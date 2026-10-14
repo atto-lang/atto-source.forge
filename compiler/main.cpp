@@ -22,7 +22,9 @@ std::string read_file(const char* path) {
       throw std::runtime_error("source exceeds 1 MiB bootstrap limit");
     text.append(buffer.data(),static_cast<std::size_t>(count));
   }
-  if (f.bad()) throw std::runtime_error("read failed");
+  // A short read at EOF is valid; any other stream failure must fail closed.
+  if (f.bad() || (f.fail() && !f.eof()))
+    throw std::runtime_error("read failed");
   return text;
 }
 }
