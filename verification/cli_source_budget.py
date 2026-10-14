@@ -23,6 +23,12 @@ def main() -> int:
         control = run(executable, good)
         if control.returncode != 0 or "ret %" not in control.stdout:
             raise SystemExit("FAIL: executable did not compile a valid control")
+        # Exactly the source-byte limit must reach parsing, not fail admission.
+        exact = Path(temp) / "exact-limit.ores"
+        exact.write_bytes(b" " * (1024 * 1024))
+        at_limit = run(executable, exact)
+        if "source exceeds 1 MiB bootstrap limit" in at_limit.stderr:
+            raise SystemExit("FAIL: exact 1 MiB source rejected by byte budget")
         bad = Path(temp) / "too-large.ores"
         bad.write_bytes(b" " * (1024 * 1024 + 1))
         rejected = run(executable, bad)
