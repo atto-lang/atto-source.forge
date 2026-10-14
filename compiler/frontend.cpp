@@ -118,7 +118,17 @@ class Parser {
   }
   int factor(std::size_t depth) {
     check_depth(depth);
-    if (take("-")) { int zero=add(Op::Constant,0); int value=factor(depth+1); return add(Op::Sub,0,zero,value); }
+    if (take("-")) {
+      // The signed i64 minimum is valid, though its positive magnitude
+      // cannot be represented as an i64. Admit only this exact negative lexeme.
+      if (tok_.kind==Kind::Number && tok_.text=="9223372036854775808") {
+        next();
+        return add(Op::Constant,std::numeric_limits<std::int64_t>::min());
+      }
+      int zero=add(Op::Constant,0);
+      int value=factor(depth+1);
+      return add(Op::Sub,0,zero,value);
+    }
     if (take("+")) return factor(depth+1);
     if (take("(")) { int value=expr(depth+1); expect(")"); return value; }
     if (tok_.kind!=Kind::Number) error("expected integer");
