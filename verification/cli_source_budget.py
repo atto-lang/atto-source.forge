@@ -30,19 +30,19 @@ def main() -> int:
             raise SystemExit("FAIL: oversized source was accepted or emitted IR")
         if "source exceeds 1 MiB bootstrap limit" not in rejected.stderr:
             raise SystemExit("FAIL: rejection did not originate from the byte budget")
-    for label, payload, diagnostic in (
-        ("overlong", b"// " + bytes([0xC0, 0xAF]), "not valid UTF-8"),
-        ("surrogate", b"// " + bytes([0xED, 0xA0, 0x80]), "not valid UTF-8"),
-        ("truncated", b"// " + bytes([0xE2, 0x82]), "not valid UTF-8"),
-        ("nul", b"// " + bytes([0x00]), "contains NUL byte"),
-    ):
-        bad_encoding = Path(temp) / (label + ".ores")
-        bad_encoding.write_bytes(payload)
-        invalid = run(executable, bad_encoding)
-        if invalid.returncode == 0 or invalid.stdout:
-            raise SystemExit(f"FAIL: {label} malformed source accepted or emitted IR")
-        if diagnostic not in invalid.stderr:
-            raise SystemExit(f"FAIL: {label} bypassed encoding admission")
+        for label, payload, diagnostic in (
+            ("overlong", b"// " + bytes([0xC0, 0xAF]), "not valid UTF-8"),
+            ("surrogate", b"// " + bytes([0xED, 0xA0, 0x80]), "not valid UTF-8"),
+            ("truncated", b"// " + bytes([0xE2, 0x82]), "not valid UTF-8"),
+            ("nul", b"// " + bytes([0x00]), "contains NUL byte"),
+        ):
+            bad_encoding = Path(temp) / (label + ".ores")
+            bad_encoding.write_bytes(payload)
+            invalid = run(executable, bad_encoding)
+            if invalid.returncode == 0 or invalid.stdout:
+                raise SystemExit(f"FAIL: {label} malformed source accepted or emitted IR")
+            if diagnostic not in invalid.stderr:
+                raise SystemExit(f"FAIL: {label} bypassed encoding admission")
     print("Forge CLI source input budget enforced")
     return 0
 
