@@ -1,3 +1,38 @@
 # OresForge
 
-Independent Oreslang compiler and runtime research implementation. Work in progress.
+An **independent, experimental C++20 compiler and execution stack** for Oreslang, distinct from GraalVM/Truffle and LLVM. This is a working **bootstrap prototype**, not a production Oreslang compiler.
+
+## Getting started
+
+~~~sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+./build/oresforge run examples/hello.ores       # 14
+./build/oresforge ir examples/hello.ores
+./build/oresforge emit-asm x86_64 examples/hello.ores
+./build/oresforge emit-asm arm64 examples/hello.ores
+bash verification/smoke.sh build/oresforge
+~~~
+
+Requires CMake >= 3.20, a C++20-capable GCC/Clang, and a POSIX toolchain for native smoke testing.
+
+## Directories
+
+| Directory | Responsibility | State |
+| --- | --- | --- |
+| compiler/ | Parser, SSA-like IR, verifier, checked interpreter, CLI | Small runnable arithmetic subset |
+| codegen/ | x86-64 and AArch64 assembly | Constant-return programs only |
+| runtime/ | OresVM-facing infrastructure | Thread-safe bounded **byte mailbox prototype** only |
+| jit/ | Tiered execution | Policy only; interpreter is always used |
+| verification/ | Tests, fuzzing, cross-backend and proof plan | Bootstrap tests; formal work planned |
+
+### Current supported grammar
+
+A single zero-argument \`fnc main() : int { return EXPR; }\`, with optional \`define\` and \`pub\` modifiers. Expressions include i64 decimal literals, parentheses, unary +/- and binary + - * /. Arithmetic is checked for overflow and division by zero. The IR is single-block and every operand must refer to an earlier definition. All emitted machine-code functions simply return the **compile-time computed constant** in \`oresforge_entry()\`; general instruction selection is not implemented.
+
+Actors as Oreslang language constructs, ownership/borrows, concurrent scheduling, async/await, hot reload, true native JIT, native object generation, and OresVM integration **are not implemented**. The numeric actor references in the prototype are **not authenticated capabilities**.
+
+See [architecture](docs/architecture.md), [roadmap](docs/roadmap.md), and [verification](verification/README.md).
+
+License is not yet selected; maintainers should add an explicit license before external contributions.
