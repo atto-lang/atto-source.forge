@@ -32,6 +32,19 @@ int main() {
     ensure(interpret(source("-(3+2)"))==-5,"unary");
     ensure(interpret(parse_source("pub define fnc main():int { return 9; }"))==9,"pub define");
     reject([] { source("9223372036854775808"); });
+    reject([] { parse_source(std::string(1024 * 1024 + 1, ' ')); });
+    reject([] { source(std::string(200, '(') + "1" + std::string(200, ')')); });
+    reject([] { source(std::string(200, '-') + "1"); });
+    reject([] {
+      std::string expr="1";
+      for (int i=0; i<50000; ++i) expr += "+1";
+      source(expr);
+    });
+    reject([] {
+      Program too_large;
+      too_large.instructions.resize(100001, {Op::Constant,0});
+      verify(too_large);
+    });
     reject([] { interpret(source("9223372036854775807 + 1")); });
     reject([] { interpret(source("3/0")); });
     reject([] { parse_source("fnc main():int {return 1;} garbage"); });
