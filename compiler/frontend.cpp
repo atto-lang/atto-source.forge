@@ -28,7 +28,7 @@ class Parser {
     }
     expect("fnc"); expect("main"); expect("("); expect(")"); expect(":");
     expect("int"); expect("{"); expect("return");
-    const int result=expr();
+    const int result=expr(0);
     expect(";"); expect("}");
     if (tok_.kind!=Kind::End) error("trailing code");
     add(Op::Return,0,result);
@@ -40,6 +40,11 @@ class Parser {
   std::size_t at_=0;
   Token tok_{Kind::End,{},0};
   Program program_;
+  static constexpr std::size_t kMaxExpressionDepth = 128;
+  static constexpr std::size_t kMaxInstructions = 100000;
+  static void check_depth(std::size_t depth) {
+    if (depth > kMaxExpressionDepth) throw std::runtime_error("expression nesting too deep");
+  }
   [[noreturn]] void error(const char* s) const {
     throw std::runtime_error(std::string(s)+" at byte "+std::to_string(tok_.offset));
   }
@@ -85,34 +90,37 @@ class Parser {
     if (!take(value)) error("unexpected token");
   }
   int add(Op op, std::int64_t value=0, int a=-1, int b=-1) {
-    if (program_.instructions.size()>=static_cast<std::size_t>(std::numeric_limits<int>::max()))
+    if (program_.instructions.size()>=kMaxInstructions)
       error("too many instructions");
     int index=static_cast<int>(program_.instructions.size());
     program_.instructions.push_back({op,value,a,b});
     return index;
   }
-  int expr() {
-    int left=term();
+  int expr(std::size_t depth) {
+    check_depth(depth);
+    int left=term(depth+1);
     while (tok_.text=="+" || tok_.text=="-") {
       bool plus=tok_.text=="+";
-      next(); int right=term();
+      next(); int right=term(depth+1);
       left=add(plus?Op::Add:Op::Sub,0,left,right);
     }
     return left;
   }
-  int term() {
-    int left=factor();
+  int term(std::size_t depth) {
+    check_depth(depth);
+    int left=factor(depth+1);
     while (tok_.text=="*" || tok_.text=="/") {
       bool mult=tok_.text=="*";
-      next(); int right=factor();
+      next(); int right=factor(depth+1);
       left=add(mult?Op::Mul:Op::Div,0,left,right);
     }
     return left;
   }
-  int factor() {
-    if (take("-")) { int zero=add(Op::Constant,0); int value=factor(); return add(Op::Sub,0,zero,value); }
-    if (take("+")) return factor();
-    if (take("(")) { int value=expr(); expect(")"); return value; }
+  int factor(std::size_t depth) {
+    check_depth(depth);
+    if (take("-")) { int zero=add(Op::Constant,0); int value=factor(depth+1); return add(Op::Sub,0,zero,value); }
+    if (take("+")) return factor(depth+1);
+    if (take("(")) { int value=expr(depth+1); expect(")"); return value; }
     if (tok_.kind!=Kind::Number) error("expected integer");
     std::int64_t n=0;
     const char* begin=tok_.text.data();
@@ -122,5 +130,8 @@ class Parser {
   }
 };
 }
-Program parse_source(std::string_view source) { return Parser(source).parse(); }
+Program parse_source(std::string_view source) {
+  if (source.size() > 1024 * 1024) throw std::runtime_error("source exceeds 1 MiB bootstrap limit");
+  return Parser(source).parse();
+}
 }
