@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -32,6 +33,10 @@ int main() {
     ensure(interpret(source("-(3+2)"))==-5,"unary");
     ensure(interpret(parse_source("pub define fnc main():int { return 9; }"))==9,"pub define");
     reject([] { source("9223372036854775808"); });
+    ensure(interpret(source("-9223372036854775808"))==
+               std::numeric_limits<std::int64_t>::min(),"i64 minimum");
+    reject([] { interpret(source("--9223372036854775808")); });
+    reject([] { interpret(source("-9223372036854775808/-1")); });
     reject([] { parse_source(std::string(1024 * 1024 + 1, ' ')); });
     reject([] { source(std::string(200, '(') + "1" + std::string(200, ')')); });
     reject([] { source(std::string(200, '-') + "1"); });
