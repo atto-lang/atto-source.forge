@@ -14,6 +14,12 @@ if(BUILD_TESTING)
   add_executable(oresforge_tests verification/tests.cpp)
   target_link_libraries(oresforge_tests PRIVATE oresforge_core)
   add_test(NAME oresforge_unit COMMAND oresforge_tests)
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  add_test(NAME oresforge_cli_source_budget
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/cli_source_budget.py"
+      "$<TARGET_FILE:oresforge>")
+  set_tests_properties(oresforge_cli_source_budget PROPERTIES TIMEOUT 20)
 endif()
 if(ORESFORGE_FUZZ)
   if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
