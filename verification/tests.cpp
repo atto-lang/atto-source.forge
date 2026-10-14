@@ -38,6 +38,18 @@ int main() {
     reject([] { interpret(source("--9223372036854775808")); });
     reject([] { interpret(source("-9223372036854775808/-1")); });
     reject([] { parse_source(std::string(1024 * 1024 + 1, ' ')); });
+    // Encoding admission applies even to direct parser clients (not just CLI).
+    reject([] { parse_source(std::string("fnc main():int {return 1;} ") +
+        static_cast<char>(0xc0) + static_cast<char>(0xaf)); }); // overlong
+    reject([] { parse_source(std::string("fnc main():int {return 1;} ") +
+        static_cast<char>(0xed) + static_cast<char>(0xa0) + static_cast<char>(0x80)); }); // surrogate
+    reject([] { parse_source(std::string("fnc main():int {return 1;} ") +
+        static_cast<char>(0xe2) + static_cast<char>(0x82)); }); // truncated
+    reject([] { std::string text="fnc main():int {return 1;}"; text.push_back('\\0');
+        parse_source(text); });
+    ensure(interpret(parse_source("fnc main():int {return 3;} // caf\\xc3\\xa9"))==3,
+           "valid UTF-8 comment");
+
     reject([] { source(std::string(200, '(') + "1" + std::string(200, ')')); });
     reject([] { source(std::string(200, '-') + "1"); });
     reject([] {
