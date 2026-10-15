@@ -23,6 +23,14 @@ def main() -> int:
         control = run(executable, good)
         if control.returncode != 0 or "ret %" not in control.stdout:
             raise SystemExit("FAIL: executable did not compile a valid control")
+        # Publication failures must not report a successful compilation.
+        for command in (["run", str(good)], ["ir", str(good)],
+                        ["emit-asm", "x86_64", str(good)]):
+            with good.open("rb") as readonly_stdout:
+                failed = subprocess.run([executable, *command], stdout=readonly_stdout,
+                                        stderr=subprocess.PIPE, text=True, timeout=12)
+            if failed.returncode == 0:
+                raise SystemExit("FAIL: unwritable stdout reported success")
         # Exactly the source-byte limit must reach parsing, not fail admission.
         exact = Path(temp) / "exact-limit.ores"
         exact.write_bytes(b" " * (1024 * 1024))

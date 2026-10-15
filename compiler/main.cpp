@@ -30,16 +30,20 @@ std::string read_file(const char* path) {
 }
 int main(int argc,char** argv) {
   try {
+    // Report failed publication (e.g. read-only stdout) as compilation failure.
+    std::cout.exceptions(std::ios::badbit | std::ios::failbit);
     if (argc==3 && (std::string(argv[1])=="run" || std::string(argv[1])=="ir")) {
       auto program=oresforge::parse_source(read_file(argv[2]));
       if (std::string(argv[1])=="run") std::cout<<oresforge::interpret(program)<<'\n';
       else std::cout<<oresforge::dump_ir(program);
+      std::cout.flush();
       return 0;
     }
     if (argc==4 && std::string(argv[1])=="emit-asm") {
       auto target=oresforge::parse_arch(argv[2]);
       auto program=oresforge::parse_source(read_file(argv[3]));
       std::cout<<oresforge::emit_asm(program,target);
+      std::cout.flush();
       return 0;
     }
     std::cerr<<"usage: oresforge run|ir <file.ores> OR oresforge emit-asm x86_64|arm64 <file.ores>\n";
