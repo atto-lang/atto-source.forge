@@ -25,6 +25,10 @@ if(ORESFORGE_FUZZ)
   if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     message(FATAL_ERROR "libFuzzer requires Clang")
   endif()
+  # Instrument the actual compiler implementation, not only the harness.
+  # -fsanitize=fuzzer-no-link keeps the static library linkable with libFuzzer.
+  target_compile_options(oresforge_core PRIVATE
+    -fsanitize=fuzzer-no-link,address,undefined -fno-omit-frame-pointer)
   add_executable(oresforge_fuzz verification/fuzz_frontend.cpp)
   target_link_libraries(oresforge_fuzz PRIVATE oresforge_core)
   target_compile_options(oresforge_fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
