@@ -140,6 +140,7 @@ class Parser {
     int left=factor(depth+1);
     while (tok_.text=="*" || tok_.text=="/") {
       bool mult=tok_.text=="*";
+      if (!mult) error("division requires float result lowering; unsupported in the i64 source subset");
       next(); int right=factor(depth+1);
       left=add(mult?Op::Mul:Op::Div,0,left,right);
     }

@@ -41,7 +41,17 @@ int main() {
     using namespace oresforge;
     ensure(interpret(source("2+3*4"))==14,"precedence");
     ensure(interpret(source("(2+3)*4"))==20,"parentheses");
-    ensure(interpret(source("-3/2"))==-1,"division rounding");
+    for (const auto& expression : {"3/2", "4/2", "5/0", "-9223372036854775808/-1"})
+      reject_diagnostic([&] { source(expression); }, "float result lowering");
+    // Internal checked-i64 IR division is distinct from the source / operator.
+    Program internal_division{{{Op::Constant,-3},{Op::Constant,2},
+                              {Op::Div,0,0,1},{Op::Return,0,2,-1}}};
+    ensure(interpret(internal_division)==-1,"internal checked division");
+    internal_division.instructions[1].value=0;
+    reject_diagnostic([&] { interpret(internal_division); }, "division by zero");
+    internal_division.instructions[0].value=std::numeric_limits<std::int64_t>::min();
+    internal_division.instructions[1].value=-1;
+    reject_diagnostic([&] { interpret(internal_division); }, "division overflow");
     ensure(interpret(source("-(3+2)"))==-5,"unary");
     ensure(interpret(parse_source("pub define fnc main():int { return 9; }"))==9,"pub define");
     reject([] { source("9223372036854775808"); });
@@ -96,6 +106,8 @@ int main() {
     ensure(emit_asm(source("2+3*4"),Arch::X86_64).find("movabs $14")!=std::string::npos,"x86_64 asm");
     ensure(emit_asm(source("2+3*4"),Arch::ARM64).find("movz x0, #14")!=std::string::npos,"arm64 asm");
     reject([] { emit_asm(source("1/0"),Arch::X86_64); });
+    reject_diagnostic([] { emit_asm(source("1"),static_cast<Arch>(99)); },
+                      "unsupported architecture");
     jit::Executor executor({2,3});
     ensure(executor.run(source("1+2"))==3,"interpreter");
     ensure(executor.requested_tier()==jit::Tier::Interpreter,"tier0");
