@@ -36,3 +36,6 @@ Actors as Oreslang language constructs, ownership/borrows, concurrent scheduling
 See [architecture](docs/architecture.md), [roadmap](docs/roadmap.md), and [verification](verification/README.md).
 
 License is not yet selected; maintainers should add an explicit license before external contributions.
+
+See [value-boundary audit and admission tests](docs/VALUE_BOUNDARIES.md) for
+aggregate, call, string, conditional and async feature limits.

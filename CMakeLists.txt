@@ -34,3 +34,12 @@ if(ORESFORGE_FUZZ)
   target_compile_options(oresforge_fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
   target_link_options(oresforge_fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
 endif()
+
+# Admission gates for language surfaces that this backend does not lower yet.
+if(BUILD_TESTING)
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  add_test(NAME value_boundary_admission
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/value_boundaries.py"
+      "$<TARGET_FILE:oresforge>")
+  set_tests_properties(value_boundary_admission PROPERTIES TIMEOUT 60)
+endif()
