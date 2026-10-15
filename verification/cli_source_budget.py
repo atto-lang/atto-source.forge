@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Real OresForge CLI input-budget regression (not a parser-only unit test)."""
 from pathlib import Path
+import os
 import subprocess
 import sys
 import tempfile
@@ -23,6 +24,24 @@ def main() -> int:
         control = run(executable, good)
         if control.returncode != 0 or "ret %" not in control.stdout:
             raise SystemExit("FAIL: executable did not compile a valid control")
+        if os.name == "posix":
+            fifo = Path(temp) / "unwritten-fifo.ores"
+            os.mkfifo(fifo)
+            linked_fifo = Path(temp) / "fifo-link.ores"
+            linked_fifo.symlink_to(fifo)
+            linked_good = Path(temp) / "regular-link.ores"
+            linked_good.symlink_to(good)
+            for flags in (["run"], ["ir"], ["emit-asm", "x86_64"]):
+                for special in (fifo, linked_fifo, Path(temp), type(good)("/dev/zero")):
+                    rejected = subprocess.run([executable, *flags, str(special)],
+                                              capture_output=True, text=True, timeout=3)
+                    if (rejected.returncode != 1 or rejected.stdout
+                            or "source must be a regular file" not in rejected.stderr):
+                        raise SystemExit("FAIL: nonregular source admission: " + str(special))
+                accepted = subprocess.run([executable, *flags, str(linked_good)],
+                                          capture_output=True, text=True, timeout=3)
+                if accepted.returncode != 0 or not accepted.stdout:
+                    raise SystemExit("FAIL: regular source symlink rejected")
         # Publication failures must not report a successful compilation.
         for command in (["run", str(good)], ["ir", str(good)],
                         ["emit-asm", "x86_64", str(good)]):
