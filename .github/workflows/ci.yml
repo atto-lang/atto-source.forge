@@ -48,3 +48,20 @@ jobs:
           ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
           UBSAN_OPTIONS: halt_on_error=1
         run: ctest --test-dir build-sanitized --output-on-failure
+
+  fuzz-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Configure instrumented libFuzzer
+        run: >-
+          cmake -S . -B build-fuzz -DCMAKE_BUILD_TYPE=Debug
+          -DBUILD_TESTING=OFF -DORESFORGE_FUZZ=ON
+          -DCMAKE_CXX_COMPILER=clang++
+      - name: Compile fuzz target and instrumented compiler
+        run: cmake --build build-fuzz --target oresforge_fuzz --parallel 2
+      - name: Deterministic bounded fuzz corpus regression
+        run: >-
+          ./build-fuzz/oresforge_fuzz -runs=3000 -max_len=4096
+          -timeout=3 -rss_limit_mb=1024 verification/fuzz-corpus
