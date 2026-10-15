@@ -41,6 +41,7 @@ std::int64_t checked(Op op, std::int64_t a, std::int64_t b) {
 }
 void verify(const Program& p) {
   if (p.instructions.empty()) throw std::runtime_error("empty IR");
+  if (p.instructions.size() > 100000) throw std::runtime_error("IR instruction budget exceeded");
   for (std::size_t i=0; i<p.instructions.size(); ++i) {
     const auto& ins = p.instructions[i];
     if (ins.op == Op::Constant) {

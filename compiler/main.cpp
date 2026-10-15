@@ -1,6 +1,7 @@
 #include "compiler/frontend.hpp"
 #include "compiler/ir.hpp"
 #include "codegen/native.hpp"
+#include <array>
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -10,8 +11,20 @@ namespace {
 std::string read_file(const char* path) {
   std::ifstream f(path,std::ios::binary);
   if (!f) throw std::runtime_error(std::string("cannot open ")+path);
-  std::string text{std::istreambuf_iterator<char>{f},std::istreambuf_iterator<char>{}};
-  if (f.bad()) throw std::runtime_error("read failed");
+  constexpr std::size_t kMaxSourceBytes = 1024 * 1024;
+  std::array<char,8192> buffer{};
+  std::string text;
+  while (f) {
+    f.read(buffer.data(),static_cast<std::streamsize>(buffer.size()));
+    auto count=f.gcount();
+    if (count <= 0) break;
+    if (static_cast<std::size_t>(count)>kMaxSourceBytes-text.size())
+      throw std::runtime_error("source exceeds 1 MiB bootstrap limit");
+    text.append(buffer.data(),static_cast<std::size_t>(count));
+  }
+  // A short read at EOF is valid; any other stream failure must fail closed.
+  if (f.bad() || (f.fail() && !f.eof()))
+    throw std::runtime_error("read failed");
   return text;
 }
 }

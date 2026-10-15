@@ -12,6 +12,8 @@ Arch parse_arch(std::string_view name) {
 std::string emit_asm(const Program& p,Arch arch) {
   // Entire supported source subset is constant arithmetic. Evaluate with
   // checked semantics first; do not emit unchecked native arithmetic.
+  if (arch != Arch::X86_64 && arch != Arch::ARM64)
+    throw std::runtime_error("unsupported architecture");
   const std::int64_t value=interpret(p);
   std::ostringstream out;
   out<<".text\n.globl oresforge_entry\noresforge_entry:\n";
