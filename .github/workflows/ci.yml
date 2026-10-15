@@ -1,0 +1,27 @@
+name: OresForge compiler and native smoke
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  compiler-and-native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Configure checked bootstrap
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+      - name: Compile bootstrap
+        run: cmake --build build --parallel 2
+      - name: Run registered CTest cases
+        run: ctest --test-dir build --output-on-failure
+      - name: Run real compiler smoke
+        run: |
+          set -euo pipefail
+          output="$(./build/oresforge run examples/hello.ores)"
+          printf '%s\n' "$output"
+          test "$output" = "14"
