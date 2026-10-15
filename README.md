@@ -12,10 +12,10 @@ ctest --test-dir build --output-on-failure
 ./build/oresforge ir examples/hello.ores
 ./build/oresforge emit-asm x86_64 examples/hello.ores
 ./build/oresforge emit-asm arm64 examples/hello.ores
-bash verification/smoke.sh build/oresforge
+./build/oresforge run examples/hello.ores  # expected: 14
 ~~~
 
-Requires CMake >= 3.20, a C++20-capable GCC/Clang, and a POSIX toolchain for native smoke testing.
+Requires CMake >= 3.20, a C++20-capable GCC/Clang, and a POSIX toolchain for native smoke testing. CI builds this experimental bootstrap and executes its CTest suite. The former `verification/smoke.sh` reference was removed because that file does not exist.
 
 ## Directories
 
