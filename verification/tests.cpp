@@ -66,7 +66,7 @@ int main() {
         static_cast<char>(0x80)+static_cast<char>(0x80)); },"not valid UTF-8");
     reject_diagnostic([&] { parse_source(comment+
         static_cast<char>(0x80)); },"not valid UTF-8");
-    reject_diagnostic([&] { std::string text=comment; text.push_back('\\0');
+    reject_diagnostic([&] { std::string text=comment; text.push_back('\0');
         parse_source(text); },"source contains NUL byte");
     ensure(interpret(parse_source("fnc main():int {return 3;} // caf\xc3\xa9"))==3,
            "valid UTF-8 comment");
