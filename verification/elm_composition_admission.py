@@ -12,7 +12,7 @@ def require(cond, evidence):
 
 compiler = str(Path(sys.argv[1]).resolve())
 cases = json.loads(Path(__file__).with_name("elm_composition_rejections.json").read_text())
-require(len(cases) == 6, "exact six composition families must be exercised")
+require(len(cases) == 11, "exact eleven composition/failure admission cases must be exercised")
 with tempfile.TemporaryDirectory(prefix="oresforge-elm-") as root:
     path = Path(root) / "input.ores"
     path.write_text("pub fnc main():int{return (5+3)*7-14;}", encoding="utf-8")
