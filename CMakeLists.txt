@@ -42,4 +42,8 @@ if(BUILD_TESTING)
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/value_boundaries.py"
       "$<TARGET_FILE:oresforge>")
   set_tests_properties(value_boundary_admission PROPERTIES TIMEOUT 60)
+  add_test(NAME elm_composition_source_admission
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/elm_composition_admission.py"
+      "$<TARGET_FILE:oresforge>")
+  set_tests_properties(elm_composition_source_admission PROPERTIES TIMEOUT 90)
 endif()
