@@ -43,3 +43,10 @@ if(BUILD_TESTING)
       "$<TARGET_FILE:oresforge>")
   set_tests_properties(value_boundary_admission PROPERTIES TIMEOUT 60)
 endif()
+
+if(BUILD_TESTING)
+  add_test(NAME mandatory_async_io
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/mandatory_async_io.py"
+      "$<TARGET_FILE:oresforge>")
+  set_tests_properties(mandatory_async_io PROPERTIES TIMEOUT 60)
+endif()

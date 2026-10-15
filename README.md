@@ -39,3 +39,5 @@ License is not yet selected; maintainers should add an explicit license before e
 
 See [value-boundary audit and admission tests](docs/VALUE_BOUNDARIES.md) for
 aggregate, call, string, conditional and async feature limits.
+
+See [mandatory nonblocking guest I/O](docs/MANDATORY_ASYNC_IO.md) for enforcement, verification and unsupported surfaces.
