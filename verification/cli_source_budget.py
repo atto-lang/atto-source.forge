@@ -40,6 +40,8 @@ def main() -> int:
             ("overlong", b"// " + bytes([0xC0, 0xAF]), "not valid UTF-8"),
             ("surrogate", b"// " + bytes([0xED, 0xA0, 0x80]), "not valid UTF-8"),
             ("truncated", b"// " + bytes([0xE2, 0x82]), "not valid UTF-8"),
+            ("out-of-range", b"// " + bytes([0xF4, 0x90, 0x80, 0x80]), "not valid UTF-8"),
+            ("stray-continuation", b"// " + bytes([0x80]), "not valid UTF-8"),
             ("nul", b"// " + bytes([0x00]), "contains NUL byte"),
         ):
             bad_encoding = Path(temp) / (label + ".ores")
