@@ -54,6 +54,10 @@ int main() {
     reject_diagnostic([&] { interpret(internal_division); }, "division overflow");
     ensure(interpret(source("-(3+2)"))==-5,"unary");
     ensure(interpret(parse_source("pub define fnc main():int { return 9; }"))==9,"pub define");
+    ensure(interpret(parse_source("define pub fnc main() -> int { return 2+3*4; }"))==14,
+           "canonical formatter arrow");
+    reject([] { parse_source("fnc main() - > int { return 1; }"); });
+    reject([] { parse_source("fnc main() ->> int { return 1; }"); });
     reject([] { source("9223372036854775808"); });
     ensure(interpret(source("-9223372036854775808"))==
                std::numeric_limits<std::int64_t>::min(),"i64 minimum");
