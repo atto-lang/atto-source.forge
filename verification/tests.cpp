@@ -10,6 +10,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 namespace {
 void ensure(bool yes,const char* message) {
@@ -19,6 +20,17 @@ void reject(const std::function<void()>& fn) {
   bool caught=false;
   try { fn(); } catch (const std::exception&) { caught=true; }
   ensure(caught,"expected rejection");
+}
+void reject_diagnostic(const std::function<void()>& fn,std::string_view diagnostic) {
+  try {
+    fn();
+  } catch (const std::exception& error) {
+    if (std::string_view(error.what()).find(diagnostic)==std::string_view::npos)
+      throw std::runtime_error("source rejected for wrong reason: "+
+                               std::string(error.what()));
+    return;
+  }
+  throw std::runtime_error("malformed source admitted unexpectedly");
 }
 oresforge::Program source(const std::string& expr) {
   return oresforge::parse_source("define pub fnc main() : int { return "+expr+"; }");
@@ -38,15 +50,24 @@ int main() {
     reject([] { interpret(source("--9223372036854775808")); });
     reject([] { interpret(source("-9223372036854775808/-1")); });
     reject([] { parse_source(std::string(1024 * 1024 + 1, ' ')); });
-    // Encoding admission applies even to direct parser clients (not just CLI).
-    reject([] { parse_source(std::string("fnc main():int {return 1;} ") +
-        static_cast<char>(0xc0) + static_cast<char>(0xaf)); }); // overlong
-    reject([] { parse_source(std::string("fnc main():int {return 1;} ") +
-        static_cast<char>(0xed) + static_cast<char>(0xa0) + static_cast<char>(0x80)); }); // surrogate
-    reject([] { parse_source(std::string("fnc main():int {return 1;} ") +
-        static_cast<char>(0xe2) + static_cast<char>(0x82)); }); // truncated
-    reject([] { std::string text="fnc main():int {return 1;}"; text.push_back('\0');
-        parse_source(text); });
+    // These are complete *valid* programs with invalid bytes inside comments.
+    // A generic assertThrows would pass for an unrelated lexical error; require
+    // the encoding-specific diagnostic even where lexing would ignore comments.
+    const std::string comment="fnc main():int {return 1;} // ";
+    reject_diagnostic([&] { parse_source(comment+
+        static_cast<char>(0xc0)+static_cast<char>(0xaf)); },"not valid UTF-8");
+    reject_diagnostic([&] { parse_source(comment+
+        static_cast<char>(0xed)+static_cast<char>(0xa0)+static_cast<char>(0x80)); },
+        "not valid UTF-8");
+    reject_diagnostic([&] { parse_source(comment+
+        static_cast<char>(0xe2)+static_cast<char>(0x82)); },"not valid UTF-8");
+    reject_diagnostic([&] { parse_source(comment+
+        static_cast<char>(0xf4)+static_cast<char>(0x90)+
+        static_cast<char>(0x80)+static_cast<char>(0x80)); },"not valid UTF-8");
+    reject_diagnostic([&] { parse_source(comment+
+        static_cast<char>(0x80)); },"not valid UTF-8");
+    reject_diagnostic([&] { std::string text=comment; text.push_back('\\0');
+        parse_source(text); },"source contains NUL byte");
     ensure(interpret(parse_source("fnc main():int {return 3;} // caf\xc3\xa9"))==3,
            "valid UTF-8 comment");
 
