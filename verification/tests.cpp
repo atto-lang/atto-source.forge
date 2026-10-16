@@ -4,6 +4,7 @@
 #include "runtime/actor.hpp"
 #include "jit/tiered.hpp"
 #include "generated_numeric_i64_cases.hpp"
+#include "generated_numeric_overflow_cases.hpp"
 #include <array>
 #include <cstdint>
 #include <functional>
@@ -46,6 +47,11 @@ int main() {
     for (const auto& [expression, expected] : kPortableNumericalCases) {
       ensure(interpret(source(expression))==expected,"numeric parity i64 source");
     }
+    // The four byte-pinned shared negative cases exercise the *actual*
+    // Forge source parser, verified i64 IR and interpreter. An exception
+    // from either admission or execution is allowed; wrapping is not.
+    for (const char* expression : kOverflowNumericalCases)
+      reject([&] { (void)interpret(source(expression)); });
     // The bootstrap intentionally has NO BigInt, Decimal or binary64 lowering.
     // Fail closed rather than treating those spellings as signed i64.
     reject([] { source("1.25"); });
