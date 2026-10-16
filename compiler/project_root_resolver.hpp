@@ -107,6 +107,9 @@ inline fs::path configured_project_root(const fs::path& manifest_dir,
         throw std::invalid_argument("project.root is not an existing directory");
     if (!within(manifest_dir, selected))
         throw std::invalid_argument("project.root escapes physical manifest directory");
+    if (selected != manifest_dir &&
+        fs::symlink_status(selected / ".ores.pkg.toml").type() != fs::file_type::not_found)
+        throw std::invalid_argument("project.root crosses nested project manifest");
     return selected;
 }
 
