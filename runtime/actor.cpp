@@ -19,10 +19,15 @@ void discard_queued(std::deque<std::vector<std::uint8_t>>& queue) noexcept {
   queue.clear();
 }
 } // namespace
+// Clean pending mailbox-owned data on destruction, not just explicit close.
+// As with any C++ object, destruction requires all users to have stopped.
+Mailbox::~Mailbox() noexcept { discard_queued(queue_); }
 Mailbox::Mailbox(std::uint64_t id,std::size_t capacity,std::size_t bytes):
     id_(id),capacity_(capacity),byte_capacity_(bytes),
     authority_(std::make_shared<CapabilityToken>()) {
-  if (id==0 || capacity==0 || bytes==0) throw std::invalid_argument("invalid mailbox");
+  if (id==0 || capacity==0 || capacity>kMaxMailboxMessages ||
+      bytes==0 || bytes>kMaxMailboxBytes)
+    throw std::invalid_argument("invalid or unbounded mailbox capacity");
 }
 ActorRef Mailbox::ref() const {
   std::scoped_lock lock(mutex_);
@@ -34,9 +39,12 @@ void Mailbox::send(ActorRef destination,std::span<const std::uint8_t> payload) {
   if (closed_ || destination.id!=id_ || destination.generation!=generation_ ||
       destination.authority_!=authority_)
     throw std::runtime_error("closed or stale actor");
-  if (queue_.size()>=capacity_ || payload.size()>byte_capacity_-queued_bytes_)
+  if (queue_.size()>=capacity_ || queued_bytes_>byte_capacity_ ||
+      payload.size()>byte_capacity_-queued_bytes_)
     throw std::length_error("mailbox capacity");
-  queue_.emplace_back(payload.begin(),payload.end());
+  // A default empty span may have null iterators. It still uses one slot.
+  if (payload.empty()) queue_.emplace_back();
+  else queue_.emplace_back(payload.begin(),payload.end());
   queued_bytes_+=payload.size();
 }
 std::optional<std::vector<std::uint8_t>> Mailbox::receive() {

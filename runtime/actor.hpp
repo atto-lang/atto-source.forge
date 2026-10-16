@@ -10,6 +10,8 @@
 #include <utility>
 namespace oresforge::runtime {
 inline constexpr std::size_t kMaxMessageBytes=1024*1024;
+inline constexpr std::size_t kMaxMailboxMessages=4096;
+inline constexpr std::size_t kMaxMailboxBytes=16*kMaxMessageBytes;
 struct CapabilityToken; // Opaque, local-only authority; never serialize it.
 class Mailbox;
 struct ActorRef {
@@ -26,6 +28,8 @@ class Mailbox {
  public:
   Mailbox(std::uint64_t id,std::size_t capacity=1024,
           std::size_t byte_capacity=4*kMaxMessageBytes);
+  // No concurrent calls may outlive mailbox destruction.
+  ~Mailbox() noexcept;
   ActorRef ref() const;
   void send(ActorRef,std::span<const std::uint8_t>);
   std::optional<std::vector<std::uint8_t>> receive();

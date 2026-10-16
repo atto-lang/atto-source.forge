@@ -14,6 +14,12 @@ if(BUILD_TESTING)
   add_executable(oresforge_tests verification/tests.cpp)
   target_link_libraries(oresforge_tests PRIVATE oresforge_core)
   add_test(NAME oresforge_unit COMMAND oresforge_tests)
+  add_executable(oresforge_mailbox_destructor verification/actor_mailbox_destructor.cpp)
+  target_link_libraries(oresforge_mailbox_destructor PRIVATE oresforge_core)
+  add_test(NAME oresforge_actor_mailbox_destructor COMMAND oresforge_mailbox_destructor)
+  add_executable(oresforge_mailbox_limits verification/actor_mailbox_limits.cpp)
+  target_link_libraries(oresforge_mailbox_limits PRIVATE oresforge_core)
+  add_test(NAME oresforge_actor_mailbox_limits COMMAND oresforge_mailbox_limits)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   add_test(NAME oresforge_cli_source_budget
     COMMAND "${Python3_EXECUTABLE}"
