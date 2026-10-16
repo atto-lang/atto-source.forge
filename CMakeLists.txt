@@ -14,6 +14,13 @@ if(BUILD_TESTING)
   add_executable(oresforge_tests verification/tests.cpp)
   target_link_libraries(oresforge_tests PRIVATE oresforge_core)
   add_test(NAME oresforge_unit COMMAND oresforge_tests)
+  # Exercise the real mailbox with concurrent sends, deep-copy ownership,
+  # backpressure, byte-credit recovery and generation/authority fencing.
+  find_package(Threads REQUIRED)
+  add_executable(oresforge_mailbox_stress verification/actor_mailbox_concurrency.cpp)
+  target_link_libraries(oresforge_mailbox_stress PRIVATE oresforge_core Threads::Threads)
+  add_test(NAME oresforge_actor_mailbox_concurrency COMMAND oresforge_mailbox_stress)
+  set_tests_properties(oresforge_actor_mailbox_concurrency PROPERTIES TIMEOUT 60)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   add_test(NAME oresforge_cli_source_budget
     COMMAND "${Python3_EXECUTABLE}"
