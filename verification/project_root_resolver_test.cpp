@@ -43,7 +43,7 @@ int main() {
               "canonical root source unresolved");
         check(project_root_source(project, "+/src/lib/answer.ores") == expected,
               "exact .ores source unresolved");
-        for (const std::string bad : {
+        for (const std::string& bad : std::vector<std::string>{
             "", "+", "+src/lib/answer", "@/", "@/src/lib/answer",
             "+/", "+//src/lib/answer", "+/src//answer", "+/src/./lib/answer",
             "+/src/../src/lib/answer", "+/src/lib/answer/",
