@@ -70,3 +70,16 @@ if(BUILD_TESTING)
       "$<TARGET_FILE:oresforge>")
   set_tests_properties(value_boundary_admission PROPERTIES TIMEOUT 60)
 endif()
+
+# Host-only typed CPU/GPU graph contract: no guest GPU launch capability.
+if(BUILD_TESTING)
+  find_package(Threads REQUIRED)
+  add_executable(oresforge_execution_graph_v1 verification/execution_graph_v1_test.cpp)
+  target_include_directories(oresforge_execution_graph_v1 PRIVATE .)
+  target_compile_features(oresforge_execution_graph_v1 PRIVATE cxx_std_20)
+  target_compile_options(oresforge_execution_graph_v1 PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic -Werror>)
+  target_link_libraries(oresforge_execution_graph_v1 PRIVATE Threads::Threads)
+  add_test(NAME oresforge_execution_graph_v1_host_only COMMAND oresforge_execution_graph_v1)
+  set_tests_properties(oresforge_execution_graph_v1_host_only PROPERTIES TIMEOUT 45)
+endif()
