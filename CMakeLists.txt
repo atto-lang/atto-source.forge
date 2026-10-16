@@ -14,6 +14,15 @@ if(BUILD_TESTING)
   add_executable(oresforge_tests verification/tests.cpp)
   target_link_libraries(oresforge_tests PRIVATE oresforge_core)
   add_test(NAME oresforge_unit COMMAND oresforge_tests)
+  # Host-only positive filesystem resolution substrate, not guest import linking.
+  add_executable(oresforge_root_resolver_test verification/project_root_resolver_test.cpp)
+  target_include_directories(oresforge_root_resolver_test PRIVATE .)
+  target_compile_features(oresforge_root_resolver_test PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_root_resolver_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME oresforge_project_root_resolver_host_only COMMAND oresforge_root_resolver_test)
+  set_tests_properties(oresforge_project_root_resolver_host_only PROPERTIES TIMEOUT 20)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   add_test(NAME oresforge_cli_source_budget
     COMMAND "${Python3_EXECUTABLE}"
