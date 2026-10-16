@@ -5,6 +5,7 @@
 #include <exception>
 #include <iostream>
 #include <stdexcept>
+#include <type_traits>
 #include <vector>
 
 using oresforge::runtime::ActorRef;
@@ -82,12 +83,10 @@ void run_model(std::uint64_t seed) {
       bytes = 0;
       closed = false;
     } else if (operation == 9) {
-      // Public numeric identifiers are deliberately not send authority.
-      bool rejected = false;
-      try { box.send(ActorRef{id, ref.generation},
-                     std::vector<std::uint8_t>{}); }
-      catch (const std::runtime_error&) { rejected = true; }
-      expect(rejected, "numeric-only actor reference gained authority");
+      // Numeric identities are public metadata, not send authority.
+      // The only valid references originate from Mailbox::ref/restart.
+      expect(!std::is_constructible_v<ActorRef, std::uint64_t, std::uint64_t>,
+             "numeric-only actor reference is constructible");
     } else if (operation == 10) {
       bool rejected = false;
       try { box.send(foreign.ref(), std::vector<std::uint8_t>{}); }

@@ -1,21 +1,37 @@
 #include "runtime/actor.hpp"
-#include <memory>
 #include <limits>
 #include <stdexcept>
 #include <utility>
+#include <memory>
+#include <deque>
+#include <vector>
 namespace oresforge::runtime {
+struct CapabilityToken final {}; // unique per mailbox incarnation
+namespace {
+// Only pending mailbox-owned copies may be wiped. Already-delivered values
+// belong to the receiver. Volatile byte stores prevent dead-store elimination
+// when queue entries are released immediately afterward.
+void discard_queued(std::deque<std::vector<std::uint8_t>>& queue) noexcept {
+  for (auto& payload : queue) {
+    volatile std::uint8_t* bytes = payload.data();
+    for (std::size_t i = 0; i < payload.size(); ++i) bytes[i] = 0;
+  }
+  queue.clear();
+}
+} // namespace
+// Clean pending mailbox-owned data on destruction, not just explicit close.
+// As with any C++ object, destruction requires all users to have stopped.
+Mailbox::~Mailbox() noexcept { discard_queued(queue_); }
 Mailbox::Mailbox(std::uint64_t id,std::size_t capacity,std::size_t bytes):
-    id_(id),capacity_(capacity),byte_capacity_(bytes) {
+    id_(id),capacity_(capacity),byte_capacity_(bytes),
+    authority_(std::make_shared<CapabilityToken>()) {
   if (id==0 || capacity==0 || capacity>kMaxMailboxMessages ||
       bytes==0 || bytes>kMaxMailboxBytes)
     throw std::invalid_argument("invalid or unbounded mailbox capacity");
 }
-// No concurrent references or in-flight sends may outlive a mailbox.
-// Discard undelivered owned payloads before their vector storage is freed.
-Mailbox::~Mailbox() noexcept { discard_pending(); }
 ActorRef Mailbox::ref() const {
   std::scoped_lock lock(mutex_);
-  return ActorRef(id_,generation_,authority_);
+  return ActorRef{id_,generation_,authority_};
 }
 void Mailbox::send(ActorRef destination,std::span<const std::uint8_t> payload) {
   if (payload.size()>kMaxMessageBytes) throw std::length_error("message size limit");
@@ -23,14 +39,10 @@ void Mailbox::send(ActorRef destination,std::span<const std::uint8_t> payload) {
   if (closed_ || destination.id!=id_ || destination.generation!=generation_ ||
       destination.authority_!=authority_)
     throw std::runtime_error("closed or stale actor");
-  // Defensive subtraction guard keeps the byte budget fail-closed even
-  // if a future queue change violates the accounting invariant.
   if (queue_.size()>=capacity_ || queued_bytes_>byte_capacity_ ||
       payload.size()>byte_capacity_-queued_bytes_)
     throw std::length_error("mailbox capacity");
-  // A default-constructed empty span may have null iterators. Avoid a
-  // pointer range construction (and potential null-pointer subtraction).
-  // Empty DATA messages are legal, but still consume one queue slot.
+  // A default empty span may have null iterators. It still uses one slot.
   if (payload.empty()) queue_.emplace_back();
   else queue_.emplace_back(payload.begin(),payload.end());
   queued_bytes_+=payload.size();
@@ -43,32 +55,24 @@ std::optional<std::vector<std::uint8_t>> Mailbox::receive() {
   queue_.pop_front();
   return value;
 }
-// Erase undelivered owned message bytes, never sender or delivered buffers.
-void Mailbox::discard_pending() {
-  for (auto& pending : queue_) {
-    volatile std::uint8_t* bytes=pending.data();
-    for (std::size_t i=0; i<pending.size(); ++i) bytes[i]=0;
-  }
-  queue_.clear();
-}
 void Mailbox::close() {
   std::scoped_lock lock(mutex_);
   closed_=true;
-  discard_pending();
+  discard_queued(queue_);
   queued_bytes_=0;
 }
 ActorRef Mailbox::restart() {
   std::scoped_lock lock(mutex_);
   if (generation_==std::numeric_limits<std::uint64_t>::max())
     throw std::overflow_error("generation exhausted");
-  // Allocation failure cannot partially revoke or restart the mailbox.
-  auto fresh_authority=std::make_shared<const std::uint8_t>(0);
+  // Allocate first: allocation failure leaves the old incarnation untouched.
+  auto fresh=std::make_shared<CapabilityToken>();
   ++generation_;
-  authority_=std::move(fresh_authority);
+  authority_=std::move(fresh);
   closed_=false;
-  discard_pending();
+  discard_queued(queue_);
   queued_bytes_=0;
-  return ActorRef(id_,generation_,authority_);
+  return ActorRef{id_,generation_,authority_};
 }
 std::size_t Mailbox::queued() const {
   std::scoped_lock lock(mutex_);

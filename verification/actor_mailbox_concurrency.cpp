@@ -6,6 +6,7 @@
 #include <exception>
 #include <iostream>
 #include <stdexcept>
+#include <type_traits>
 #include <thread>
 #include <vector>
 
@@ -38,7 +39,8 @@ void test_capacity_and_restart() {
   must_reject([&] { box.send(first, a); });
   const ActorRef second = box.restart();
   must_reject([&] { box.send(first, a); });
-  must_reject([&] { box.send(ActorRef(second.id, second.generation), a); });
+  static_assert(!std::is_constructible_v<ActorRef, std::uint64_t, std::uint64_t>,
+                "numeric ActorRef construction must be inaccessible");
   box.send(second, a);
   require(box.queued() == 1, "fresh authority was rejected");
   Mailbox other(101, 2, 4);

@@ -11,6 +11,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 namespace {
 void ensure(bool yes,const char* message) {
@@ -39,6 +40,19 @@ oresforge::Program source(const std::string& expr) {
 int main() {
   try {
     using namespace oresforge;
+    // Import graph linking is not available in the Forge scalar bootstrap.
+    // Reject with the *right* diagnostic before IR or assembly emission.
+    for (const auto& path : {"+/src/helper", "+src/helper", "@/src/helper", "pkg:math/src/helper",
+                             "./helper", "../helper", "common/helper",
+                             ".hidden/helper"}) {
+      reject_diagnostic([&] {
+        parse_source(std::string("import fnc helper from ") +
+                     static_cast<char>(34) + path + static_cast<char>(34) +
+                     "; fnc main():int{return 42;}");
+      }, "source imports require verified module graph lowering");
+    }
+    ensure(interpret(parse_source("fnc main():int{return 42;} // import ignored"))==42,
+           "import in a comment does not trigger module admission");
     ensure(interpret(source("2+3*4"))==14,"precedence");
     ensure(interpret(source("(2+3)*4"))==20,"parentheses");
     for (const auto& expression : {"3/2", "4/2", "5/0", "-9223372036854775808/-1"})
@@ -116,31 +130,40 @@ int main() {
     executor.run(source("1+2"));
     ensure(executor.requested_tier()==jit::Tier::OptimizedRequested,"tier2 request");
     ensure(executor.effective_tier()==jit::Tier::Interpreter,"fallback honest");
+    static_assert(!std::is_constructible_v<runtime::ActorRef,
+                  std::uint64_t, std::uint64_t>,
+                  "ActorRef must not be constructible from numeric IDs");
     runtime::Mailbox box(9,1,4);
     auto old=box.ref();
-    runtime::Mailbox duplicate(9,1,4);
-    reject([&] { box.send(duplicate.ref(), std::array<std::uint8_t,1>{7}); });
-    reject([&] { box.send(runtime::ActorRef{old.id,old.generation},
-                           std::array<std::uint8_t,1>{7}); });
-    auto copied_ref=old;
     std::array<std::uint8_t,3> bytes={1,2,3};
-    box.send(copied_ref,bytes);
+    box.send(old,bytes);
     bytes[0]=99;
     reject([&] { box.send(old,bytes); });
     ensure(box.queued()==1,"capacity");
     auto received=box.receive();
     ensure(received && received->at(0)==1,"deep copy");
     ensure(!box.receive(),"empty");
-    reject([&] { box.send({10,old.generation},bytes); });
+    runtime::Mailbox wrong(10,1,4);
+    reject([&] { box.send(wrong.ref(),bytes); });
+    runtime::Mailbox duplicate(9,1,4);
+    reject([&] { box.send(duplicate.ref(),bytes); }); // same ID+generation
     box.close();
     reject([&] { box.send(old,bytes); });
     auto next=box.restart();
     ensure(next.generation>old.generation,"generation");
+    ensure(box.queued()==0,"restart discarded all pending envelopes");
     reject([&] { box.send(old,bytes); });
-    reject([&] { box.send(runtime::ActorRef{next.id,next.generation},bytes); });
+    reject([&] { box.send(duplicate.ref(),bytes); });
     box.send(next,bytes);
     std::vector<std::uint8_t> huge(runtime::kMaxMessageBytes+1);
     reject([&] { box.send(next,huge); });
+    box.close();
+    ensure(box.queued()==0,"stop discarded pending owned envelopes");
+    reject([&] { box.send(next,bytes); });
+    auto newest=box.restart();
+    reject([&] { box.send(next,bytes); });
+    box.send(newest,bytes);
+    ensure(box.queued()==1,"fresh capability works after second restart");
     std::cout<<"OresForge bootstrap tests passed\n";
     return 0;
   } catch (const std::exception& error) {

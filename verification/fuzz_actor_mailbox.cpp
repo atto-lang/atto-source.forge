@@ -7,6 +7,7 @@
 #include <deque>
 #include <span>
 #include <stdexcept>
+#include <type_traits>
 #include <vector>
 
 using oresforge::runtime::ActorRef;
@@ -86,8 +87,11 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* input,
       queued_bytes = 0;
       closed = false;
     } else {
-      const ActorRef attacker = op == 6
-          ? ActorRef(current.id, current.generation)
+      // Numeric-only construction is forbidden by the type system.
+      // Exercise foreign authority and revoked generations at runtime.
+      static_assert(!std::is_constructible_v<ActorRef, std::uint64_t,
+                                           std::uint64_t>);
+      const ActorRef attacker = op == 6 ? other.ref()
           : (has_revoked ? revoked : other.ref());
       check(attempt(mailbox, attacker, std::vector<std::uint8_t>{}) ==
             Outcome::invalid_ref);

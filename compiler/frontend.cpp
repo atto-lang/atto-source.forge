@@ -98,7 +98,12 @@ class Parser {
         if (!std::isalnum(c) && c!='_') break;
         ++at_;
       }
-      tok_={Kind::Word,source_.substr(start,at_-start),start}; return;
+      tok_={Kind::Word,source_.substr(start,at_-start),start};
+      // The bootstrap parser cannot resolve any Java/Graal import forms.
+      // Reject with a stable diagnostic rather than emitting an unrelated
+      // scalar result from a source that depends on external modules.
+      if (tok_.text=="import") error("source imports require verified module graph lowering");
+      return;
     }
     if (std::isdigit(c)) {
       ++at_;
