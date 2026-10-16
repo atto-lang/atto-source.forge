@@ -92,8 +92,14 @@ inline fs::path configured_project_root(const fs::path& manifest_dir,
     if (!input.eof()) throw std::invalid_argument("unreadable package project.root");
     if (root_text.size() > 1024 || root_text.empty() ||
         root_text.find('\\') != std::string::npos ||
-        root_text.find(':') != std::string::npos)
+        root_text.find(':') != std::string::npos ||
+        (root_text != "." &&
+         (root_text.front() == '/' || root_text.back() == '/' ||
+          root_text.find("//") != std::string::npos)))
         throw std::invalid_argument("invalid project.root path");
+    for (unsigned char byte : root_text)
+        if (byte < 32 || byte == 127)
+            throw std::invalid_argument("control byte in project.root");
     const fs::path relative(root_text);
     if (relative.is_absolute())
         throw std::invalid_argument("absolute project.root unsupported in Forge bootstrap");
