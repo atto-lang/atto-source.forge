@@ -67,6 +67,20 @@ class NumericGeneratorTest(unittest.TestCase):
                         with self.assertRaises(ValueError):
                             MODULE.generate(path)
 
+    def test_positive_two_to_sixty_three_is_rejected_as_final_i64(self):
+        # Lexer admission of the magnitude 2^63 is necessary to spell the
+        # signed minimum using unary minus. As the final value it is invalid.
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "bare-positive-extreme.json"
+            changed = json.loads(CORPUS.read_bytes())
+            changed["cases"][0]["expression"] = "9223372036854775808"
+            changed["cases"][0]["expected"] = "9223372036854775808"
+            payload = json.dumps(changed).encode("utf-8")
+            path.write_bytes(payload)
+            with mock.patch.object(MODULE, "FIXTURE_SHA", sha_blob(payload)):
+                with self.assertRaisesRegex(ValueError, "final value out of bounds"):
+                    MODULE.generate(path)
+
     def test_duplicate_case_ids_are_rejected_even_with_updated_pin(self):
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "duplicate.json"
