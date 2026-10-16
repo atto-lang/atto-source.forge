@@ -40,6 +40,16 @@ oresforge::Program source(const std::string& expr) {
 int main() {
   try {
     using namespace oresforge;
+    // CPU/GPU/nb regions must fail closed before scalar IR can be emitted.
+    for (const auto& scope : {"gpu {}", "cpu {}", "nb gpu {}", "nb cpu {}",
+                              "gpu { cpu { gpu {} } }", "nb gpu { nb cpu {} }",
+                              "gpu", "cpu", "nb"}) {
+      reject_diagnostic([&] {
+        parse_source(std::string("fnc main():int{return ") + scope + ";}");
+      }, "CPU/GPU execution domain and nb graph lowering unsupported; no implicit CPU fallback");
+    }
+    ensure(interpret(parse_source("fnc main():int{return 42;} // nb gpu { cpu {} }")) == 42,
+           "domain markers in comments must remain comments");
     // Import graph linking is not available in the Forge scalar bootstrap.
     // Reject with the *right* diagnostic before IR or assembly emission.
     for (const auto& path : {"+/src/helper", "+src/helper", "@/src/helper", "pkg:math/src/helper",
