@@ -68,3 +68,15 @@ graphs in Wasm, implement corresponding .NET and Forge graphs, then run a shared
 per-backend conformance fixture corpus. Do not promote parity on documentation
 alone. Java/Graal's source-export security policy must be honored for private
 cross-organization CI mirroring.
+
+## Stacked Forge configured-root resolver refinement
+
+The existing host-only `project_root_source(manifest_dir, "+/path")`
+resolver now honors a restricted TOML `[project] root = "subdir"` path,
+instead of always treating the manifest's own directory as `+/` authority.
+It validates canonical physical containment, rejects malformed/dotted,
+duplicated, absolute, missing, or escaping roots, and preserves existing
+nested-manifest and symlink protections. The bootstrap deliberately accepts
+only a narrow string-subset of TOML; it is **not** a complete manifest parser.
+The independent Forge frontend still rejects source imports before IR
+lowering, so executable `import fnc` parity remains outstanding.
