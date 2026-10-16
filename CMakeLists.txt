@@ -25,6 +25,10 @@ if(BUILD_TESTING)
   target_link_libraries(oresforge_mailbox_limits PRIVATE oresforge_core)
   add_test(NAME oresforge_actor_mailbox_limits COMMAND oresforge_mailbox_limits)
   set_tests_properties(oresforge_actor_mailbox_limits PROPERTIES TIMEOUT 20)
+  add_executable(oresforge_mailbox_model verification/actor_mailbox_model.cpp)
+  target_link_libraries(oresforge_mailbox_model PRIVATE oresforge_core)
+  add_test(NAME oresforge_actor_mailbox_model COMMAND oresforge_mailbox_model)
+  set_tests_properties(oresforge_actor_mailbox_model PROPERTIES TIMEOUT 30)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   add_test(NAME oresforge_cli_source_budget
     COMMAND "${Python3_EXECUTABLE}"
