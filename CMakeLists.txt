@@ -74,3 +74,14 @@ if(BUILD_TESTING)
       "$<TARGET_FILE:oresforge>")
   set_tests_properties(value_boundary_admission PROPERTIES TIMEOUT 60)
 endif()
+
+# HOST-ONLY Option<T> recursive flatten substrate. Source-language admission,
+# Future<T> scheduler integration, and guest execution remain independent gates.
+if(BUILD_TESTING)
+  add_executable(oresforge_wrapper_flatten_option_host verification/wrapper_flatten_option_host_test.cpp)
+  target_include_directories(oresforge_wrapper_flatten_option_host PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/runtime")
+  target_compile_options(oresforge_wrapper_flatten_option_host PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic -Werror>)
+  add_test(NAME forge_wrapper_option_host_conformance COMMAND oresforge_wrapper_flatten_option_host)
+  set_tests_properties(forge_wrapper_option_host_conformance PROPERTIES TIMEOUT 20)
+endif()
