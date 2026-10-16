@@ -4,6 +4,8 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <type_traits>
+#include <utility>
 #include <vector>
 using namespace oresforge::runtime;
 static void check(bool ok, const char* reason) {
@@ -32,6 +34,33 @@ int main() {
     {"source","worker-a","Event"},{"source","worker-b","Event"},
     {"source","worker-c","Event"}
   };
+  // Borrowed views from a selector become invalid when its owning graph
+  // is destroyed. Every publicly returned routing value must be an owned
+  // snapshot, not a const reference with hidden lifetime requirements.
+  static_assert(std::is_same_v<
+      decltype(std::declval<const ActorPipelineSelector&>().forward_all(
+          std::declval<const std::string&>())), std::vector<PipelineEdge>>);
+  static_assert(std::is_same_v<
+      decltype(std::declval<const ActorPipelineSelector&>().forward(
+          std::declval<const std::string&>())), PipelineEdge>);
+  static_assert(std::is_same_v<
+      decltype(std::declval<const ActorPipelineSelector&>().forward_to(
+          std::declval<const std::string&>(),
+          std::declval<const std::string&>())), PipelineEdge>);
+  static_assert(std::is_same_v<
+      decltype(std::declval<const ActorPipelineSelector&>().forward_by_key(
+          std::declval<const std::string&>(), std::string_view{})), PipelineEdge>);
+  std::vector<PipelineEdge> detached;
+  PipelineEdge selected;
+  {
+    ActorPipelineSelector scoped(stages,edges,4);
+    detached=scoped.forward_all("source");
+    selected=scoped.forward_by_key("source","beta");
+    scoped.retire();
+  }
+  check(detached.size()==3 && detached[0].target=="worker-a" &&
+        detached[1].target=="worker-b" && detached[2].target=="worker-c" &&
+        selected.target=="worker-c", "routing snapshots must outlive the selector");
   auto g=ActorPipelineSelector(stages,edges,7);
   const std::vector<std::pair<std::string,std::size_t>> vectors={
     {"customer-7",0},{"alpha",0},{"beta",2},{"\xf0\x9f\x8c\x8d",0},{"",2},{std::string(1,'\0'),0}
