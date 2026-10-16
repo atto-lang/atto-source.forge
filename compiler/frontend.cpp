@@ -106,6 +106,13 @@ class Parser {
         std::isdigit(static_cast<unsigned char>(source_[at_]))) ++at_;
       tok_={Kind::Number,source_.substr(start,at_-start),start}; return;
     }
+    // Treat contiguous '|>' as one source token. The bootstrap frontend
+    // deliberately lacks function declarations/call lowering, so expr()
+    // rejects the operator instead of accidentally emitting malformed IR.
+    if (c=='|' && at_+1<source_.size() && source_[at_+1]=='>') {
+      at_+=2;
+      tok_={Kind::Punct,source_.substr(start,2),start}; return;
+    }
     if (std::string_view("()+-*/{};:").find(static_cast<char>(c)) == std::string_view::npos)
       error("invalid character");
     ++at_;
@@ -133,6 +140,8 @@ class Parser {
       next(); int right=term(depth+1);
       left=add(plus?Op::Add:Op::Sub,0,left,right);
     }
+    if (tok_.text=="|>")
+      error("value pipeline requires named callable lowering; unsupported in Forge i64 bootstrap");
     return left;
   }
   int term(std::size_t depth) {
