@@ -7,6 +7,7 @@
 #include <optional>
 #include <span>
 #include <vector>
+#include <utility>
 namespace oresforge::runtime {
 inline constexpr std::size_t kMaxMessageBytes=1024*1024;
 // Local authority is never a network-serializable actor address.
