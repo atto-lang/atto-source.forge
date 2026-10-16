@@ -67,6 +67,37 @@ class NumericGeneratorTest(unittest.TestCase):
                         with self.assertRaises(ValueError):
                             MODULE.generate(path)
 
+    def test_positive_extreme_cannot_be_hidden_in_an_intermediate(self):
+        # A predecessor oracle admitted +2**63 as an intermediate even
+        # though the guest parser only permits that token under unary minus.
+        # Recompute the Git blob pin deliberately to test semantics as well
+        # as immutable-source integrity.
+        examples = (
+            ("9223372036854775808-1", "9223372036854775807"),
+            ("0-9223372036854775808", str(-(1 << 63))),
+            ("+1", "1"),
+            ("-(-9223372036854775808)", "9223372036854775808"),
+        )
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "adversarial.json"
+            for expression, expected in examples:
+                with self.subTest(expression=expression):
+                    fixture = json.loads(CORPUS.read_bytes())
+                    fixture["cases"][0]["expression"] = expression
+                    fixture["cases"][0]["expected"] = expected
+                    payload = json.dumps(fixture).encode("utf-8")
+                    path.write_bytes(payload)
+                    with mock.patch.object(MODULE, "FIXTURE_SHA", sha_blob(payload)):
+                        with self.assertRaises(ValueError):
+                            MODULE.generate(path)
+
+    def test_signed_minimum_token_is_valid_only_under_unary_minus(self):
+        self.assertEqual(MODULE.evaluate(
+            ast.parse("-9223372036854775808", mode="eval").body), -(1 << 63))
+        self.assertEqual(MODULE.evaluate(
+            ast.parse("(-9223372036854775808)+1", mode="eval").body),
+            -(1 << 63) + 1)
+
     def test_positive_two_to_sixty_three_is_rejected_as_final_i64(self):
         # Lexer admission of the magnitude 2^63 is necessary to spell the
         # signed minimum using unary minus. As the final value it is invalid.
