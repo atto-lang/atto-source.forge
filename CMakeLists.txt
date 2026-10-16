@@ -11,6 +11,19 @@ add_executable(oresforge compiler/main.cpp)
 target_link_libraries(oresforge PRIVATE oresforge_core)
 include(CTest)
 if(BUILD_TESTING)
+  # Host-policy substrate only; guest syscall interception remains unimplemented.
+  add_executable(oresforge_scoped_policy_tests
+    contracts/v1/scoped_permission_policy_test.cpp)
+  target_include_directories(oresforge_scoped_policy_tests PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/contracts/v1")
+  target_compile_features(oresforge_scoped_policy_tests PRIVATE cxx_std_17)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_scoped_policy_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME scoped_permission_host_policy_substrate
+    COMMAND oresforge_scoped_policy_tests)
+  set_tests_properties(scoped_permission_host_policy_substrate PROPERTIES TIMEOUT 15)
   add_executable(oresforge_tests verification/tests.cpp)
   target_link_libraries(oresforge_tests PRIVATE oresforge_core)
   add_test(NAME oresforge_unit COMMAND oresforge_tests)
