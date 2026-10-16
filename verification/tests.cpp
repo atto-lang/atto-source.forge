@@ -53,6 +53,16 @@ int main() {
                      "; fnc main():int{return 42;}");
       }, "source imports require verified module graph lowering");
     }
+    // A comment ends at CR as well as LF. Otherwise a CR-only import line
+    // is silently skipped and the scalar artifact could look successful.
+    for (const std::string ending : {"\r", "\r\n", "\n"}) {
+      reject_diagnostic([&] {
+        parse_source("fnc main():int{return 42;} // comment"+ending+
+                     "import fnc helper from \"./other\";");
+      }, "source imports require verified module graph lowering");
+    }
+    ensure(interpret(parse_source("fnc main():int{return 42;} // import ignored\r"))==42,
+           "CR-only trailing comment must stay a comment");
     ensure(interpret(parse_source("fnc main():int{return 42;} // import ignored"))==42,
            "import in a comment does not trigger module admission");
     ensure(interpret(source("2+3*4"))==14,"precedence");
