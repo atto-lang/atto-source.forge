@@ -55,6 +55,30 @@ jobs:
           UBSAN_OPTIONS: halt_on_error=1
         run: ctest --test-dir build-sanitized --output-on-failure
 
+  actor-routing-tsan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Record immutable source identity
+        run: |
+          git rev-parse HEAD
+          git rev-parse 'HEAD^{tree}'
+          git hash-object runtime/actor_pipeline_policy.hpp verification/actor_pipeline_concurrency_test.cpp
+      - name: Compile host selector race test with ThreadSanitizer
+        run: >-
+          g++ -std=c++20 -O1 -g -pthread -I.
+          -Wall -Wextra -Wpedantic -Werror
+          -fsanitize=thread -fno-omit-frame-pointer
+          verification/actor_pipeline_concurrency_test.cpp
+          -o actor-pipeline-tsan
+      - name: Prove routing fairness and retirement gate
+        env:
+          TSAN_OPTIONS: halt_on_error=1
+        run: ./actor-pipeline-tsan
+
   fuzz-smoke:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
