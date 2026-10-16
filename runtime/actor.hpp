@@ -33,6 +33,7 @@ class Mailbox {
   ActorRef restart();
   std::size_t queued() const;
  private:
+  void discardPending() noexcept;
   const std::uint64_t id_;
   const std::size_t capacity_,byte_capacity_;
   mutable std::mutex mutex_;
