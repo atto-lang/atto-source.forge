@@ -1,4 +1,5 @@
 #include "runtime/actor_pipeline_selector.hpp"
+#include "compiler/frontend.hpp"
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -11,6 +12,14 @@ template<class F> void rejects(F f, const char* why) {
   throw std::runtime_error(why);
 }
 int main() {
+  // No guest routing lowers here: checked selector availability must not
+  // accidentally widen the Forge arithmetic-only source compiler.
+  rejects([] { (void)oresforge::parse_source(
+      "define readable pipe actor Producer {}"); }, "actor source accepted");
+  rejects([] { (void)oresforge::parse_source(
+      "fnc main():int{return self.forward(1);}"); }, "forward source accepted");
+  rejects([] { (void)oresforge::parse_source(
+      "fnc main():int{return self.reply(1);}"); }, "reply source accepted");
   const std::vector<PipelineStage> stages={
     {"source","Producer",PipelineRole::readable,"","Event"},
     {"worker-a","Worker",PipelineRole::writable,"Event",""},
