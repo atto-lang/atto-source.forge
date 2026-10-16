@@ -1,14 +1,14 @@
 #include "runtime/actor_arena.hpp"
 #include <array>
-#include <cassert>
 #include <cstddef>
 #include <stdexcept>
 #include <thread>
 using oresforge::runtime::ActorArena;
+static void ensure(bool ok) { if (!ok) throw std::runtime_error("actor arena invariant failed"); }
 template <typename F> static void rejects(F&& f) {
   bool caught = false;
   try { f(); } catch (const std::exception&) { caught = true; }
-  assert(caught);
+  ensure(caught);
 }
 int main() {
   ActorArena a(10, 1), b(11, 1);
@@ -22,7 +22,7 @@ int main() {
   std::thread foreign([&] { rejects([&] { a.read(ta, h, output); }); });
   foreign.join();
   a.read(ta, h, output);
-  assert(output == value);
+  ensure(output == value);
   auto scratch = a.scratch_alloc(ta, 2);
   a.scratch_write(ta, scratch, value);
   a.end_turn(ta);
@@ -31,15 +31,15 @@ int main() {
   rejects([&] { a.scratch_read(t2, scratch, output); });
   auto fresh = a.scratch_alloc(t2, 2);
   a.scratch_read(t2, fresh, output);
-  assert(output == (std::array<std::byte, 2>{}));
+  ensure(output == (std::array<std::byte, 2>{}));
   a.read(t2, h, output);
-  assert(output == value);
+  ensure(output == value);
   a.drop(t2, h);
   rejects([&] { a.read(t2, h, output); });
   auto replacement = a.allocate(t2, 2);
   rejects([&] { a.read(t2, h, output); });
   a.read(t2, replacement, output);
-  assert(output == (std::array<std::byte, 2>{}));
+  ensure(output == (std::array<std::byte, 2>{}));
   rejects([&] { a.retire(); });
   a.end_turn(t2);
   a.retire(); a.retire();
