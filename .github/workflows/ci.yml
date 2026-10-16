@@ -24,7 +24,10 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Verify exact-blob actor routing fixture
+        run: python3 contracts/v1/verify_actor_pipeline_v1.py contracts/v1/actor-pipeline-routing-v1.json
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DCMAKE_CXX_COMPILER=${{ matrix.compiler }}
       - name: Compile
@@ -40,7 +43,10 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Verify exact-blob actor routing fixture
+        run: python3 contracts/v1/verify_actor_pipeline_v1.py contracts/v1/actor-pipeline-routing-v1.json
       - name: Configure ASan and UBSan
         run: >-
           cmake -S . -B build-sanitized -DCMAKE_BUILD_TYPE=Debug
@@ -61,7 +67,10 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Verify exact-blob actor routing fixture
+        run: python3 contracts/v1/verify_actor_pipeline_v1.py contracts/v1/actor-pipeline-routing-v1.json
       - name: Record immutable source identity
         run: |
           git rev-parse HEAD
@@ -85,7 +94,10 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Verify exact-blob actor routing fixture
+        run: python3 contracts/v1/verify_actor_pipeline_v1.py contracts/v1/actor-pipeline-routing-v1.json
       - name: Configure instrumented libFuzzer
         run: >-
           cmake -S . -B build-fuzz -DCMAKE_BUILD_TYPE=Debug
