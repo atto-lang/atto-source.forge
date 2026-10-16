@@ -14,6 +14,13 @@ if(BUILD_TESTING)
   add_executable(oresforge_tests verification/tests.cpp)
   target_link_libraries(oresforge_tests PRIVATE oresforge_core)
   add_test(NAME oresforge_unit COMMAND oresforge_tests)
+  # Already present in main via PR #34; keep these registrations exactly once.
+  add_executable(oresforge_mailbox_destructor verification/actor_mailbox_destructor.cpp)
+  target_link_libraries(oresforge_mailbox_destructor PRIVATE oresforge_core)
+  add_test(NAME oresforge_actor_mailbox_destructor COMMAND oresforge_mailbox_destructor)
+  add_executable(oresforge_mailbox_limits verification/actor_mailbox_limits.cpp)
+  target_link_libraries(oresforge_mailbox_limits PRIVATE oresforge_core)
+  add_test(NAME oresforge_actor_mailbox_limits COMMAND oresforge_mailbox_limits)
   # Exercise the real mailbox with concurrent sends, deep-copy ownership,
   # backpressure, byte-credit recovery and generation/authority fencing.
   find_package(Threads REQUIRED)
