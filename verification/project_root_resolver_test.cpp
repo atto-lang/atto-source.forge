@@ -81,7 +81,7 @@ int main() {
         reject([&] { (void)project_root_source(project, "+/src/lib/answer"); },
                "rooted import leaked manifest parent after explicit root");
         for (const char* bad_root : {"../other", "/tmp", "appdata/../src", "",
-                                     "appdata\\outside"}) {
+                                     "appdata\\outside", "appdata//lib", "appdata/", "appdata/."}) {
             write(project / ".ores.pkg.toml",
                   ("schema_version = \"1\"\n[project]\nroot = \"" +
                    std::string(bad_root) + "\"\n").c_str());
