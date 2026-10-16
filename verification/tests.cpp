@@ -54,6 +54,21 @@ int main() {
     ensure(interpret(parse_source("fnc main():int{return 42;} // import ignored"))==42,
            "import in a comment does not trigger module admission");
     ensure(interpret(source("2+3*4"))==14,"precedence");
+    // Structural functions, parameters and canonical pattern arms require a
+    // real type checker/ownership lowering; arithmetic bootstrap must reject.
+    for (const std::string_view candidate : {
+        "structural fnc main(): int { return 1; }",
+        "structural routine main(): int { return 1; }",
+        "@structural\nfnc main(): int { return 1; }",
+        "fnc main(structural Shape value): int { return 1; }",
+        "routine main(structural Shape value): int { return 1; }",
+        "fnc main(): int { match 1 over on _ -> { return 1; } end }",
+        "fnc main(): int { return match 1 over on _ -> { return 1; } end; }",
+        "fnc main(): int { match 1 over on structural {x:int} v when true -> {return 1;} on _ -> {return 0;} end }"
+    }) {
+      reject([&] { (void)parse_source(candidate); });
+    }
+
     ensure(interpret(source("(2+3)*4"))==20,"parentheses");
     for (const auto& expression : {"3/2", "4/2", "5/0", "-9223372036854775808/-1"})
       reject_diagnostic([&] { source(expression); }, "float result lowering");
@@ -113,6 +128,27 @@ int main() {
     });
     reject([] { interpret(source("9223372036854775807 + 1")); });
     reject([] { interpret(source("3/0")); });
+    // Structural declarations, argument shape matching and match-over are not
+    // implemented by the arithmetic bootstrap. Never silently accept them.
+    reject_diagnostic([] {
+      parse_source("structural fnc main():int{return 1;}");
+    }, "expected");
+    reject_diagnostic([] {
+      parse_source("fnc main(structural Shape value):int{return 1;}");
+    }, "expected");
+    reject_diagnostic([] {
+      parse_source("fnc main():int{match 1 over on _ -> {return 1;} end}");
+    }, "expected");
+    // v2 tuple syntax is intentionally not executable on Forge bootstrap.
+    reject([] {
+      parse_source("fnc take(tuple (int,int,string?) v):int{return 1;}");
+    });
+    reject([] {
+      parse_source("fnc take((int,int,string?) v):int{return 1;}");
+    });
+    reject([] {
+      parse_source("fnc take(structural (int,int,string?) v):int{return 1;}");
+    });
     reject([] { parse_source("fnc main():int {return 1;} garbage"); });
     reject([] { parse_source("fnc main():int {return x;}"); });
     reject([] { parse_source("pub pub fnc main():int {return 1;}"); });
