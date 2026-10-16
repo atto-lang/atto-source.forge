@@ -103,6 +103,54 @@ int main(){
     check(std::string(e.what()).find("no downstream")!=std::string::npos,
           "key parsing ran before route-source validation");
   }
+  // Composite names cannot collide when both sides contain delimiters.
+  std::vector<PipeStage> tricky={
+    {"a:b","Producer","readable","","Event"},
+    {"a","Producer","readable","","Event"},
+    {"c","Sink","writable","Event",""},
+    {"b:c","Sink","writable","Event",""}
+  };
+  std::vector<PipeEdge> tricky_edges={
+    {"a:b","c","Event"},{"a","b:c","Event"}};
+  ActorPipePolicy separated(tricky,tricky_edges);
+  check(separated.forward("a:b").target=="c","delimiter collision source one");
+  check(separated.forward("a").target=="b:c","delimiter collision source two");
+  deny([&]{
+    auto duplicate=tricky_edges;
+    duplicate.push_back(tricky_edges[0]);
+    ActorPipePolicy bad(tricky,duplicate);
+  });
+  // UTF-8 actor instance identity is byte-exact, not Unicode normalized.
+  std::vector<PipeStage> distinct=tricky;
+  distinct[0].id="\xc3\xa9";
+  distinct[1].id="e\xcc\x81";
+  std::vector<PipeEdge> distinct_edges={
+    {distinct[0].id,"c","Event"},
+    {distinct[1].id,"b:c","Event"}};
+  ActorPipePolicy unicode_identity(distinct,distinct_edges);
+  check(unicode_identity.forward(distinct[0].id).target=="c","composed actor ID");
+  check(unicode_identity.forward(distinct[1].id).target=="b:c","decomposed actor ID");
+  // Reject oversized vertex and edge allocations before per-edge admission.
+  deny([&]{
+    auto many=tricky;
+    many.resize(1025,tricky[0]);
+    ActorPipePolicy bad(many,tricky_edges);
+  });
+  deny([&]{
+    auto many=tricky_edges;
+    many.resize(4097,tricky_edges[0]);
+    ActorPipePolicy bad(tricky,many);
+  });
+  std::string exact256;
+  for(int i=0;i<64;++i)exact256+="\xf0\x9f\x8c\x8d";
+  auto bounded=tricky;bounded[0].id=exact256;
+  auto bounded_edges=tricky_edges;bounded_edges[0].source=exact256;
+  ActorPipePolicy accepted(bounded,bounded_edges);
+  check(accepted.forward(exact256).target=="c","valid 256-byte actor ID");
+  deny([&]{
+    auto over=bounded;over[0].id+="\xf0\x9f\x8c\x8d";
+    ActorPipePolicy bad(over,bounded_edges);
+  });
   plan.close();deny([&]{(void)plan.forward_all("src");});
   try {
     (void)plan.forward_by_key("src",std::string(1,char(0x80)));
