@@ -33,6 +33,13 @@ if(BUILD_TESTING)
   target_link_libraries(oresforge_mailbox_model PRIVATE oresforge_core)
   add_test(NAME oresforge_actor_mailbox_model COMMAND oresforge_mailbox_model)
   set_tests_properties(oresforge_actor_mailbox_model PROPERTIES TIMEOUT 30)
+  # Deterministic bad_alloc fault injection for ownership/credit guarantees.
+  add_executable(oresforge_mailbox_allocation_failure
+    verification/actor_mailbox_allocation_failure.cpp)
+  target_link_libraries(oresforge_mailbox_allocation_failure PRIVATE oresforge_core)
+  add_test(NAME oresforge_actor_mailbox_allocation_failure
+    COMMAND oresforge_mailbox_allocation_failure)
+  set_tests_properties(oresforge_actor_mailbox_allocation_failure PROPERTIES TIMEOUT 20)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   add_test(NAME oresforge_cli_source_budget
     COMMAND "${Python3_EXECUTABLE}"
