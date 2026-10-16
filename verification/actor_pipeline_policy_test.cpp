@@ -151,6 +151,15 @@ int main(){
     auto over=bounded;over[0].id+="\xf0\x9f\x8c\x8d";
     ActorPipePolicy bad(over,bounded_edges);
   });
+  // A transform's declared outbound port requires a real outbound edge.
+  deny([&] {
+    std::vector<PipeStage> stages={
+      {"src","P","readable","","Event"},
+      {"terminal","T","transform","Event","Event"}
+    };
+    std::vector<PipeEdge> edges={{"src","terminal","Event"}};
+    ActorPipePolicy invalid(stages,edges);
+  });
   plan.close();deny([&]{(void)plan.forward_all("src");});
   try {
     (void)plan.forward_by_key("src",std::string(1,char(0x80)));
