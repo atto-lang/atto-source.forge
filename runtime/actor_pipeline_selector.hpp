@@ -1,7 +1,6 @@
 #pragma once
 // Host-only actor routing selector v1. No guest source lowering, message
 // admission, actor authority, or correlated backward/reply delivery.
-#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -127,35 +126,33 @@ class ActorPipelineSelector final {
     if (visited!=stages.size())
       throw std::invalid_argument("pipeline graph contains cycle");
   }
-  // Terminal host selector seal. A new topology generation must create a
-  // separate checked selector; this one never regains routing authority.
+  // Retirement is linearizable with ALL host-only selection operations.
+  // A selector whose retirement returns can never issue another route.
+  // Routing references remain immutable host metadata, NOT a guest bearer
+  // authority; actual mailbox admission still needs scheduler authentication.
   void retire() {
     std::lock_guard<std::mutex> guard(mutex_);
-    retired_.store(true,std::memory_order_release);
-  }
-  void ensure_active() const {
-    if (retired_.load(std::memory_order_acquire))
-      throw std::invalid_argument("pipeline selector retired");
+    retired_=true;
   }
   void require_ingress_root(const std::string& source) const {
-    ensure_active();
-    if (!roots_.contains(source)) throw std::invalid_argument("not an ingress root");
+    std::lock_guard<std::mutex> guard(mutex_);
+    ensure_active_locked();
+    if (!roots_.contains(source))
+      throw std::invalid_argument("not an ingress root");
   }
   const std::vector<PipelineEdge>& forward_all(const std::string& source) const {
-    ensure_active();
-    const auto it=outgoing_.find(source);
-    if (it==outgoing_.end() || it->second.empty())
-      throw std::invalid_argument("source has no downstream");
-    return it->second;
+    std::lock_guard<std::mutex> guard(mutex_);
+    return connected_locked(source);
   }
   const PipelineEdge& forward(const std::string& source) const {
-    const auto& edges=forward_all(source);
+    std::lock_guard<std::mutex> guard(mutex_);
+    const auto& edges=connected_locked(source);
     if (edges.size()!=1) throw std::invalid_argument("ambiguous pipeline forward");
     return edges.front();
   }
   PipelineEdge forward_round_robin(const std::string& source) {
     std::lock_guard<std::mutex> guard(mutex_);
-    const auto& edges=forward_all(source);
+    const auto& edges=connected_locked(source);
     auto& cursor=cursors_[source];
     PipelineEdge selected=edges.at(cursor);
     cursor=(cursor+1)%edges.size();
@@ -163,18 +160,20 @@ class ActorPipelineSelector final {
   }
   const PipelineEdge& forward_to(const std::string& source,
                                  const std::string& target) const {
-    for (const auto& edge:forward_all(source))
+    std::lock_guard<std::mutex> guard(mutex_);
+    for (const auto& edge:connected_locked(source))
       if (edge.target==target) return edge;
     throw std::invalid_argument("pipeline destination not connected");
   }
   const PipelineEdge& forward_by_key(const std::string& source,
                                      std::string_view key) const {
-    const auto& edges=forward_all(source);
+    std::lock_guard<std::mutex> guard(mutex_);
+    const auto& edges=connected_locked(source);
     return edges.at(pipeline_key_slot(key,edges.size()));
   }
   void advance_generation(std::uint64_t successor, bool quiescent, bool aborted) {
     std::lock_guard<std::mutex> guard(mutex_);
-    ensure_active();
+    ensure_active_locked();
     if (successor<=generation_ || (!quiescent && !aborted))
       throw std::invalid_argument("pipeline generation barrier required");
     generation_=successor;
@@ -185,11 +184,22 @@ class ActorPipelineSelector final {
     return generation_;
   }
  private:
+  void ensure_active_locked() const {
+    if (retired_) throw std::invalid_argument("pipeline selector retired");
+  }
+  const std::vector<PipelineEdge>& connected_locked(
+      const std::string& source) const {
+    ensure_active_locked();
+    const auto it=outgoing_.find(source);
+    if (it==outgoing_.end() || it->second.empty())
+      throw std::invalid_argument("source has no downstream");
+    return it->second;
+  }
   std::unordered_map<std::string,std::vector<PipelineEdge>> outgoing_;
   std::unordered_set<std::string> roots_;
   mutable std::mutex mutex_;
   std::unordered_map<std::string,std::size_t> cursors_;
   std::uint64_t generation_;
-  std::atomic<bool> retired_{false};
+  bool retired_=false;
 };
 }  // namespace oresforge::runtime
