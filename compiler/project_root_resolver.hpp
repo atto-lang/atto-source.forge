@@ -96,7 +96,10 @@ inline fs::path configured_project_root(const fs::path& manifest_dir,
         if (part == ".." || part.empty())
             throw std::invalid_argument("project.root escapes manifest directory");
     }
-    const auto selected = fs::canonical(manifest_dir / relative);
+    std::error_code root_error;
+    const auto selected = fs::canonical(manifest_dir / relative, root_error);
+    if (root_error || !fs::is_directory(selected))
+        throw std::invalid_argument("project.root is not an existing directory");
     if (!within(manifest_dir, selected))
         throw std::invalid_argument("project.root escapes physical manifest directory");
     return selected;
