@@ -32,7 +32,7 @@ int main() {
   };
   auto g=ActorPipelineSelector(stages,edges,7);
   const std::vector<std::pair<std::string,std::size_t>> vectors={
-    {"customer-7",0},{"alpha",0},{"beta",2},{"\xf0\x9f\x8c\x8d",0},{"",2}
+    {"customer-7",0},{"alpha",0},{"beta",2},{"\xf0\x9f\x8c\x8d",0},{"",2},{std::string(1,'\0'),0}
   };
   for (const auto& [key,slot]:vectors) {
     check(pipeline_key_slot(key,3)==slot,"FNV-1a cross-backend vector");
