@@ -29,6 +29,8 @@ class Mailbox {
  public:
   Mailbox(std::uint64_t id,std::size_t capacity=1024,
           std::size_t byte_capacity=4*kMaxMessageBytes);
+  // Requires no concurrent use during object destruction.
+  ~Mailbox() noexcept;
   ActorRef ref() const;
   void send(ActorRef,std::span<const std::uint8_t>);
   std::optional<std::vector<std::uint8_t>> receive();
