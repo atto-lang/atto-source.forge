@@ -62,6 +62,11 @@ def generate(source):
                 not re.fullmatch(r"[0-9()+* -]{1,128}", expression)):
             raise ValueError("nonportable expression")
         got = evaluate(ast.parse(expression, mode="eval").body)
+        # The parser admits the positive 2^63 token solely so unary minus
+        # can produce i64::MIN. A *bare* 2^63 is not an i64 value: catch
+        # it before generating a C++ narrowing/compile failure.
+        if not LO <= got <= HI:
+            raise ValueError("portable i64 final value out of bounds")
         if not isinstance(expected, str) or str(got) != expected:
             raise ValueError("portable case has an invalid reference result")
         native = ("std::numeric_limits<std::int64_t>::min()"
