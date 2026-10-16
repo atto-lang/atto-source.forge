@@ -47,5 +47,8 @@ if(BUILD_TESTING)
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/contracts/scalar/v1/run.py"
       --backend forge --mode stdout-i64 --command "$<TARGET_FILE:oresforge> run {source}")
   set_tests_properties(source_scalar_parity PROPERTIES TIMEOUT 240)
+  add_test(NAME scalar_parity_harness_selftest
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/contracts/scalar/v1/selftest.py")
+  set_tests_properties(scalar_parity_harness_selftest PROPERTIES TIMEOUT 30)
 
 endif()
