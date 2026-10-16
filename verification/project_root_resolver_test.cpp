@@ -56,6 +56,28 @@ int main() {
         const auto expected = fs::canonical(project / "src" / "lib" / "answer.ores");
         check(project_root_source(project, "+/src/lib/answer") == expected,
               "canonical root source unresolved");
+        // Host-only ./ and ../ resolve relative to the importer, never CWD.
+        write(project / "src/routes/main.ores", "fnc main():int{return 42;}\n");
+        write(project / "src/routes/local.ores", "fnc local():int{return 42;}\n");
+        const auto importer = project / "src/routes/main.ores";
+        check(relative_source(importer, "./local", project) ==
+                  fs::canonical(project / "src/routes/local.ores"),
+              "relative ./ import did not resolve");
+        check(relative_source(importer, "../lib/answer", project) == expected,
+              "relative ../ import did not resolve");
+        for (const auto& bad_relative : {"local", ".hidden/local", "./", "../",
+                                          "./missing", "./local.java",
+                                          "../../../../other/answer",
+                                          "./local//alias", "./local\\\\alias"}) {
+            reject([&] { (void)relative_source(importer, bad_relative, project); },
+                   "malformed or escaping relative source admitted");
+        }
+        write(project / "src/routes/child/hidden.ores", "fnc hidden():int{return 1;}\n");
+        write(project / "src/routes/child/.oreslangc.cfg.toml", "legacy marker\\n");
+        reject([&] { (void)relative_source(importer, "./child/hidden", project); },
+               "relative import crossed legacy nested-package boundary");
+        reject([&] { (void)project_root_source(project, "+/src/routes/child/hidden"); },
+               "rooted import crossed legacy nested-package boundary");
         // The manifest's explicit project.root changes the authority anchor.
         write(project / "appdata" / "lib" / "answer.ores",
               "fnc answer():int{return 42;}\n");
