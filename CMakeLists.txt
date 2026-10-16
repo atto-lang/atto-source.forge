@@ -20,6 +20,9 @@ if(BUILD_TESTING)
   add_executable(oresforge_mailbox_limits verification/actor_mailbox_limits.cpp)
   target_link_libraries(oresforge_mailbox_limits PRIVATE oresforge_core)
   add_test(NAME oresforge_actor_mailbox_limits COMMAND oresforge_mailbox_limits)
+  add_executable(oresforge_mailbox_auth_precedence verification/actor_mailbox_authority_precedence.cpp)
+  target_link_libraries(oresforge_mailbox_auth_precedence PRIVATE oresforge_core)
+  add_test(NAME oresforge_actor_mailbox_auth_precedence COMMAND oresforge_mailbox_auth_precedence)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   add_test(NAME oresforge_cli_source_budget
     COMMAND "${Python3_EXECUTABLE}"
