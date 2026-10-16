@@ -43,7 +43,7 @@ class ActorArena final {
   void end_turn(Turn turn) {
     std::scoped_lock lock(mutex_);
     require_turn(turn);
-    scratch_.fill(std::byte{0});
+    zero_bytes(scratch_.data(), scratch_.size());
     scratch_top_ = 0;
     active_ = false;
     owner_ = {};
@@ -57,7 +57,7 @@ class ActorArena final {
       if (s.live || !s.generation) continue;
       s.live = true;
       s.length = length;
-      s.data.fill(std::byte{0});
+      zero_bytes(s.data.data(), s.data.size());
       return {domain_, s.generation, i};
     }
     throw std::out_of_range("actor arena quota");
@@ -77,7 +77,7 @@ class ActorArena final {
   void drop(Turn turn, Handle handle) {
     std::scoped_lock lock(mutex_);
     auto& s = slot(turn, handle);
-    s.data.fill(std::byte{0});
+    zero_bytes(s.data.data(), s.data.size());
     s.live = false;
     s.length = 0;
     s.generation = s.generation == std::numeric_limits<std::uint64_t>::max()
@@ -142,13 +142,19 @@ class ActorArena final {
         h.length != bytes || h.length > scratch_top_ - h.offset)
       throw std::logic_error("stale or oversized scratch");
   }
+  // Volatile stores make security zeroization observable to the compiler even
+  // during final destruction and prevent deletion of dead-store clearing.
+  static void zero_bytes(std::byte* p, std::size_t length) noexcept {
+    volatile std::byte* bytes = p;
+    for (std::size_t i = 0; i < length; ++i) bytes[i] = std::byte{0};
+  }
   void scrub() noexcept {
     for (auto& s : slots_) {
-      s.data.fill(std::byte{0});
+      zero_bytes(s.data.data(), s.data.size());
       s.live = false;
       s.length = 0;
     }
-    scratch_.fill(std::byte{0});
+    zero_bytes(scratch_.data(), scratch_.size());
     scratch_top_ = 0;
   }
 };
