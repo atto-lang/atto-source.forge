@@ -1,6 +1,7 @@
 #pragma once
 // Host-only actor routing selector v1. No guest source lowering, message
 // admission, actor authority, or correlated backward/reply delivery.
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -126,10 +127,22 @@ class ActorPipelineSelector final {
     if (visited!=stages.size())
       throw std::invalid_argument("pipeline graph contains cycle");
   }
+  // Terminal host selector seal. A new topology generation must create a
+  // separate checked selector; this one never regains routing authority.
+  void retire() {
+    std::lock_guard<std::mutex> guard(mutex_);
+    retired_.store(true,std::memory_order_release);
+  }
+  void ensure_active() const {
+    if (retired_.load(std::memory_order_acquire))
+      throw std::invalid_argument("pipeline selector retired");
+  }
   void require_ingress_root(const std::string& source) const {
+    ensure_active();
     if (!roots_.contains(source)) throw std::invalid_argument("not an ingress root");
   }
   const std::vector<PipelineEdge>& forward_all(const std::string& source) const {
+    ensure_active();
     const auto it=outgoing_.find(source);
     if (it==outgoing_.end() || it->second.empty())
       throw std::invalid_argument("source has no downstream");
@@ -161,6 +174,7 @@ class ActorPipelineSelector final {
   }
   void advance_generation(std::uint64_t successor, bool quiescent, bool aborted) {
     std::lock_guard<std::mutex> guard(mutex_);
+    ensure_active();
     if (successor<=generation_ || (!quiescent && !aborted))
       throw std::invalid_argument("pipeline generation barrier required");
     generation_=successor;
@@ -176,5 +190,6 @@ class ActorPipelineSelector final {
   mutable std::mutex mutex_;
   std::unordered_map<std::string,std::size_t> cursors_;
   std::uint64_t generation_;
+  std::atomic<bool> retired_{false};
 };
 }  // namespace oresforge::runtime
