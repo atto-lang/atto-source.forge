@@ -54,7 +54,10 @@ inline std::uint64_t pipe_route_hash64(std::string_view s) {
     i+=n;
   }
   std::uint64_t hash=UINT64_C(14695981039346656037);
-  for(unsigned char c:s){hash^=c;hash*=UINT64_C(1099511628211);}
+  for(char code_unit:s){
+    const auto c=static_cast<unsigned char>(code_unit);
+    hash^=c;hash*=UINT64_C(1099511628211);
+  }
   return hash;
 }
 class ActorPipePolicy {
