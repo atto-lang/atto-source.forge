@@ -39,6 +39,19 @@ oresforge::Program source(const std::string& expr) {
 int main() {
   try {
     using namespace oresforge;
+    // Import graph linking is not available in the Forge scalar bootstrap.
+    // Reject with the *right* diagnostic before IR or assembly emission.
+    for (const auto& path : {"+/src/helper", "+src/helper", "@/src/helper", "pkg:math/src/helper",
+                             "./helper", "../helper", "common/helper",
+                             ".hidden/helper"}) {
+      reject_diagnostic([&] {
+        parse_source(std::string("import fnc helper from ") +
+                     static_cast<char>(34) + path + static_cast<char>(34) +
+                     "; fnc main():int{return 42;}");
+      }, "source imports require verified module graph lowering");
+    }
+    ensure(interpret(parse_source("fnc main():int{return 42;} // import ignored"))==42,
+           "import in a comment does not trigger module admission");
     ensure(interpret(source("2+3*4"))==14,"precedence");
     ensure(interpret(source("(2+3)*4"))==20,"parentheses");
     for (const auto& expression : {"3/2", "4/2", "5/0", "-9223372036854775808/-1"})
