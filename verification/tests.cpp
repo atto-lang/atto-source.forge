@@ -43,6 +43,8 @@ int main() {
     ensure(interpret(source("(2+3)*4"))==20,"parentheses");
     for (const auto& expression : {"3/2", "4/2", "5/0", "-9223372036854775808/-1"})
       reject_diagnostic([&] { source(expression); }, "float result lowering");
+    for (const auto& expression : {"0.125", "1e10", "1E-10", "123.456d", "123d"})
+      reject_diagnostic([&] { source(expression); }, "typed numeric lowering");
     // Internal checked-i64 IR division is distinct from the source / operator.
     Program internal_division{{{Op::Constant,-3},{Op::Constant,2},
                               {Op::Div,0,0,1},{Op::Return,0,2,-1}}};
