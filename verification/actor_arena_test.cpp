@@ -3,6 +3,8 @@
 #include <cstddef>
 #include <stdexcept>
 #include <thread>
+#include <atomic>
+#include <thread>
 using oresforge::runtime::ActorArena;
 static void ensure(bool ok) { if (!ok) throw std::runtime_error("actor arena invariant failed"); }
 template <typename F> static void rejects(F&& f) {
@@ -48,4 +50,47 @@ int main() {
   auto tr = restarted.begin_turn(10, 2);
   rejects([&] { restarted.read(tr, replacement, output); });
   restarted.end_turn(tr); restarted.retire();
+  // Turn authority is carrier-specific and may migrate only after end_turn.
+  ActorArena migrating(200, 7);
+  auto m0 = migrating.begin_turn(200, 7);
+  auto mh = migrating.allocate(m0, 8);
+  std::array<std::byte, 8> payload{};
+  payload[0] = std::byte{41};
+  migrating.write(m0, mh, payload);
+  std::atomic<bool> wrongCarrierDenied{false};
+  std::thread blocked([&] {
+    try { std::array<std::byte, 8> buffer{}; migrating.read(m0, mh, buffer); }
+    catch (const std::logic_error&) { wrongCarrierDenied = true; }
+  });
+  blocked.join();
+  ensure(wrongCarrierDenied.load());
+  migrating.end_turn(m0);
+  std::atomic<bool> migrated{false};
+  std::thread nextCarrier([&] {
+    auto t = migrating.begin_turn(200, 7);
+    std::array<std::byte, 8> copy{};
+    migrating.read(t, mh, copy);
+    migrated = (copy == payload);
+    migrating.end_turn(t);
+  });
+  nextCarrier.join();
+  ensure(migrated.load());
+  rejects([&] { migrating.begin_turn(200, 8); });
+  rejects([&] { migrating.begin_turn(201, 7); });
+  auto m1 = migrating.begin_turn(200, 7);
+  // 8192 deterministic generational reallocations ensure stale handles never
+  // regain authority and fresh slots have their bytes zeroed.
+  for (int i = 0; i < 8192; ++i) {
+    auto temp = migrating.allocate(m1, 8);
+    migrating.write(m1, temp, payload);
+    migrating.drop(m1, temp);
+    rejects([&] { std::array<std::byte, 8> result{}; migrating.read(m1, temp, result); });
+    auto fresh = migrating.allocate(m1, 8);
+    std::array<std::byte, 8> result{};
+    migrating.read(m1, fresh, result);
+    ensure(result == (std::array<std::byte,8>{}));
+    migrating.drop(m1, fresh);
+  }
+  migrating.end_turn(m1);
+  migrating.retire();
 }
