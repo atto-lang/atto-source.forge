@@ -41,6 +41,9 @@ void test_capacity_and_restart() {
   must_reject([&] { box.send(first, a); });
   static_assert(!std::is_constructible_v<ActorRef, std::uint64_t, std::uint64_t>,
                 "numeric ActorRef construction must be inaccessible");
+  ActorRef tampered = second;
+  ++tampered.id;
+  must_reject([&] { box.send(tampered, a); });
   box.send(second, a);
   require(box.queued() == 1, "fresh authority was rejected");
   Mailbox other(101, 2, 4);
