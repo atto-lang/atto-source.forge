@@ -138,11 +138,19 @@ int main() {
     reject([&] { box.send(old,bytes); });
     auto next=box.restart();
     ensure(next.generation>old.generation,"generation");
+    ensure(box.queued()==0,"restart discarded all pending envelopes");
     reject([&] { box.send(old,bytes); });
     reject([&] { box.send(duplicate.ref(),bytes); });
     box.send(next,bytes);
     std::vector<std::uint8_t> huge(runtime::kMaxMessageBytes+1);
     reject([&] { box.send(next,huge); });
+    box.close();
+    ensure(box.queued()==0,"stop discarded pending owned envelopes");
+    reject([&] { box.send(next,bytes); });
+    auto newest=box.restart();
+    reject([&] { box.send(next,bytes); });
+    box.send(newest,bytes);
+    ensure(box.queued()==1,"fresh capability works after second restart");
     std::cout<<"OresForge bootstrap tests passed\n";
     return 0;
   } catch (const std::exception& error) {
