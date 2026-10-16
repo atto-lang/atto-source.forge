@@ -124,7 +124,9 @@ class Parser {
       tok_={Kind::Punct,source_.substr(start,2),start}; return;
     }
     // Plain |args| closures are unsupported just like lex/nlex closures.
-    if (c=='|') error("lexical captures require checked closure lowering");
+    if (c=='|')
+      throw std::runtime_error("lexical captures require checked closure lowering at byte "+
+                               std::to_string(start));
     if (std::string_view("()+-*/{};:").find(static_cast<char>(c)) == std::string_view::npos)
       error("invalid character");
     ++at_;
