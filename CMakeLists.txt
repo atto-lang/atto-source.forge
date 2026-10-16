@@ -14,6 +14,19 @@ if(BUILD_TESTING)
   add_executable(oresforge_tests verification/tests.cpp)
   target_link_libraries(oresforge_tests PRIVATE oresforge_core)
   add_test(NAME oresforge_unit COMMAND oresforge_tests)
+  # Host-only policy conformance (not source-compiled actor execution).
+  add_executable(oresforge_actor_pipeline_policy_test
+    verification/actor_pipeline_policy_test.cpp)
+  target_include_directories(oresforge_actor_pipeline_policy_test PRIVATE .)
+  target_compile_features(oresforge_actor_pipeline_policy_test PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_actor_pipeline_policy_test PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME actor_pipeline_v1_host_policy
+    COMMAND oresforge_actor_pipeline_policy_test)
+  set_tests_properties(actor_pipeline_v1_host_policy PROPERTIES TIMEOUT 15)
+
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   add_test(NAME oresforge_cli_source_budget
     COMMAND "${Python3_EXECUTABLE}"
