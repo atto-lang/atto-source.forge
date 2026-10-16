@@ -41,9 +41,10 @@ int main() {
     using namespace oresforge;
     // Import graph linking is not available in the Forge scalar bootstrap.
     // Reject with the *right* diagnostic before IR or assembly emission.
-    for (const auto& path : {"+/src/helper", "+src/helper", "@/src/helper", "pkg:math/src/helper",
-                             "./helper", "../helper", "common/helper",
-                             ".hidden/helper"}) {
+    for (const auto& path : {"+/src/helper", "+/../outside", "+/src/../helper",
+                             "+//src/helper", "+/src\\\\helper", "+src/helper",
+                             "@/src/helper", "pkg:math/src/helper", "pkg:missing/helper",
+                             "./helper", "../helper", "common/helper", ".hidden/helper"}) {
       reject_diagnostic([&] {
         parse_source(std::string("import fnc helper from ") +
                      static_cast<char>(34) + path + static_cast<char>(34) +
