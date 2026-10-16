@@ -126,7 +126,19 @@ int main() {
     auto received=box.receive();
     ensure(received && received->at(0)==1,"deep copy");
     ensure(!box.receive(),"empty");
-    reject([&] { box.send({10,old.generation},bytes); });
+    // Numeric IDs and generations are not mailbox authorization.
+    runtime::Mailbox other(10,1,4);
+    runtime::Mailbox sameId(9,1,4);
+    reject([&] { box.send(other.ref(),bytes); });
+    reject([&] { box.send(sameId.ref(),bytes); });
+    reject([&] { box.send(runtime::ActorRef{},bytes); });
+    auto tampered=old;
+    tampered.id=10;
+    reject([&] { box.send(tampered,bytes); });
+    auto fabricatedEpoch=old;
+    fabricatedEpoch.generation++;
+    reject([&] { box.send(fabricatedEpoch,bytes); });
+    ensure(box.queued()==0,"forged references cannot enqueue");
     box.close();
     reject([&] { box.send(old,bytes); });
     auto next=box.restart();
