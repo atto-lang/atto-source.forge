@@ -95,6 +95,17 @@ int main() {
     });
     reject([] { interpret(source("9223372036854775807 + 1")); });
     reject([] { interpret(source("3/0")); });
+    // Structural declarations, argument shape matching and match-over are not
+    // implemented by the arithmetic bootstrap. Never silently accept them.
+    reject_diagnostic([] {
+      parse_source("structural fnc main():int{return 1;}");
+    }, "expected");
+    reject_diagnostic([] {
+      parse_source("fnc main(structural Shape value):int{return 1;}");
+    }, "expected");
+    reject_diagnostic([] {
+      parse_source("fnc main():int{match 1 over on _ -> {return 1;} end}");
+    }, "expected");
     reject([] { parse_source("fnc main():int {return 1;} garbage"); });
     reject([] { parse_source("fnc main():int {return x;}"); });
     reject([] { parse_source("pub pub fnc main():int {return 1;}"); });
