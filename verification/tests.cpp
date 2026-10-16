@@ -41,7 +41,7 @@ int main() {
     using namespace oresforge;
     // Import graph linking is not available in the Forge scalar bootstrap.
     // Reject with the *right* diagnostic before IR or assembly emission.
-    for (const auto& path : {"@/src/helper", "pkg:math/src/helper",
+    for (const auto& path : {"+/src/helper", "+src/helper", "@/src/helper", "pkg:math/src/helper",
                              "./helper", "../helper", "common/helper",
                              ".hidden/helper"}) {
       reject_diagnostic([&] {
