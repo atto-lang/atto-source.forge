@@ -14,6 +14,41 @@ if(BUILD_TESTING)
   add_executable(oresforge_tests verification/tests.cpp)
   target_link_libraries(oresforge_tests PRIVATE oresforge_core)
   add_test(NAME oresforge_unit COMMAND oresforge_tests)
+  find_package(Threads REQUIRED)
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  # Host-only policy conformance (not source-compiled actor execution).
+  add_executable(oresforge_actor_pipeline_policy_test
+    verification/actor_pipeline_policy_test.cpp)
+  target_include_directories(oresforge_actor_pipeline_policy_test PRIVATE .)
+  target_compile_features(oresforge_actor_pipeline_policy_test PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_actor_pipeline_policy_test PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_executable(oresforge_actor_pipeline_concurrency_test
+    verification/actor_pipeline_concurrency_test.cpp)
+  target_include_directories(oresforge_actor_pipeline_concurrency_test PRIVATE .)
+  target_compile_features(oresforge_actor_pipeline_concurrency_test PRIVATE cxx_std_20)
+  target_link_libraries(oresforge_actor_pipeline_concurrency_test PRIVATE Threads::Threads)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_actor_pipeline_concurrency_test PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME actor_pipeline_v1_concurrent_selection_and_retirement
+    COMMAND oresforge_actor_pipeline_concurrency_test)
+  set_tests_properties(actor_pipeline_v1_concurrent_selection_and_retirement
+    PROPERTIES TIMEOUT 25)
+
+  add_test(NAME actor_pipeline_v1_host_policy
+    COMMAND oresforge_actor_pipeline_policy_test)
+  set_tests_properties(actor_pipeline_v1_host_policy PROPERTIES TIMEOUT 15)
+  add_test(NAME actor_pipeline_v1_golden_fixture
+    COMMAND "${Python3_EXECUTABLE}" 
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/actor_pipeline_fixture.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/contracts/v1/actor-pipeline-routing-v1.json")
+  set_tests_properties(actor_pipeline_v1_golden_fixture PROPERTIES TIMEOUT 15)
+
+
   # Already present in main via PR #34; keep these registrations exactly once.
   add_executable(oresforge_mailbox_destructor verification/actor_mailbox_destructor.cpp)
   target_link_libraries(oresforge_mailbox_destructor PRIVATE oresforge_core)
