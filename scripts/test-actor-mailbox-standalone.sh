@@ -21,7 +21,7 @@ elif [[ "${SANITIZE:-0}" != 0 ]]; then
   echo 'SANITIZE must be 0 or 1' >&2
   exit 2
 fi
-for name in actor_mailbox_limits actor_mailbox_concurrency actor_mailbox_model actor_mailbox_destructor; do
+for name in actor_mailbox_limits actor_mailbox_concurrency actor_mailbox_model actor_mailbox_destructor actor_mailbox_allocation_failure; do
   "$compiler" "${flags[@]}" -I"$root" \
     "$root/runtime/actor.cpp" "$root/verification/$name.cpp" -o "$work/$name"
   timeout 65 "$work/$name"
