@@ -128,9 +128,10 @@ inline void require_no_nested_manifest(const fs::path& root, const fs::path& can
          parent = parent.parent_path()) {
         if (parent.empty() || parent == parent.root_path() || !within(root, parent))
             throw std::invalid_argument("project-root source escapes physical package root");
-        if (fs::symlink_status(parent / ".ores.pkg.toml").type()
-                != fs::file_type::not_found)
-            throw std::invalid_argument("root import crosses nested package boundary");
+        for (const auto* name : {".ores.pkg.toml", ".oreslangc.cfg.toml"})
+            if (fs::symlink_status(parent / name).type()
+                    != fs::file_type::not_found)
+                throw std::invalid_argument("source import crosses nested package boundary");
     }
 }
 
@@ -180,4 +181,39 @@ inline fs::path project_root_source(const fs::path& manifest_dir,
     require_no_nested_manifest(selected_root, physical);
     return physical;
 }
+// Host-only explicit relative resolution: this does not wire any import
+// into Forge's parser/IR. The caller must supply the already-authorized
+// physical package source root. Do not infer authority from process CWD.
+inline fs::path relative_source(const fs::path& importer,
+                               std::string_view specifier,
+                               const fs::path& source_root) {
+    if (!(specifier.starts_with("./") || specifier.starts_with("../")) ||
+        specifier.size() > 4096)
+        throw std::invalid_argument("expected explicit ./ or ../ source import");
+    for (unsigned char c : specifier)
+        if (c < 32 || c == 127 || c == '\\' || c == ':')
+            throw std::invalid_argument("invalid relative source separator");
+    if (specifier.find("//") != std::string_view::npos ||
+        specifier.back() == '/')
+        throw std::invalid_argument("invalid relative source path segment");
+    const fs::path root = fs::canonical(source_root);
+    const fs::path owner = fs::canonical(importer);
+    if (!fs::is_regular_file(owner) || owner.extension() != ".ores" ||
+        !within(root, owner))
+        throw std::invalid_argument("relative importer is outside source root");
+    require_no_nested_manifest(root, owner);
+    auto spelled = (owner.parent_path() / fs::path(std::string(specifier))).lexically_normal();
+    if (spelled.extension().empty()) spelled += ".ores";
+    if (spelled.extension() != ".ores" || !within(root, spelled))
+        throw std::invalid_argument("relative source escapes owning package");
+    if (!fs::is_regular_file(spelled))
+        throw std::invalid_argument("relative source file not found");
+    const auto physical = fs::canonical(spelled);
+    if (physical.extension() != ".ores" || !within(root, physical))
+        throw std::invalid_argument("relative source escapes physical package root");
+    require_no_nested_manifest(root, spelled);
+    require_no_nested_manifest(root, physical);
+    return physical;
+}
+
 } // namespace oresforge::imports
