@@ -53,6 +53,55 @@ inline void require_v1_manifest(const fs::path& manifest) {
         throw std::invalid_argument("package manifest requires exactly one schema_version = 1");
 }
 
+// Conservative subset of TOML v1: respect [project].root rather than
+// silently resolving +/ relative to the manifest when an explicit root
+// exists. Reject unsupported root forms; this is not a full TOML parser.
+inline fs::path configured_project_root(const fs::path& manifest_dir,
+                                        const fs::path& manifest) {
+    std::ifstream input(manifest, std::ios::binary);
+    if (!input) throw std::invalid_argument("cannot open verified package manifest");
+    const std::regex project_table(R"ores(^[ \t]*\\[project\\][ \t]*(?:#.*)?$)ores");
+    const std::regex section(R"ores(^[ \t]*\\[.*$)ores");
+    const std::regex root_key(R"ores(^[ \t]*(?:root|"root"|'root')[ \t]*=.*$)ores");
+    const std::regex root_value(R"ores(^[ \t]*root[ \t]*=[ \t]*"([^"]+)"[ \t]*(?:#.*)?$)ores");
+    const std::regex dotted_root(R"ores(^[ \t]*project[ \t]*\\.[ \t]*root[ \t]*=.*$)ores");
+    std::string line, root_text = ".";
+    bool in_project = false, found_root = false;
+    while (std::getline(input, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (std::regex_match(line, section)) {
+            in_project = std::regex_match(line, project_table);
+            continue;
+        }
+        if (std::regex_match(line, dotted_root))
+            throw std::invalid_argument("unsupported dotted project.root form");
+        if (in_project && std::regex_match(line, root_key)) {
+            if (found_root) throw std::invalid_argument("duplicate project.root");
+            std::smatch match;
+            if (!std::regex_match(line, match, root_value))
+                throw std::invalid_argument("unsupported project.root value");
+            root_text = match[1].str();
+            found_root = true;
+        }
+    }
+    if (!input.eof()) throw std::invalid_argument("unreadable package project.root");
+    if (root_text.size() > 1024 || root_text.empty() ||
+        root_text.find('\\') != std::string::npos ||
+        root_text.find(':') != std::string::npos)
+        throw std::invalid_argument("invalid project.root path");
+    const fs::path relative(root_text);
+    if (relative.is_absolute())
+        throw std::invalid_argument("absolute project.root unsupported in Forge bootstrap");
+    for (const auto& part : relative) {
+        if (part == ".." || part.empty())
+            throw std::invalid_argument("project.root escapes manifest directory");
+    }
+    const auto selected = fs::canonical(manifest_dir / relative);
+    if (!within(manifest_dir, selected))
+        throw std::invalid_argument("project.root escapes physical manifest directory");
+    return selected;
+}
+
 inline void require_no_nested_manifest(const fs::path& root, const fs::path& candidate) {
     for (auto parent = candidate.parent_path(); parent != root;
          parent = parent.parent_path()) {
@@ -94,19 +143,20 @@ inline fs::path project_root_source(const fs::path& manifest_dir,
         fs::canonical(manifest).parent_path() != root)
         throw std::invalid_argument("verified package manifest must be in root directory");
     require_v1_manifest(manifest);
-    auto candidate = root / fs::path(std::string(suffix));
+    const auto selected_root = configured_project_root(root, manifest);
+    auto candidate = selected_root / fs::path(std::string(suffix));
     if (candidate.extension().empty()) candidate += ".ores";
     if (!fs::is_regular_file(candidate))
         throw std::invalid_argument("project-root source not found");
     if (candidate.extension() != ".ores")
         throw std::invalid_argument("non-Oreslang source requires unsupported backend");
     const auto physical = fs::canonical(candidate);
-    if (physical.extension() != ".ores" || !within(root, physical))
+    if (physical.extension() != ".ores" || !within(selected_root, physical))
         throw std::invalid_argument("project-root source escapes physical package root");
     // A source spelled through a nested package symlink to a parent-owned
     // physical file is still a cross-package import and must be denied.
-    require_no_nested_manifest(root, candidate);
-    require_no_nested_manifest(root, physical);
+    require_no_nested_manifest(selected_root, candidate);
+    require_no_nested_manifest(selected_root, physical);
     return physical;
 }
 } // namespace oresforge::imports
