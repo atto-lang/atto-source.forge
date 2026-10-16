@@ -197,10 +197,14 @@ inline fs::path relative_source(const fs::path& importer,
         specifier.back() == '/')
         throw std::invalid_argument("invalid relative source path segment");
     const fs::path root = fs::canonical(source_root);
+    // Check both spelled and physical importer paths. Canonicalizing first
+    // alone would erase traversal into a nested package via a back-reference.
+    const fs::path spelled_owner = fs::absolute(importer).lexically_normal();
     const fs::path owner = fs::canonical(importer);
     if (!fs::is_regular_file(owner) || owner.extension() != ".ores" ||
-        !within(root, owner))
+        !within(root, owner) || !within(root, spelled_owner))
         throw std::invalid_argument("relative importer is outside source root");
+    require_no_nested_manifest(root, spelled_owner);
     require_no_nested_manifest(root, owner);
     auto spelled = (owner.parent_path() / fs::path(std::string(specifier))).lexically_normal();
     if (spelled.extension().empty()) spelled += ".ores";
@@ -211,6 +215,8 @@ inline fs::path relative_source(const fs::path& importer,
     const auto physical = fs::canonical(spelled);
     if (physical.extension() != ".ores" || !within(root, physical))
         throw std::invalid_argument("relative source escapes physical package root");
+    if (physical == owner)
+        throw std::invalid_argument("relative source cannot import itself");
     require_no_nested_manifest(root, spelled);
     require_no_nested_manifest(root, physical);
     return physical;
