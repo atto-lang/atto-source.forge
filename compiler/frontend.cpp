@@ -55,7 +55,8 @@ class Parser {
       }
       next();
     }
-    expect("fnc"); expect("main"); expect("("); expect(")"); expect(":");
+    expect("fnc"); expect("main"); expect("("); expect(")");
+    if (!take(":")) expect("->");
     expect("int"); expect("{"); expect("return");
     const int result=expr(0);
     expect(";"); expect("}");
@@ -98,7 +99,12 @@ class Parser {
         if (!std::isalnum(c) && c!='_') break;
         ++at_;
       }
-      tok_={Kind::Word,source_.substr(start,at_-start),start}; return;
+      tok_={Kind::Word,source_.substr(start,at_-start),start};
+      // The bootstrap parser cannot resolve any Java/Graal import forms.
+      // Reject with a stable diagnostic rather than emitting an unrelated
+      // scalar result from a source that depends on external modules.
+      if (tok_.text=="import") error("source imports require verified module graph lowering");
+      return;
     }
     if (std::isdigit(c)) {
       ++at_;
@@ -106,10 +112,13 @@ class Parser {
         std::isdigit(static_cast<unsigned char>(source_[at_]))) ++at_;
       tok_={Kind::Number,source_.substr(start,at_-start),start}; return;
     }
-    // Treat contiguous '|>' as one source token. The bootstrap frontend
-    // deliberately lacks function declarations/call lowering, so expr()
-    // rejects the operator instead of accidentally emitting malformed IR.
-    if (c=='|' && at_+1<source_.size() && source_[at_+1]=='>') {
+    // Recognize the contiguous operator, but defer execution until named
+    // callable and tagged value lowering are actually implemented.
+    if (source_[at_]=='|' && at_+1<source_.size() && source_[at_+1]=='>') {
+      at_+=2;
+      tok_={Kind::Punct,source_.substr(start,2),start}; return;
+    }
+    if (source_[at_]=='-' && at_+1<source_.size() && source_[at_+1]=='>') {
       at_+=2;
       tok_={Kind::Punct,source_.substr(start,2),start}; return;
     }
