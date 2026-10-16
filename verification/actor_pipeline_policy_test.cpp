@@ -95,7 +95,22 @@ int main(){
   for(int i=0;i<1024;++i)valid_key+="\xf0\x9f\x8c\x8d";
   (void)pipe_route_hash64(valid_key);
   deny([&] { (void)pipe_route_hash64(valid_key+"\xf0\x9f\x8c\x8d"); });
+  // Check source/retirement before validating caller-supplied route key bytes.
+  try {
+    (void)plan.forward_by_key("unconnected",std::string(1,char(0x80)));
+    throw std::runtime_error("unknown keyed source was admitted");
+  } catch(const std::invalid_argument& e) {
+    check(std::string(e.what()).find("no downstream")!=std::string::npos,
+          "key parsing ran before route-source validation");
+  }
   plan.close();deny([&]{(void)plan.forward_all("src");});
+  try {
+    (void)plan.forward_by_key("src",std::string(1,char(0x80)));
+    throw std::runtime_error("retired keyed route was admitted");
+  } catch(const std::logic_error& e) {
+    check(std::string(e.what()).find("retired")!=std::string::npos,
+          "key parsing ran before retirement");
+  }
   ActorPipePolicy fresh(stages,edges);
   check(fresh.forward_round_robin("src").target=="a","fresh RR");
   std::cout<<"ORES_FORGE_HOST_ACTOR_PIPELINE_POLICY_PASS\n";
