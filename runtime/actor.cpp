@@ -50,7 +50,7 @@ ActorRef Mailbox::restart() {
   closed_=false;
   queue_.clear();
   queued_bytes_=0;
-  return {id_,generation_};
+  return ActorRef{id_,generation_,authority_};
 }
 std::size_t Mailbox::queued() const {
   std::scoped_lock lock(mutex_);
