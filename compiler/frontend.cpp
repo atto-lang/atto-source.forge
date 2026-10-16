@@ -104,6 +104,13 @@ class Parser {
       // Reject with a stable diagnostic rather than emitting an unrelated
       // scalar result from a source that depends on external modules.
       if (tok_.text=="import") error("source imports require verified module graph lowering");
+      // Fail closed on named language features before the scalar grammar
+      // gives a misleading generic syntax error (or ever learns to skip them).
+      // These require typed method dispatch and ownership-checked closure IR.
+      if (tok_.text=="class" || tok_.text=="actor")
+        error("class/actor methods require typed native lowering");
+      if (tok_.text=="lex" || tok_.text=="nlex")
+        error("lexical captures require checked closure lowering");
       return;
     }
     if (std::isdigit(c)) {
@@ -116,6 +123,8 @@ class Parser {
       at_+=2;
       tok_={Kind::Punct,source_.substr(start,2),start}; return;
     }
+    // Plain |args| closures are unsupported just like lex/nlex closures.
+    if (c=='|') error("lexical captures require checked closure lowering");
     if (std::string_view("()+-*/{};:").find(static_cast<char>(c)) == std::string_view::npos)
       error("invalid character");
     ++at_;
