@@ -45,6 +45,15 @@ int main() {
   rejects([&]{(void)g.forward("source");},"ambiguous default forward");
   check(g.forward_to("source","worker-b").target=="worker-b","named edge");
   rejects([&]{(void)g.forward_to("source","worker-z");},"disconnected named edge");
+  // Unknown graph authority wins over a malformed UTF-8 key.
+  try {
+    (void)g.forward_by_key("worker-a", "\xc0\xaf");
+    throw std::runtime_error("unauthorized keyed routing unexpectedly accepted");
+  } catch (const std::invalid_argument& error) {
+    check(std::string(error.what()).find("source has no downstream") != std::string::npos,
+          "invalid UTF-8 key masked an unauthorized route source");
+  }
+
   g.require_ingress_root("source");
   rejects([&]{g.require_ingress_root("worker-a");},"internal worker ingress");
   for(int i=0;i<999;++i)
@@ -80,6 +89,14 @@ int main() {
   rejects([&]{(void)stopped.forward_round_robin("source");},"post-STOP RR");
   rejects([&]{(void)stopped.forward_to("source","worker-a");},"post-STOP named");
   rejects([&]{(void)stopped.forward_by_key("source","alpha");},"post-STOP key");
+  try {
+    (void)stopped.forward_by_key("source", "\xc0\xaf");
+    throw std::runtime_error("retired selector accepted malformed key");
+  } catch (const std::invalid_argument& error) {
+    check(std::string(error.what()).find("retired") != std::string::npos,
+          "malformed key masked terminal routing retirement");
+  }
+
   rejects([&]{stopped.require_ingress_root("source");},"post-STOP root");
   rejects([&]{stopped.advance_generation(21,true,false);},"post-STOP quiescent");
   rejects([&]{stopped.advance_generation(21,false,true);},"post-STOP abort");
