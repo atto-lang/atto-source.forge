@@ -113,6 +113,22 @@ int main() {
     });
     reject([] { interpret(source("9223372036854775807 + 1")); });
     reject([] { interpret(source("3/0")); });
+    // Retain earlier structural declaration, parameter and match rejection
+    // gates alongside positional tuple v2. Scalar bootstrap must not silently
+    // emit a native artifact for source it does not semantically check.
+    for (const std::string_view candidate : {
+        "structural fnc main(): int { return 1; }",
+        "structural routine main(): int { return 1; }",
+        "@structural\nfnc main(): int { return 1; }",
+        "fnc main(structural Shape value): int { return 1; }",
+        "routine main(structural Shape value): int { return 1; }",
+        "fnc main(): int { match 1 over on _ -> { return 1; } end }",
+        "fnc main(): int { return match 1 over on _ -> { return 1; } end; }",
+        "fnc main(): int { match 1 over on structural {x:int} v when true -> {return 1;} on _ -> {return 0;} end }"
+    }) {
+      reject([&] { (void)parse_source(std::string(candidate)); });
+    }
+
     // Forge's scalar bootstrap does not lower structural positional tuples.
     reject([] {
       parse_source("fnc take(tuple (int,int,string?) v):int{return 1;}");
