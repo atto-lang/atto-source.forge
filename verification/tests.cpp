@@ -11,6 +11,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 namespace {
 void ensure(bool yes,const char* message) {
@@ -116,6 +117,9 @@ int main() {
     executor.run(source("1+2"));
     ensure(executor.requested_tier()==jit::Tier::OptimizedRequested,"tier2 request");
     ensure(executor.effective_tier()==jit::Tier::Interpreter,"fallback honest");
+    static_assert(!std::is_constructible_v<runtime::ActorRef,
+                  std::uint64_t, std::uint64_t>,
+                  "ActorRef must not be constructible from numeric IDs");
     runtime::Mailbox box(9,1,4);
     auto old=box.ref();
     std::array<std::uint8_t,3> bytes={1,2,3};
@@ -126,12 +130,16 @@ int main() {
     auto received=box.receive();
     ensure(received && received->at(0)==1,"deep copy");
     ensure(!box.receive(),"empty");
-    reject([&] { box.send({10,old.generation},bytes); });
+    runtime::Mailbox wrong(10,1,4);
+    reject([&] { box.send(wrong.ref(),bytes); });
+    runtime::Mailbox duplicate(9,1,4);
+    reject([&] { box.send(duplicate.ref(),bytes); }); // same ID+generation
     box.close();
     reject([&] { box.send(old,bytes); });
     auto next=box.restart();
     ensure(next.generation>old.generation,"generation");
     reject([&] { box.send(old,bytes); });
+    reject([&] { box.send(duplicate.ref(),bytes); });
     box.send(next,bytes);
     std::vector<std::uint8_t> huge(runtime::kMaxMessageBytes+1);
     reject([&] { box.send(next,huge); });
