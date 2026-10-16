@@ -78,6 +78,14 @@ int main() {
                "relative import crossed legacy nested-package boundary");
         reject([&] { (void)project_root_source(project, "+/src/routes/child/hidden"); },
                "rooted import crossed legacy nested-package boundary");
+        // A physical alias into the parent does not erase its spelled
+        // importer path through the child package's legacy marker.
+        std::error_code relative_alias_error;
+        const auto child_alias = project / "src/routes/child/main-alias.ores";
+        fs::create_symlink(importer, child_alias, relative_alias_error);
+        if (!relative_alias_error)
+            reject([&] { (void)relative_source(child_alias, "../local", project); },
+                   "relative importer context laundered through nested symlink");
         // The manifest's explicit project.root changes the authority anchor.
         write(project / "appdata" / "lib" / "answer.ores",
               "fnc answer():int{return 42;}\n");
