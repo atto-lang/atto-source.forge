@@ -79,6 +79,14 @@ int main() {
         reject([&] { (void)project_root_source(project, "+/lib/answer"); },
                "duplicate project.root admitted");
         write(project / ".ores.pkg.toml",
+              "schema_version = \"1\"\n[ project ]\nroot = \"appdata\"\n");
+        reject([&] { (void)project_root_source(project, "+/lib/answer"); },
+               "unsupported project table silently ignored");
+        write(project / ".ores.pkg.toml",
+              "schema_version = \"1\"\n[project]\n[project]\nroot = \"appdata\"\n");
+        reject([&] { (void)project_root_source(project, "+/lib/answer"); },
+               "duplicate project table admitted");
+        write(project / ".ores.pkg.toml",
               "schema_version = \"1\"\nproject.root = \"appdata\"\n");
         reject([&] { (void)project_root_source(project, "+/lib/answer"); },
                "unsupported dotted project.root accepted");
