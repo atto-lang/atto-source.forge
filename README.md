@@ -31,7 +31,11 @@ Requires CMake >= 3.20, a C++20-capable GCC/Clang, and a POSIX toolchain for nat
 
 A single zero-argument \`fnc main() : int { return EXPR; }\`, with optional \`define\` and \`pub\` modifiers. Expressions include i64 decimal literals, parentheses, unary +/- and binary + - *. Source division is rejected because reference Oreslang `int / int` returns `float`; float lowering is not implemented. Internal checked-i64 IR division remains independently tested. Arithmetic is checked for overflow. The IR is single-block and every operand must refer to an earlier definition. All emitted machine-code functions simply return the **compile-time computed constant** in \`oresforge_entry()\`; general instruction selection is not implemented.
 
-Actors as Oreslang language constructs, ownership/borrows, concurrent scheduling, async/await, hot reload, true native JIT, native object generation, and OresVM integration **are not implemented**. The numeric actor references in the prototype are **not authenticated capabilities**.
+Actors as Oreslang language constructs, ownership/borrows, concurrent scheduling, async/await, hot reload, true native JIT, native object generation, and OresVM integration **are not implemented**. Actor references now carry an **opaque, unforgeable-from-numeric-fields local
+incarnation authority**, rotating on restart. This only prevents one local
+mailbox from accepting a different mailbox's numerically matching handle;
+it is **not** a cryptographically authenticated or network-serializable
+capability, and it does not implement guest actor execution.
 
 See [architecture](docs/architecture.md), [roadmap](docs/roadmap.md), and [verification](verification/README.md).
 
