@@ -57,9 +57,10 @@ int main() {
     // this scalar frontend. Deny the declaration with a specific diagnostic,
     // rather than claiming parity from a synthetic policy helper.
     for (const auto& invalid : {
-        "define enum Color as Red end fnc main():int{return 1;}",
-        "define enum Color as Red end fnc pick(Color x):int{return 1;} "
-            "fnc pick(Mode x):int{return 2;} fnc main():int{return 0;}"
+        "define enum Color as\n  Red\nend\nfnc main():int{return 1;}",
+        "define enum Color as\n  Red\nend\ndefine enum Mode as\n  Fast\nend\n"
+            "fnc pick(Color x):int{return 1;} fnc pick(Mode x):int{return 2;} "
+            "fnc main():int{return 0;}"
     }) {
       reject_diagnostic([&] { parse_source(invalid); },
                         "nominal enum overloads require compiler-bound dispatch");
