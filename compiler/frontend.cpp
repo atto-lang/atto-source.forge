@@ -104,6 +104,8 @@ class Parser {
       // Reject with a stable diagnostic rather than emitting an unrelated
       // scalar result from a source that depends on external modules.
       if (tok_.text=="import") error("source imports require verified module graph lowering");
+      if (tok_.text=="cpu" || tok_.text=="gpu" || tok_.text=="nb")
+        error("unsupported execution domain: typed effect graph required; no implicit CPU fallback");
       return;
     }
     if (std::isdigit(c)) {
