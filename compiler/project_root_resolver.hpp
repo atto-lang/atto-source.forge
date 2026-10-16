@@ -60,11 +60,11 @@ inline fs::path configured_project_root(const fs::path& manifest_dir,
                                         const fs::path& manifest) {
     std::ifstream input(manifest, std::ios::binary);
     if (!input) throw std::invalid_argument("cannot open verified package manifest");
-    const std::regex project_table(R"ores(^[ \t]*\\[project\\][ \t]*(?:#.*)?$)ores");
-    const std::regex section(R"ores(^[ \t]*\\[.*$)ores");
+    const std::regex project_table(R"ores(^[ \t]*\[project\][ \t]*(?:#.*)?$)ores");
+    const std::regex section(R"ores(^[ \t]*\[.*$)ores");
     const std::regex root_key(R"ores(^[ \t]*(?:root|"root"|'root')[ \t]*=.*$)ores");
     const std::regex root_value(R"ores(^[ \t]*root[ \t]*=[ \t]*"([^"]+)"[ \t]*(?:#.*)?$)ores");
-    const std::regex dotted_root(R"ores(^[ \t]*project[ \t]*\\.[ \t]*root[ \t]*=.*$)ores");
+    const std::regex dotted_root(R"ores(^[ \t]*project[ \t]*\.[ \t]*root[ \t]*=.*$)ores");
     std::string line, root_text = ".";
     bool in_project = false, found_root = false;
     while (std::getline(input, line)) {
