@@ -73,6 +73,18 @@ int main() {
   concurrent.advance_generation(102,true,false);
   check(concurrent.forward_round_robin("source").target=="worker-a",
         "generation change did not reset concurrent RR");
+  ActorPipelineSelector stopped(stages,edges,20);
+  stopped.retire();
+  rejects([&]{(void)stopped.forward("source");},"post-STOP default");
+  rejects([&]{(void)stopped.forward_all("source");},"post-STOP fanout");
+  rejects([&]{(void)stopped.forward_round_robin("source");},"post-STOP RR");
+  rejects([&]{(void)stopped.forward_to("source","worker-a");},"post-STOP named");
+  rejects([&]{(void)stopped.forward_by_key("source","alpha");},"post-STOP key");
+  rejects([&]{stopped.require_ingress_root("source");},"post-STOP root");
+  rejects([&]{stopped.advance_generation(21,true,false);},"post-STOP quiescent");
+  rejects([&]{stopped.advance_generation(21,false,true);},"post-STOP abort");
+  check(stopped.generation()==20,"STOP changed routing generation");
+  stopped.retire(); // idempotent terminal state
   rejects([&]{g.advance_generation(8,false,false);},"unfenced epoch");
   g.advance_generation(8,true,false);
   check(g.forward_round_robin("source").target=="worker-a","epoch reset");
