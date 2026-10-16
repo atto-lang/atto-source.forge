@@ -21,6 +21,9 @@ if(BUILD_TESTING)
   add_executable(oresforge_mailbox_limits verification/actor_mailbox_limits.cpp)
   target_link_libraries(oresforge_mailbox_limits PRIVATE oresforge_core)
   add_test(NAME oresforge_actor_mailbox_limits COMMAND oresforge_mailbox_limits)
+  add_executable(oresforge_mailbox_auth_precedence verification/actor_mailbox_authority_precedence.cpp)
+  target_link_libraries(oresforge_mailbox_auth_precedence PRIVATE oresforge_core)
+  add_test(NAME oresforge_actor_mailbox_auth_precedence COMMAND oresforge_mailbox_auth_precedence)
   # Exercise the real mailbox with concurrent sends, deep-copy ownership,
   # backpressure, byte-credit recovery and generation/authority fencing.
   find_package(Threads REQUIRED)
