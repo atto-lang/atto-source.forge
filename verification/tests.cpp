@@ -106,6 +106,16 @@ int main() {
     reject_diagnostic([] {
       parse_source("fnc main():int{match 1 over on _ -> {return 1;} end}");
     }, "expected");
+    // v2 tuple syntax is intentionally not executable on Forge bootstrap.
+    reject([] {
+      parse_source("fnc take(tuple (int,int,string?) v):int{return 1;}");
+    });
+    reject([] {
+      parse_source("fnc take((int,int,string?) v):int{return 1;}");
+    });
+    reject([] {
+      parse_source("fnc take(structural (int,int,string?) v):int{return 1;}");
+    });
     reject([] { parse_source("fnc main():int {return 1;} garbage"); });
     reject([] { parse_source("fnc main():int {return x;}"); });
     reject([] { parse_source("pub pub fnc main():int {return 1;}"); });
