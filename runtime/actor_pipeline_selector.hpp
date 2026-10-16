@@ -140,11 +140,13 @@ class ActorPipelineSelector final {
     if (!roots_.contains(source))
       throw std::invalid_argument("not an ingress root");
   }
-  const std::vector<PipelineEdge>& forward_all(const std::string& source) const {
+  std::vector<PipelineEdge> forward_all(const std::string& source) const {
     std::lock_guard<std::mutex> guard(mutex_);
+    // Return owned routing metadata: callers cannot retain a view into a
+    // selector whose lifetime/retirement they do not control.
     return connected_locked(source);
   }
-  const PipelineEdge& forward(const std::string& source) const {
+  PipelineEdge forward(const std::string& source) const {
     std::lock_guard<std::mutex> guard(mutex_);
     const auto& edges=connected_locked(source);
     if (edges.size()!=1) throw std::invalid_argument("ambiguous pipeline forward");
@@ -158,14 +160,14 @@ class ActorPipelineSelector final {
     cursor=(cursor+1)%edges.size();
     return selected;
   }
-  const PipelineEdge& forward_to(const std::string& source,
+  PipelineEdge forward_to(const std::string& source,
                                  const std::string& target) const {
     std::lock_guard<std::mutex> guard(mutex_);
     for (const auto& edge:connected_locked(source))
       if (edge.target==target) return edge;
     throw std::invalid_argument("pipeline destination not connected");
   }
-  const PipelineEdge& forward_by_key(const std::string& source,
+  PipelineEdge forward_by_key(const std::string& source,
                                      std::string_view key) const {
     std::lock_guard<std::mutex> guard(mutex_);
     const auto& edges=connected_locked(source);
