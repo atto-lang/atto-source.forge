@@ -47,6 +47,12 @@ if(BUILD_TESTING)
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/contracts/scalar/v1/run.py"
       --backend forge --mode stdout-i64 --command "$<TARGET_FILE:oresforge> run {source}")
   set_tests_properties(source_scalar_parity PROPERTIES TIMEOUT 240)
+  # Bootstrap Forge must reject all source imports until a verified module
+  # graph exists; no successful scalar IR may be published from such source.
+  add_test(NAME source_import_parity_admission
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/import_parity_admission.py"
+      "$<TARGET_FILE:oresforge>")
+  set_tests_properties(source_import_parity_admission PROPERTIES TIMEOUT 60)
   add_test(NAME scalar_parity_harness_selftest
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/contracts/scalar/v1/selftest.py")
   set_tests_properties(scalar_parity_harness_selftest PROPERTIES TIMEOUT 30)
