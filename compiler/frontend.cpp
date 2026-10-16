@@ -107,6 +107,8 @@ class Parser {
       // Fail closed on named language features before the scalar grammar
       // gives a misleading generic syntax error (or ever learns to skip them).
       // These require typed method dispatch and ownership-checked closure IR.
+      if (tok_.text=="abstract")
+        error("private abstract hooks require typed native vtables and superclass-only dispatch");
       if (tok_.text=="class" || tok_.text=="actor")
         error("class/actor methods require typed native lowering");
       if (tok_.text=="lex" || tok_.text=="nlex")
