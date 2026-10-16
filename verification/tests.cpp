@@ -39,6 +39,15 @@ oresforge::Program source(const std::string& expr) {
 int main() {
   try {
     using namespace oresforge;
+    // Until this bootstrap compiler has named function definitions/calls,
+    // |>-stages must reject atomically with a stable diagnostic.
+    for (const auto& pipeline : {"1 |> twice", "(1 |> twice)", "1 + 2 |> plus(3)"}) {
+      reject_diagnostic([&] { source(pipeline); },
+                        "value pipeline requires named callable lowering");
+    }
+    ensure(interpret(parse_source("fnc main():int{return 1;} // 1 |> ignore"))==1,
+           "pipeline text in comments must not be tokenized");
+
     ensure(interpret(source("2+3*4"))==14,"precedence");
     ensure(interpret(source("(2+3)*4"))==20,"parentheses");
     for (const auto& expression : {"3/2", "4/2", "5/0", "-9223372036854775808/-1"})
