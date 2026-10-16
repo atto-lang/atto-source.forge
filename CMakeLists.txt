@@ -14,6 +14,9 @@ if(BUILD_TESTING)
   add_executable(oresforge_tests verification/tests.cpp)
   target_link_libraries(oresforge_tests PRIVATE oresforge_core)
   add_test(NAME oresforge_unit COMMAND oresforge_tests)
+  add_executable(oresforge_actor_arena_tests verification/actor_arena_test.cpp)
+  target_link_libraries(oresforge_actor_arena_tests PRIVATE oresforge_core)
+  add_test(NAME oresforge_actor_arena COMMAND oresforge_actor_arena_tests)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   add_test(NAME oresforge_cli_source_budget
     COMMAND "${Python3_EXECUTABLE}"
