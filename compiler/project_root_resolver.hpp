@@ -97,9 +97,16 @@ inline fs::path configured_project_root(const fs::path& manifest_dir,
     const fs::path relative(root_text);
     if (relative.is_absolute())
         throw std::invalid_argument("absolute project.root unsupported in Forge bootstrap");
+    auto inspected = manifest_dir;
     for (const auto& part : relative) {
-        if (part == ".." || part.empty())
+        if (part == ".." || part.empty() || (part == "." && root_text != "."))
             throw std::invalid_argument("project.root escapes manifest directory");
+        if (part == ".") continue;
+        inspected /= part;
+        for (const auto* name : {".ores.pkg.toml", ".oreslangc.cfg.toml"}) {
+            if (fs::symlink_status(inspected / name).type() != fs::file_type::not_found)
+                throw std::invalid_argument("project.root crosses nested project manifest");
+        }
     }
     std::error_code root_error;
     const auto selected = fs::canonical(manifest_dir / relative, root_error);
@@ -107,9 +114,6 @@ inline fs::path configured_project_root(const fs::path& manifest_dir,
         throw std::invalid_argument("project.root is not an existing directory");
     if (!within(manifest_dir, selected))
         throw std::invalid_argument("project.root escapes physical manifest directory");
-    if (selected != manifest_dir &&
-        fs::symlink_status(selected / ".ores.pkg.toml").type() != fs::file_type::not_found)
-        throw std::invalid_argument("project.root crosses nested project manifest");
     return selected;
 }
 
