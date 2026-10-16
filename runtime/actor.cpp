@@ -23,11 +23,12 @@ void discard_queued(std::deque<std::vector<std::uint8_t>>& queue) noexcept {
 // As with any C++ object, destruction requires all users to have stopped.
 Mailbox::~Mailbox() noexcept { discard_queued(queue_); }
 Mailbox::Mailbox(std::uint64_t id,std::size_t capacity,std::size_t bytes):
-    id_(id),capacity_(capacity),byte_capacity_(bytes),
-    authority_(std::make_shared<CapabilityToken>()) {
+    id_(id),capacity_(capacity),byte_capacity_(bytes) {
+  // Reject invalid admission budgets before allocating a capability.
   if (id==0 || capacity==0 || capacity>kMaxMailboxMessages ||
       bytes==0 || bytes>kMaxMailboxBytes)
     throw std::invalid_argument("invalid or unbounded mailbox capacity");
+  authority_=std::make_shared<CapabilityToken>();
 }
 ActorRef Mailbox::ref() const {
   std::scoped_lock lock(mutex_);
