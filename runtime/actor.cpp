@@ -20,9 +20,16 @@ void Mailbox::send(ActorRef destination,std::span<const std::uint8_t> payload) {
   if (closed_ || destination.id!=id_ || destination.generation!=generation_ ||
       destination.authority_!=authority_)
     throw std::runtime_error("closed or stale actor");
-  if (queue_.size()>=capacity_ || payload.size()>byte_capacity_-queued_bytes_)
+  // Defensive subtraction guard keeps the byte budget fail-closed even
+  // if a future queue change violates the accounting invariant.
+  if (queue_.size()>=capacity_ || queued_bytes_>byte_capacity_ ||
+      payload.size()>byte_capacity_-queued_bytes_)
     throw std::length_error("mailbox capacity");
-  queue_.emplace_back(payload.begin(),payload.end());
+  // A default-constructed empty span may have null iterators. Avoid a
+  // pointer range construction (and potential null-pointer subtraction).
+  // Empty DATA messages are legal, but still consume one queue slot.
+  if (payload.empty()) queue_.emplace_back();
+  else queue_.emplace_back(payload.begin(),payload.end());
   queued_bytes_+=payload.size();
 }
 std::optional<std::vector<std::uint8_t>> Mailbox::receive() {
