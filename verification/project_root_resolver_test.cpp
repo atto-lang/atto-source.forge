@@ -68,6 +68,16 @@ int main() {
         reject([&] { (void)project_root_source(project, "+/lib/answer"); },
                "nested package reused parent-root authority");
         fs::remove(project / "appdata" / ".ores.pkg.toml");
+        write(project / "parent" / "appdata" / "lib" / "answer.ores",
+              "fnc answer():int{return 42;}\n");
+        write(project / "parent" / ".ores.pkg.toml", "schema_version = \"1\"\n");
+        write(project / ".ores.pkg.toml",
+              "schema_version = \"1\"\n[project]\nroot = \"parent/appdata\"\n");
+        reject([&] { (void)project_root_source(project, "+/lib/answer"); },
+               "intermediate nested package marker ignored");
+        fs::remove(project / "parent" / ".ores.pkg.toml");
+        write(project / ".ores.pkg.toml",
+              "schema_version = \"1\"\n[project]\nroot = \"appdata\"\n");
         reject([&] { (void)project_root_source(project, "+/src/lib/answer"); },
                "rooted import leaked manifest parent after explicit root");
         for (const char* bad_root : {"../other", "/tmp", "appdata/../src", "",
