@@ -49,7 +49,8 @@ class ActorArena final {
     return {domain_, ++epoch_};
   }
   void end_turn(Turn turn) {
-    std::scoped_lock lock(mutex_);
+    std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
+    if (!lock.owns_lock()) throw std::logic_error("actor arena busy");
     require_turn(turn);
     zero_bytes(scratch_.data(), scratch_.size());
     scratch_top_ = 0;
@@ -57,7 +58,8 @@ class ActorArena final {
     owner_ = {};
   }
   Handle allocate(Turn turn, std::size_t length) {
-    std::scoped_lock lock(mutex_);
+    std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
+    if (!lock.owns_lock()) throw std::logic_error("actor arena busy");
     require_turn(turn);
     if (length == 0 || length > SlotBytes) throw std::out_of_range("slot length");
     for (std::size_t i = 0; i < Slots; ++i) {
@@ -71,19 +73,22 @@ class ActorArena final {
     throw std::out_of_range("actor arena quota");
   }
   void write(Turn turn, Handle handle, std::span<const std::byte> bytes) {
-    std::scoped_lock lock(mutex_);
+    std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
+    if (!lock.owns_lock()) throw std::logic_error("actor arena busy");
     auto& s = slot(turn, handle);
     if (bytes.size() != s.length) throw std::out_of_range("write length");
     std::memcpy(s.data.data(), bytes.data(), bytes.size());
   }
   void read(Turn turn, Handle handle, std::span<std::byte> out) {
-    std::scoped_lock lock(mutex_);
+    std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
+    if (!lock.owns_lock()) throw std::logic_error("actor arena busy");
     auto& s = slot(turn, handle);
     if (out.size() != s.length) throw std::out_of_range("read length");
     std::memcpy(out.data(), s.data.data(), out.size());
   }
   void drop(Turn turn, Handle handle) {
-    std::scoped_lock lock(mutex_);
+    std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
+    if (!lock.owns_lock()) throw std::logic_error("actor arena busy");
     auto& s = slot(turn, handle);
     zero_bytes(s.data.data(), s.data.size());
     s.live = false;
@@ -92,7 +97,8 @@ class ActorArena final {
         ? 0 : s.generation + 1;
   }
   Scratch scratch_alloc(Turn turn, std::size_t length) {
-    std::scoped_lock lock(mutex_);
+    std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
+    if (!lock.owns_lock()) throw std::logic_error("actor arena busy");
     require_turn(turn);
     if (!length || length > ScratchBytes - scratch_top_)
       throw std::out_of_range("scratch quota");
@@ -101,12 +107,14 @@ class ActorArena final {
     return {domain_, epoch_, offset, length};
   }
   void scratch_write(Turn turn, Scratch h, std::span<const std::byte> bytes) {
-    std::scoped_lock lock(mutex_);
+    std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
+    if (!lock.owns_lock()) throw std::logic_error("actor arena busy");
     require_scratch(turn, h, bytes.size());
     std::memcpy(scratch_.data() + h.offset, bytes.data(), bytes.size());
   }
   void scratch_read(Turn turn, Scratch h, std::span<std::byte> out) {
-    std::scoped_lock lock(mutex_);
+    std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
+    if (!lock.owns_lock()) throw std::logic_error("actor arena busy");
     require_scratch(turn, h, out.size());
     std::memcpy(out.data(), scratch_.data() + h.offset, out.size());
   }
