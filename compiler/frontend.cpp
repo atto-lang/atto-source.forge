@@ -104,6 +104,10 @@ class Parser {
       // Reject with a stable diagnostic rather than emitting an unrelated
       // scalar result from a source that depends on external modules.
       if (tok_.text=="import") error("source imports require verified module graph lowering");
+      // Bootstrap scalar IR has no typed CPU/GPU execution graph or
+      // nonblocking task representation. Fail at the lexer boundary.
+      if (tok_.text=="gpu" || tok_.text=="cpu" || tok_.text=="nb")
+        error("CPU/GPU execution domain and nb graph lowering unsupported; no implicit CPU fallback");
       return;
     }
     if (std::isdigit(c)) {
