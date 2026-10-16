@@ -64,6 +64,10 @@ int main() {
         check(project_root_source(project, "+/lib/answer") ==
                   fs::canonical(project / "appdata/lib/answer.ores"),
               "explicit project.root ignored");
+        write(project / "appdata" / ".ores.pkg.toml", "schema_version = \"1\"\n");
+        reject([&] { (void)project_root_source(project, "+/lib/answer"); },
+               "nested package reused parent-root authority");
+        fs::remove(project / "appdata" / ".ores.pkg.toml");
         reject([&] { (void)project_root_source(project, "+/src/lib/answer"); },
                "rooted import leaked manifest parent after explicit root");
         for (const char* bad_root : {"../other", "/tmp", "appdata/../src", "",
