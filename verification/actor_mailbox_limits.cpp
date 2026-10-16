@@ -53,6 +53,23 @@ int main() {
     standard.send(standard.ref(), payload);
     if (standard.queued() != 1)
       throw std::runtime_error("default mailbox incorrectly rejected normal send");
+    // A zero-length DATA message uses a real bounded slot; a default empty
+    // span must not be passed as a possibly-null iterator range.
+    Mailbox empty(3, 1, 1);
+    const auto empty_ref = empty.ref();
+    empty.send(empty_ref, std::span<const std::uint8_t>{});
+    if (empty.queued() != 1)
+      throw std::runtime_error("empty DATA message was dropped");
+    bool full_empty = false;
+    try { empty.send(empty_ref, std::span<const std::uint8_t>{}); }
+    catch (const std::length_error&) { full_empty = true; }
+    if (!full_empty) throw std::runtime_error("empty DATA bypassed slot budget");
+    auto empty_value = empty.receive();
+    if (!empty_value || !empty_value->empty() || empty.queued() != 0)
+      throw std::runtime_error("empty DATA delivery or credit reclaim failed");
+    empty.send(empty_ref, payload);
+    if (empty.queued() != 1)
+      throw std::runtime_error("empty DATA failed to reclaim capacity");
     std::cout << "forge actor mailbox bounds: pass\n";
     return 0;
   } catch (const std::exception& error) {
