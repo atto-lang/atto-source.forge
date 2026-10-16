@@ -7,6 +7,7 @@
 #include <memory>
 #include <span>
 #include <vector>
+#include <utility>
 namespace oresforge::runtime {
 inline constexpr std::size_t kMaxMessageBytes=1024*1024;
 struct CapabilityToken; // Opaque, local-only authority; never serialize it.
