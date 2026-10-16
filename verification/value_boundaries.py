@@ -35,5 +35,10 @@ with tempfile.TemporaryDirectory(prefix="ores-value-boundaries-") as work:
         require(result.returncode == 1, name, result.returncode, result.stderr)
         require(result.stdout == "", name, "published code for rejected source", result.stdout)
         require('oresforge:' in result.stderr, name, result.stderr)
+        if name in DOMAIN_CASES:
+            require("oresforge:" in result.stderr and
+                    "unsupported execution domain" in result.stderr and
+                    "no implicit CPU fallback" in result.stderr,
+                    name, "generic parser failure is not domain rejection", result.stderr)
         print(f"{name}: rejected with no code output")
 print(f"{len(CASES)} value boundary and {len(DOMAIN_CASES)} CPU/GPU/nb rejections passed")
