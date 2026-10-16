@@ -46,6 +46,12 @@ int main() {
         write(project / ".ores.pkg.toml", "name = \"test\"\n");
         reject([&] { (void)project_root_source(project, "+/src/lib/answer"); },
                "missing manifest schema admitted");
+        // Blank lines count toward the 64 KiB manifest byte budget.
+        const auto oversized = std::string("schema_version = \"1\"\n") +
+                               std::string(65536, '\n');
+        write(project / ".ores.pkg.toml", oversized.c_str());
+        reject([&] { (void)project_root_source(project, "+/src/lib/answer"); },
+               "newline-only manifest exceeded 64 KiB budget");
         write(project / ".ores.pkg.toml", "schema_version = \"1\"\n");
         const auto expected = fs::canonical(project / "src" / "lib" / "answer.ores");
         check(project_root_source(project, "+/src/lib/answer") == expected,
