@@ -156,9 +156,10 @@ class ActorPipePolicy {
     throw std::invalid_argument("target is not connected");
   }
   PipeEdge forward_by_key(const std::string& source,std::string_view key){
-    auto hash=pipe_route_hash64(key);
     std::scoped_lock lock(gate_);
     auto& choices=connected(source);
+    // Ensure the route is active before checking an untrusted key.
+    auto hash=pipe_route_hash64(key);
     return edges_[choices[hash%choices.size()]];
   }
   void close(){std::scoped_lock lock(gate_);closed_=true;}
