@@ -23,22 +23,24 @@ void discard_queued(std::deque<std::vector<std::uint8_t>>& queue) noexcept {
 // As with any C++ object, destruction requires all users to have stopped.
 Mailbox::~Mailbox() noexcept { discard_queued(queue_); }
 Mailbox::Mailbox(std::uint64_t id,std::size_t capacity,std::size_t bytes):
-    id_(id),capacity_(capacity),byte_capacity_(bytes),
-    authority_(std::make_shared<CapabilityToken>()) {
+    id_(id),capacity_(capacity),byte_capacity_(bytes) {
+  // Reject invalid admission budgets before allocating a capability.
   if (id==0 || capacity==0 || capacity>kMaxMailboxMessages ||
       bytes==0 || bytes>kMaxMailboxBytes)
     throw std::invalid_argument("invalid or unbounded mailbox capacity");
+  authority_=std::make_shared<CapabilityToken>();
 }
 ActorRef Mailbox::ref() const {
   std::scoped_lock lock(mutex_);
   return ActorRef{id_,generation_,authority_};
 }
 void Mailbox::send(ActorRef destination,std::span<const std::uint8_t> payload) {
-  if (payload.size()>kMaxMessageBytes) throw std::length_error("message size limit");
   std::scoped_lock lock(mutex_);
   if (closed_ || destination.id!=id_ || destination.generation!=generation_ ||
       destination.authority_!=authority_)
     throw std::runtime_error("closed or stale actor");
+  // Check capability before exposing receiver message limits.
+  if (payload.size()>kMaxMessageBytes) throw std::length_error("message size limit");
   if (queue_.size()>=capacity_ || queued_bytes_>byte_capacity_ ||
       payload.size()>byte_capacity_-queued_bytes_)
     throw std::length_error("mailbox capacity");
