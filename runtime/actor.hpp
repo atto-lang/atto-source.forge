@@ -10,6 +10,9 @@
 #include <utility>
 namespace oresforge::runtime {
 inline constexpr std::size_t kMaxMessageBytes=1024*1024;
+// Per-mailbox limits; callers cannot disable bounded queue admission.
+inline constexpr std::size_t kMaxMailboxMessages=4096;
+inline constexpr std::size_t kMaxMailboxBytes=16*kMaxMessageBytes;
 // Local authority is never a network-serializable actor address.
 struct ActorRef {
   std::uint64_t id;
