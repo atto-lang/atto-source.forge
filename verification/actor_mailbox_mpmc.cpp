@@ -26,16 +26,16 @@ int main() {
     if(!v){std::this_thread::yield();continue;}
     if(v->size()!=4){failed=true;break;}
     std::uint32_t id=0;
-    for(int b=0;b<4;++b)id|=std::uint32_t((*v)[b])<<(8*b);
-    if(id>=T || seen[id].fetch_add(1)!=0){failed=true;break;}
+    for(int b=0;b<4;++b)id|=std::uint32_t((*v)[static_cast<std::size_t>(b)])<<(8*b);
+    if(id>=static_cast<std::uint32_t>(T) || seen[id].fetch_add(1)!=0){failed=true;break;}
     ++received;
    }
   });
   for(int p=0;p<P;++p)writers.emplace_back([&,p]{
    for(int n=0;n<N && !failed;++n){
-    const std::uint32_t id=p*N+n;
+    const std::uint32_t id=static_cast<std::uint32_t>(p*N+n);
     std::array<std::uint8_t,4> bytes{};
-    for(int b=0;b<4;++b)bytes[b]=std::uint8_t(id>>(8*b));
+    for(int b=0;b<4;++b)bytes[static_cast<std::size_t>(b)]=std::uint8_t(id>>(8*b));
     while(!failed){
      if(std::chrono::steady_clock::now()>until){failed=true;break;}
      try{box.send(ref,bytes);break;}
