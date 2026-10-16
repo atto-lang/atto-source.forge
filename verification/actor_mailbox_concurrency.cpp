@@ -67,7 +67,7 @@ void test_parallel_producers() {
       }
       std::uint64_t id = 0;
       for (int byte = 0; byte < 8; ++byte)
-        id |= std::uint64_t((*payload)[byte]) << (8 * byte);
+        id |= std::uint64_t((*payload)[static_cast<std::size_t>(byte)]) << (8 * byte);
       if (id >= kTotal || seen[id] != 0) {
         failed = true;
         break;
@@ -80,10 +80,10 @@ void test_parallel_producers() {
   for (int producer = 0; producer < kProducers; ++producer) {
     writers.emplace_back([&, producer] {
       for (int index = 0; index < kPerProducer && !failed.load(); ++index) {
-        const std::uint64_t id = std::uint64_t(producer) * kPerProducer + index;
+        const std::uint64_t id = std::uint64_t(producer) * std::uint64_t(kPerProducer) + std::uint64_t(index);
         std::array<std::uint8_t, 8> bytes{};
         for (int byte = 0; byte < 8; ++byte)
-          bytes[byte] = std::uint8_t(id >> (8 * byte));
+          bytes[static_cast<std::size_t>(byte)] = std::uint8_t(id >> (8 * byte));
         while (!failed.load()) {
           try {
             box.send(ref, bytes);
