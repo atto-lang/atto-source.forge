@@ -118,8 +118,13 @@ int main() {
     ensure(executor.effective_tier()==jit::Tier::Interpreter,"fallback honest");
     runtime::Mailbox box(9,1,4);
     auto old=box.ref();
+    runtime::Mailbox duplicate(9,1,4);
+    reject([&] { box.send(duplicate.ref(), std::array<std::uint8_t,1>{7}); });
+    reject([&] { box.send(runtime::ActorRef{old.id,old.generation},
+                           std::array<std::uint8_t,1>{7}); });
+    auto copied_ref=old;
     std::array<std::uint8_t,3> bytes={1,2,3};
-    box.send(old,bytes);
+    box.send(copied_ref,bytes);
     bytes[0]=99;
     reject([&] { box.send(old,bytes); });
     ensure(box.queued()==1,"capacity");
@@ -132,6 +137,7 @@ int main() {
     auto next=box.restart();
     ensure(next.generation>old.generation,"generation");
     reject([&] { box.send(old,bytes); });
+    reject([&] { box.send(runtime::ActorRef{next.id,next.generation},bytes); });
     box.send(next,bytes);
     std::vector<std::uint8_t> huge(runtime::kMaxMessageBytes+1);
     reject([&] { box.send(next,huge); });
