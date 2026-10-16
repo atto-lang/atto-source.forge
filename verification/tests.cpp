@@ -44,7 +44,9 @@ int main() {
     for (const auto& path : {"+/src/helper", "+/../outside", "+/src/../helper",
                              "+//src/helper", "+/src\\\\helper", "+src/helper",
                              "@/src/helper", "pkg:math/src/helper", "pkg:missing/helper",
-                             "./helper", "../helper", "common/helper", ".hidden/helper"}) {
+                             "+/nested/lib/child", "+/nested/parent-alias",
+                             "+/dangling/lib/child", "./helper", "../helper",
+                             "common/helper", ".hidden/helper"}) {
       reject_diagnostic([&] {
         parse_source(std::string("import fnc helper from ") +
                      static_cast<char>(34) + path + static_cast<char>(34) +
