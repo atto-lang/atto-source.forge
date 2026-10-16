@@ -50,8 +50,16 @@ int main() {
     // The four byte-pinned shared negative cases exercise the *actual*
     // Forge source parser, verified i64 IR and interpreter. An exception
     // from either admission or execution is allowed; wrapping is not.
-    for (const char* expression : kOverflowNumericalCases)
-      reject([&] { (void)interpret(source(expression)); });
+    constexpr std::array<std::string_view,4> overflow_diagnostics{
+      "i64 add overflow", "i64 sub overflow",
+      "i64 mul overflow", "i64 sub overflow"
+    };
+    for (std::size_t i=0; i<kOverflowNumericalCases.size(); ++i) {
+      const std::string expression{kOverflowNumericalCases[i]};
+      // No unrelated source-parse/IR error may count as a numeric pass.
+      reject_diagnostic([&] { (void)interpret(source(expression)); },
+                        overflow_diagnostics[i]);
+    }
     // The bootstrap intentionally has NO BigInt, Decimal or binary64 lowering.
     // Fail closed rather than treating those spellings as signed i64.
     reject([] { source("1.25"); });
