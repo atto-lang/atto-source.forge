@@ -53,6 +53,17 @@ int main() {
     }
     ensure(interpret(parse_source("fnc main():int{return 42;} // import ignored"))==42,
            "import in a comment does not trigger module admission");
+    // The scalar bootstrap has no class vtable, receiver loan, or closure
+    // representation. New language constructs must fail closed until their
+    // actual native codegen and ownership checking are present.
+    for (const char* program : {
+      "define class Foo as fnc read(self, int x): int { return x; } end",
+      "define actor Foo as receive(self, int x): void { return; } end",
+      "fnc main():int{return lex[x] || -> x;}",
+      "fnc main():int{return nlex[x] || -> x;}",
+      "fnc main():int{return nlex || -> 1;}",
+      "fnc main():int{return lex[self] || -> 1;}"
+    }) reject([&] { parse_source(program); });
     ensure(interpret(source("2+3*4"))==14,"precedence");
     ensure(interpret(source("(2+3)*4"))==20,"parentheses");
     for (const auto& expression : {"3/2", "4/2", "5/0", "-9223372036854775808/-1"})
