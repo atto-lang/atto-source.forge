@@ -130,6 +130,10 @@ class ActorPipePolicy {
       }
     }
     if(visited!=stages.size())throw std::invalid_argument("pipeline graph cycle");
+    // Allocate RR state as part of checked graph construction, not on a
+    // first actor message. Routing attempts now perform only an existing lookup.
+    cursor_.reserve(outgoing_.size());
+    for(const auto& item:outgoing_)cursor_.emplace(item.first,0);
   }
   std::vector<PipeEdge> forward_all(const std::string& source){
     std::scoped_lock lock(gate_);
@@ -146,8 +150,9 @@ class ActorPipePolicy {
   PipeEdge forward_round_robin(const std::string& source){
     std::scoped_lock lock(gate_);
     auto& choices=connected(source);
-    auto i=cursor_[source];
-    cursor_[source]=(i+1)%choices.size();
+    auto& cursor=cursor_.at(source);
+    auto i=cursor;
+    cursor=(i+1)%choices.size();
     return edges_[choices[i]];
   }
   PipeEdge forward_to(const std::string& source,const std::string& target){
