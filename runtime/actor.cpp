@@ -3,8 +3,22 @@
 #include <stdexcept>
 #include <utility>
 #include <memory>
+#include <deque>
+#include <vector>
 namespace oresforge::runtime {
 struct CapabilityToken final {}; // unique per mailbox incarnation
+namespace {
+// Only pending mailbox-owned copies may be wiped. Already-delivered values
+// belong to the receiver. Volatile byte stores prevent dead-store elimination
+// when queue entries are released immediately afterward.
+void discard_queued(std::deque<std::vector<std::uint8_t>>& queue) noexcept {
+  for (auto& payload : queue) {
+    volatile std::uint8_t* bytes = payload.data();
+    for (std::size_t i = 0; i < payload.size(); ++i) bytes[i] = 0;
+  }
+  queue.clear();
+}
+} // namespace
 Mailbox::Mailbox(std::uint64_t id,std::size_t capacity,std::size_t bytes):
     id_(id),capacity_(capacity),byte_capacity_(bytes),
     authority_(std::make_shared<CapabilityToken>()) {
@@ -36,7 +50,7 @@ std::optional<std::vector<std::uint8_t>> Mailbox::receive() {
 void Mailbox::close() {
   std::scoped_lock lock(mutex_);
   closed_=true;
-  queue_.clear();
+  discard_queued(queue_);
   queued_bytes_=0;
 }
 ActorRef Mailbox::restart() {
@@ -48,7 +62,7 @@ ActorRef Mailbox::restart() {
   ++generation_;
   authority_=std::move(fresh);
   closed_=false;
-  queue_.clear();
+  discard_queued(queue_);
   queued_bytes_=0;
   return ActorRef{id_,generation_,authority_};
 }
