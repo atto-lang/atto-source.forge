@@ -14,6 +14,13 @@ if(BUILD_TESTING)
   add_executable(oresforge_tests verification/tests.cpp)
   target_link_libraries(oresforge_tests PRIVATE oresforge_core)
   add_test(NAME oresforge_unit COMMAND oresforge_tests)
+  # Host selector parity only; NOT guest self.forward_* lowering.
+  add_executable(oresforge_actor_pipeline_selector_test
+    verification/actor_pipeline_selector_test.cpp)
+  target_link_libraries(oresforge_actor_pipeline_selector_test PRIVATE oresforge_core)
+  add_test(NAME actor_pipeline_selector_v1
+    COMMAND oresforge_actor_pipeline_selector_test)
+  set_tests_properties(actor_pipeline_selector_v1 PROPERTIES TIMEOUT 15)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   add_test(NAME oresforge_cli_source_budget
     COMMAND "${Python3_EXECUTABLE}"
