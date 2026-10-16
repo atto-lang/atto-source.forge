@@ -14,6 +14,7 @@ if(BUILD_TESTING)
   add_executable(oresforge_tests verification/tests.cpp)
   target_link_libraries(oresforge_tests PRIVATE oresforge_core)
   add_test(NAME oresforge_unit COMMAND oresforge_tests)
+  # Already present in main via PR #34; keep these registrations exactly once.
   add_executable(oresforge_mailbox_destructor verification/actor_mailbox_destructor.cpp)
   target_link_libraries(oresforge_mailbox_destructor PRIVATE oresforge_core)
   add_test(NAME oresforge_actor_mailbox_destructor COMMAND oresforge_mailbox_destructor)
@@ -23,6 +24,18 @@ if(BUILD_TESTING)
   add_executable(oresforge_mailbox_auth_precedence verification/actor_mailbox_authority_precedence.cpp)
   target_link_libraries(oresforge_mailbox_auth_precedence PRIVATE oresforge_core)
   add_test(NAME oresforge_actor_mailbox_auth_precedence COMMAND oresforge_mailbox_auth_precedence)
+  # Exercise the real mailbox with concurrent sends, deep-copy ownership,
+  # backpressure, byte-credit recovery and generation/authority fencing.
+  find_package(Threads REQUIRED)
+  add_executable(oresforge_mailbox_stress verification/actor_mailbox_concurrency.cpp)
+  target_link_libraries(oresforge_mailbox_stress PRIVATE oresforge_core Threads::Threads)
+  add_test(NAME oresforge_actor_mailbox_concurrency COMMAND oresforge_mailbox_stress)
+  set_tests_properties(oresforge_actor_mailbox_concurrency PROPERTIES TIMEOUT 60)
+  set_tests_properties(oresforge_actor_mailbox_limits PROPERTIES TIMEOUT 20)
+  add_executable(oresforge_mailbox_model verification/actor_mailbox_model.cpp)
+  target_link_libraries(oresforge_mailbox_model PRIVATE oresforge_core)
+  add_test(NAME oresforge_actor_mailbox_model COMMAND oresforge_mailbox_model)
+  set_tests_properties(oresforge_actor_mailbox_model PROPERTIES TIMEOUT 30)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   add_test(NAME oresforge_cli_source_budget
     COMMAND "${Python3_EXECUTABLE}"
@@ -42,6 +55,11 @@ if(ORESFORGE_FUZZ)
   target_link_libraries(oresforge_fuzz PRIVATE oresforge_core)
   target_compile_options(oresforge_fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
   target_link_options(oresforge_fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
+  # Stateful differential fuzzing against the actual actor mailbox implementation.
+  add_executable(oresforge_mailbox_fuzz verification/fuzz_actor_mailbox.cpp)
+  target_link_libraries(oresforge_mailbox_fuzz PRIVATE oresforge_core)
+  target_compile_options(oresforge_mailbox_fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
+  target_link_options(oresforge_mailbox_fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
 endif()
 
 # Admission gates for language surfaces that this backend does not lower yet.
