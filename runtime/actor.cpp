@@ -10,6 +10,9 @@ Mailbox::Mailbox(std::uint64_t id,std::size_t capacity,std::size_t bytes):
       bytes==0 || bytes>kMaxMailboxBytes)
     throw std::invalid_argument("invalid or unbounded mailbox capacity");
 }
+// No concurrent references or in-flight sends may outlive a mailbox.
+// Discard undelivered owned payloads before their vector storage is freed.
+Mailbox::~Mailbox() noexcept { discard_pending(); }
 ActorRef Mailbox::ref() const {
   std::scoped_lock lock(mutex_);
   return ActorRef(id_,generation_,authority_);
