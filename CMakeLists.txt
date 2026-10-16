@@ -40,6 +40,20 @@ if(BUILD_TESTING)
   target_link_libraries(oresforge_mailbox_model PRIVATE oresforge_core)
   add_test(NAME oresforge_actor_mailbox_model COMMAND oresforge_mailbox_model)
   set_tests_properties(oresforge_actor_mailbox_model PROPERTIES TIMEOUT 30)
+  # Host-only actor physical credit parity with Java/LLVM/.NET. This does not
+  # authorize source-level parallel actor execution or claim a network reactor.
+  add_executable(oresforge_actor_turn_credits verification/actor_turn_credits.cpp)
+  target_include_directories(oresforge_actor_turn_credits PRIVATE .)
+  target_compile_features(oresforge_actor_turn_credits PRIVATE cxx_std_20)
+  target_link_libraries(oresforge_actor_turn_credits PRIVATE Threads::Threads)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_actor_turn_credits PRIVATE
+      -Wall -Wextra -Wpedantic -Wconversion -Werror)
+  endif()
+  add_test(NAME oresforge_actor_physical_turn_credits
+    COMMAND oresforge_actor_turn_credits)
+  set_tests_properties(oresforge_actor_physical_turn_credits PROPERTIES TIMEOUT 40)
+
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   add_test(NAME oresforge_cli_source_budget
     COMMAND "${Python3_EXECUTABLE}"
