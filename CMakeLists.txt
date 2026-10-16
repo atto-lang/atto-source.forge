@@ -23,6 +23,21 @@ if(BUILD_TESTING)
     target_compile_options(oresforge_actor_pipeline_policy_test PRIVATE
       -Wall -Wextra -Wpedantic -Werror)
   endif()
+  find_package(Threads REQUIRED)
+  add_executable(oresforge_actor_pipeline_concurrency_test
+    verification/actor_pipeline_concurrency_test.cpp)
+  target_include_directories(oresforge_actor_pipeline_concurrency_test PRIVATE .)
+  target_compile_features(oresforge_actor_pipeline_concurrency_test PRIVATE cxx_std_20)
+  target_link_libraries(oresforge_actor_pipeline_concurrency_test PRIVATE Threads::Threads)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_actor_pipeline_concurrency_test PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME actor_pipeline_v1_concurrent_selection_and_retirement
+    COMMAND oresforge_actor_pipeline_concurrency_test)
+  set_tests_properties(actor_pipeline_v1_concurrent_selection_and_retirement
+    PROPERTIES TIMEOUT 25)
+
   add_test(NAME actor_pipeline_v1_host_policy
     COMMAND oresforge_actor_pipeline_policy_test)
   set_tests_properties(actor_pipeline_v1_host_policy PROPERTIES TIMEOUT 15)
