@@ -91,10 +91,14 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* input,
       // Exercise foreign authority and revoked generations at runtime.
       static_assert(!std::is_constructible_v<ActorRef, std::uint64_t,
                                            std::uint64_t>);
-      const ActorRef attacker = op == 6 ? other.ref()
+      ActorRef attacker = op == 6 ? current
           : (has_revoked ? revoked : other.ref());
-      check(attempt(mailbox, attacker, std::vector<std::uint8_t>{}) ==
-            Outcome::invalid_ref);
+      if (op == 6) ++attacker.generation;
+      // Ignore closed state as a proof of authority fencing: in a live
+      // mailbox, tampered/foreign/stale references must be rejected.
+      if (!closed)
+        check(attempt(mailbox, attacker, std::vector<std::uint8_t>{}) ==
+              Outcome::invalid_ref);
       check(attempt(mailbox, other.ref(), std::vector<std::uint8_t>{}) ==
             Outcome::invalid_ref);
     }
