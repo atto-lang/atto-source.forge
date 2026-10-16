@@ -6,7 +6,9 @@
 namespace oresforge::runtime {
 Mailbox::Mailbox(std::uint64_t id,std::size_t capacity,std::size_t bytes):
     id_(id),capacity_(capacity),byte_capacity_(bytes) {
-  if (id==0 || capacity==0 || bytes==0) throw std::invalid_argument("invalid mailbox");
+  if (id==0 || capacity==0 || capacity>kMaxMailboxMessages ||
+      bytes==0 || bytes>kMaxMailboxBytes)
+    throw std::invalid_argument("invalid or unbounded mailbox capacity");
 }
 ActorRef Mailbox::ref() const {
   std::scoped_lock lock(mutex_);
