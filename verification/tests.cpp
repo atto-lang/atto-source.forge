@@ -53,6 +53,20 @@ int main() {
     }
     ensure(interpret(parse_source("fnc main():int{return 42;} // import ignored"))==42,
            "import in a comment does not trigger module admission");
+    // Nominal enums and same-arity virtual method dispatch are not part of
+    // this scalar frontend. Deny the declaration with a specific diagnostic,
+    // rather than claiming parity from a synthetic policy helper.
+    for (const auto& invalid : {
+        "define enum Color as Red end fnc main():int{return 1;}",
+        "define enum Color as Red end fnc pick(Color x):int{return 1;} "
+            "fnc pick(Mode x):int{return 2;} fnc main():int{return 0;}"
+    }) {
+      reject_diagnostic([&] { parse_source(invalid); },
+                        "nominal enum overloads require compiler-bound dispatch");
+    }
+    ensure(interpret(parse_source("fnc main():int{return 1;} // enum comment"))==1,
+           "enum spelling in a comment is not a declaration");
+
     ensure(interpret(source("2+3*4"))==14,"precedence");
     ensure(interpret(source("(2+3)*4"))==20,"parentheses");
     for (const auto& expression : {"3/2", "4/2", "5/0", "-9223372036854775808/-1"})
