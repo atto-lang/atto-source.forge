@@ -5,6 +5,7 @@
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+#include <vector>
 
 using oresforge::runtime::Mailbox;
 using oresforge::runtime::kMaxMailboxBytes;
@@ -32,10 +33,26 @@ int main() {
     Mailbox boundary(1, kMaxMailboxMessages, kMaxMailboxBytes);
     Mailbox standard(2);
     auto ref = boundary.ref();
+    std::vector<std::uint8_t> meg(kMaxMailboxBytes / 16, 0xb7);
+    if (meg.size() != oresforge::runtime::kMaxMessageBytes)
+      throw std::runtime_error("regression expects sixteen 1 MiB messages");
+    for (int i = 0; i < 16; ++i) boundary.send(ref, meg);
+    bool full_rejected = false;
+    try { boundary.send(ref, meg); }
+    catch (const std::length_error&) { full_rejected = true; }
+    if (!full_rejected || boundary.queued() != 16)
+      throw std::runtime_error("16 MiB mailbox byte cap not enforced");
+    auto delivered = boundary.receive();
+    if (!delivered || delivered->size() != meg.size() || delivered->at(0) != 0xb7)
+      throw std::runtime_error("owned message corrupt or lost");
+    boundary.send(ref, meg);  // reclaimed exactly 1 MiB credit
+    boundary.close();
+    if (boundary.queued() != 0 || meg[0] != 0xb7)
+      throw std::runtime_error("mailbox close retained entries or modified sender-owned bytes");
     const std::uint8_t payload[] = {1};
-    boundary.send(ref, payload);
-    if (boundary.queued() != 1)
-      throw std::runtime_error("bounded mailbox incorrectly rejected normal send");
+    standard.send(standard.ref(), payload);
+    if (standard.queued() != 1)
+      throw std::runtime_error("default mailbox incorrectly rejected normal send");
     std::cout << "forge actor mailbox bounds: pass\n";
     return 0;
   } catch (const std::exception& error) {
