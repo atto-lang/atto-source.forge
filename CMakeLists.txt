@@ -83,3 +83,16 @@ if(BUILD_TESTING)
   add_test(NAME oresforge_execution_graph_v1_host_only COMMAND oresforge_execution_graph_v1)
   set_tests_properties(oresforge_execution_graph_v1_host_only PROPERTIES TIMEOUT 45)
 endif()
+
+# Typed CPU/GPU plan constructor admission and malformed-IR fuzz matrix.
+if(BUILD_TESTING)
+  find_package(Threads REQUIRED)
+  add_executable(oresforge-typed-graph-security verification/execution_graph_v1_admission_security_test.cpp)
+  target_include_directories(oresforge-typed-graph-security PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge-typed-graph-security PRIVATE cxx_std_20)
+  target_compile_options(oresforge-typed-graph-security PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic -Werror>)
+  target_link_libraries(oresforge-typed-graph-security PRIVATE Threads::Threads)
+  add_test(NAME forge_typed_graph_malformed_admission COMMAND oresforge-typed-graph-security)
+  set_tests_properties(forge_typed_graph_malformed_admission PROPERTIES TIMEOUT 45)
+endif()
