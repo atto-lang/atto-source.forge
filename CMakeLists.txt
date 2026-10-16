@@ -42,4 +42,10 @@ if(BUILD_TESTING)
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/value_boundaries.py"
       "$<TARGET_FILE:oresforge>")
   set_tests_properties(value_boundary_admission PROPERTIES TIMEOUT 60)
+  # Shared Java-reference scalar source fixtures: executed guest values + negative admission.
+  add_test(NAME source_scalar_parity
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/contracts/scalar/v1/run.py"
+      --backend forge --mode stdout-i64 --command "$<TARGET_FILE:oresforge> run {source}")
+  set_tests_properties(source_scalar_parity PROPERTIES TIMEOUT 240)
+
 endif()
