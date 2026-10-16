@@ -22,7 +22,8 @@ CASES = json.loads(Path(__file__).with_name("value-boundary-rejections.json").re
 # or guest values. A frontend that merely rejects everything is not parity.
 with tempfile.TemporaryDirectory(prefix="ores-value-boundaries-") as work:
     source = Path(work) / "main.ores"
-    source.write_text("pub fnc main():int{return (5+3)*7-14;}")
+    shared_add = Path(__file__).resolve().parents[1] / "contracts/v1/semantics/fixtures/add.ores"
+    source.write_bytes(shared_add.read_bytes())  # identical Git blob across five backends
     for mode in ("ir", "run"):
         command = [compiler, mode, str(source)]
         control = subprocess.run(command, capture_output=True, text=True, timeout=20)
