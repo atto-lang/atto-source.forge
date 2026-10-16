@@ -53,6 +53,19 @@ int main() {
     }
     ensure(interpret(parse_source("fnc main():int{return 42;} // import ignored"))==42,
            "import in a comment does not trigger module admission");
+    // Named-call and tagged pipeline lowering are still unavailable in
+    // Forge's i64 bootstrap. Verify explicit rejection before codegen.
+    for (const auto& expression : {
+        "1 |> twice", "(1 |> twice)", "1+2 |> plus(3)",
+        "1 |> Option.map(inc)", "1 |> Result.map_err(annotate)",
+        "1 |> Option /*comment*/ . map(inc)",
+        "1 |> plus(2 |> Result.map_err(f))"
+    }) {
+      reject_diagnostic([&] { source(expression); },
+                        "value pipeline requires named callable lowering");
+    }
+    ensure(interpret(parse_source("fnc main():int{return 1;} // |> ignored"))==1,
+           "value pipeline syntax inside comments must not be tokenized");
     ensure(interpret(source("2+3*4"))==14,"precedence");
     ensure(interpret(source("(2+3)*4"))==20,"parentheses");
     for (const auto& expression : {"3/2", "4/2", "5/0", "-9223372036854775808/-1"})

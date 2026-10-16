@@ -112,6 +112,12 @@ class Parser {
         std::isdigit(static_cast<unsigned char>(source_[at_]))) ++at_;
       tok_={Kind::Number,source_.substr(start,at_-start),start}; return;
     }
+    // Recognize the contiguous operator, but defer execution until named
+    // callable and tagged value lowering are actually implemented.
+    if (source_[at_]=='|' && at_+1<source_.size() && source_[at_+1]=='>') {
+      at_+=2;
+      tok_={Kind::Punct,source_.substr(start,2),start}; return;
+    }
     if (source_[at_]=='-' && at_+1<source_.size() && source_[at_+1]=='>') {
       at_+=2;
       tok_={Kind::Punct,source_.substr(start,2),start}; return;
@@ -143,6 +149,8 @@ class Parser {
       next(); int right=term(depth+1);
       left=add(plus?Op::Add:Op::Sub,0,left,right);
     }
+    if (tok_.text=="|>")
+      error("value pipeline requires named callable lowering; unsupported in Forge i64 bootstrap");
     return left;
   }
   int term(std::size_t depth) {
