@@ -66,11 +66,16 @@ inline fs::path configured_project_root(const fs::path& manifest_dir,
     const std::regex root_value(R"ores(^[ \t]*root[ \t]*=[ \t]*"([^"]+)"[ \t]*(?:#.*)?$)ores");
     const std::regex dotted_root(R"ores(^[ \t]*project[ \t]*\.[ \t]*root[ \t]*=.*$)ores");
     std::string line, root_text = ".";
-    bool in_project = false, found_root = false;
+    bool in_project = false, seen_project_table = false, found_root = false;
     while (std::getline(input, line)) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
         if (std::regex_match(line, section)) {
             in_project = std::regex_match(line, project_table);
+            if (!in_project && line.find("project") != std::string::npos)
+                throw std::invalid_argument("unsupported project manifest table form");
+            if (in_project && seen_project_table)
+                throw std::invalid_argument("duplicate project table");
+            if (in_project) seen_project_table = true;
             continue;
         }
         if (std::regex_match(line, dotted_root))
