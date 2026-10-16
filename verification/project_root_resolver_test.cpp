@@ -66,7 +66,7 @@ int main() {
         check(relative_source(importer, "../lib/answer", project) == expected,
               "relative ../ import did not resolve");
         for (const auto& bad_relative : {"local", ".hidden/local", "./", "../",
-                                          "./missing", "./local.java",
+                                          "./missing", "./local.java", "./main",
                                           "../../../../other/answer",
                                           "./local//alias", "./local\\\\alias"}) {
             reject([&] { (void)relative_source(importer, bad_relative, project); },
