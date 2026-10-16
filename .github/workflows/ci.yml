@@ -25,6 +25,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
       - name: Verify exact PR-head checkout identity
         shell: bash
         env:
@@ -33,7 +34,6 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
           git rev-parse 'HEAD^{tree}'
-          persist-credentials: false
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DCMAKE_CXX_COMPILER=${{ matrix.compiler }}
       - name: Compile
@@ -50,6 +50,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
       - name: Verify exact PR-head checkout identity
         shell: bash
         env:
@@ -58,7 +59,6 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
           git rev-parse 'HEAD^{tree}'
-          persist-credentials: false
       - name: Configure ASan and UBSan
         run: >-
           cmake -S . -B build-sanitized -DCMAKE_BUILD_TYPE=Debug
@@ -80,6 +80,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
       - name: Verify exact PR-head checkout identity
         shell: bash
         env:
@@ -88,7 +89,6 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
           git rev-parse 'HEAD^{tree}'
-          persist-credentials: false
       - name: Configure instrumented libFuzzer
         run: >-
           cmake -S . -B build-fuzz -DCMAKE_BUILD_TYPE=Debug
