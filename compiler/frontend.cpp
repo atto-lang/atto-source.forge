@@ -104,6 +104,10 @@ class Parser {
       // Reject with a stable diagnostic rather than emitting an unrelated
       // scalar result from a source that depends on external modules.
       if (tok_.text=="import") error("source imports require verified module graph lowering");
+      // Reserve CPU/GPU and nb in the real lexer, before any scalar IR can be
+      // emitted. Unsupported nested execution graphs must not run on the CPU.
+      if (tok_.text=="cpu" || tok_.text=="gpu" || tok_.text=="nb")
+        error("execution region requires verified typed CPU/GPU/nb lowering");
       return;
     }
     if (std::isdigit(c)) {
