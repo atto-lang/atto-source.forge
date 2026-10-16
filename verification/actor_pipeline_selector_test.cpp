@@ -85,6 +85,59 @@ int main() {
   rejects([&]{stopped.advance_generation(21,false,true);},"post-STOP abort");
   check(stopped.generation()==20,"STOP changed routing generation");
   stopped.retire(); // idempotent terminal state
+  // Race ordinary route selection with a supervisor STOP barrier.
+  // All calls that begin after retire() returns MUST fail. Calls that
+  // overlap STOP may linearize on either side; never assert ordering from
+  // an observation made only after a previously started operation.
+  {
+    ActorPipelineSelector racing(stages,edges,31);
+    std::atomic<bool> begin{false}, after_stop{false};
+    std::atomic<int> ready{0}, pre_attempts{0}, accepted_after{0};
+    std::atomic<int> expected_rejections{0};
+    std::vector<std::thread> contenders;
+    for(int t=0;t<8;++t) {
+      contenders.emplace_back([&,t] {
+        ++ready;
+        while(!begin.load(std::memory_order_acquire)) std::this_thread::yield();
+        while(!after_stop.load(std::memory_order_acquire)) {
+          try {
+            switch(t%4) {
+              case 0: (void)racing.forward_all("source"); break;
+              case 1: (void)racing.forward_to("source","worker-a"); break;
+              case 2: (void)racing.forward_by_key("source","k"); break;
+              default: (void)racing.forward_round_robin("source"); break;
+            }
+          } catch(const std::invalid_argument&) { /* raced with STOP */ }
+          ++pre_attempts;
+        }
+        for(int n=0;n<1000;++n) {
+          try {
+            switch(n%5) {
+              case 0: (void)racing.forward_all("source"); break;
+              case 1: (void)racing.forward_to("source","worker-b"); break;
+              case 2: (void)racing.forward_by_key("source","beta"); break;
+              case 3: (void)racing.forward_round_robin("source"); break;
+              default: racing.require_ingress_root("source"); break;
+            }
+            ++accepted_after;
+          } catch(const std::invalid_argument&) {
+            ++expected_rejections;
+          }
+        }
+      });
+    }
+    while(ready.load()<8) std::this_thread::yield();
+    begin.store(true,std::memory_order_release);
+    while(pre_attempts.load()<800) std::this_thread::yield();
+    racing.retire();
+    after_stop.store(true,std::memory_order_release);
+    for(auto& t:contenders)t.join();
+    check(accepted_after.load()==0 && expected_rejections.load()==8000,
+          "a routing decision was accepted after retirement returned");
+    rejects([&]{racing.advance_generation(32,true,false);},
+            "retirement raced with generation reopening");
+    check(racing.generation()==31,"retired selector changed generation");
+  }
   rejects([&]{g.advance_generation(8,false,false);},"unfenced epoch");
   g.advance_generation(8,true,false);
   check(g.forward_round_robin("source").target=="worker-a","epoch reset");
