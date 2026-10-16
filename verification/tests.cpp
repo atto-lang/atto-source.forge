@@ -39,6 +39,24 @@ oresforge::Program source(const std::string& expr) {
 int main() {
   try {
     using namespace oresforge;
+    // Cross-backend i64 positive controls run against the real Forge parser,
+    // verified IR and checked interpreter. These are not Python-only data tests.
+    for (const auto& [expression, expected] :
+         std::array<std::pair<const char*, std::int64_t>, 7>{
+             std::pair{"2+3*4", std::int64_t{14}},
+             {"(2+3)*4", 20}, {"(8-3)*5+2", 27},
+             {"100-(3+2)-19", 76}, {"3*4-2*5-7", -5},
+             {"9223372036854775807-1", std::numeric_limits<std::int64_t>::max()-1},
+             {"-9223372036854775808", std::numeric_limits<std::int64_t>::min()}
+         }) {
+      ensure(interpret(source(expression))==expected,"numeric parity i64 source");
+    }
+    // The bootstrap intentionally has NO BigInt, Decimal or binary64 lowering.
+    // Fail closed rather than treating those spellings as signed i64.
+    reject([] { source("1.25"); });
+    reject([] { source("2.0i"); });
+    reject([] { parse_source("fnc main():bigint{return 1;}"); });
+    reject([] { parse_source("fnc main():decimal{return 1;}"); });
     ensure(interpret(source("2+3*4"))==14,"precedence");
     ensure(interpret(source("(2+3)*4"))==20,"parentheses");
     for (const auto& expression : {"3/2", "4/2", "5/0", "-9223372036854775808/-1"})
