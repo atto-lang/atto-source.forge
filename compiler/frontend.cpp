@@ -55,7 +55,8 @@ class Parser {
       }
       next();
     }
-    expect("fnc"); expect("main"); expect("("); expect(")"); expect(":");
+    expect("fnc"); expect("main"); expect("("); expect(")");
+    if (!take(":")) expect("->");
     expect("int"); expect("{"); expect("return");
     const int result=expr(0);
     expect(";"); expect("}");
@@ -110,6 +111,10 @@ class Parser {
       while (at_<source_.size() &&
         std::isdigit(static_cast<unsigned char>(source_[at_]))) ++at_;
       tok_={Kind::Number,source_.substr(start,at_-start),start}; return;
+    }
+    if (source_[at_]=='-' && at_+1<source_.size() && source_[at_+1]=='>') {
+      at_+=2;
+      tok_={Kind::Punct,source_.substr(start,2),start}; return;
     }
     if (std::string_view("()+-*/{};:").find(static_cast<char>(c)) == std::string_view::npos)
       error("invalid character");
