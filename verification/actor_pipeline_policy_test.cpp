@@ -1,13 +1,16 @@
 #include "runtime/actor_pipeline_policy.hpp"
-#include <cassert>
+#include <stdexcept>
 #include <functional>
 #include <iostream>
 #include <tuple>
 using namespace oresforge::runtime;
+static void check(bool ok,const char* why){
+  if(!ok)throw std::runtime_error(why);
+}
 static void deny(const std::function<void()>& fn){
   bool failed=false;
   try{fn();}catch(const std::exception&){failed=true;}
-  assert(failed);
+  check(failed,"missing expected rejection");
 }
 int main(){
   auto stages=std::vector<PipeStage>{{"src","Producer","readable","","Event"},
@@ -15,11 +18,11 @@ int main(){
     {"c","Worker","writable","Event",""}};
   auto edges=std::vector<PipeEdge>{{"src","a","Event"},{"src","b","Event"},{"src","c","Event"}};
   ActorPipePolicy plan(stages,edges);
-  assert(plan.forward_all("src").size()==3);
+  check(plan.forward_all("src").size()==3,"fanout");
   for(const char* expected:{"a","b","c","a","b","c"})
-    assert(plan.forward_round_robin("src").target==expected);
+    check(plan.forward_round_robin("src").target==expected,"round-robin");
   deny([&]{(void)plan.forward("src");});
-  assert(plan.forward_to("src","b").target=="b");
+  check(plan.forward_to("src","b").target=="b","target");
   deny([&]{(void)plan.forward_to("src","z");});
   for(const auto& [key,target,hash]:std::vector<std::tuple<std::string,std::string,std::uint64_t>>{
      {"customer-7","a",UINT64_C(0x660308ab83c6fdf1)},
@@ -27,8 +30,8 @@ int main(){
      {"beta","c",UINT64_C(0x7627619b954620a7)},
      {"\xf0\x9f\x8c\x8d","a",UINT64_C(0xff430438753bca3b)},
      {"","c",UINT64_C(0xcbf29ce484222325)}}){
-    assert(pipe_route_hash64(key)==hash);
-    assert(plan.forward_by_key("src",key).target==target);
+    check(pipe_route_hash64(key)==hash,"hash");
+    check(plan.forward_by_key("src",key).target==target,"key-route");
   }
   deny([&]{auto bad=edges;bad.push_back(edges.front());ActorPipePolicy x(stages,bad);});
   deny([&]{auto bad=edges;bad.front().payload="Wrong";ActorPipePolicy x(stages,bad);});
@@ -39,6 +42,6 @@ int main(){
   deny([&]{(void)pipe_route_hash64(std::string(4097,'x'));});
   plan.close();deny([&]{(void)plan.forward_all("src");});
   ActorPipePolicy fresh(stages,edges);
-  assert(fresh.forward_round_robin("src").target=="a");
+  check(fresh.forward_round_robin("src").target=="a","fresh RR");
   std::cout<<"ORES_FORGE_HOST_ACTOR_PIPELINE_POLICY_PASS\n";
 }
