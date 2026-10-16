@@ -46,7 +46,7 @@ int main() {
     const std::string arithmetic76=R"ores(pub fnc main(): int {
   return 100 - (3 + 2) - 19;
 }
-)ores";\\n}\\n";
+)ores";
     ensure(interpret(parse_source(arithmetic76))==76,
            "shared arithmetic-76 source execution");
     for (const auto& expression : {"3/2", "4/2", "5/0", "-9223372036854775808/-1"})
