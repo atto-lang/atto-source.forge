@@ -37,6 +37,15 @@ int main() {
         write(tmp / "other" / "answer.ores", "fnc answer():int{return 0;}\n");
         reject([&] { (void)project_root_source(project, "+/src/lib/answer"); },
                "missing manifest gained package-root authority");
+        write(project / ".ores.pkg.toml", "schema_version = \"2\"\n");
+        reject([&] { (void)project_root_source(project, "+/src/lib/answer"); },
+               "unsupported manifest schema admitted");
+        write(project / ".ores.pkg.toml", "schema_version = \"1\"\nschema_version = \"1\"\n");
+        reject([&] { (void)project_root_source(project, "+/src/lib/answer"); },
+               "duplicate manifest schema admitted");
+        write(project / ".ores.pkg.toml", "name = \"test\"\n");
+        reject([&] { (void)project_root_source(project, "+/src/lib/answer"); },
+               "missing manifest schema admitted");
         write(project / ".ores.pkg.toml", "schema_version = \"1\"\n");
         const auto expected = fs::canonical(project / "src" / "lib" / "answer.ores");
         check(project_root_source(project, "+/src/lib/answer") == expected,
@@ -63,6 +72,30 @@ int main() {
                    "foreign source symlink escaped package boundary");
         fs::create_symlink(tmp / "other" / "answer.ores",
                            project / ".ores.pkg.toml.injected", error);
+        // A manifest symlink to a nested file must not confer project-root
+        // authority, even if the target contains a plausible v1 marker.
+        write(project / "src" / "foreign-manifest.toml", "schema_version = \"1\"\n");
+        fs::remove(project / ".ores.pkg.toml");
+        error.clear();
+        fs::create_symlink(project / "src" / "foreign-manifest.toml",
+                           project / ".ores.pkg.toml", error);
+        if (!error) {
+            reject([&] { (void)project_root_source(project, "+/src/lib/answer"); },
+                   "manifest symlink delegated root authority into child directory");
+            fs::remove(project / ".ores.pkg.toml");
+        }
+        write(project / ".ores.pkg.toml", "schema_version = \"1\"\n");
+        // Lexical nested-package crossing cannot be legalized by a symlink
+        // pointing back to the parent-owned physical source.
+        write(project / "nested" / ".ores.pkg.toml", "schema_version = \"1\"\n");
+        error.clear();
+        fs::create_symlink(project / "src" / "lib" / "answer.ores",
+                           project / "nested" / "backref.ores", error);
+        if (!error)
+            reject([&] { (void)project_root_source(project, "+/nested/backref"); },
+                   "nested-package symlink alias escaped namespace boundary");
+        check(project_root_source(project, "+/src/lib/answer") == expected,
+              "legal parent-owned source rejected after nested checks");
         fs::create_directories(tmp / "another");
         write(tmp / "another" / ".ores.pkg.toml", "schema_version = \"1\"\n");
         check(project_root_source(project, "+/src/lib/answer") == expected,
