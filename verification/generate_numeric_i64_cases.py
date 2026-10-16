@@ -18,17 +18,25 @@ LO, HI = -(1 << 63), (1 << 63) - 1
 
 def evaluate(node):
     if isinstance(node, ast.Constant) and type(node.value) is int:
-        if not 0 <= node.value <= (1 << 63):
+        # +2**63 cannot appear as an ordinary Oreslang int literal.
+        # It is admitted solely as the immediate syntactic magnitude
+        # of unary minus used to spell INT64_MIN.
+        if not 0 <= node.value <= HI:
             raise ValueError("portable integer literal out of bounds")
         return node.value
-    if isinstance(node, ast.UnaryOp) and type(node.op) in (ast.UAdd, ast.USub):
-        x = evaluate(node.operand)
-        result = x if type(node.op) is ast.UAdd else -x
+    if isinstance(node, ast.UnaryOp) and type(node.op) is ast.USub:
+        if (isinstance(node.operand, ast.Constant)
+                and type(node.operand.value) is int
+                and node.operand.value == (1 << 63)):
+            return LO
+        result = -evaluate(node.operand)
     elif isinstance(node, ast.BinOp) and type(node.op) in (ast.Add, ast.Sub, ast.Mult):
         x, y = evaluate(node.left), evaluate(node.right)
         result = x + y if type(node.op) is ast.Add else (
             x - y if type(node.op) is ast.Sub else x * y)
     else:
+        # No unary plus, floats, exponentiation or implicit promotion:
+        # this must match the actual checked-i64 source parser.
         raise ValueError("nonportable numeric source expression")
     if not LO <= result <= HI:
         raise ValueError("i64 intermediate overflow")
