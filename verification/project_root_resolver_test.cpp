@@ -56,6 +56,34 @@ int main() {
         const auto expected = fs::canonical(project / "src" / "lib" / "answer.ores");
         check(project_root_source(project, "+/src/lib/answer") == expected,
               "canonical root source unresolved");
+        // The manifest's explicit project.root changes the authority anchor.
+        write(project / "appdata" / "lib" / "answer.ores",
+              "fnc answer():int{return 42;}\n");
+        write(project / ".ores.pkg.toml",
+              "schema_version = \"1\"\n[project]\nroot = \"appdata\"\n");
+        check(project_root_source(project, "+/lib/answer") ==
+                  fs::canonical(project / "appdata/lib/answer.ores"),
+              "explicit project.root ignored");
+        reject([&] { (void)project_root_source(project, "+/src/lib/answer"); },
+               "rooted import leaked manifest parent after explicit root");
+        for (const char* bad_root : {"../other", "/tmp", "appdata/../src", "",
+                                     "appdata\\outside"}) {
+            write(project / ".ores.pkg.toml",
+                  ("schema_version = \"1\"\n[project]\nroot = \"" +
+                   std::string(bad_root) + "\"\n").c_str());
+            reject([&] { (void)project_root_source(project, "+/lib/answer"); },
+                   "unsafe project.root admitted");
+        }
+        write(project / ".ores.pkg.toml",
+              "schema_version = \"1\"\n[project]\nroot = \"appdata\"\nroot = \"appdata\"\n");
+        reject([&] { (void)project_root_source(project, "+/lib/answer"); },
+               "duplicate project.root admitted");
+        write(project / ".ores.pkg.toml",
+              "schema_version = \"1\"\nproject.root = \"appdata\"\n");
+        reject([&] { (void)project_root_source(project, "+/lib/answer"); },
+               "unsupported dotted project.root accepted");
+        write(project / ".ores.pkg.toml", "schema_version = \"1\"\n");
+
         check(project_root_source(project, "+/src/lib/answer.ores") == expected,
               "exact .ores source unresolved");
         for (const std::string& bad : std::vector<std::string>{
