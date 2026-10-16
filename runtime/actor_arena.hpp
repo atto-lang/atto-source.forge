@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <exception>
 #include <limits>
 #include <mutex>
 #include <span>
@@ -29,10 +30,17 @@ class ActorArena final {
   }
   ActorArena(const ActorArena&) = delete;
   ActorArena& operator=(const ActorArena&) = delete;
-  ~ActorArena() { scrub(); }
+  ~ActorArena() noexcept {
+    // A live carrier must be quiesced by CONTROL before destruction. Never
+    // scrub concurrently with an admitted turn or park awaiting its mutex.
+    std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
+    if (!lock.owns_lock() || active_) std::terminate();
+    scrub();
+  }
 
   Turn begin_turn(std::uint64_t actor, std::uint64_t incarnation) {
-    std::scoped_lock lock(mutex_);
+    std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
+    if (!lock.owns_lock()) throw std::logic_error("actor arena busy");
     if (retired_ || active_ || actor != actor_ || incarnation != incarnation_ ||
         epoch_ == std::numeric_limits<std::uint64_t>::max())
       throw std::logic_error("actor arena admission denied");
@@ -103,7 +111,8 @@ class ActorArena final {
     std::memcpy(out.data(), scratch_.data() + h.offset, out.size());
   }
   void retire() {
-    std::scoped_lock lock(mutex_);
+    std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
+    if (!lock.owns_lock()) throw std::logic_error("actor arena busy");
     if (retired_) return;
     if (active_) throw std::logic_error("active actor turn blocks retirement");
     retired_ = true;
