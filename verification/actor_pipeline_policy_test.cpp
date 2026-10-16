@@ -30,7 +30,7 @@ int main(){
      {"beta","c",UINT64_C(0x7627619b954620a7)},
      {"\xf0\x9f\x8c\x8d","a",UINT64_C(0xff430438753bca3b)},
      {"","c",UINT64_C(0xcbf29ce484222325)},
-     {std::string(1, '\\0'),"a",UINT64_C(0xaf63bd4c8601b7df)}}){
+     {std::string(1, '\0'),"a",UINT64_C(0xaf63bd4c8601b7df)}}){
     check(pipe_route_hash64(key)==hash,"hash");
     check(plan.forward_by_key("src",key).target==target,"key-route");
   }
