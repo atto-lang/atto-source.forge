@@ -48,6 +48,11 @@ if(ORESFORGE_FUZZ)
   target_link_libraries(oresforge_fuzz PRIVATE oresforge_core)
   target_compile_options(oresforge_fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
   target_link_options(oresforge_fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
+  # Stateful differential fuzzing against the actual actor mailbox implementation.
+  add_executable(oresforge_mailbox_fuzz verification/fuzz_actor_mailbox.cpp)
+  target_link_libraries(oresforge_mailbox_fuzz PRIVATE oresforge_core)
+  target_compile_options(oresforge_mailbox_fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
+  target_link_options(oresforge_mailbox_fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
 endif()
 
 # Admission gates for language surfaces that this backend does not lower yet.
