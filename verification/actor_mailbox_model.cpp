@@ -47,20 +47,15 @@ void run_model(std::uint64_t seed) {
       enum class Outcome { admitted, full, stopped };
       const auto expected = closed ? Outcome::stopped :
           (full ? Outcome::full : Outcome::admitted);
-      bool admitted = false;
-      try {
-        box.send(ref, payload);
-        expect(expected == Outcome::admitted,
-               "message unexpectedly admitted");
-        admitted = true;
-      } catch (const std::length_error&) {
-        expect(expected == Outcome::full,
-               "incorrect byte/slot capacity rejection");
-      } catch (const std::runtime_error&) {
-        expect(expected == Outcome::stopped,
-               "incorrect close or generation rejection");
-      }
-      if (admitted) {
+      // Capture the actual result before asserting: assertion failures must
+      // never be mistaken for expected std::runtime_error send failures.
+      Outcome observed = Outcome::admitted;
+      try { box.send(ref, payload); }
+      catch (const std::length_error&) { observed = Outcome::full; }
+      catch (const std::runtime_error&) { observed = Outcome::stopped; }
+      expect(observed == expected,
+             "mailbox admission differs from reference state machine");
+      if (observed == Outcome::admitted) {
         oracle.push_back(payload);
         bytes += payload.size();
         if (!payload.empty()) payload.front() ^= 0xff;
