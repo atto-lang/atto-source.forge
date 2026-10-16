@@ -83,10 +83,18 @@ void run_model(std::uint64_t seed) {
       bytes = 0;
       closed = false;
     } else if (operation == 9) {
-      // Numeric identities are public metadata, not send authority.
-      // The only valid references originate from Mailbox::ref/restart.
-      expect(!std::is_constructible_v<ActorRef, std::uint64_t, std::uint64_t>,
-             "numeric-only actor reference is constructible");
+      // Even a copied valid capability must be rejected if the public
+      // identity fields are tampered with. Run only while open so the
+      // rejection cannot be attributed to close() instead of fencing.
+      if (!closed) {
+        ActorRef tampered = ref;
+        if ((next(rng) & 1U) == 0) ++tampered.id;
+        else ++tampered.generation;
+        bool rejected = false;
+        try { box.send(tampered, std::vector<std::uint8_t>{}); }
+        catch (const std::runtime_error&) { rejected = true; }
+        expect(rejected, "tampered actor identity was accepted");
+      }
     } else if (operation == 10) {
       bool rejected = false;
       try { box.send(foreign.ref(), std::vector<std::uint8_t>{}); }
