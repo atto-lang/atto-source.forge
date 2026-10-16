@@ -40,6 +40,17 @@ int main() {
   try {
     using namespace oresforge;
     ensure(interpret(source("2+3*4"))==14,"precedence");
+    // Structural functions, parameters and canonical pattern arms require a
+    // real type checker/ownership lowering; arithmetic bootstrap must reject.
+    for (const std::string_view candidate : {
+        "structural fnc main(): int { return 1; }",
+        "fnc main(structural Shape value): int { return 1; }",
+        "fnc main(): int { match 1 over on _ -> { return 1; } end }",
+        "fnc main(): int { return match 1 over on _ -> { return 1; } end; }"
+    }) {
+      reject([&] { (void)parse_source(candidate); });
+    }
+
     ensure(interpret(source("(2+3)*4"))==20,"parentheses");
     for (const auto& expression : {"3/2", "4/2", "5/0", "-9223372036854775808/-1"})
       reject_diagnostic([&] { source(expression); }, "float result lowering");
