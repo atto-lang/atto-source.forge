@@ -65,16 +65,25 @@ int main() {
       "fnc main():int{return lex[self] || -> 1;}",
       "define class Foo as fnc read(mut self, int x): int { return x; } end",
       "define class Foo as fnc read(self Foo)(int x): int { return x; } end",
-      "fnc main():int{let int x=1;return lex[x,x] || -> x;}",
-      "fnc main():int{let int x=1;return lex[missing] || -> x;}",
-      "fnc main():int{let int x=1;return lex[] || -> x;}",
-      "fnc main():int{let int x=1;return nlex[self] || -> x;}",
-      "fnc main():int{let int x=1;return nlex[] || -> x;}",
-      "fnc main():int{let int x=1;return lex[x] |x| -> x;}",
-      "fnc main():int{let int x=1;return |y| -> x;}",
-      "fnc main():int{let int x=1;return lex[x] || -> nlex || -> x;}",
-      "fnc main():int{let int x=1;return nlex[self] critical |state| -> 1;}",
-    }) reject([&] { parse_source(program); });
+      "fnc main():int{return lex[x,x] || -> x;}",
+      "fnc main():int{return lex[missing] || -> x;}",
+      "fnc main():int{return lex[] || -> x;}",
+      "fnc main():int{return nlex[self] || -> x;}",
+      "fnc main():int{return nlex[] || -> x;}",
+      "fnc main():int{return lex[x] |x| -> x;}",
+      "fnc main():int{return |y| -> x;}",
+      "fnc main():int{return lex[x] || -> nlex || -> x;}",
+      "fnc main():int{return nlex[self] critical |state| -> 1;}",
+    }) {
+      // A catch-all parser exception is not proof of fail-closed feature
+      // admission. Check that the unsupported feature itself was diagnosed.
+      const std::string_view text(program);
+      const bool method = text.find("define class") != std::string_view::npos ||
+                          text.find("define actor") != std::string_view::npos;
+      reject_diagnostic([&] { parse_source(program); }, method
+                        ? "class/actor methods require typed native lowering"
+                        : "lexical captures require checked closure lowering");
+    }
     ensure(interpret(source("2+3*4"))==14,"precedence");
     ensure(interpret(source("(2+3)*4"))==20,"parentheses");
     for (const auto& expression : {"3/2", "4/2", "5/0", "-9223372036854775808/-1"})
