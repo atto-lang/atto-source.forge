@@ -31,9 +31,11 @@ inline void require_v1_manifest(const fs::path& manifest) {
     std::size_t consumed = 0, count = 0;
     bool top_level = true;
     while (std::getline(input, line)) {
-        if (line.size() > 65536 || consumed > 65536 - line.size())
+        // Include the consumed line delimiter in the manifest byte budget:
+        // a file of blank lines must not evade the nominal 64 KiB ceiling.
+        if (line.size() >= 65536 || consumed > 65536 - (line.size() + 1))
             throw std::invalid_argument("package manifest exceeds 64 KiB");
-        consumed += line.size();
+        consumed += line.size() + 1;
         if (!line.empty() && line.back() == '\r') line.pop_back();
         if (line.find('\0') != std::string::npos ||
             line.find("\"\"\"") != std::string::npos ||
