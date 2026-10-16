@@ -53,6 +53,22 @@ int main() {
     }
     ensure(interpret(parse_source("fnc main():int{return 42;} // import ignored"))==42,
            "import in a comment does not trigger module admission");
+    // The bootstrap has no typed CPU/GPU graph IR: lexical admission must
+    // reject even syntactically nested or nonblocking scopes before codegen.
+    ensure(interpret(parse_source("fnc main():int{return 42;} // cpu gpu nb"))==42,
+           "execution keywords inside comments are ignored");
+    for (const auto& program : {
+      "fnc main():int{return cpu {1};}",
+      "fnc main():int{return gpu {1};}",
+      "fnc main():int{return cpu {gpu {1}};}",
+      "fnc main():int{return gpu {cpu {gpu {1}}};}",
+      "fnc main():int{return nb gpu {1};}",
+      "fnc main():int{return nb cpu {1};}",
+      "fnc main():int{return gpu;}"
+    }) {
+      reject_diagnostic([&] { parse_source(program); },
+                        "execution region requires verified typed CPU/GPU/nb lowering");
+    }
     ensure(interpret(source("2+3*4"))==14,"precedence");
     ensure(interpret(source("(2+3)*4"))==20,"parentheses");
     for (const auto& expression : {"3/2", "4/2", "5/0", "-9223372036854775808/-1"})
