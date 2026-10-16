@@ -113,6 +113,16 @@ int main() {
     });
     reject([] { interpret(source("9223372036854775807 + 1")); });
     reject([] { interpret(source("3/0")); });
+    // Forge's scalar bootstrap does not lower structural positional tuples.
+    reject([] {
+      parse_source("fnc take(tuple (int,int,string?) v):int{return 1;}");
+    });
+    reject([] {
+      parse_source("fnc take((int,int,string?) v):int{return 1;}");
+    });
+    reject([] {
+      parse_source("fnc take(structural (int,int,string?) v):int{return 1;}");
+    });
     reject([] { parse_source("fnc main():int {return 1;} garbage"); });
     reject([] { parse_source("fnc main():int {return x;}"); });
     reject([] { parse_source("pub pub fnc main():int {return 1;}"); });
