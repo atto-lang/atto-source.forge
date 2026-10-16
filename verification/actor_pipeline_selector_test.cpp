@@ -1,7 +1,9 @@
 #include "runtime/actor_pipeline_selector.hpp"
 #include "compiler/frontend.hpp"
+#include <atomic>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 using namespace oresforge::runtime;
 static void check(bool ok, const char* reason) {
@@ -48,6 +50,29 @@ int main() {
   for(int i=0;i<999;++i)
     check(g.forward_round_robin("source").target==edges.at(i%3).target,
           "round-robin publication order");
+  // Shared RR cursor remains strict across concurrent host attempts; this
+  // does not claim parallel execution of guest actor code.
+  ActorPipelineSelector concurrent(stages,edges,101);
+  std::atomic<int> counts[3] = {};
+  std::vector<std::thread> senders;
+  for (int w=0;w<8;++w) {
+    senders.emplace_back([&] {
+      for(int i=0;i<1000;++i) {
+        auto chosen=concurrent.forward_round_robin("source").target;
+        int slot = chosen=="worker-a" ? 0 : chosen=="worker-b" ? 1 :
+                   chosen=="worker-c" ? 2 : -1;
+        check(slot>=0,"unknown concurrent RR target");
+        ++counts[slot];
+      }
+    });
+  }
+  for(auto& t:senders)t.join();
+  const int a=counts[0].load(),b=counts[1].load(),c=counts[2].load();
+  check(a+b+c==8000 && a==2667 && b==2667 && c==2666,
+        "concurrent RR lost a turn or favored a consumer");
+  concurrent.advance_generation(102,true,false);
+  check(concurrent.forward_round_robin("source").target=="worker-a",
+        "generation change did not reset concurrent RR");
   rejects([&]{g.advance_generation(8,false,false);},"unfenced epoch");
   g.advance_generation(8,true,false);
   check(g.forward_round_robin("source").target=="worker-a","epoch reset");
