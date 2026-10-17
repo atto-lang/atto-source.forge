@@ -7,11 +7,13 @@
 #include <cstdint>
 #include <cstring>
 #include <exception>
+#include <functional>
 #include <limits>
 #include <mutex>
 #include <span>
 #include <stdexcept>
 #include <thread>
+#include <type_traits>
 #include <utility>
 namespace oresforge::runtime {
 namespace detail {
@@ -185,6 +187,23 @@ class ActorArena final {
       throw std::overflow_error("actor arena external lease count exhausted");
     ++external_leases_;
     return ExternalLease(*this);
+  }
+
+  template <class F>
+  auto track_external_callback(Turn turn, F&& callback) {
+    auto lease = acquire_external(turn);
+    using Fn = std::decay_t<F>;
+    return [lease = std::move(lease),
+            callback = Fn(std::forward<F>(callback)),
+            fired = false](auto&&... args) mutable -> decltype(auto) {
+      if (fired) throw std::logic_error("actor external completion already fired");
+      fired = true;
+      struct CloseGuard {
+        ExternalLease* lease;
+        ~CloseGuard() noexcept { lease->close(); }
+      } guard{&lease};
+      return std::invoke(callback, std::forward<decltype(args)>(args)...);
+    };
   }
 
   std::size_t outstanding_external_leases() const {
