@@ -12,9 +12,12 @@ import stat
 from pathlib import Path
 import re
 import shlex
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 
 HERE = Path(__file__).resolve().parent
 MAX_OUTPUT_BYTES = 65536
@@ -179,26 +182,103 @@ NEGATIVE_DIAGNOSTICS = {
 }
 
 
+def capture_bounded(argv, timeout):
+    """Capture bounded stdout/stderr while a process is running.
+
+    A delayed post-exit size check can exhaust disk. Reader threads drain
+    anonymous pipes in small chunks, storing at most MAX_OUTPUT_BYTES + 1
+    per stream. On overflow or timeout, kill the isolated POSIX process group
+    (or the direct child on Windows). No shell or compiler credentials.
+    """
+    popen_kwargs = {"stdin": subprocess.DEVNULL, "stdout": subprocess.PIPE,
+                    "stderr": subprocess.PIPE}
+    if os.name == "posix":
+        popen_kwargs["start_new_session"] = True
+    elif os.name == "nt":
+        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    proc = subprocess.Popen(argv, **popen_kwargs)
+    outputs = [bytearray(), bytearray()]
+    overflow = threading.Event()
+    read_errors = []
+
+    def reader(stream, buffer):
+        try:
+            while True:
+                chunk = os.read(stream.fileno(), 4096)
+                if not chunk:
+                    break
+                room = MAX_OUTPUT_BYTES + 1 - len(buffer)
+                if room > 0:
+                    buffer.extend(chunk[:room])
+                if len(buffer) > MAX_OUTPUT_BYTES:
+                    overflow.set()
+                    break
+        except OSError as exc:
+            read_errors.append(exc)
+            overflow.set()
+        finally:
+            stream.close()
+
+    threads = [threading.Thread(target=reader, args=(pipe, buf), daemon=True)
+               for pipe, buf in zip((proc.stdout, proc.stderr), outputs)]
+    for thread in threads:
+        thread.start()
+
+    def kill_group():
+        if os.name == "posix":
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        elif proc.poll() is None:
+            proc.kill()
+
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            if overflow.is_set():
+                if read_errors:
+                    raise OSError("compiler output pipe read failed") from read_errors[0]
+                return None, b"", b"", True
+            if proc.poll() is not None and all(not t.is_alive() for t in threads):
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(argv, timeout)
+            for thread in threads:
+                thread.join(timeout=min(0.025, remaining))
+        if read_errors:
+            raise OSError("compiler output pipe read failed") from read_errors[0]
+        return proc.returncode, bytes(outputs[0]), bytes(outputs[1]), False
+    finally:
+        # Also terminate descendants holding inherited pipe FDs after the
+        # direct compiler process exits, preventing a stuck background writer.
+        if overflow.is_set() or proc.poll() is None or any(t.is_alive() for t in threads):
+            kill_group()
+        try:
+            proc.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            kill_group()
+            proc.wait(timeout=1)
+        for thread in threads:
+            thread.join(timeout=0.2)
+
+
 def run_case(command, source, kind, value, mode, timeout, backend=None, case_id=None):
     argv = [s.replace("{source}", str(source)) for s in command]
-    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
-        try:
-            proc = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=out, stderr=err,
-                                  timeout=timeout, check=False)
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            return False, "infrastructure: " + type(exc).__name__
-        if out.tell() > MAX_OUTPUT_BYTES or err.tell() > MAX_OUTPUT_BYTES:
-            return False, "compiler output exceeded 64 KiB"
-        out.seek(0)
-        err.seek(0)
-        # Invalid UTF-8 from a compiler is not an admissible semantic
-        # diagnostic. Replacement decoding could turn arbitrary failure
-        # bytes + exit(1) into an apparently passing rejection test.
-        try:
-            stdout = out.read().decode("utf-8", "strict")
-            stderr = err.read().decode("utf-8", "strict")
-        except UnicodeDecodeError:
-            return False, "infrastructure: invalid UTF-8 in compiler output"
+    try:
+        returncode, stdout_bytes, stderr_bytes, exceeded = capture_bounded(argv, timeout)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return False, "infrastructure: " + type(exc).__name__
+    if exceeded:
+        return False, "compiler output exceeded 64 KiB"
+    # Invalid UTF-8 from a compiler is not admissible semantic evidence.
+    try:
+        stdout = stdout_bytes.decode("utf-8", "strict")
+        stderr = stderr_bytes.decode("utf-8", "strict")
+    except UnicodeDecodeError:
+        return False, "infrastructure: invalid UTF-8 in compiler output"
+    proc = type("CompletedProcessStatus", (), {"returncode": returncode})()
     if kind == "reject":
         signature = NEGATIVE_DIAGNOSTICS.get(backend, {}).get(case_id)
         # Full-match disallows prefixed disk/launcher failures and extra errors.
