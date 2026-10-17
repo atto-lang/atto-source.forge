@@ -70,12 +70,10 @@ int main() {
 #endif
   ActorArena a(10, 1), b(11, 1);
   auto ta = a.begin_turn(10, 1);
-  auto tb = b.begin_turn(11, 1);
+  rejects([&] { (void)b.begin_turn(11, 1); });  // one carrier, one actor turn
   auto h = a.allocate(ta, 2);
   std::array<std::byte, 2> value{std::byte{42}, std::byte{9}}, output{};
   a.write(ta, h, value);
-  rejects([&] { b.read(tb, h, output); });
-  rejects([&] { a.read(tb, h, output); });
   std::thread foreign([&] { rejects([&] { a.read(ta, h, output); }); });
   foreign.join();
   a.read(ta, h, output);
@@ -90,6 +88,9 @@ int main() {
   a.scratch_read(ta, scratch, output);
   ensure(output == value);
   a.end_turn(ta);
+  auto tb = b.begin_turn(11, 1);
+  rejects([&] { b.read(tb, h, output); });
+  rejects([&] { a.read(tb, h, output); });
   b.end_turn(tb);
   b.retire(); b.retire();
   auto t2 = a.begin_turn(10, 1);
