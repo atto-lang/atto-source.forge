@@ -24,6 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DCMAKE_CXX_COMPILER=${{ matrix.compiler }}
@@ -34,7 +35,7 @@ jobs:
       - name: Reject unsupported Option pattern syntax using real Forge compiler
         run: |
           python3 scripts/check_option_pattern_contract.py --backend forge \
-            --revision "${{ github.sha }}" --report build/option-pattern-forge.json \
+            --revision "${{ github.event.pull_request.head.sha || github.sha }}" --report build/option-pattern-forge.json \
             -- ./build/oresforge ir '{source}'
       - name: Preserve Option-pattern admission report (not parity)
         if: always()
@@ -54,6 +55,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Configure ASan and UBSan
         run: >-
@@ -75,6 +77,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Configure instrumented libFuzzer
         run: >-
@@ -101,6 +104,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: GCC ThreadSanitizer on actual actor mailbox concurrency
         shell: bash
