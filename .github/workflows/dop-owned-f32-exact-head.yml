@@ -45,22 +45,8 @@ jobs:
           TSAN_OPTIONS: halt_on_error=1
         run: |
           set -euo pipefail
-          flags=(-std=c++20 -pthread -I. -Wall -Wextra -Wpedantic -Werror)
-          case "$BUILD_MODE" in
-            asan-ubsan) flags+=(-O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined) ;;
-            tsan) flags+=(-O1 -g -fno-omit-frame-pointer -fsanitize=thread) ;;
-            release) flags+=(-O2 -DNDEBUG) ;;
-            *) echo "unsupported build mode: $BUILD_MODE" >&2; exit 2 ;;
-          esac
-          work_dir="$(mktemp -d)"
-          trap 'rm -rf "$work_dir"' EXIT
-          "$CXX" "${flags[@]}" verification/dop_owned_f32_v1_test.cpp -o "$work_dir/owned-f32"
-          "$work_dir/owned-f32"
-          "$CXX" "${flags[@]}" verification/dop_owned_graph_v1_test.cpp -o "$work_dir/owned-graph"
-          "$work_dir/owned-graph"
-          printf 'SOURCE_SHA=%s\n' "$(git rev-parse HEAD)"
-          printf 'SOURCE_TREE=%s\n' "$(git rev-parse HEAD^{tree})"
-          printf '%s\n' 'SCOPE=owned host F32 plus one-shot I64 graph; no .ores lowering, GPU or full Forge compiler'
+          bash scripts/test-dop-owned-f32-graph-native.sh
+          printf '%s\n' 'SCOPE=owned F32 + graph security + one-shot I64 bridge direct suite; full Forge CMake/CTest follows'
 
       - name: Compile full Forge compiler and run all registered CTests
         shell: bash
