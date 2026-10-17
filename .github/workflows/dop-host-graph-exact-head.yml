@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: dop-forge-host-graph-${{ github.ref }}-${{ matrix.compiler }}-${{ matrix.mode }}
+  group: dop-forge-host-graph-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
