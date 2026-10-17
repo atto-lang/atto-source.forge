@@ -5,6 +5,12 @@
 #include <limits>
 #include <cstddef>
 #include <stdexcept>
+#include <exception>
+#include <cstdlib>
+#if defined(__unix__) || defined(__APPLE__)
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 #include <thread>
 #include <atomic>
 #include <thread>
@@ -15,7 +21,36 @@ template <typename F> static void rejects(F&& f) {
   try { f(); } catch (const std::exception&) { caught = true; }
   ensure(caught);
 }
+#if defined(__unix__) || defined(__APPLE__)
+// Test the *actual* native destructor in a child: a correctly failed-closed
+// destructor terminates the process and cannot be caught in this test runner.
+static int destruction_outcome(int scenario) {
+  const pid_t pid = fork();
+  ensure(pid >= 0);
+  if (pid == 0) {
+    std::set_terminate([] { std::_Exit(77); });
+    {
+      ActorArena arena(1001, 1);
+      if (scenario == 1) {
+        (void)arena.begin_turn(1001, 1);
+      } else if (scenario == 2) {
+        arena.retire();
+        arena.retire();
+      }
+    }
+    std::_Exit(0);
+  }
+  int status = 0;
+  ensure(waitpid(pid, &status, 0) == pid && WIFEXITED(status));
+  return WEXITSTATUS(status);
+}
+#endif
 int main() {
+#if defined(__unix__) || defined(__APPLE__)
+  ensure(destruction_outcome(0) == 77); // an unretired arena is rejected
+  ensure(destruction_outcome(1) == 77); // an active turn blocks destruction
+  ensure(destruction_outcome(2) == 0);  // retired, idempotent cleanup succeeds
+#endif
   // Saturating domain IDs may never be recycled under concurrent admission.
   // Test the compiled native arena allocation path directly.
   {
