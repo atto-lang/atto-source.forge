@@ -105,6 +105,38 @@ int main() {
         orphan();
         expect_fail([&] { (void) rejectedAfterQueue.get(); }, "rejected after enqueue");
 
+        // Pure host graph still requires atomic scheduler admission: an
+        // executor may start a worker and subsequently reject submission.
+        auto inlineRejected = plan.submit_cpu([](std::function<void()> task) {
+            task();
+        });
+        expect_fail([&] { (void) inlineRejected.get(); }, "inline dispatch rejected");
+        auto inlineThenThrown = plan.submit_cpu([](std::function<void()> task) {
+            task();
+            throw std::runtime_error("actual inline-then-throw rejection");
+        });
+        expect_fail([&] { (void) inlineThenThrown.get(); },
+                    "actual inline-then-throw rejection");
+
+        for (int trial = 0; trial < 128; ++trial) {
+            std::promise<void> started;
+            auto startedFuture = started.get_future();
+            std::thread premature;
+            auto rejectedAfterStart = plan.submit_cpu(
+                [&](std::function<void()> task) {
+                    premature = std::thread([job = std::move(task),
+                                             &started]() mutable {
+                        started.set_value();
+                        job();
+                    });
+                    startedFuture.wait();
+                    throw std::runtime_error("worker began before rejection");
+                });
+            premature.join();
+            expect_fail([&] { (void) rejectedAfterStart.get(); },
+                        "worker began before rejection");
+        }
+
         // Cancellation vs actual execution can race. Exactly one terminal state
         // must prevail. No unhandled exception or double promise settlement.
         for (int i = 0; i < 64; ++i) {
