@@ -111,3 +111,15 @@ if(BUILD_TESTING)
   add_test(NAME oresforge_owned_f32_cpu_region COMMAND oresforge_owned_f32_cpu_region)
   set_tests_properties(oresforge_owned_f32_cpu_region PROPERTIES TIMEOUT 30)
 endif()
+
+# One-shot host-only owned F32 region -> checked I64 CPU graph.
+if(BUILD_TESTING)
+  add_executable(oresforge_owned_f32_graph verification/dop_owned_graph_v1_test.cpp)
+  target_include_directories(oresforge_owned_f32_graph PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_owned_f32_graph PRIVATE cxx_std_20)
+  target_compile_options(oresforge_owned_f32_graph PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic -Werror>)
+  target_link_libraries(oresforge_owned_f32_graph PRIVATE Threads::Threads)
+  add_test(NAME oresforge_owned_f32_graph COMMAND oresforge_owned_f32_graph)
+  set_tests_properties(oresforge_owned_f32_graph PROPERTIES TIMEOUT 45)
+endif()
