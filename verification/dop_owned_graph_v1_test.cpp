@@ -166,6 +166,9 @@ int main() {
         close_out->close();
         close_task();
         reject([&]{(void)close_race.get();},"closed allocation executed after preflight");
+        // Drop the copied rejected callback: it intentionally owns `in` and
+        // would otherwise make the later lifetime test report a false leak.
+        close_task={};
 
         queued={};
         auto retained=submit_owned_graph(in,out,src,dst,1,0,answer(),schedule);
