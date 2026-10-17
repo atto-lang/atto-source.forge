@@ -31,6 +31,7 @@ if(BUILD_TESTING)
   # Exercise the real mailbox with concurrent sends, deep-copy ownership,
   # backpressure, byte-credit recovery and generation/authority fencing.
   find_package(Threads REQUIRED)
+  target_link_libraries(oresforge_actor_arena_tests PRIVATE Threads::Threads)
   add_executable(oresforge_mailbox_stress verification/actor_mailbox_concurrency.cpp)
   target_link_libraries(oresforge_mailbox_stress PRIVATE oresforge_core Threads::Threads)
   add_test(NAME oresforge_actor_mailbox_concurrency COMMAND oresforge_mailbox_stress)
