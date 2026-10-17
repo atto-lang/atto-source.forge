@@ -84,6 +84,10 @@ public:
     public:
         Area(const Area&) = default;
         Area& operator=(const Area&) = default;
+        Mode mode() const noexcept { return mode_; }
+        std::uint32_t field() const noexcept { return field_; }
+        std::uint64_t begin() const noexcept { return begin_; }
+        std::uint64_t end() const noexcept { return end_; }
     };
     class Loan {
         friend class HostBuffer;
@@ -135,6 +139,14 @@ public:
             field >= shape().fields || begin > end || end > shape().rows)
             throw std::invalid_argument("invalid/closed F32 region footprint");
         return Area(state_, mode, field, begin, end);
+    }
+    // Structural preflight; execution rechecks and takes actual physical loans.
+    // The Area keeps a weak identity, not lifetime or mutating authority.
+    bool owns_area(const Area& area, Mode expected) const {
+        std::lock_guard<std::mutex> guard(state_->gate);
+        return !state_->closed && area.owner_.lock() == state_ &&
+            area.mode_ == expected && area.field_ < state_->shape.fields &&
+            area.begin_ <= area.end_ && area.end_ <= state_->shape.rows;
     }
     Loan borrow_read() const {
         std::lock_guard<std::mutex> guard(state_->gate);
