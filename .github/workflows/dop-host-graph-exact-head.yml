@@ -78,6 +78,7 @@ jobs:
             printf 'PASS %s\n' "$name" >> "$RUNNER_TEMP/dop-forge-evidence/test-results.txt"
           done
           grep -Fq 'typed native CPU/GPU graph host contract: PASS' "$RUNNER_TEMP/dop-forge-evidence/test-output.txt"
+          grep -Fq 'typed graph IR security PASS: 20019 assertions' "$RUNNER_TEMP/dop-forge-evidence/test-output.txt"
           test "$(grep -c '^PASS ' "$RUNNER_TEMP/dop-forge-evidence/test-results.txt")" = 2
           printf 'DOP_FORGE_GRAPH_TESTS=PASS\n' > "$RUNNER_TEMP/dop-forge-evidence/test-outcome.txt"
       - name: Retain bounded exact-head evidence
