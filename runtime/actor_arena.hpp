@@ -12,6 +12,7 @@
 #include <span>
 #include <stdexcept>
 #include <thread>
+#include <utility>
 namespace oresforge::runtime {
 namespace detail {
 // Domain IDs are actor-capability provenance, never a wrapping ticket queue.
@@ -72,6 +73,34 @@ class ActorArena final {
     Scratch(const Scratch&) = default;
     Scratch& operator=(const Scratch&) = default;
   };
+
+  // Lifetime-only authority for a registered continuation/FFI/I/O callback.
+  // It intentionally carries no slot or pointer authority. Logical retirement
+  // revokes arena operations immediately; native bytes remain until the final
+  // external lease closes.
+  class ExternalLease {
+    friend class ActorArena;
+    ActorArena* arena_ = nullptr;
+    explicit ExternalLease(ActorArena& arena) noexcept : arena_(&arena) {}
+   public:
+    ExternalLease(const ExternalLease&) = delete;
+    ExternalLease& operator=(const ExternalLease&) = delete;
+    ExternalLease(ExternalLease&& other) noexcept
+        : arena_(std::exchange(other.arena_, nullptr)) {}
+    ExternalLease& operator=(ExternalLease&& other) noexcept {
+      if (this != &other) {
+        close();
+        arena_ = std::exchange(other.arena_, nullptr);
+      }
+      return *this;
+    }
+    ~ExternalLease() noexcept { close(); }
+    void close() noexcept {
+      if (auto* arena = std::exchange(arena_, nullptr))
+        arena->release_external();
+    }
+    explicit operator bool() const noexcept { return arena_ != nullptr; }
+  };
   static constexpr std::size_t Slots = 64;
   static constexpr std::size_t SlotBytes = 256;
   static constexpr std::size_t ScratchBytes = 16 * 1024;
@@ -81,11 +110,12 @@ class ActorArena final {
   ActorArena(const ActorArena&) = delete;
   ActorArena& operator=(const ActorArena&) = delete;
   ~ActorArena() noexcept {
-    // A live carrier must be quiesced by CONTROL before destruction. Never
-    // scrub concurrently with an admitted turn or park awaiting its mutex.
+    // A live carrier or external lifetime pin must be quiesced by CONTROL
+    // before destruction. Never free bytes while an async/FFI/I/O owner may
+    // still reference the actor domain.
     std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
-    if (!lock.owns_lock() || active_ || !retired_) std::terminate();
-    scrub();
+    if (!lock.owns_lock() || active_ || !retired_ || !reclaimed_ ||
+        external_leases_ != 0) std::terminate();
   }
 
   Turn begin_turn(std::uint64_t actor, std::uint64_t incarnation) {
@@ -147,6 +177,29 @@ class ActorArena final {
     s.generation = s.generation == std::numeric_limits<std::uint64_t>::max()
         ? 0 : s.generation + 1;
   }
+  ExternalLease acquire_external(Turn turn) {
+    std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
+    if (!lock.owns_lock()) throw std::logic_error("actor arena busy");
+    require_turn(turn);
+    if (external_leases_ == std::numeric_limits<std::size_t>::max())
+      throw std::overflow_error("actor arena external lease count exhausted");
+    ++external_leases_;
+    return ExternalLease(*this);
+  }
+
+  std::size_t outstanding_external_leases() const {
+    std::unique_lock<std::mutex> lock(mutex_);
+    return external_leases_;
+  }
+  bool retired() const {
+    std::unique_lock<std::mutex> lock(mutex_);
+    return retired_;
+  }
+  bool physically_reclaimed() const {
+    std::unique_lock<std::mutex> lock(mutex_);
+    return reclaimed_;
+  }
+
   Scratch scratch_alloc(Turn turn, std::size_t length) {
     std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
     if (!lock.owns_lock()) throw std::logic_error("actor arena busy");
@@ -175,8 +228,10 @@ class ActorArena final {
     if (!lock.owns_lock()) throw std::logic_error("actor arena busy");
     if (retired_) return;
     if (active_) throw std::logic_error("active actor turn blocks retirement");
+    // Close admission now. Reclaim only when continuation/FFI/I/O owners have
+    // released their lifetime-only pins.
     retired_ = true;
-    scrub();
+    if (external_leases_ == 0) reclaim_locked();
   }
  private:
   struct Slot {
@@ -194,9 +249,10 @@ class ActorArena final {
   // Fixed-size metadata avoids dynamic allocation during an admitted turn.
   std::array<std::uint16_t, ScratchBytes> scratch_lengths_{};
   std::size_t scratch_top_ = 0;
-  std::mutex mutex_;
+  mutable std::mutex mutex_;
   std::thread::id owner_{};
-  bool active_ = false, retired_ = false;
+  std::size_t external_leases_ = 0;
+  bool active_ = false, retired_ = false, reclaimed_ = false;
   void require_turn(Turn t) const {
     if (!active_ || retired_ || owner_ != std::this_thread::get_id() ||
         t.domain_ != domain_ || t.epoch_ != epoch_)
@@ -217,6 +273,18 @@ class ActorArena final {
         scratch_lengths_[h.offset_] != h.length_)
       throw std::logic_error("stale or oversized scratch");
   }
+  void release_external() noexcept {
+    std::unique_lock<std::mutex> lock(mutex_);
+    if (external_leases_ == 0) std::terminate();
+    --external_leases_;
+    if (retired_ && external_leases_ == 0) reclaim_locked();
+  }
+  void reclaim_locked() noexcept {
+    if (reclaimed_) return;
+    scrub();
+    reclaimed_ = true;
+  }
+
   // Volatile stores make security zeroization observable to the compiler even
   // during final destruction and prevent deletion of dead-store clearing.
   static void zero_bytes(std::byte* p, std::size_t length) noexcept {
