@@ -42,6 +42,19 @@ if(BUILD_TESTING)
   add_test(NAME actor_pipeline_v1_host_policy
     COMMAND oresforge_actor_pipeline_policy_test)
   set_tests_properties(actor_pipeline_v1_host_policy PROPERTIES TIMEOUT 15)
+  # Exact host-policy proof: allocation failure must not consume RR selection.
+  add_executable(oresforge_actor_pipeline_rr_allocation_test
+    verification/actor_pipeline_rr_allocation_test.cpp)
+  target_include_directories(oresforge_actor_pipeline_rr_allocation_test PRIVATE .)
+  target_compile_features(oresforge_actor_pipeline_rr_allocation_test PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_actor_pipeline_rr_allocation_test PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME actor_pipeline_v1_rr_allocation_atomic
+    COMMAND oresforge_actor_pipeline_rr_allocation_test)
+  set_tests_properties(actor_pipeline_v1_rr_allocation_atomic PROPERTIES TIMEOUT 15)
+
   add_test(NAME actor_pipeline_v1_golden_fixture
     COMMAND "${Python3_EXECUTABLE}" 
       "${CMAKE_CURRENT_SOURCE_DIR}/verification/actor_pipeline_fixture.py"
