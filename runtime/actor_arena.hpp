@@ -199,8 +199,8 @@ class ActorArena final {
     TrackedExternalCallback(TrackedExternalCallback&& other)
         noexcept(std::is_nothrow_move_constructible_v<Fn>)
         : lease_(std::move(other.lease_)),
-          callback_(std::move(other.callback_)),
-          fired_(other.fired_.load(std::memory_order_acquire)) {}
+          fired_(other.fired_.exchange(true, std::memory_order_acq_rel)),
+          callback_(std::move(other.callback_)) {}
     TrackedExternalCallback& operator=(TrackedExternalCallback&&) = delete;
 
     template <class... Args>
@@ -216,8 +216,10 @@ class ActorArena final {
 
    private:
     ExternalLease lease_;
-    Fn callback_;
+    // Declared before callback_ so move construction revokes the source
+    // wrapper before a potentially-throwing user callback move runs.
     std::atomic<bool> fired_{false};
+    Fn callback_;
   };
 
   template <class F>
