@@ -148,6 +148,20 @@ int main() {
     }) {
       reject([&] { (void)parse_source(std::string(candidate)); });
     }
+    // V3 structural collections are not a Forge bootstrap feature yet.
+    // Keep every family fail-closed until parser, ownership, codegen and runtime
+    // all have executable evidence; inventory parity alone is insufficient.
+    for (const std::string_view candidate : {
+        "fnc take(structural Array<int> v):int{return v[0];}",
+        "fnc take(structural List<int> v):int{return v[0];}",
+        "fnc take(structural FixedArray[2 of int] v):int{return v[0];}",
+        "fnc take(structural FixedList[0 of int] v):int{return v.length;}",
+        "fnc take(structural Map<string,int> v):int{return 1;}",
+        "fnc main():int{val Map<string,int> v=new Map<string,int>();return 1;}"
+    }) {
+      reject([&] { (void)parse_source(std::string(candidate)); });
+    }
+
     reject([] { parse_source("fnc main():int {return 1;} garbage"); });
     reject([] { parse_source("fnc main():int {return x;}"); });
     reject([] { parse_source("pub pub fnc main():int {return 1;}"); });
