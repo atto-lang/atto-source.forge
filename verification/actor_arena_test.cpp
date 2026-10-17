@@ -5,6 +5,10 @@
 #include <thread>
 #include <atomic>
 #include <type_traits>
+#include <algorithm>
+#include <cstdint>
+#include <limits>
+#include <vector>
 using oresforge::runtime::ActorArena;
 // No host caller can manufacture a valid-looking arena authority from the
 // observable domain/slot/generation values. Handles remain copyable once
@@ -115,4 +119,41 @@ int main() {
   }
   migrating.end_turn(m1);
   migrating.retire();
+
+  // The actual runtime's saturating allocator must not wrap or reuse IDs.
+  // Drive it with independent counters so global capability domains remain
+  // untampered and production actor IDs are not exhausted by this test.
+  using oresforge::runtime::detail::claim_actor_domain;
+  constexpr auto max_id = std::numeric_limits<std::uint64_t>::max();
+  std::atomic<std::uint64_t> near_end{max_id - 1};
+  ensure(claim_actor_domain(near_end) == max_id - 1);
+  ensure(near_end.load() == max_id);
+  rejects([&] { (void)claim_actor_domain(near_end); });
+  rejects([&] { (void)claim_actor_domain(near_end); });
+  ensure(near_end.load() == max_id);  // must never wrap to zero or one
+  std::atomic<std::uint64_t> invalid_zero{0};
+  rejects([&] { (void)claim_actor_domain(invalid_zero); });
+  ensure(invalid_zero.load() == 0);
+
+  constexpr int Workers = 8, PerWorker = 1250;
+  std::atomic<std::uint64_t> concurrent_counter{1};
+  std::array<std::vector<std::uint64_t>, Workers> issued{};
+  std::array<std::thread, Workers> workers;
+  for (int w = 0; w < Workers; ++w) {
+    workers[w] = std::thread([&, w] {
+      auto& ids = issued[w];
+      ids.reserve(PerWorker);
+      for (int j = 0; j < PerWorker; ++j)
+        ids.push_back(claim_actor_domain(concurrent_counter));
+    });
+  }
+  for (auto& worker : workers) worker.join();
+  std::vector<std::uint64_t> all;
+  for (const auto& batch : issued)
+    all.insert(all.end(), batch.begin(), batch.end());
+  std::sort(all.begin(), all.end());
+  ensure(all.size() == static_cast<std::size_t>(Workers * PerWorker));
+  for (std::size_t i = 0; i < all.size(); ++i)
+    ensure(all[i] == i + 1);
+  ensure(concurrent_counter.load() == all.size() + 1);
 }
