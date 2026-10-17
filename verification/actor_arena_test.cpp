@@ -27,6 +27,18 @@ int main() {
   ensure(output == value);
   auto scratch = a.scratch_alloc(ta, 2);
   a.scratch_write(ta, scratch, value);
+  // A scratch handle must identify an issued allocation, not an arbitrary
+  // in-bounds region of scratch memory.
+  auto subrange = scratch;
+  ++subrange.offset;
+  subrange.length = 1;
+  std::array<std::byte, 1> one{};
+  rejects([&] { a.scratch_read(ta, subrange, one); });
+  auto shortened = scratch;
+  shortened.length = 1;
+  rejects([&] { a.scratch_read(ta, shortened, one); });
+  a.scratch_read(ta, scratch, output);
+  ensure(output == value);
   a.end_turn(ta);
   b.end_turn(tb);
   auto t2 = a.begin_turn(10, 1);
