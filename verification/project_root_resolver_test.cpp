@@ -64,6 +64,30 @@ int main() {
         check(project_root_source(project, "+/src/lib/answer") ==
                   fs::canonical(project / "src/lib/answer.ores"),
               "exact 64 KiB manifest without final LF was rejected");
+        // A legal exact-budget single line previously crashed GCC/Clang
+        // libstdc++'s recursive std::regex engine before completing admission.
+        const auto long_schema_prefix = std::string("schema_version = \"1\" #");
+        const auto exact_long_schema = long_schema_prefix +
+            std::string(65536 - long_schema_prefix.size(), 'x');
+        check(exact_long_schema.size() == 65536, "single-line schema fixture size");
+        write(project / ".ores.pkg.toml", exact_long_schema.c_str());
+        check(project_root_source(project, "+/src/lib/answer") ==
+                  fs::canonical(project / "src/lib/answer.ores"),
+              "64 KiB single-line schema comment crashed or was denied");
+        const auto long_table_prefix = valid_prefix + "[project] #";
+        const auto exact_long_table = long_table_prefix +
+            std::string(65536 - long_table_prefix.size(), 'x');
+        write(project / ".ores.pkg.toml", exact_long_table.c_str());
+        check(project_root_source(project, "+/src/lib/answer") ==
+                  fs::canonical(project / "src/lib/answer.ores"),
+              "64 KiB project table comment crashed or was denied");
+        const auto long_root_prefix = valid_prefix + "[project]\nroot = \"";
+        const auto exact_long_root = long_root_prefix +
+            std::string(65536 - long_root_prefix.size() - 1, 'x') + "\"";
+        check(exact_long_root.size() == 65536, "long root fixture size");
+        write(project / ".ores.pkg.toml", exact_long_root.c_str());
+        reject([&] { (void)project_root_source(project, "+/src/lib/answer"); },
+               "overlong project.root bypassed 1024-byte cap");
         const auto over_max = exactly_max + "\n";
         write(project / ".ores.pkg.toml", over_max.c_str());
         reject([&] { (void)project_root_source(project, "+/src/lib/answer"); },
