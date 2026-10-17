@@ -346,19 +346,24 @@ valid execution records. The additional adversarial regression mutates
 the required job to whitespace-only while leaving a real build step intact.
 Source-free CI now requires **86** tests per round, not native guest execution.
 
-## Forge draft 87-case integration union (review required)
+## Forge draft 91-case integration union (review required)
 
-The Forge integration previously had an additional source-free redirect denial
-regression that is absent from the independently executed 86-case shared
-baseline. This review candidate preserves all 86 baseline test methods and
-adds the redirect denial case, for **87 distinct regression methods**. Its
-verifier refuses to follow GitHub API HTTP redirects while carrying a bearer
-token. The original integrated actor compiler, runtime and graph semantics
-remain unchanged.
+The Forge integration carried five source-free security regressions not present
+in the independently executed 86-case shared baseline: one GitHub API bearer
+redirect-denial test plus four negative/positive tests for invisible Unicode,
+bidirectional-control, multiline and spoofed runner/job/step display labels.
+This review candidate preserves all 86 common verifier test methods and adds
+all five Forge-specific cases: **91 distinct regression methods**.
 
-The workflow requires at least 87 no-skip methods per round, three rounds.
-**The 87-case union has not yet been independently executed on a hosted
-runner.** The previous successful 86-case private carrier run
-#38998666203 proves only the exact 86-case input blobs; it is not
-certification of this changed verifier, tests or Forge runtime. Do not merge
-until code-owner review and true exact-branch CI evidence are recorded.
+The verifier rejects credential-bearing GitHub API HTTP redirects, refuses
+unsafe display names and mandatory proof labels, and still permits legible
+Unicode labels. The underlying Forge compiler, runtime, actor arena and graph
+implementations are unchanged.
+
+The workflow now requires at least 91 completed, unskipped methods in
+each of three rounds. **The 91-case union is not yet independently executed
+on a hosted runner.** The successful private-carrier 86-case run
+#38998666203 proves only its three exact canonical input blobs, not this
+modified union or native Forge semantics. Require independently reviewed
+CI execution, exact-commit/tree proof, original-org native runtime tests,
+and security-owner approval before merge.
