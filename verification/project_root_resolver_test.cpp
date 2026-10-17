@@ -94,6 +94,14 @@ int main() {
         check(project_root_source(project, "+/lib/answer") ==
                   fs::canonical(project / "appdata/lib/answer.ores"),
               "explicit project.root ignored");
+        write(project / "appdata/src/entry.ores", "fnc main():int{return 42;}\n");
+        check(relative_source(project / "appdata/src/entry.ores", "../lib/answer",
+                              project / "appdata") ==
+                  fs::canonical(project / "appdata/lib/answer.ores"),
+              "relative import did not use selected physical project root");
+        reject([&] { (void)relative_source(project / "appdata/src/entry.ores",
+                                          "../../src/lib/answer", project / "appdata"); },
+               "relative source crossed configured project root boundary");
         write(project / "appdata" / ".ores.pkg.toml", "schema_version = \"1\"\n");
         reject([&] { (void)project_root_source(project, "+/lib/answer"); },
                "nested package reused parent-root authority");
