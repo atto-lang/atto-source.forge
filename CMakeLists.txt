@@ -14,6 +14,59 @@ if(BUILD_TESTING)
   add_executable(oresforge_tests verification/tests.cpp)
   target_link_libraries(oresforge_tests PRIVATE oresforge_core)
   add_test(NAME oresforge_unit COMMAND oresforge_tests)
+  find_package(Threads REQUIRED)
+  # Actor-local persistent/scratch arena host proof; not guest lowering.
+  add_executable(oresforge_actor_arena_tests verification/actor_arena_test.cpp)
+  target_link_libraries(oresforge_actor_arena_tests PRIVATE oresforge_core Threads::Threads)
+  add_test(NAME oresforge_actor_arena COMMAND oresforge_actor_arena_tests)
+  set_tests_properties(oresforge_actor_arena PROPERTIES TIMEOUT 25)
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  # Host-only policy conformance (not source-compiled actor execution).
+  add_executable(oresforge_actor_pipeline_policy_test
+    verification/actor_pipeline_policy_test.cpp)
+  target_include_directories(oresforge_actor_pipeline_policy_test PRIVATE .)
+  target_compile_features(oresforge_actor_pipeline_policy_test PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_actor_pipeline_policy_test PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_executable(oresforge_actor_pipeline_concurrency_test
+    verification/actor_pipeline_concurrency_test.cpp)
+  target_include_directories(oresforge_actor_pipeline_concurrency_test PRIVATE .)
+  target_compile_features(oresforge_actor_pipeline_concurrency_test PRIVATE cxx_std_20)
+  target_link_libraries(oresforge_actor_pipeline_concurrency_test PRIVATE Threads::Threads)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_actor_pipeline_concurrency_test PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME actor_pipeline_v1_concurrent_selection_and_retirement
+    COMMAND oresforge_actor_pipeline_concurrency_test)
+  set_tests_properties(actor_pipeline_v1_concurrent_selection_and_retirement
+    PROPERTIES TIMEOUT 25)
+
+  add_test(NAME actor_pipeline_v1_host_policy
+    COMMAND oresforge_actor_pipeline_policy_test)
+  set_tests_properties(actor_pipeline_v1_host_policy PROPERTIES TIMEOUT 15)
+  # Exact host-policy proof: allocation failure must not consume RR selection.
+  add_executable(oresforge_actor_pipeline_rr_allocation_test
+    verification/actor_pipeline_rr_allocation_test.cpp)
+  target_include_directories(oresforge_actor_pipeline_rr_allocation_test PRIVATE .)
+  target_compile_features(oresforge_actor_pipeline_rr_allocation_test PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_actor_pipeline_rr_allocation_test PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME actor_pipeline_v1_rr_allocation_atomic
+    COMMAND oresforge_actor_pipeline_rr_allocation_test)
+  set_tests_properties(actor_pipeline_v1_rr_allocation_atomic PROPERTIES TIMEOUT 15)
+
+  add_test(NAME actor_pipeline_v1_golden_fixture
+    COMMAND "${Python3_EXECUTABLE}" 
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/actor_pipeline_fixture.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/contracts/v1/actor-pipeline-routing-v1.json")
+  set_tests_properties(actor_pipeline_v1_golden_fixture PROPERTIES TIMEOUT 15)
+
+
   # Already present in main via PR #34; keep these registrations exactly once.
   add_executable(oresforge_mailbox_destructor verification/actor_mailbox_destructor.cpp)
   target_link_libraries(oresforge_mailbox_destructor PRIVATE oresforge_core)
@@ -73,4 +126,23 @@ if(BUILD_TESTING)
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/value_boundaries.py"
       "$<TARGET_FILE:oresforge>")
   set_tests_properties(value_boundary_admission PROPERTIES TIMEOUT 60)
+  # Shared Java-reference scalar source fixtures: executed guest values + negative admission.
+  add_test(NAME source_scalar_parity
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/contracts/scalar/v1/run.py"
+      --backend forge --mode stdout-i64 --command "$<TARGET_FILE:oresforge> run {source}")
+  set_tests_properties(source_scalar_parity PROPERTIES TIMEOUT 240)
+  # Bootstrap Forge must reject all source imports until a verified module
+  # graph exists; no successful scalar IR may be published from such source.
+  add_test(NAME source_import_parity_admission
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/import_parity_admission.py"
+      "$<TARGET_FILE:oresforge>")
+  set_tests_properties(source_import_parity_admission PROPERTIES TIMEOUT 120)
+  # Source-free adversarial classifier checks are separate from compiled guest tests.
+  add_test(NAME source_import_parity_classifier_selftest
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/import_parity_admission.py" --selftest)
+  set_tests_properties(source_import_parity_classifier_selftest PROPERTIES TIMEOUT 15)
+  add_test(NAME scalar_parity_harness_selftest
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/contracts/scalar/v1/selftest.py")
+  set_tests_properties(scalar_parity_harness_selftest PROPERTIES TIMEOUT 30)
 endif()
