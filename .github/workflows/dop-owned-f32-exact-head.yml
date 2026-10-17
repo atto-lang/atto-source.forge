@@ -1,0 +1,56 @@
+name: Forge owned F32 CPU exact-head
+
+on:
+  push:
+    branches:
+      - feat/forge-owned-f32-cpu-region-v1-20261016
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-f32:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: ['g++', 'clang++']
+        mode: ['release', 'sanitized']
+    steps:
+      - name: Checkout exact private Forge source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Verify original repository and exact SHA
+        shell: bash
+        env:
+          EXPECTED: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED"
+          test "$(git remote get-url origin | sed -E 's#^https://github.com/##; s#\.git$##')" = 'ores-truffle-oreslang/oreslang-source.forge'
+      - name: Build and execute the production owned-F32 header tests
+        shell: bash
+        env:
+          CXX: ${{ matrix.compiler }}
+          BUILD_MODE: ${{ matrix.mode }}
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1
+        run: |
+          set -euo pipefail
+          flags=(-std=c++20 -pthread -I. -Wall -Wextra -Wpedantic -Werror)
+          if [[ "$BUILD_MODE" == sanitized ]]; then
+            flags+=(-O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined)
+          else
+            flags+=(-O2 -DNDEBUG)
+          fi
+          work_dir="$(mktemp -d)"
+          trap 'rm -rf "$work_dir"' EXIT
+          "$CXX" "${flags[@]}" verification/dop_owned_f32_v1_test.cpp -o "$work_dir/owned-f32"
+          "$work_dir/owned-f32"
+          printf 'SOURCE_SHA=%s\n' "$(git rev-parse HEAD)"
+          printf 'SOURCE_TREE=%s\n' "$(git rev-parse HEAD^{tree})"
+          printf '%s\n' 'SCOPE=owned host F32 region only; no host graph bridge, .ores lowering, GPU or full Forge compiler'
