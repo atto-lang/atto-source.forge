@@ -22,10 +22,8 @@ class ActorArena final {
   static constexpr std::size_t SlotBytes = 256;
   static constexpr std::size_t ScratchBytes = 16 * 1024;
   explicit ActorArena(std::uint64_t actor, std::uint64_t incarnation)
-      : actor_(actor), incarnation_(incarnation),
-        domain_(next_domain_.fetch_add(1, std::memory_order_relaxed)) {
-    if (!actor || !incarnation || !domain_ ||
-        domain_ == std::numeric_limits<std::uint64_t>::max())
+      : actor_(actor), incarnation_(incarnation), domain_(allocate_domain()) {
+    if (!actor || !incarnation)
       throw std::invalid_argument("invalid actor arena identity");
   }
   ActorArena(const ActorArena&) = delete;
@@ -136,6 +134,19 @@ class ActorArena final {
     bool live = false;
   };
   inline static std::atomic<std::uint64_t> next_domain_{1};
+  // Domain identity is a non-recyclable authority boundary. Fail closed at
+  // exhaustion, rather than letting fetch_add wrap into stale token values.
+  static std::uint64_t allocate_domain() {
+    auto current = next_domain_.load(std::memory_order_relaxed);
+    for (;;) {
+      if (!current || current == std::numeric_limits<std::uint64_t>::max())
+        throw std::overflow_error("actor arena domain identity exhausted");
+      if (next_domain_.compare_exchange_weak(
+              current, current + 1, std::memory_order_relaxed,
+              std::memory_order_relaxed))
+        return current;
+    }
+  }
   std::uint64_t actor_, incarnation_, domain_, epoch_ = 0;
   std::array<Slot, Slots> slots_{};
   std::array<std::byte, ScratchBytes> scratch_{};
