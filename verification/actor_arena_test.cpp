@@ -94,6 +94,9 @@ int main() {
   ensure(output == value);
   a.end_turn(ta);
   b.end_turn(tb);
+  // Every arena must explicitly pass CONTROL retirement before destruction.
+  b.retire();
+  b.retire(); // retired teardown is idempotent
   auto t2 = a.begin_turn(10, 1);
   rejects([&] { a.scratch_read(t2, scratch, output); });
   auto fresh = a.scratch_alloc(t2, 2);
