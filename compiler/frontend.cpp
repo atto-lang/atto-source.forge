@@ -44,6 +44,15 @@ class Parser {
  public:
   explicit Parser(std::string_view text): source_(text) { next(); }
   Program parse() {
+    // The Forge bootstrap compiler cannot instantiate source actors yet.
+    // Recognize scheduling vocabulary and reject it with an explicit semantic
+    // diagnostic rather than silently compiling an unrelated scalar function.
+    if (tok_.text=="@") {
+      next();
+      if (tok_.text=="ActorMaxThreads")
+        error("@ActorMaxThreads requires actor source lowering; physical turns unsupported");
+      error("unsupported source annotation");
+    }
     bool defined=false, public_=false;
     while (tok_.text=="define" || tok_.text=="pub") {
       if (tok_.text=="define") {
@@ -55,6 +64,10 @@ class Parser {
       }
       next();
     }
+    if (tok_.text=="enum")
+      error("MaxActorThreads enum requires actor source lowering; no user enum fallback");
+    if (tok_.text=="actor")
+      error("source actor execution unsupported; host credit gate is not actor scheduler");
     expect("fnc"); expect("main"); expect("("); expect(")");
     if (!take(":")) expect("->");
     expect("int"); expect("{"); expect("return");
@@ -116,7 +129,7 @@ class Parser {
       at_+=2;
       tok_={Kind::Punct,source_.substr(start,2),start}; return;
     }
-    if (std::string_view("()+-*/{};:").find(static_cast<char>(c)) == std::string_view::npos)
+    if (std::string_view("@()+-*/{};:").find(static_cast<char>(c)) == std::string_view::npos)
       error("invalid character");
     ++at_;
     tok_={Kind::Punct,source_.substr(start,1),start};
