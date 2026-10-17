@@ -32,7 +32,7 @@ class ActorArena final {
     // A live carrier must be quiesced by CONTROL before destruction. Never
     // scrub concurrently with an admitted turn or park awaiting its mutex.
     std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
-    if (!lock.owns_lock() || active_) std::terminate();
+    if (!lock.owns_lock() || active_ || !retired_) std::terminate();
     scrub();
   }
 
