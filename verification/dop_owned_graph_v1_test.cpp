@@ -100,6 +100,46 @@ int main() {
                 "inline rejection masked scheduling failure");
         }
         for(int trial=0; trial<64; ++trial) {
+            std::promise<void> launched;
+            auto launched_future=launched.get_future();
+            std::thread early;
+            auto accepted_early=submit_owned_graph(in,out,src,dst,1,0,answer(),
+                [&](std::function<void()> task) {
+                    early=std::thread([job=std::move(task),&launched]() mutable {
+                        launched.set_value();
+                        job();
+                    });
+                    launched_future.wait();
+                    // Normal scheduler return commits admission.
+                });
+            early.join();
+            check(accepted_early.get()==42,
+                "early worker failed after accepted scheduler admission");
+        }
+        for(int trial=0; trial<64; ++trial) {
+            std::promise<void> launched;
+            auto launched_future=launched.get_future();
+            std::thread early;
+            auto rejected_early=submit_owned_graph(in,out,src,dst,1,0,answer(),
+                [&](std::function<void()> task) {
+                    early=std::thread([job=std::move(task),&launched]() mutable {
+                        launched.set_value();
+                        job();
+                    });
+                    launched_future.wait();
+                    throw std::runtime_error("owned worker began before rejection");
+                });
+            early.join();
+            try {
+                (void)rejected_early.get();
+                throw std::runtime_error("started rejected worker unexpectedly succeeded");
+            } catch(const std::runtime_error& ex) {
+                check(std::string(ex.what())=="owned worker began before rejection",
+                    "started-worker scheduler rejection was masked");
+            }
+        }
+
+        for(int trial=0; trial<64; ++trial) {
             auto once=submit_owned_graph(in,out,src,dst,1,0,answer(),schedule);
             std::thread t1([&]{queued();}),t2([&]{queued();});
             t1.join();t2.join();
@@ -114,6 +154,17 @@ int main() {
             try { check(once.get()==42,"unexpected successful I64 result"); }
             catch(const graph::Cancellation&) {check(once.ready(),"cancel not terminal");}
         }
+        // Close after structural preflight must be revalidated at physical
+        // loan admission. No queued callback may revive closed storage.
+        auto close_out=std::make_shared<HostBuffer>(shape);
+        auto close_dst=close_out->area(Mode::Write,1,2,6);
+        queued={};
+        auto close_race=submit_owned_graph(in,close_out,src,close_dst,1,0,answer(),schedule);
+        auto close_task=queued;
+        close_out->close();
+        close_task();
+        reject([&]{(void)close_race.get();},"closed allocation executed after preflight");
+
         queued={};
         auto retained=submit_owned_graph(in,out,src,dst,1,0,answer(),schedule);
         std::weak_ptr<HostBuffer> wi=in,wo=out;
