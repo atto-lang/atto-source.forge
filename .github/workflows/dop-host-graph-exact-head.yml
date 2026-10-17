@@ -1,0 +1,94 @@
+name: DOP Forge host graph exact-head verification
+
+on:
+  push:
+    branches:
+      - feat/cpu-gpu-nb-graph-contract-20261016
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dop-forge-host-graph-${{ github.ref }}-${{ matrix.compiler }}-${{ matrix.mode }}
+  cancel-in-progress: false
+
+jobs:
+  native-host-graph:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: ['g++', 'clang++']
+        mode: ['release', 'sanitized']
+    steps:
+      - name: Checkout exact private source head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Assert source repository, commit and clean input tree
+        id: provenance
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+          EXPECTED_REPO_ID: '1419703674'
+          ACTUAL_REPO_ID: ${{ github.repository_id }}
+          SOURCE_PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          set -euo pipefail
+          test "$ACTUAL_REPO_ID" = "$EXPECTED_REPO_ID"
+          test "$SOURCE_PRIVATE" = true
+          test "$GITHUB_REPOSITORY" = 'ores-truffle-oreslang/oreslang-source.forge'
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(git remote get-url origin | sed -E 's#^https://github.com/##; s#\.git$##')" = 'ores-truffle-oreslang/oreslang-source.forge'
+          git diff --quiet
+          install -d -m 700 "$RUNNER_TEMP/dop-forge-evidence"
+          {
+            printf 'SOURCE_HEAD=%s\n' "$(git rev-parse HEAD)"
+            printf 'SOURCE_TREE=%s\n' "$(git rev-parse HEAD^{tree})"
+            printf 'RUNTIME_BLOB=%s\n' "$(git hash-object compiler/execution_graph_v1.hpp)"
+            printf 'TEST_BLOB=%s\n' "$(git hash-object verification/execution_graph_v1_test.cpp)"
+            printf 'COMPILER=%s\n' '${{ matrix.compiler }}'
+            printf 'MODE=%s\n' '${{ matrix.mode }}'
+            printf '%s\n' 'SCOPE=Forge host-I64 typed graph and scheduler admission; no owned-F32 bridge or GPU'
+          } > "$RUNNER_TEMP/dop-forge-evidence/provenance.txt"
+      - name: Compile and execute exact host graph tests
+        shell: bash
+        env:
+          CXX: ${{ matrix.compiler }}
+          BUILD_MODE: ${{ matrix.mode }}
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1
+        run: |
+          set -euo pipefail
+          flags=(-std=c++20 -pthread -I. -Wall -Wextra -Wpedantic -Werror)
+          if [[ "$BUILD_MODE" == sanitized ]]; then
+            flags+=(-O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined)
+          else
+            flags+=(-O2 -DNDEBUG)
+          fi
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          for src in verification/execution_graph_v1_test.cpp verification/execution_graph_v1_admission_security_test.cpp; do
+            name="$(basename "$src" .cpp)"
+            "$CXX" "${flags[@]}" "$src" -o "$work/$name"
+            "$work/$name" | tee -a "$RUNNER_TEMP/dop-forge-evidence/test-output.txt"
+            printf 'PASS %s\n' "$name" >> "$RUNNER_TEMP/dop-forge-evidence/test-results.txt"
+          done
+          grep -Fq 'typed native CPU/GPU graph host contract: PASS' "$RUNNER_TEMP/dop-forge-evidence/test-output.txt"
+          test "$(grep -c '^PASS ' "$RUNNER_TEMP/dop-forge-evidence/test-results.txt")" = 2
+          printf 'DOP_FORGE_GRAPH_TESTS=PASS\n' > "$RUNNER_TEMP/dop-forge-evidence/test-outcome.txt"
+      - name: Retain bounded exact-head evidence
+        if: ${{ always() && steps.provenance.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: dop-forge-host-graph-${{ matrix.compiler }}-${{ matrix.mode }}
+          path: |
+            ${{ runner.temp }}/dop-forge-evidence/provenance.txt
+            ${{ runner.temp }}/dop-forge-evidence/test-output.txt
+            ${{ runner.temp }}/dop-forge-evidence/test-results.txt
+            ${{ runner.temp }}/dop-forge-evidence/test-outcome.txt
+          if-no-files-found: error
+          retention-days: 7
