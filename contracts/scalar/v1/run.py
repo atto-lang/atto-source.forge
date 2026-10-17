@@ -278,7 +278,6 @@ def run_case(command, source, kind, value, mode, timeout, backend=None, case_id=
         stderr = stderr_bytes.decode("utf-8", "strict")
     except UnicodeDecodeError:
         return False, "infrastructure: invalid UTF-8 in compiler output"
-    proc = type("CompletedProcessStatus", (), {"returncode": returncode})()
     if kind == "reject":
         signature = NEGATIVE_DIAGNOSTICS.get(backend, {}).get(case_id)
         # Full-match disallows prefixed disk/launcher failures and extra errors.
@@ -288,18 +287,18 @@ def run_case(command, source, kind, value, mode, timeout, backend=None, case_id=
         # fabricated failure, not source-specific negative evidence.
         offset = diagnostic.groupdict().get("offset") if diagnostic else None
         offset_valid = offset is None or int(offset) <= source.stat().st_size
-        success = (proc.returncode == 1 and not stdout and
+        success = (returncode == 1 and not stdout and
                    diagnostic is not None and offset_valid)
     elif mode == "stdout-i64":
-        success = (proc.returncode == 0 and stderr == "" and
+        success = (returncode == 0 and stderr == "" and
                    stdout in (value, value + "\n", value + "\r\n"))
     else:
         # .NET `check` must actually pass its typed-IR admission path. An
         # arbitrary exit-zero command is not proof of parser/type acceptance.
         net_admission = "Oreslang subset syntax and typed OresIR: OK"
         stdout_ok = (stdout.strip() == net_admission) if backend == "net" else True
-        success = proc.returncode == 0 and stdout_ok and not stderr.strip()
-    return success, ("exit=" + str(proc.returncode) + " stderr=" + repr(stderr[:160])
+        success = returncode == 0 and stdout_ok and not stderr.strip()
+    return success, ("exit=" + str(returncode) + " stderr=" + repr(stderr[:160])
                      + " stdout=" + repr(stdout[:160]))
 
 
