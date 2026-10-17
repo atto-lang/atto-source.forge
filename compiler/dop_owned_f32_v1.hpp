@@ -74,16 +74,21 @@ public:
     class Area {
         friend class HostBuffer;
         friend void execute_cpu_region(const HostBuffer&, HostBuffer&, const Area&, const Area&, float, float);
-        std::weak_ptr<State> owner_;
+        const std::weak_ptr<State> owner_;
         Area(const std::shared_ptr<State>& state, Mode mode, std::uint32_t field,
              std::uint64_t begin, std::uint64_t end)
             : owner_(state), mode_(mode), field_(field), begin_(begin), end_(end) {}
-        Mode mode_;
-        std::uint32_t field_;
-        std::uint64_t begin_, end_;
+        const Mode mode_;
+        const std::uint32_t field_;
+        const std::uint64_t begin_, end_;
     public:
+        // A copied Area remains an immutable storage-bound capability.
+        // Assignment would swap the checked owner/row bounds before a
+        // CPU kernel consumes a const Area& after preflight.
         Area(const Area&) = default;
-        Area& operator=(const Area&) = default;
+        Area(Area&&) = default;
+        Area& operator=(const Area&) = delete;
+        Area& operator=(Area&&) = delete;
         Mode mode() const noexcept { return mode_; }
         std::uint32_t field() const noexcept { return field_; }
         std::uint64_t begin() const noexcept { return begin_; }
