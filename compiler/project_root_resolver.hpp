@@ -22,6 +22,17 @@ inline bool within(const fs::path& root, const fs::path& path) {
 // Restricted v1 bootstrap admission, NOT complete TOML support. Fail closed
 // when the schema marker is missing, duplicated, contradictory, or concealed
 // inside a multiline literal. Full manifest semantics require a TOML parser.
+// TOML permits LF and CRLF only. A bare CR, including one hidden by a
+// trailing # comment, must not let an unparsed [project] or root declaration
+// silently inherit the default package-root authority.
+inline void reject_bare_manifest_cr(std::string& line, bool eof_without_lf) {
+    const auto cr = line.find('\r');
+    if (cr == std::string::npos) return;
+    if (cr != line.size() - 1 || eof_without_lf)
+        throw std::invalid_argument("bare carriage return in project manifest");
+    line.pop_back();
+}
+
 inline void require_v1_manifest(const fs::path& manifest) {
     std::ifstream input(manifest, std::ios::binary);
     if (!input) throw std::invalid_argument("cannot open verified package manifest");
@@ -36,7 +47,7 @@ inline void require_v1_manifest(const fs::path& manifest) {
         if (line.size() >= 65536 || consumed > 65536 - (line.size() + 1))
             throw std::invalid_argument("package manifest exceeds 64 KiB");
         consumed += line.size() + 1;
-        if (!line.empty() && line.back() == '\r') line.pop_back();
+        reject_bare_manifest_cr(line, input.eof());
         if (line.find('\0') != std::string::npos ||
             line.find("\"\"\"") != std::string::npos ||
             line.find("'''") != std::string::npos)
@@ -68,7 +79,7 @@ inline fs::path configured_project_root(const fs::path& manifest_dir,
     std::string line, root_text = ".";
     bool in_project = false, seen_project_table = false, found_root = false;
     while (std::getline(input, line)) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();
+        reject_bare_manifest_cr(line, input.eof());
         if (std::regex_match(line, section)) {
             in_project = std::regex_match(line, project_table);
             if (!in_project && line.find("project") != std::string::npos)
