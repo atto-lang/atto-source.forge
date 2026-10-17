@@ -22,10 +22,7 @@ class ActorArena final {
   static constexpr std::size_t SlotBytes = 256;
   static constexpr std::size_t ScratchBytes = 16 * 1024;
   explicit ActorArena(std::uint64_t actor, std::uint64_t incarnation)
-      : actor_(actor), incarnation_(incarnation), domain_(allocate_domain()) {
-    if (!actor || !incarnation)
-      throw std::invalid_argument("invalid actor arena identity");
-  }
+      : actor_(actor), incarnation_(incarnation), domain_(allocate_domain(actor, incarnation)) {}
   ActorArena(const ActorArena&) = delete;
   ActorArena& operator=(const ActorArena&) = delete;
   ~ActorArena() noexcept {
@@ -136,7 +133,10 @@ class ActorArena final {
   inline static std::atomic<std::uint64_t> next_domain_{1};
   // Domain identity is a non-recyclable authority boundary. Fail closed at
   // exhaustion, rather than letting fetch_add wrap into stale token values.
-  static std::uint64_t allocate_domain() {
+  static std::uint64_t allocate_domain(std::uint64_t actor, std::uint64_t incarnation) {
+    // Invalid requests cannot burn identities in the non-recyclable domain.
+    if (!actor || !incarnation)
+      throw std::invalid_argument("invalid actor arena identity");
     auto current = next_domain_.load(std::memory_order_relaxed);
     for (;;) {
       if (!current || current == std::numeric_limits<std::uint64_t>::max())
