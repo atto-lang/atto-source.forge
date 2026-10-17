@@ -100,3 +100,14 @@ if(BUILD_TESTING)
   add_test(NAME forge_typed_graph_malformed_admission COMMAND oresforge-typed-graph-security)
   set_tests_properties(forge_typed_graph_malformed_admission PROPERTIES TIMEOUT 45)
 endif()
+
+# Trusted host-only owned F32 CPU foundation (no source or GPU admission).
+if(BUILD_TESTING)
+  add_executable(oresforge_owned_f32_cpu_region verification/dop_owned_f32_v1_test.cpp)
+  target_include_directories(oresforge_owned_f32_cpu_region PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_owned_f32_cpu_region PRIVATE cxx_std_20)
+  target_compile_options(oresforge_owned_f32_cpu_region PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic -Werror>)
+  add_test(NAME oresforge_owned_f32_cpu_region COMMAND oresforge_owned_f32_cpu_region)
+  set_tests_properties(oresforge_owned_f32_cpu_region PROPERTIES TIMEOUT 30)
+endif()
