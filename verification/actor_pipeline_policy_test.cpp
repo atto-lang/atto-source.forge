@@ -160,6 +160,15 @@ int main(){
     std::vector<PipeEdge> edges={{"src","terminal","Event"}};
     ActorPipePolicy invalid(stages,edges);
   });
+  // Forge receives graph vectors by value: mutation of the caller's
+  // original vectors after construction must never rewrite a live route.
+  auto mutable_stages=stages, mutable_edges=edges;
+  ActorPipePolicy immutable_snapshot(mutable_stages,mutable_edges);
+  mutable_stages[0].id="forged";
+  mutable_edges[0].target="forged";
+  mutable_edges.emplace_back("src","a","Event");
+  check(immutable_snapshot.forward_all("src")[0].target=="a",
+        "caller-owned graph mutation changed published route");
   plan.close();deny([&]{(void)plan.forward_all("src");});
   try {
     (void)plan.forward_by_key("src",std::string(1,char(0x80)));
