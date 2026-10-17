@@ -17,7 +17,10 @@ jobs:
       fail-fast: false
       matrix:
         compiler: ['g++', 'clang++']
-        mode: ['release', 'sanitized']
+        mode: ['release', 'asan-ubsan', 'tsan']
+        exclude:
+          - compiler: 'clang++'
+            mode: 'tsan'
     steps:
       - name: Checkout exact private Forge source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -39,14 +42,16 @@ jobs:
           BUILD_MODE: ${{ matrix.mode }}
           ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
           UBSAN_OPTIONS: halt_on_error=1
+          TSAN_OPTIONS: halt_on_error=1
         run: |
           set -euo pipefail
           flags=(-std=c++20 -pthread -I. -Wall -Wextra -Wpedantic -Werror)
-          if [[ "$BUILD_MODE" == sanitized ]]; then
-            flags+=(-O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined)
-          else
-            flags+=(-O2 -DNDEBUG)
-          fi
+          case "$BUILD_MODE" in
+            asan-ubsan) flags+=(-O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined) ;;
+            tsan) flags+=(-O1 -g -fno-omit-frame-pointer -fsanitize=thread) ;;
+            release) flags+=(-O2 -DNDEBUG) ;;
+            *) echo "unsupported build mode: $BUILD_MODE" >&2; exit 2 ;;
+          esac
           work_dir="$(mktemp -d)"
           trap 'rm -rf "$work_dir"' EXIT
           "$CXX" "${flags[@]}" verification/dop_owned_f32_v1_test.cpp -o "$work_dir/owned-f32"
@@ -64,13 +69,20 @@ jobs:
           BUILD_MODE: ${{ matrix.mode }}
           ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
           UBSAN_OPTIONS: halt_on_error=1
+          TSAN_OPTIONS: halt_on_error=1
         run: |
           set -euo pipefail
           extra=()
-          if [[ "$BUILD_MODE" == sanitized ]]; then
-            extra+=("-DCMAKE_CXX_FLAGS=-O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined")
-            extra+=("-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined")
-          fi
+          case "$BUILD_MODE" in
+            asan-ubsan)
+              extra+=("-DCMAKE_CXX_FLAGS=-O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined")
+              extra+=("-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined")
+              ;;
+            tsan)
+              extra+=("-DCMAKE_CXX_FLAGS=-O1 -g -fno-omit-frame-pointer -fsanitize=thread")
+              extra+=("-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread")
+              ;;
+          esac
           cmake -S . -B build-dop-full -DCMAKE_CXX_COMPILER="$CXX" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON "${extra[@]}"
           cmake --build build-dop-full --parallel 2
           ctest --test-dir build-dop-full --output-on-failure -j2
