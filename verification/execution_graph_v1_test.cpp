@@ -133,6 +133,26 @@ int main() {
                     "actual inline-then-throw rejection");
 
         for (int trial = 0; trial < 128; ++trial) {
+            std::promise<void> launched;
+            auto launchedFuture = launched.get_future();
+            std::thread early;
+            auto acceptedEarly = plan.submit_cpu(
+                [&](std::function<void()> task) {
+                    early = std::thread([job = std::move(task),
+                                         &launched]() mutable {
+                        launched.set_value();
+                        job();
+                    });
+                    launchedFuture.wait();
+                    // Normal return commits scheduler admission.
+                });
+            early.join();
+            require(acceptedEarly.ready() &&
+                    std::get<std::int64_t>(acceptedEarly.get()) == 42,
+                    "early worker failed after scheduler acceptance");
+        }
+
+        for (int trial = 0; trial < 128; ++trial) {
             std::promise<void> started;
             auto startedFuture = started.get_future();
             std::thread premature;
