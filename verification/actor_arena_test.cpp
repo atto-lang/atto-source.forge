@@ -5,6 +5,15 @@
 #include <thread>
 #include <atomic>
 #include <type_traits>
+#include <algorithm>
+#include <cstdint>
+#include <limits>
+#include <vector>
+#include <cstdlib>
+#if defined(__unix__) || defined(__APPLE__)
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 using oresforge::runtime::ActorArena;
 // No host caller can manufacture a valid-looking arena authority from the
 // observable domain/slot/generation values. Handles remain copyable once
@@ -27,7 +36,38 @@ template <typename F> static void rejects(F&& f) {
   try { f(); } catch (const std::exception&) { caught = true; }
   ensure(caught);
 }
+#if defined(__unix__) || defined(__APPLE__)
+static int destruction_outcome(int scenario) {
+  const pid_t pid = fork();
+  ensure(pid >= 0);
+  if (pid == 0) {
+    std::set_terminate([] { std::_Exit(77); });
+    {
+      ActorArena arena(1001, 1);
+      if (scenario == 1) {
+        (void)arena.begin_turn(1001, 1);
+      } else if (scenario == 2) {
+        arena.retire();
+        arena.retire();
+      }
+    }
+    std::_Exit(0);
+  }
+  int status = 0;
+  ensure(waitpid(pid, &status, 0) == pid && WIFEXITED(status));
+  return WEXITSTATUS(status);
+}
+#endif
 int main() {
+  std::atomic<std::uint64_t> invalid_owner_counter{7};
+  rejects([&] { (void)claim_actor_domain(invalid_owner_counter, 0, 1); });
+  rejects([&] { (void)claim_actor_domain(invalid_owner_counter, 1, 0); });
+  ensure(invalid_owner_counter.load() == 7);
+#if defined(__unix__) || defined(__APPLE__)
+  ensure(destruction_outcome(0) == 77);
+  ensure(destruction_outcome(1) == 77);
+  ensure(destruction_outcome(2) == 0);
+#endif
   ActorArena a(10, 1), b(11, 1);
   auto ta = a.begin_turn(10, 1);
   auto tb = b.begin_turn(11, 1);
@@ -51,6 +91,7 @@ int main() {
   ensure(output == value);
   a.end_turn(ta);
   b.end_turn(tb);
+  b.retire(); b.retire();
   auto t2 = a.begin_turn(10, 1);
   rejects([&] { a.scratch_read(t2, scratch, output); });
   auto fresh = a.scratch_alloc(t2, 2);
@@ -115,4 +156,41 @@ int main() {
   }
   migrating.end_turn(m1);
   migrating.retire();
+
+  // The actual runtime's saturating allocator must not wrap or reuse IDs.
+  // Drive it with independent counters so global capability domains remain
+  // untampered and production actor IDs are not exhausted by this test.
+  using oresforge::runtime::detail::claim_actor_domain;
+  constexpr auto max_id = std::numeric_limits<std::uint64_t>::max();
+  std::atomic<std::uint64_t> near_end{max_id - 1};
+  ensure(claim_actor_domain(near_end, 1, 1) == max_id - 1);
+  ensure(near_end.load() == max_id);
+  rejects([&] { (void)claim_actor_domain(near_end, 1, 1); });
+  rejects([&] { (void)claim_actor_domain(near_end, 1, 1); });
+  ensure(near_end.load() == max_id);  // must never wrap to zero or one
+  std::atomic<std::uint64_t> invalid_zero{0};
+  rejects([&] { (void)claim_actor_domain(invalid_zero, 1, 1); });
+  ensure(invalid_zero.load() == 0);
+
+  constexpr int Workers = 8, PerWorker = 1250;
+  std::atomic<std::uint64_t> concurrent_counter{1};
+  std::array<std::vector<std::uint64_t>, Workers> issued{};
+  std::array<std::thread, Workers> workers;
+  for (int w = 0; w < Workers; ++w) {
+    workers[w] = std::thread([&, w] {
+      auto& ids = issued[w];
+      ids.reserve(PerWorker);
+      for (int j = 0; j < PerWorker; ++j)
+        ids.push_back(claim_actor_domain(concurrent_counter, 1000 + w, 1));
+    });
+  }
+  for (auto& worker : workers) worker.join();
+  std::vector<std::uint64_t> all;
+  for (const auto& batch : issued)
+    all.insert(all.end(), batch.begin(), batch.end());
+  std::sort(all.begin(), all.end());
+  ensure(all.size() == static_cast<std::size_t>(Workers * PerWorker));
+  for (std::size_t i = 0; i < all.size(); ++i)
+    ensure(all[i] == i + 1);
+  ensure(concurrent_counter.load() == all.size() + 1);
 }
