@@ -293,3 +293,34 @@ are allowed because GitHub returns second-resolution timestamps. The two
 additional source-free regressions reject overlapping intervals and accept
 adjacent intervals. This is an API evidence consistency check, not an
 independent proof of the commands' effects or any guest runtime semantics.
+
+
+## 91-case source-free provenance gate — October 17, 2026 UTC
+
+All five source backends use identical source-free provenance Git blobs:
+
+- `scripts/verify_ci_run.py`: `339b0e7b17266513a34ea991c8a0a98a38286a75`
+- `scripts/test_verify_ci_run.py`: `f90bbd0623aa94e1cf8022a7c41c9e5dc864fa3e`
+- `.github/workflows/ci-run-evidence-contract.yml`: `089e60d28472d40ac97205e465ceb5930416a288`
+
+The workflow checks a clean, exact PR-head checkout and runs at least 91
+Python security regressions in three complete rounds, with no failures, skips,
+unexpected successes or expected failures. Tests cover strict GitHub API JSON
+parsing, repository/run/step identity and timing, redirect credential
+exfiltration denial, and spoofed runner/job/step display names.
+
+An independent, source-free private-carrier
+[run 39000067741](https://github.com/scintilla-run-test/gleam-runner-conformance/actions/runs/39000067741)
+ran **91 × 3 = 273 tests successfully** and uploaded
+[artifact 12088488424](https://github.com/scintilla-run-test/gleam-runner-conformance/actions/runs/39000067741/artifacts/12088488424).
+The artifact has ZIP SHA-256
+`fb2b613e21e471a15ff1c8c5ee9c6b7754cd43654f28737be20042919cd3f2f9`,
+records `expected_total=273`, and binds the tested carrier commit/tree and
+these exact script/workflow blob hashes.
+
+This **only** verifies source-free CI security rules. It does not certify any
+Oreslang guest compiler, actor runtime, native/AOT backend, or candidate source
+repository Git tree. Never treat the carrier result as approval to export
+private compiler/runtime source. Native CI and independent security review
+remain required before releasing or merging a backend.
+
