@@ -1,5 +1,8 @@
 #include "runtime/actor_arena.hpp"
 #include <array>
+#include <algorithm>
+#include <vector>
+#include <limits>
 #include <cstddef>
 #include <stdexcept>
 #include <thread>
@@ -13,6 +16,36 @@ template <typename F> static void rejects(F&& f) {
   ensure(caught);
 }
 int main() {
+  // Saturating domain IDs may never be recycled under concurrent admission.
+  // Test the compiled native arena allocation path directly.
+  {
+    constexpr std::size_t Threads = 8, PerThread = 256;
+    std::array<std::array<std::uint64_t, PerThread>, Threads> issued{};
+    std::array<std::thread, Threads> workers;
+    std::atomic<bool> start{false};
+    for (std::size_t t = 0; t < Threads; ++t) {
+      workers[t] = std::thread([&, t] {
+        while (!start.load(std::memory_order_acquire)) std::this_thread::yield();
+        for (std::size_t i = 0; i < PerThread; ++i) {
+          ActorArena domain(1000 + t, 1);
+          auto turn = domain.begin_turn(1000 + t, 1);
+          issued[t][i] = turn.domain;
+          domain.end_turn(turn);
+          domain.retire();
+        }
+      });
+    }
+    start.store(true, std::memory_order_release);
+    for (auto& worker : workers) worker.join();
+    std::vector<std::uint64_t> values;
+    values.reserve(Threads * PerThread);
+    for (const auto& row : issued) for (auto identity : row) {
+      ensure(identity != 0 && identity != std::numeric_limits<std::uint64_t>::max());
+      values.push_back(identity);
+    }
+    std::sort(values.begin(), values.end());
+    ensure(std::adjacent_find(values.begin(), values.end()) == values.end());
+  }
   ActorArena a(10, 1), b(11, 1);
   rejects([&] { (void)a.begin_turn(10, 2); }); // refuse wrong incarnation before admission
   auto ta = a.begin_turn(10, 1);
