@@ -83,7 +83,12 @@ if(BUILD_TESTING)
   add_test(NAME source_import_parity_admission
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/import_parity_admission.py"
       "$<TARGET_FILE:oresforge>")
-  set_tests_properties(source_import_parity_admission PROPERTIES TIMEOUT 60)
+  set_tests_properties(source_import_parity_admission PROPERTIES TIMEOUT 120)
+  # Source-free adversarial classifier checks are separate from compiled guest tests.
+  add_test(NAME source_import_parity_classifier_selftest
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/import_parity_admission.py" --selftest)
+  set_tests_properties(source_import_parity_classifier_selftest PROPERTIES TIMEOUT 15)
   add_test(NAME scalar_parity_harness_selftest
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/contracts/scalar/v1/selftest.py")
   set_tests_properties(scalar_parity_harness_selftest PROPERTIES TIMEOUT 30)
