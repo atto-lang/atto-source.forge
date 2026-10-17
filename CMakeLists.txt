@@ -62,6 +62,16 @@ if(ORESFORGE_FUZZ)
   target_link_options(oresforge_mailbox_fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
 endif()
 
+# Type-only graph contract: no GPU driver or enabled Oreslang domain parser.
+if(BUILD_TESTING)
+  add_executable(oresforge-execution-region-graph-test verification/execution_region_graph_test.cpp)
+  target_compile_features(oresforge-execution-region-graph-test PRIVATE cxx_std_20)
+  target_include_directories(oresforge-execution-region-graph-test PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/compiler")
+  add_test(NAME cpu_gpu_typed_graph_reference COMMAND oresforge-execution-region-graph-test)
+  set_tests_properties(cpu_gpu_typed_graph_reference PROPERTIES TIMEOUT 20)
+endif()
+
 # Admission gates for language surfaces that this backend does not lower yet.
 if(BUILD_TESTING)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
