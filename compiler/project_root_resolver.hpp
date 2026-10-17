@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <fstream>
 #include <regex>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -33,20 +34,37 @@ inline void reject_bare_manifest_cr(std::string& line, bool eof_without_lf) {
     line.pop_back();
 }
 
+// Read through a fixed-size buffer before any line-based parsing. getline
+// otherwise allocates an attacker-controlled line before checking our 64 KiB
+// manifest budget. EOF is not a substitute for a byte-bounded snapshot.
+inline std::string read_bounded_manifest_text(const fs::path& manifest) {
+    std::ifstream stream(manifest, std::ios::binary);
+    if (!stream) throw std::invalid_argument("cannot open verified package manifest");
+    std::string bytes(65537, '\0');
+    stream.read(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    const auto count = stream.gcount();
+    if (stream.bad() || count < 0)
+        throw std::invalid_argument("cannot read verified package manifest");
+    if (count > 65536)
+        throw std::invalid_argument("package manifest exceeds 64 KiB");
+    bytes.resize(static_cast<std::size_t>(count));
+    return bytes;
+}
+
 inline void require_v1_manifest(const fs::path& manifest) {
-    std::ifstream input(manifest, std::ios::binary);
-    if (!input) throw std::invalid_argument("cannot open verified package manifest");
+    std::istringstream input{read_bounded_manifest_text(manifest)};
     const std::regex version(R"ores(^[ \t]*schema_version[ \t]*=[ \t]*"1"[ \t]*(?:#.*)?$)ores");
     const std::regex key(R"ores(^[ \t]*(?:schema_version|"schema_version"|'schema_version')[ \t]*=.*$)ores");
     std::string line;
     std::size_t consumed = 0, count = 0;
     bool top_level = true;
     while (std::getline(input, line)) {
-        // Include the consumed line delimiter in the manifest byte budget:
-        // a file of blank lines must not evade the nominal 64 KiB ceiling.
-        if (line.size() >= 65536 || consumed > 65536 - (line.size() + 1))
+        // Count the delimiter only when getline consumed one. A legal final
+        // line without LF must not be counted as one byte larger than stored.
+        const auto line_bytes = line.size() + (input.eof() ? 0U : 1U);
+        if (line_bytes > 65536 - consumed)
             throw std::invalid_argument("package manifest exceeds 64 KiB");
-        consumed += line.size() + 1;
+        consumed += line_bytes;
         reject_bare_manifest_cr(line, input.eof());
         if (line.find('\0') != std::string::npos ||
             line.find("\"\"\"") != std::string::npos ||
@@ -69,8 +87,7 @@ inline void require_v1_manifest(const fs::path& manifest) {
 // exists. Reject unsupported root forms; this is not a full TOML parser.
 inline fs::path configured_project_root(const fs::path& manifest_dir,
                                         const fs::path& manifest) {
-    std::ifstream input(manifest, std::ios::binary);
-    if (!input) throw std::invalid_argument("cannot open verified package manifest");
+    std::istringstream input{read_bounded_manifest_text(manifest)};
     const std::regex project_table(R"ores(^[ \t]*\[project\][ \t]*(?:#.*)?$)ores");
     const std::regex section(R"ores(^[ \t]*\[.*$)ores");
     const std::regex root_key(R"ores(^[ \t]*(?:root|"root"|'root')[ \t]*=.*$)ores");
