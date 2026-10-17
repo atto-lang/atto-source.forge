@@ -203,6 +203,74 @@ int main() {
   rejects([&] { (void)trackedCallback(); });
 
 
+  // Two completion carriers may race the same external callback. Exactly one
+  // may invoke guest/host completion logic, and the lifetime lease must close
+  // exactly once without an accounting underflow.
+  ActorArena racedCallbackArena(406, 1);
+  auto racedTurn = racedCallbackArena.begin_turn(406, 1);
+  std::atomic<int> callbackRuns{0};
+  auto racedCallback = racedCallbackArena.track_external_callback(
+      racedTurn, [&] {
+        callbackRuns.fetch_add(1, std::memory_order_relaxed);
+        std::this_thread::yield();
+        return 29;
+      });
+  racedCallbackArena.end_turn(racedTurn);
+  racedCallbackArena.retire();
+  ensure(!racedCallbackArena.physically_reclaimed());
+  std::atomic<int> callbackSuccesses{0}, callbackRejections{0};
+  std::thread raceA([&] {
+    try {
+      if (racedCallback() == 29) ++callbackSuccesses;
+    } catch (const std::logic_error&) {
+      ++callbackRejections;
+    }
+  });
+  std::thread raceB([&] {
+    try {
+      if (racedCallback() == 29) ++callbackSuccesses;
+    } catch (const std::logic_error&) {
+      ++callbackRejections;
+    }
+  });
+  raceA.join();
+  raceB.join();
+  ensure(callbackRuns.load() == 1);
+  ensure(callbackSuccesses.load() == 1);
+  ensure(callbackRejections.load() == 1);
+  ensure(racedCallbackArena.outstanding_external_leases() == 0);
+  ensure(racedCallbackArena.physically_reclaimed());
+
+  // Throwing completion logic must still release lifetime authority.
+  ActorArena throwingCallbackArena(407, 1);
+  auto throwingTurn = throwingCallbackArena.begin_turn(407, 1);
+  auto throwingCallback = throwingCallbackArena.track_external_callback(
+      throwingTurn, []() -> int {
+        throw std::runtime_error("synthetic callback failure");
+      });
+  throwingCallbackArena.end_turn(throwingTurn);
+  throwingCallbackArena.retire();
+  rejects([&] { (void)throwingCallback(); });
+  ensure(throwingCallbackArena.outstanding_external_leases() == 0);
+  ensure(throwingCallbackArena.physically_reclaimed());
+  rejects([&] { (void)throwingCallback(); });
+
+  // Abandoning an unfired wrapper is also a terminal ownership path: RAII
+  // must release the pin so retired actor storage cannot be stranded.
+  ActorArena abandonedCallbackArena(408, 1);
+  auto abandonedTurn = abandonedCallbackArena.begin_turn(408, 1);
+  {
+    auto abandoned = abandonedCallbackArena.track_external_callback(
+        abandonedTurn, [] { return 1; });
+    abandonedCallbackArena.end_turn(abandonedTurn);
+    abandonedCallbackArena.retire();
+    ensure(abandonedCallbackArena.outstanding_external_leases() == 1);
+    ensure(!abandonedCallbackArena.physically_reclaimed());
+    (void)abandoned;
+  }
+  ensure(abandonedCallbackArena.outstanding_external_leases() == 0);
+  ensure(abandonedCallbackArena.physically_reclaimed());
+
   // The actual runtime's saturating allocator must not wrap or reuse IDs.
   // Drive it with independent counters so global capability domains remain
   // untampered and production actor IDs are not exhausted by this test.
