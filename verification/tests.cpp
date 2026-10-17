@@ -2,8 +2,11 @@
 #include "compiler/ir.hpp"
 #include "codegen/native.hpp"
 #include "runtime/actor.hpp"
+#include "runtime/complex128.hpp"
 #include "jit/tiered.hpp"
 #include <array>
+#include <bit>
+#include <cmath>
 #include <cstdint>
 #include <functional>
 #include <iostream>
@@ -54,6 +57,38 @@ int main() {
     ensure(interpret(parse_source("fnc main():int{return 42;} // import ignored"))==42,
            "import in a comment does not trigger module admission");
     ensure(interpret(source("2+3*4"))==14,"precedence");
+
+    // First real complex128 value-category slice. Source/IR lowering remains
+    // i64-only; exercise the runtime ABI directly without implying source parity.
+    static_assert(sizeof(runtime::Complex128)==16,
+                  "complex128 carrier must be exactly two binary64 components");
+    const auto exact_hi=runtime::complex128_from_i64(9'007'199'254'740'992LL);
+    ensure(exact_hi.real==9'007'199'254'740'992.0 && exact_hi.imaginary==0.0,
+           "complex128 exact integer upper boundary");
+    const auto exact_lo=runtime::complex128_from_i64(-9'007'199'254'740'992LL);
+    ensure(exact_lo.real==-9'007'199'254'740'992.0 && exact_lo.imaginary==0.0,
+           "complex128 exact integer lower boundary");
+    reject([] { (void)runtime::complex128_from_i64(9'007'199'254'740'993LL); });
+    reject([] { (void)runtime::complex128_from_i64(-9'007'199'254'740'993LL); });
+
+    const runtime::Complex128 first{1.0,2.0};
+    const runtime::Complex128 second{3.0,-4.0};
+    const auto added=runtime::complex128_add(first,second);
+    ensure(added.real==4.0 && added.imaginary==-2.0,
+           "complex128 component addition");
+    const auto subtracted=runtime::complex128_subtract(first,second);
+    ensure(subtracted.real==-2.0 && subtracted.imaginary==6.0,
+           "complex128 component subtraction");
+    const auto conjugated=runtime::complex128_conjugate({1.0,0.0});
+    ensure(std::bit_cast<std::uint64_t>(conjugated.imaginary)==
+               0x8000'0000'0000'0000ULL,
+           "complex128 conjugation preserves signed-zero bit semantics");
+
+    // Do not accidentally expand the Forge source subset just because a runtime
+    // carrier now exists.
+    reject_diagnostic([] {
+      parse_source("fnc main():complex128{return 1;}");
+    }, "unexpected token");
     ensure(interpret(source("(2+3)*4"))==20,"parentheses");
     for (const auto& expression : {"3/2", "4/2", "5/0", "-9223372036854775808/-1"})
       reject_diagnostic([&] { source(expression); }, "float result lowering");

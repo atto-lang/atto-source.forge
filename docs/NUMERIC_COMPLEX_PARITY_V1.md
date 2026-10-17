@@ -231,3 +231,21 @@ uploaded short-lived [artifact #12110614229](https://github.com/cliptown/cliptow
 Its checks were not copied from the private Oreslang source tree;
 **the actual source finite/IEEE oracle files and Oreslang native guest
 compilers have not been tested successfully by that host**.
+
+
+## Forge complex128 value ABI foundation (2026-10-17)
+
+Forge now has a compiled `runtime::Complex128` carrier with an explicit
+standard-layout/trivially-copyable 16-byte representation: real binary64
+followed by imaginary binary64. Direct runtime operations cover add, subtract,
+conjugate, and lossless i64 promotion only inside the ±2^53 exact-binary64
+range. Raw-bit tests pin conjugation of +0 imaginary to -0.
+
+This intentionally stops before multiplication/division. Forge currently has
+no standard-library multiprecision integer and no reviewed fixed-width exact
+dyadic engine; using naïve `double` cross-products here would contradict the
+shared once-rounded finite complex contract. Source parsing, typed IR and
+native assembly remain checked-i64-only and explicitly reject a complex128
+return spelling. The next arithmetic step must either introduce a reviewed
+portable exact-dyadic kernel or reuse a shared implementation without making
+Boost/host-library availability an implicit release dependency.
