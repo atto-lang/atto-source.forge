@@ -30,6 +30,8 @@ static_assert(!std::is_constructible_v<ActorArena::Scratch, std::uint64_t, std::
 static_assert(std::is_copy_constructible_v<ActorArena::Turn>);
 static_assert(std::is_copy_constructible_v<ActorArena::Handle>);
 static_assert(std::is_copy_constructible_v<ActorArena::Scratch>);
+static_assert(!std::is_copy_constructible_v<ActorArena::ExternalLease>);
+static_assert(std::is_move_constructible_v<ActorArena::ExternalLease>);
 static void ensure(bool ok) { if (!ok) throw std::runtime_error("actor arena invariant failed"); }
 template <typename F> static void rejects(F&& f) {
   bool caught = false;
@@ -156,6 +158,29 @@ int main() {
   }
   migrating.end_turn(m1);
   migrating.retire();
+
+  // External lifetime pins model continuations, FFI and I/O callbacks.
+  // They grant no arena access, but must delay physical reclamation after
+  // logical retirement until the final external owner quiesces.
+  ActorArena quiescing(700, 3);
+  auto qturn = quiescing.begin_turn(700, 3);
+  auto qhandle = quiescing.allocate(qturn, 8);
+  quiescing.write(qturn, qhandle, payload);
+  auto external = quiescing.acquire_external(qturn);
+  ensure(quiescing.outstanding_external_leases() == 1);
+  quiescing.end_turn(qturn);
+  quiescing.retire();
+  ensure(quiescing.retired());
+  ensure(!quiescing.physically_reclaimed());
+  rejects([&] { (void)quiescing.begin_turn(700, 3); });
+  std::thread callbackCarrier([lease = std::move(external)]() mutable {
+    lease.close();
+    lease.close();
+  });
+  callbackCarrier.join();
+  ensure(quiescing.outstanding_external_leases() == 0);
+  ensure(quiescing.physically_reclaimed());
+  quiescing.retire();
 
   // The actual runtime's saturating allocator must not wrap or reuse IDs.
   // Drive it with independent counters so global capability domains remain
