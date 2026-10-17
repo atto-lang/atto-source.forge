@@ -3,7 +3,6 @@
 // successful resolution does NOT imply module graph or executable import parity.
 #include <filesystem>
 #include <fstream>
-#include <regex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -51,16 +50,39 @@ inline std::string read_bounded_manifest_text(const fs::path& manifest) {
     return bytes;
 }
 
+// Bounded, nonrecursive subset scanner. std::regex with .* recurses deeply
+// enough to crash on a legal 64 KiB one-line manifest under GCC/Clang.
+inline std::string_view trim_manifest_space(std::string_view text) {
+    const auto first = text.find_first_not_of(" \t");
+    if (first == std::string_view::npos) return {};
+    const auto last = text.find_last_not_of(" \t");
+    return text.substr(first, last - first + 1);
+}
+inline bool manifest_assignment(std::string_view line,
+                                std::string_view& key,
+                                std::string_view& value) {
+    const auto equal = line.find('=');
+    if (equal == std::string_view::npos) return false;
+    key = trim_manifest_space(line.substr(0, equal));
+    value = trim_manifest_space(line.substr(equal + 1));
+    return true;
+}
+inline bool manifest_quoted_value(std::string_view value,
+                                  std::string_view& parsed) {
+    if (value.size() < 2 || value.front() != '"') return false;
+    const auto close = value.find('"', 1);
+    if (close == std::string_view::npos) return false;
+    const auto suffix = trim_manifest_space(value.substr(close + 1));
+    if (!suffix.empty() && suffix.front() != '#') return false;
+    parsed = value.substr(1, close - 1);
+    return true;
+}
 inline void require_v1_manifest_text(const std::string& snapshot) {
     std::istringstream input{snapshot};
-    const std::regex version(R"ores(^[ \t]*schema_version[ \t]*=[ \t]*"1"[ \t]*(?:#.*)?$)ores");
-    const std::regex key(R"ores(^[ \t]*(?:schema_version|"schema_version"|'schema_version')[ \t]*=.*$)ores");
     std::string line;
     std::size_t consumed = 0, count = 0;
     bool top_level = true;
     while (std::getline(input, line)) {
-        // Count the delimiter only when getline consumed one. A legal final
-        // line without LF must not be counted as one byte larger than stored.
         const auto line_bytes = line.size() + (input.eof() ? 0U : 1U);
         if (line_bytes > 65536 - consumed)
             throw std::invalid_argument("package manifest exceeds 64 KiB");
@@ -70,10 +92,15 @@ inline void require_v1_manifest_text(const std::string& snapshot) {
             line.find("\"\"\"") != std::string::npos ||
             line.find("'''") != std::string::npos)
             throw std::invalid_argument("unsupported package manifest literal");
-        const auto first = line.find_first_not_of(" \t");
-        if (first != std::string::npos && line[first] == '[') top_level = false;
-        if (top_level && std::regex_match(line, key)) {
-            if (!std::regex_match(line, version))
+        const auto trimmed = trim_manifest_space(line);
+        if (!trimmed.empty() && trimmed.front() == '[') top_level = false;
+        std::string_view key, value;
+        if (top_level && manifest_assignment(trimmed, key, value) &&
+            (key == "schema_version" || key == "\"schema_version\"" ||
+             key == "'schema_version'")) {
+            std::string_view version;
+            if (key != "schema_version" ||
+                !manifest_quoted_value(value, version) || version != "1")
                 throw std::invalid_argument("package manifest requires schema_version = 1");
             ++count;
         }
@@ -92,32 +119,39 @@ inline void require_v1_manifest(const fs::path& manifest) {
 inline fs::path configured_project_root_text(const fs::path& manifest_dir,
                                              const std::string& snapshot) {
     std::istringstream input{snapshot};
-    const std::regex project_table(R"ores(^[ \t]*\[project\][ \t]*(?:#.*)?$)ores");
-    const std::regex section(R"ores(^[ \t]*\[.*$)ores");
-    const std::regex root_key(R"ores(^[ \t]*(?:root|"root"|'root')[ \t]*=.*$)ores");
-    const std::regex root_value(R"ores(^[ \t]*root[ \t]*=[ \t]*"([^"]+)"[ \t]*(?:#.*)?$)ores");
-    const std::regex dotted_root(R"ores(^[ \t]*project[ \t]*\.[ \t]*root[ \t]*=.*$)ores");
     std::string line, root_text = ".";
     bool in_project = false, seen_project_table = false, found_root = false;
     while (std::getline(input, line)) {
         reject_bare_manifest_cr(line, input.eof());
-        if (std::regex_match(line, section)) {
-            in_project = std::regex_match(line, project_table);
-            if (!in_project && line.find("project") != std::string::npos)
+        const auto trimmed = trim_manifest_space(line);
+        if (!trimmed.empty() && trimmed.front() == '[') {
+            constexpr std::string_view project_tag = "[project]";
+            const auto suffix = trimmed.starts_with(project_tag)
+                ? trim_manifest_space(trimmed.substr(project_tag.size()))
+                : std::string_view{};
+            in_project = trimmed.starts_with(project_tag) &&
+                         (suffix.empty() || suffix.front() == '#');
+            if (!in_project && trimmed.find("project") != std::string_view::npos)
                 throw std::invalid_argument("unsupported project manifest table form");
             if (in_project && seen_project_table)
                 throw std::invalid_argument("duplicate project table");
             if (in_project) seen_project_table = true;
             continue;
         }
-        if (std::regex_match(line, dotted_root))
+        std::string_view key, value;
+        if (!manifest_assignment(trimmed, key, value)) continue;
+        std::string dotted;
+        for (char c : key)
+            if (c != ' ' && c != '\t') dotted.push_back(c);
+        if (dotted == "project.root")
             throw std::invalid_argument("unsupported dotted project.root form");
-        if (in_project && std::regex_match(line, root_key)) {
+        if (in_project && (key == "root" || key == "\"root\"" ||
+                           key == "'root'")) {
             if (found_root) throw std::invalid_argument("duplicate project.root");
-            std::smatch match;
-            if (!std::regex_match(line, match, root_value))
+            std::string_view parsed;
+            if (key != "root" || !manifest_quoted_value(value, parsed) || parsed.empty())
                 throw std::invalid_argument("unsupported project.root value");
-            root_text = match[1].str();
+            root_text = std::string(parsed);
             found_root = true;
         }
     }
