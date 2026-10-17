@@ -16,8 +16,14 @@ void* operator new(std::size_t size) {
   if (void* memory = std::malloc(size == 0 ? 1 : size)) return memory;
   throw std::bad_alloc();
 }
-void operator delete(void* memory) noexcept { std::free(memory); }
-void operator delete(void* memory, std::size_t) noexcept { std::free(memory); }
+// Avoid GCC's mismatched-new-delete false positive for this deliberate
+// malloc-backed allocation fault injector; the hook owns both delete forms.
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((noinline))
+#endif
+static void release_allocation(void* memory) noexcept { std::free(memory); }
+void operator delete(void* memory) noexcept { release_allocation(memory); }
+void operator delete(void* memory, std::size_t) noexcept { release_allocation(memory); }
 
 int main() {
   using oresforge::runtime::ActorPipePolicy;
