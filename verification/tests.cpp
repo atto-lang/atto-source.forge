@@ -67,6 +67,22 @@ int main() {
     }
     ensure(interpret(parse_source("fnc main():int{return 1;} // enum comment"))==1,
            "enum spelling in a comment is not a declaration");
+    ensure(interpret(parse_source(
+               "fnc main():int{/* enum Color /* enum Mode */ nested */return 1;}"))==1,
+           "nested enum comments do not become declarations");
+    ensure(interpret(parse_source(
+               "fnc main():int{return 1;} /* enum Color */"))==1,
+           "trailing block-comment enum is not executable");
+    reject_diagnostic([] {
+      parse_source("fnc main():int{return 1;} /* enum Color");
+    }, "unterminated block comment");
+    {
+      std::string excessive="fnc main():int{return 1;} ";
+      for (int i=0; i<129; ++i) excessive+="/*";
+      for (int i=0; i<129; ++i) excessive+="*/";
+      reject_diagnostic([&] { parse_source(excessive); },
+                        "block comment nesting too deep");
+    }
 
     ensure(interpret(source("2+3*4"))==14,"precedence");
     ensure(interpret(source("(2+3)*4"))==20,"parentheses");
