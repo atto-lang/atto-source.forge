@@ -100,6 +100,9 @@ class Parser {
         ++at_;
       }
       tok_={Kind::Word,source_.substr(start,at_-start),start};
+      if (tok_.text=="any" || tok_.text=="unknown" ||
+          tok_.text=="Any" || tok_.text=="Unknown")
+        error("any/unknown requires tagged opaque-value ABI and runtime type descriptors");
       // The bootstrap parser cannot resolve any Java/Graal import forms.
       // Reject with a stable diagnostic rather than emitting an unrelated
       // scalar result from a source that depends on external modules.
@@ -116,7 +119,7 @@ class Parser {
       at_+=2;
       tok_={Kind::Punct,source_.substr(start,2),start}; return;
     }
-    if (std::string_view("()+-*/{};:").find(static_cast<char>(c)) == std::string_view::npos)
+    if (std::string_view("()+-*/{};:?").find(static_cast<char>(c)) == std::string_view::npos)
       error("invalid character");
     ++at_;
     tok_={Kind::Punct,source_.substr(start,1),start};
@@ -143,6 +146,8 @@ class Parser {
       next(); int right=term(depth+1);
       left=add(plus?Op::Add:Op::Sub,0,left,right);
     }
+    if (tok_.text=="?")
+      error("ternary expression requires bool typing and CFG branch-merge lowering");
     return left;
   }
   int term(std::size_t depth) {
