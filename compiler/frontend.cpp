@@ -87,6 +87,28 @@ class Parser {
         while (at_<source_.size() && source_[at_]!='\n') ++at_;
         continue;
       }
+      // Match Java/.NET's bounded nested block-comment treatment: enum
+      // words inside comments are not source declarations or method slots.
+      if (source_[at_]=='/' && at_+1<source_.size() && source_[at_+1]=='*') {
+        const auto start=at_;
+        at_+=2;
+        std::size_t depth=1;
+        while (depth) {
+          if (at_==source_.size())
+            throw std::runtime_error("unterminated block comment at byte "+
+                                     std::to_string(start));
+          if (at_+1<source_.size() && source_[at_]=='/' && source_[at_+1]=='*') {
+            if (++depth>128)
+              throw std::runtime_error("block comment nesting too deep at byte "+
+                                       std::to_string(start));
+            at_+=2;
+          } else if (at_+1<source_.size() && source_[at_]=='*' && source_[at_+1]=='/') {
+            --depth;
+            at_+=2;
+          } else ++at_;
+        }
+        continue;
+      }
       break;
     }
     const auto start=at_;
