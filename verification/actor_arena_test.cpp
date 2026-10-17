@@ -241,6 +241,23 @@ int main() {
   ensure(racedCallbackArena.outstanding_external_leases() == 0);
   ensure(racedCallbackArena.physically_reclaimed());
 
+  // Moving a callback transfers its lifetime capability. The moved-from
+  // wrapper must be permanently revoked and cannot execute completion logic.
+  ActorArena movedCallbackArena(409, 1);
+  auto movedTurn = movedCallbackArena.begin_turn(409, 1);
+  std::atomic<int> movedRuns{0};
+  auto originalCallback = movedCallbackArena.track_external_callback(
+      movedTurn, [&] { ++movedRuns; return 37; });
+  auto movedCallback = std::move(originalCallback);
+  movedCallbackArena.end_turn(movedTurn);
+  movedCallbackArena.retire();
+  rejects([&] { (void)originalCallback(); });
+  ensure(movedCallbackArena.outstanding_external_leases() == 1);
+  ensure(movedCallback() == 37);
+  ensure(movedRuns.load() == 1);
+  ensure(movedCallbackArena.outstanding_external_leases() == 0);
+  ensure(movedCallbackArena.physically_reclaimed());
+
   // Throwing completion logic must still release lifetime authority.
   ActorArena throwingCallbackArena(407, 1);
   auto throwingTurn = throwingCallbackArena.begin_turn(407, 1);
