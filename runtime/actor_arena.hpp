@@ -13,28 +13,78 @@
 #include <stdexcept>
 #include <thread>
 namespace oresforge::runtime {
+namespace detail {
+// Domain IDs are actor-capability provenance, never a wrapping ticket queue.
+// A saturated domain counter permanently denies new arenas. This helper
+// accepts an independent counter so the production algorithm can be tested
+// near UINT64_MAX without mutating the actor runtime's global counter.
+inline std::uint64_t claim_actor_domain(
+    std::atomic<std::uint64_t>& next,
+    std::uint64_t actor,
+    std::uint64_t incarnation) {
+  // Validate owner authority before consuming a non-recyclable domain ID.
+  if (!actor || !incarnation)
+    throw std::invalid_argument("invalid actor arena identity");
+  auto candidate = next.load(std::memory_order_relaxed);
+  constexpr auto limit = std::numeric_limits<std::uint64_t>::max();
+  while (candidate != 0 && candidate < limit) {
+    if (next.compare_exchange_weak(candidate, candidate + 1,
+                                   std::memory_order_relaxed,
+                                   std::memory_order_relaxed))
+      return candidate;
+  }
+  throw std::overflow_error("actor arena domain exhausted");
+}
+}  // namespace detail
 class ActorArena final {
  public:
-  struct Turn { std::uint64_t domain, epoch; };
-  struct Handle { std::uint64_t domain, generation; std::size_t slot; };
-  struct Scratch { std::uint64_t domain, epoch; std::size_t offset, length; };
+  // Capabilities are factory-issued only; public aggregate fields would let
+  // callers guess another live slot, generation, or scratch allocation.
+  // Copying an issued handle is allowed, but construction and field mutation
+  // are restricted to the owning arena (as in .NET and WASM host prototypes).
+  class Turn {
+    friend class ActorArena;
+    std::uint64_t domain_, epoch_;
+    Turn(std::uint64_t domain, std::uint64_t epoch)
+        : domain_(domain), epoch_(epoch) {}
+   public:
+    Turn(const Turn&) = default;
+    Turn& operator=(const Turn&) = default;
+  };
+  class Handle {
+    friend class ActorArena;
+    std::uint64_t domain_, generation_;
+    std::size_t slot_;
+    Handle(std::uint64_t domain, std::uint64_t generation, std::size_t slot)
+        : domain_(domain), generation_(generation), slot_(slot) {}
+   public:
+    Handle(const Handle&) = default;
+    Handle& operator=(const Handle&) = default;
+  };
+  class Scratch {
+    friend class ActorArena;
+    std::uint64_t domain_, epoch_;
+    std::size_t offset_, length_;
+    Scratch(std::uint64_t domain, std::uint64_t epoch,
+            std::size_t offset, std::size_t length)
+        : domain_(domain), epoch_(epoch), offset_(offset), length_(length) {}
+   public:
+    Scratch(const Scratch&) = default;
+    Scratch& operator=(const Scratch&) = default;
+  };
   static constexpr std::size_t Slots = 64;
   static constexpr std::size_t SlotBytes = 256;
   static constexpr std::size_t ScratchBytes = 16 * 1024;
   explicit ActorArena(std::uint64_t actor, std::uint64_t incarnation)
       : actor_(actor), incarnation_(incarnation),
-        domain_(next_domain_.fetch_add(1, std::memory_order_relaxed)) {
-    if (!actor || !incarnation || !domain_ ||
-        domain_ == std::numeric_limits<std::uint64_t>::max())
-      throw std::invalid_argument("invalid actor arena identity");
-  }
+        domain_(detail::claim_actor_domain(next_domain_, actor, incarnation)) {}
   ActorArena(const ActorArena&) = delete;
   ActorArena& operator=(const ActorArena&) = delete;
   ~ActorArena() noexcept {
     // A live carrier must be quiesced by CONTROL before destruction. Never
     // scrub concurrently with an admitted turn or park awaiting its mutex.
     std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
-    if (!lock.owns_lock() || active_) std::terminate();
+    if (!lock.owns_lock() || active_ || !retired_) std::terminate();
     scrub();
   }
 
@@ -112,13 +162,13 @@ class ActorArena final {
     std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
     if (!lock.owns_lock()) throw std::logic_error("actor arena busy");
     require_scratch(turn, h, bytes.size());
-    std::memcpy(scratch_.data() + h.offset, bytes.data(), bytes.size());
+    std::memcpy(scratch_.data() + h.offset_, bytes.data(), bytes.size());
   }
   void scratch_read(Turn turn, Scratch h, std::span<std::byte> out) {
     std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
     if (!lock.owns_lock()) throw std::logic_error("actor arena busy");
     require_scratch(turn, h, out.size());
-    std::memcpy(out.data(), scratch_.data() + h.offset, out.size());
+    std::memcpy(out.data(), scratch_.data() + h.offset_, out.size());
   }
   void retire() {
     std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
@@ -149,22 +199,22 @@ class ActorArena final {
   bool active_ = false, retired_ = false;
   void require_turn(Turn t) const {
     if (!active_ || retired_ || owner_ != std::this_thread::get_id() ||
-        t.domain != domain_ || t.epoch != epoch_)
+        t.domain_ != domain_ || t.epoch_ != epoch_)
       throw std::logic_error("wrong or stale actor turn");
   }
   Slot& slot(Turn t, Handle h) {
     require_turn(t);
-    if (h.domain != domain_ || h.slot >= Slots) throw std::logic_error("foreign handle");
-    auto& s = slots_[h.slot];
-    if (!s.live || s.generation != h.generation) throw std::logic_error("stale handle");
+    if (h.domain_ != domain_ || h.slot_ >= Slots) throw std::logic_error("foreign handle");
+    auto& s = slots_[h.slot_];
+    if (!s.live || s.generation != h.generation_) throw std::logic_error("stale handle");
     return s;
   }
   void require_scratch(Turn t, Scratch h, std::size_t bytes) const {
     require_turn(t);
-    if (h.domain != domain_ || h.epoch != epoch_ || h.offset >= ScratchBytes ||
-        h.offset >= scratch_top_ || h.length != bytes ||
-        h.length > scratch_top_ - h.offset ||
-        scratch_lengths_[h.offset] != h.length)
+    if (h.domain_ != domain_ || h.epoch_ != epoch_ || h.offset_ >= ScratchBytes ||
+        h.offset_ >= scratch_top_ || h.length_ != bytes ||
+        h.length_ > scratch_top_ - h.offset_ ||
+        scratch_lengths_[h.offset_] != h.length_)
       throw std::logic_error("stale or oversized scratch");
   }
   // Volatile stores make security zeroization observable to the compiler even
