@@ -142,6 +142,19 @@ class PersistentActorPolicyTest(unittest.TestCase):
             with self.assertRaisesRegex(ContractError, "unique regular file"):
                 read_bounded_contract(alias)
 
+    def test_secure_open_flags_missing_or_aliased_fail_closed(self):
+        # Simulate platforms/shims with missing, zero or overlapping flag bits.
+        # A failed admission must not even attempt to open the fixture.
+        for nonblock, nofollow in ((0, 1), (1, 0), (1, 1), (3, 1),
+                                   (1, 3), (None, 1), (1, None),
+                                   (True, 1), (1, "bad")):
+            with self.subTest(nonblock=nonblock, nofollow=nofollow):
+                with patch.object(os, "O_NONBLOCK", nonblock, create=True):
+                    with patch.object(os, "O_NOFOLLOW", nofollow, create=True):
+                        with patch.object(os, "open", side_effect=AssertionError("unsafe open")):
+                            with self.assertRaisesRegex(ContractError, "secure no-follow"):
+                                read_bounded_contract(DATA)
+
     def test_reject_oversized_contract_file(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "oversized.json"
@@ -152,7 +165,7 @@ class PersistentActorPolicyTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    expected = 30
+    expected = 31
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(PersistentActorPolicyTest)
     if suite.countTestCases() != expected:
         raise SystemExit(f"FAIL persistent-data gate: expected {expected} tests, "
