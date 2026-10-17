@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "checks": [
+    {
+      "context": "sanitizers",
+      "appId": 15368
+    }
+  ]
+}
