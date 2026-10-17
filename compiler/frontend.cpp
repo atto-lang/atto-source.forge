@@ -158,6 +158,21 @@ class Parser {
   }
   int factor(std::size_t depth) {
     check_depth(depth);
+    if (tok_.text=="rt") {
+      const auto at=tok_.offset;
+      next();
+      const auto operation=tok_.text;
+      if (operation=="ref" || operation=="unref" ||
+          operation=="deref" || operation=="raw") {
+        throw std::runtime_error(
+            "pointer operation 'rt "+std::string(operation)+
+            "' requires provenance-checked pointer lowering; unsupported in Forge at byte "+
+            std::to_string(at));
+      }
+      throw std::runtime_error(
+          "runtime ownership operation requires typed lowering; unsupported in Forge at byte "+
+          std::to_string(at));
+    }
     if (take("-")) {
       // The signed i64 minimum is valid, though its positive magnitude
       // cannot be represented as an i64. Admit only this exact negative lexeme.
