@@ -2,6 +2,7 @@
 #include <array>
 #include <cstddef>
 #include <stdexcept>
+#include <exception>
 #include <thread>
 #include <atomic>
 #include <type_traits>
@@ -15,6 +16,7 @@
 #include <unistd.h>
 #endif
 using oresforge::runtime::ActorArena;
+using oresforge::runtime::detail::claim_actor_domain;
 // No host caller can manufacture a valid-looking arena authority from the
 // observable domain/slot/generation values. Handles remain copyable once
 // issued, so mailbox continuation code can carry them across turns.
@@ -160,7 +162,6 @@ int main() {
   // The actual runtime's saturating allocator must not wrap or reuse IDs.
   // Drive it with independent counters so global capability domains remain
   // untampered and production actor IDs are not exhausted by this test.
-  using oresforge::runtime::detail::claim_actor_domain;
   constexpr auto max_id = std::numeric_limits<std::uint64_t>::max();
   std::atomic<std::uint64_t> near_end{max_id - 1};
   ensure(claim_actor_domain(near_end, 1, 1) == max_id - 1);
