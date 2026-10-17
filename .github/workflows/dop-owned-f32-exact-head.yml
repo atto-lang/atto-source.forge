@@ -56,3 +56,39 @@ jobs:
           printf 'SOURCE_SHA=%s\n' "$(git rev-parse HEAD)"
           printf 'SOURCE_TREE=%s\n' "$(git rev-parse HEAD^{tree})"
           printf '%s\n' 'SCOPE=owned host F32 plus one-shot I64 graph; no .ores lowering, GPU or full Forge compiler'
+
+      - name: Compile full Forge compiler and run all registered CTests
+        shell: bash
+        env:
+          CXX: ${{ matrix.compiler }}
+          BUILD_MODE: ${{ matrix.mode }}
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1
+        run: |
+          set -euo pipefail
+          extra=()
+          if [[ "$BUILD_MODE" == sanitized ]]; then
+            extra+=("-DCMAKE_CXX_FLAGS=-O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined")
+            extra+=("-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined")
+          fi
+          cmake -S . -B build-dop-full -DCMAKE_CXX_COMPILER="$CXX" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON "${extra[@]}"
+          cmake --build build-dop-full --parallel 2
+          ctest --test-dir build-dop-full --output-on-failure -j2
+      - name: Create exact-head source evidence
+        shell: bash
+        env:
+          TEST_CXX: ${{ matrix.compiler }}
+          TEST_MODE: ${{ matrix.mode }}
+          TEST_RUN: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p dop-evidence
+          printf 'SOURCE_SHA=%s\nSOURCE_TREE=%s\nRUN=%s\nCOMPILER=%s\nMODE=%s\nFULL_CTEST=PASS\n' \
+            "$(git rev-parse HEAD)" "$(git rev-parse HEAD^{tree})" "$TEST_RUN" "$TEST_CXX" "$TEST_MODE" > dop-evidence/exact-source.txt
+          ctest --test-dir build-dop-full -N > dop-evidence/test-inventory.txt
+      - name: Upload SHA-bound native test evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: forge-dop-${{ matrix.compiler }}-${{ matrix.mode }}-${{ github.sha }}
+          path: dop-evidence/
+          if-no-files-found: error
