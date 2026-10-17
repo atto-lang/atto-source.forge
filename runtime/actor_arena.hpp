@@ -189,21 +189,42 @@ class ActorArena final {
     return ExternalLease(*this);
   }
 
-  template <class F>
-  auto track_external_callback(Turn turn, F&& callback) {
-    auto lease = acquire_external(turn);
-    using Fn = std::decay_t<F>;
-    return [lease = std::move(lease),
-            callback = Fn(std::forward<F>(callback)),
-            fired = false](auto&&... args) mutable -> decltype(auto) {
-      if (fired) throw std::logic_error("actor external completion already fired");
-      fired = true;
+  template <class Fn>
+  class TrackedExternalCallback {
+   public:
+    TrackedExternalCallback(ExternalLease lease, Fn callback)
+        : lease_(std::move(lease)), callback_(std::move(callback)) {}
+    TrackedExternalCallback(const TrackedExternalCallback&) = delete;
+    TrackedExternalCallback& operator=(const TrackedExternalCallback&) = delete;
+    TrackedExternalCallback(TrackedExternalCallback&& other)
+        noexcept(std::is_nothrow_move_constructible_v<Fn>)
+        : lease_(std::move(other.lease_)),
+          callback_(std::move(other.callback_)),
+          fired_(other.fired_.load(std::memory_order_acquire)) {}
+    TrackedExternalCallback& operator=(TrackedExternalCallback&&) = delete;
+
+    template <class... Args>
+    decltype(auto) operator()(Args&&... args) {
+      if (fired_.exchange(true, std::memory_order_acq_rel))
+        throw std::logic_error("actor external completion already fired");
       struct CloseGuard {
         ExternalLease* lease;
         ~CloseGuard() noexcept { lease->close(); }
-      } guard{&lease};
-      return std::invoke(callback, std::forward<decltype(args)>(args)...);
-    };
+      } guard{&lease_};
+      return std::invoke(callback_, std::forward<Args>(args)...);
+    }
+
+   private:
+    ExternalLease lease_;
+    Fn callback_;
+    std::atomic<bool> fired_{false};
+  };
+
+  template <class F>
+  auto track_external_callback(Turn turn, F&& callback) {
+    using Fn = std::decay_t<F>;
+    return TrackedExternalCallback<Fn>(
+        acquire_external(turn), Fn(std::forward<F>(callback)));
   }
 
   std::size_t outstanding_external_leases() const {
