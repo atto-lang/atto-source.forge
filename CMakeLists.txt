@@ -126,4 +126,23 @@ if(BUILD_TESTING)
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/value_boundaries.py"
       "$<TARGET_FILE:oresforge>")
   set_tests_properties(value_boundary_admission PROPERTIES TIMEOUT 60)
+  # Shared Java-reference scalar source fixtures: executed guest values + negative admission.
+  add_test(NAME source_scalar_parity
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/contracts/scalar/v1/run.py"
+      --backend forge --mode stdout-i64 --command "$<TARGET_FILE:oresforge> run {source}")
+  set_tests_properties(source_scalar_parity PROPERTIES TIMEOUT 240)
+  # Bootstrap Forge must reject all source imports until a verified module
+  # graph exists; no successful scalar IR may be published from such source.
+  add_test(NAME source_import_parity_admission
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/import_parity_admission.py"
+      "$<TARGET_FILE:oresforge>")
+  set_tests_properties(source_import_parity_admission PROPERTIES TIMEOUT 120)
+  # Source-free adversarial classifier checks are separate from compiled guest tests.
+  add_test(NAME source_import_parity_classifier_selftest
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/import_parity_admission.py" --selftest)
+  set_tests_properties(source_import_parity_classifier_selftest PROPERTIES TIMEOUT 15)
+  add_test(NAME scalar_parity_harness_selftest
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/contracts/scalar/v1/selftest.py")
+  set_tests_properties(scalar_parity_harness_selftest PROPERTIES TIMEOUT 30)
 endif()
