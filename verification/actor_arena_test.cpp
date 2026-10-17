@@ -14,12 +14,19 @@ template <typename F> static void rejects(F&& f) {
 }
 int main() {
   ActorArena a(10, 1), b(11, 1);
+  rejects([&] { (void)a.begin_turn(10, 2); }); // refuse wrong incarnation before admission
   auto ta = a.begin_turn(10, 1);
+  rejects([&] { (void)a.begin_turn(10, 1); }); // no overlapping actor turns
   auto tb = b.begin_turn(11, 1);
   auto h = a.allocate(ta, 2);
   std::array<std::byte, 2> value{std::byte{42}, std::byte{9}}, output{};
   a.write(ta, h, value);
   rejects([&] { b.read(tb, h, output); });
+  ActorArena twin(10, 1);
+  auto tt = twin.begin_turn(10, 1);
+  rejects([&] { twin.read(tt, h, output); }); // same actor/incarnation, distinct domain
+  twin.end_turn(tt);
+  twin.retire();
   rejects([&] { a.read(tb, h, output); });
   std::thread foreign([&] { rejects([&] { a.read(ta, h, output); }); });
   foreign.join();
@@ -37,6 +44,19 @@ int main() {
   auto shortened = scratch;
   shortened.length = 1;
   rejects([&] { a.scratch_read(ta, shortened, one); });
+  a.scratch_read(ta, scratch, output);
+  ensure(output == value);
+  // A stolen turn token cannot be used to end the owner's turn or mutate
+  // scratch from a different physical carrier.
+  std::atomic<bool> foreignEndDenied{false}, foreignScratchDenied{false};
+  std::thread intruder([&] {
+    try { a.end_turn(ta); }
+    catch (const std::logic_error&) { foreignEndDenied.store(true); }
+    try { a.scratch_write(ta, scratch, value); }
+    catch (const std::logic_error&) { foreignScratchDenied.store(true); }
+  });
+  intruder.join();
+  ensure(foreignEndDenied.load() && foreignScratchDenied.load());
   a.scratch_read(ta, scratch, output);
   ensure(output == value);
   a.end_turn(ta);
