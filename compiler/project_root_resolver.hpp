@@ -51,8 +51,8 @@ inline std::string read_bounded_manifest_text(const fs::path& manifest) {
     return bytes;
 }
 
-inline void require_v1_manifest(const fs::path& manifest) {
-    std::istringstream input{read_bounded_manifest_text(manifest)};
+inline void require_v1_manifest_text(const std::string& snapshot) {
+    std::istringstream input{snapshot};
     const std::regex version(R"ores(^[ \t]*schema_version[ \t]*=[ \t]*"1"[ \t]*(?:#.*)?$)ores");
     const std::regex key(R"ores(^[ \t]*(?:schema_version|"schema_version"|'schema_version')[ \t]*=.*$)ores");
     std::string line;
@@ -82,12 +82,16 @@ inline void require_v1_manifest(const fs::path& manifest) {
         throw std::invalid_argument("package manifest requires exactly one schema_version = 1");
 }
 
+inline void require_v1_manifest(const fs::path& manifest) {
+    require_v1_manifest_text(read_bounded_manifest_text(manifest));
+}
+
 // Conservative subset of TOML v1: respect [project].root rather than
 // silently resolving +/ relative to the manifest when an explicit root
 // exists. Reject unsupported root forms; this is not a full TOML parser.
-inline fs::path configured_project_root(const fs::path& manifest_dir,
-                                        const fs::path& manifest) {
-    std::istringstream input{read_bounded_manifest_text(manifest)};
+inline fs::path configured_project_root_text(const fs::path& manifest_dir,
+                                             const std::string& snapshot) {
+    std::istringstream input{snapshot};
     const std::regex project_table(R"ores(^[ \t]*\[project\][ \t]*(?:#.*)?$)ores");
     const std::regex section(R"ores(^[ \t]*\[.*$)ores");
     const std::regex root_key(R"ores(^[ \t]*(?:root|"root"|'root')[ \t]*=.*$)ores");
@@ -151,6 +155,12 @@ inline fs::path configured_project_root(const fs::path& manifest_dir,
     return selected;
 }
 
+inline fs::path configured_project_root(const fs::path& manifest_dir,
+                                        const fs::path& manifest) {
+    return configured_project_root_text(manifest_dir,
+                                        read_bounded_manifest_text(manifest));
+}
+
 inline void require_no_nested_manifest(const fs::path& root, const fs::path& candidate) {
     for (auto parent = candidate.parent_path(); parent != root;
          parent = parent.parent_path()) {
@@ -195,8 +205,12 @@ inline fs::path project_root_source(const fs::path& manifest_dir,
     if (fs::is_symlink(manifest) || !fs::is_regular_file(manifest) ||
         fs::canonical(manifest).parent_path() != root)
         throw std::invalid_argument("verified package manifest must be in root directory");
-    require_v1_manifest(manifest);
-    const auto selected_root = configured_project_root(root, manifest);
+    // Parse schema and project.root from exactly the SAME bounded bytes.
+    // Reading twice allowed a manifest replacement between validation and
+    // root selection to create a mismatched authority view.
+    const auto snapshot = read_bounded_manifest_text(manifest);
+    require_v1_manifest_text(snapshot);
+    const auto selected_root = configured_project_root_text(root, snapshot);
     auto candidate = selected_root / fs::path(std::string(suffix));
     if (candidate.extension().empty()) candidate += ".ores";
     if (!fs::is_regular_file(candidate))
