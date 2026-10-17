@@ -13,6 +13,24 @@
 #include <stdexcept>
 #include <thread>
 namespace oresforge::runtime {
+namespace detail {
+// Domain IDs are actor-capability provenance, never a wrapping ticket queue.
+// A saturated domain counter permanently denies new arenas. This helper
+// accepts an independent counter so the production algorithm can be tested
+// near UINT64_MAX without mutating the actor runtime's global counter.
+inline std::uint64_t claim_actor_domain(
+    std::atomic<std::uint64_t>& next) {
+  auto candidate = next.load(std::memory_order_relaxed);
+  constexpr auto limit = std::numeric_limits<std::uint64_t>::max();
+  while (candidate != 0 && candidate < limit) {
+    if (next.compare_exchange_weak(candidate, candidate + 1,
+                                   std::memory_order_relaxed,
+                                   std::memory_order_relaxed))
+      return candidate;
+  }
+  throw std::overflow_error("actor arena domain exhausted");
+}
+}  // namespace detail
 class ActorArena final {
  public:
   // Capabilities are factory-issued only; public aggregate fields would let
@@ -54,7 +72,7 @@ class ActorArena final {
   static constexpr std::size_t ScratchBytes = 16 * 1024;
   explicit ActorArena(std::uint64_t actor, std::uint64_t incarnation)
       : actor_(actor), incarnation_(incarnation),
-        domain_(next_domain_.fetch_add(1, std::memory_order_relaxed)) {
+        domain_(detail::claim_actor_domain(next_domain_)) {
     if (!actor || !incarnation || !domain_ ||
         domain_ == std::numeric_limits<std::uint64_t>::max())
       throw std::invalid_argument("invalid actor arena identity");
