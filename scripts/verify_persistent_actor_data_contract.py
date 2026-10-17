@@ -129,8 +129,14 @@ def read_bounded_contract(path):
             raise ContractError("persistent contract must be a unique regular file")
         if not 0 < before.st_size <= 64 * 1024:
             raise ContractError("invalid or oversized persistent contract")
-        flags = (os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
-                 | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0))
+        # Missing or aliased secure-open flags must not silently degrade to
+        # following symlinks or blocking indefinitely on a raced FIFO.
+        nonblock = getattr(os, "O_NONBLOCK", None)
+        nofollow = getattr(os, "O_NOFOLLOW", None)
+        if (type(nonblock) is not int or type(nofollow) is not int
+                or nonblock <= 0 or nofollow <= 0 or nonblock & nofollow):
+            raise ContractError("secure no-follow/nonblocking flags unavailable or aliased")
+        flags = os.O_RDONLY | nonblock | nofollow | getattr(os, "O_BINARY", 0)
         fd = os.open(path, flags)
         try:
             stream = os.fdopen(fd, "rb")
