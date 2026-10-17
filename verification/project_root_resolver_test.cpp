@@ -53,6 +53,19 @@ int main() {
         reject([&] { (void)project_root_source(project, "+/src/lib/answer"); },
                "newline-only manifest exceeded 64 KiB budget");
         write(project / ".ores.pkg.toml", "schema_version = \"1\"\n");
+        // TOML only permits LF and CRLF line endings. Bare CR after '#'
+        // must not hide a nested [project] table or an unsafe root setting.
+        write(project / ".ores.pkg.toml",
+              "schema_version = \"1\" # comment\r[project]\rroot = \"../outside\"\n");
+        reject([&] { (void)project_root_source(project, "+/src/lib/answer"); },
+               "bare CR smuggled a hidden root table behind a comment");
+        write(project / ".ores.pkg.toml", "schema_version = \"1\"\r");
+        reject([&] { (void)project_root_source(project, "+/src/lib/answer"); },
+               "bare CR at EOF gained project authority");
+        write(project / ".ores.pkg.toml", "schema_version = \"1\"\r\n");
+        check(project_root_source(project, "+/src/lib/answer") ==
+                  fs::canonical(project / "src/lib/answer.ores"),
+              "legal CRLF manifest was denied");
         const auto expected = fs::canonical(project / "src" / "lib" / "answer.ores");
         check(project_root_source(project, "+/src/lib/answer") == expected,
               "canonical root source unresolved");
