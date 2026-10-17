@@ -4,6 +4,7 @@
 The arithmetic control executes first, preventing a broken compiler from
 passing a rejection-only suite. This is an admission test, not feature parity.
 """
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -22,18 +23,30 @@ CASES = json.loads(Path(__file__).with_name("value-boundary-rejections.json").re
 # or guest values. A frontend that merely rejects everything is not parity.
 with tempfile.TemporaryDirectory(prefix="ores-value-boundaries-") as work:
     source = Path(work) / "main.ores"
-    shared_add = Path(__file__).resolve().parents[1] / "contracts/v1/semantics/fixtures/add.ores"
-    source.write_bytes(shared_add.read_bytes())  # identical Git blob across five backends
-    for mode in ("ir", "run"):
-        command = [compiler, mode, str(source)]
-        control = subprocess.run(command, capture_output=True, text=True, timeout=20)
-        require(control.returncode == 0 and control.stderr == "",
-                "positive-control", mode, control.returncode, control.stderr)
-        if mode == "run":
-            require(control.stdout.strip() == "42", "guest not executed",
-                    mode, control.stdout)
-        else:
-            require(control.stdout.strip(), "no compiler IR output", mode)
+    shared_dir = Path(__file__).resolve().parents[1] / "contracts/v1/semantics/fixtures"
+    # Distinct Java/LLVM canonical positive controls: accepting only 40+2
+    # cannot prove parenthesized precedence lowering is correct.
+    for fixture, expected, pinned_blob in (
+        ("add.ores", "42", "015f8b0f79aafa796a148d2adeff1574e8d6c491"),
+        ("precedence.ores", "40", "2d09e697ad4eeac4ee263c3656b92998c67f0bfc"),
+    ):
+        data = (shared_dir / fixture).read_bytes()
+        actual_blob = hashlib.sha1(
+            b"blob " + str(len(data)).encode("ascii") + b"\0" + data
+        ).hexdigest()
+        require(actual_blob == pinned_blob, "canonical source changed",
+                fixture, actual_blob)
+        source.write_bytes(data)
+        for mode in ("ir", "run"):
+            command = [compiler, mode, str(source)]
+            control = subprocess.run(command, capture_output=True, text=True, timeout=20)
+            require(control.returncode == 0 and control.stderr == "",
+                    "positive-control", fixture, mode, control.returncode, control.stderr)
+            if mode == "run":
+                require(control.stdout.strip() == expected, "guest not executed",
+                        fixture, mode, control.stdout)
+            else:
+                require(control.stdout.strip(), "no compiler IR output", fixture, mode)
 
     for name, program in CASES.items():
         source.write_text(program)
