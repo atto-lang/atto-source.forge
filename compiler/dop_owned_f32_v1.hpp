@@ -188,4 +188,3 @@ inline void execute_cpu_region(const HostBuffer& input, HostBuffer& output,
 }
 
 } // namespace oresforge::dop_v1
-
