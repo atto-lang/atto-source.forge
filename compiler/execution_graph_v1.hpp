@@ -5,6 +5,8 @@
 // atomically before CPU execution or scheduling.
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <thread>
 #include <cstdint>
 #include <exception>
 #include <functional>
@@ -195,24 +197,71 @@ public:
     CpuFuture submit_cpu(const std::function<void(std::function<void()>)>& schedule) const {
         auto state = std::make_shared<CpuFuture::State>();
         CpuFuture exposed(state);
+        struct Admission final {
+            std::mutex mutex;
+            std::condition_variable cv;
+            bool resolved = false;
+            bool accepted = false;
+            void resolve(bool ok) noexcept {
+                {
+                    std::lock_guard<std::mutex> guard(mutex);
+                    resolved = true;
+                    accepted = ok;
+                }
+                cv.notify_all();
+            }
+        };
+        auto admission = std::make_shared<Admission>();
+        auto inline_attempted = std::make_shared<std::atomic<bool>>(false);
+        const auto submitting_thread = std::this_thread::get_id();
         try {
             admit_cpu();
             if (!schedule) throw std::invalid_argument("missing trusted CPU executor");
             Plan copy = *this;
-            schedule([state, copy = std::move(copy)] {
+            schedule([state, admission, inline_attempted, submitting_thread,
+                      copy = std::move(copy)] {
                 if (state->started.exchange(true, std::memory_order_acq_rel) ||
                     state->cancelled.load(std::memory_order_acquire)) return;
                 try {
+                    {
+                        std::unique_lock<std::mutex> hold(admission->mutex);
+                        if (!admission->resolved &&
+                                std::this_thread::get_id() == submitting_thread) {
+                            // Do not settle until schedule() returns: an
+                            // inline-then-throw executor must retain its
+                            // actual rejection as the terminal failure.
+                            inline_attempted->store(true, std::memory_order_release);
+                            return;
+                        }
+                        if (!admission->cv.wait_for(hold, std::chrono::seconds(30),
+                                [&] { return admission->resolved; })) {
+                            state->cancelled.store(true, std::memory_order_release);
+                            state->fail(std::make_exception_ptr(std::runtime_error(
+                                "host CPU graph scheduler admission timed out")));
+                            return;
+                        }
+                        if (!admission->accepted) return;
+                    }
+                    if (state->cancelled.load(std::memory_order_acquire)) return;
                     state->complete(copy.evaluate(state->cancelled));
                 } catch (...) {
                     state->fail(std::current_exception());
                 }
             });
+            if (inline_attempted->load(std::memory_order_acquire)) {
+                state->cancelled.store(true, std::memory_order_release);
+                state->fail(std::make_exception_ptr(std::logic_error(
+                    "host CPU graph requires queued executor; inline dispatch rejected")));
+                admission->resolve(false);
+            } else {
+                admission->resolve(true);
+            }
         } catch (...) {
-            // A scheduler may enqueue work before throwing. Revoke any
-            // delayed execution, not only the Future result.
+            // Even if a worker started, reject BEFORE opening the gate;
+            // no graph evaluation or result publication precedes admission.
             state->cancelled.store(true, std::memory_order_release);
             state->fail(std::current_exception());
+            admission->resolve(false);
         }
         return exposed;
     }
