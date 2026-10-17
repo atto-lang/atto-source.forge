@@ -56,6 +56,22 @@ int main() {
         const auto expected = fs::canonical(project / "src" / "lib" / "answer.ores");
         check(project_root_source(project, "+/src/lib/answer") == expected,
               "canonical root source unresolved");
+        // A modern package marker must not inherit authority through a
+        // same-directory symlink to the otherwise valid legacy config.
+        write(project / ".oreslangc.cfg.toml", "schema_version = \"1\"\n");
+        fs::remove(project / ".ores.pkg.toml");
+        std::error_code manifest_link_error;
+        fs::create_symlink(project / ".oreslangc.cfg.toml",
+                           project / ".ores.pkg.toml", manifest_link_error);
+        if (!manifest_link_error)
+            reject([&] { (void)project_root_source(project, "+/src/lib/answer"); },
+                   "symlinked modern manifest alias gained package authority");
+        fs::remove(project / ".ores.pkg.toml");
+        fs::create_directory(project / ".ores.pkg.toml");
+        reject([&] { (void)project_root_source(project, "+/src/lib/answer"); },
+               "directory marker silently inherited legacy authority");
+        fs::remove(project / ".ores.pkg.toml");
+        write(project / ".ores.pkg.toml", "schema_version = \"1\"\n");
         // Host-only ./ and ../ resolve relative to the importer, never CWD.
         write(project / "src/routes/main.ores", "fnc main():int{return 42;}\n");
         write(project / "src/routes/local.ores", "fnc local():int{return 42;}\n");
