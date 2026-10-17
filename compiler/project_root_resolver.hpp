@@ -161,7 +161,10 @@ inline fs::path project_root_source(const fs::path& manifest_dir,
     }
     const auto root = fs::canonical(manifest_dir);
     const auto manifest = root / ".ores.pkg.toml";
-    if (!fs::is_regular_file(manifest) ||
+    // A symlink marker can inherit different package-root authority even
+    // when its target happens to be inside this directory. A real modern
+    // manifest file is mandatory, never a legacy-manifest alias.
+    if (fs::is_symlink(manifest) || !fs::is_regular_file(manifest) ||
         fs::canonical(manifest).parent_path() != root)
         throw std::invalid_argument("verified package manifest must be in root directory");
     require_v1_manifest(manifest);
