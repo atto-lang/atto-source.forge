@@ -43,7 +43,9 @@ python3 scripts/test_verify_ci_run.py
 # Example: exact-head source run; replace placeholders with GitHub-confirmed values.
 GH_TOKEN="$READ_ONLY_GITHUB_TOKEN" python3 scripts/verify_ci_run.py \
   --backend llvm --commit "$EXACT_RUN_HEAD_SHA" --tree "$EXACT_RUN_HEAD_TREE" \
-  --run-id "$RUN_ID" --workflow-path ".github/workflows/ci.yml" \
+  --run-id "$RUN_ID" --run-attempt "$INDEPENDENTLY_PINNED_RUN_ATTEMPT" \
+  --event pull_request --workflow-path ".github/workflows/ci.yml" \
+  --workflow-run-path "$INDEPENDENTLY_PINNED_EXACT_RUN_PATH" \
   --workflow-id "$INDEPENDENTLY_PINNED_NUMERIC_WORKFLOW_ID" \
   --workflow-blob-sha "$INDEPENDENTLY_PINNED_WORKFLOW_GIT_BLOB_SHA" \
   --require-job 'test' --require-step 'Run CTest'
@@ -293,3 +295,38 @@ are allowed because GitHub returns second-resolution timestamps. The two
 additional source-free regressions reject overlapping intervals and accept
 adjacent intervals. This is an API evidence consistency check, not an
 independent proof of the commands' effects or any guest runtime semantics.
+
+## Explicit workflow-run SHA versus actual checkout SHA (2026-10-16)
+
+The source-free Actions job deliberately checks out `github.event.pull_request.head.sha`
+and compares it to `git rev-parse HEAD`. For a `pull_request` event,
+`github.sha` may instead be the GitHub-generated **merge commit**. A
+successful run's API `head_sha` therefore must **not** be silently treated
+as the checked-out PR source SHA. These two values are different proof scopes.
+
+The minimal JSON evidence now records `workflow_trigger_sha` from
+`github.sha`, `workflow_trigger_event` from `github.event_name`, and
+`trigger_sha_matches_reported_checkout` (which can only be true after a
+successful checkout identity step). These are **diagnostic fields** from the
+candidate workflow, not a cryptographic GitHub attestation; the report still
+sets `verified_execution_claim: false` and explicitly excludes native
+compiler/guest parity. Independently inspect run/head/job metadata, the source
+commit and Git tree, and executed steps before any promotion.
+
+Two source-free regressions assert the workflow's SHA fields and execute its
+actual isolated Python report writer for three synthetic conditions: a
+different PR-trigger/checkout SHA, a matching SHA, and a failed source-identity
+check despite matching bytes. Any removed assertion or accidental true result
+must fail tests. The checked-in regression inventory is at least **75** tests
+per iteration (three iterations). It does not grant private-source transfer
+permission or prove real Actions capacity.
+
+## Strict final workflow repository ID types
+
+Both `repository.id` and `head_repository.id` on the **final** workflow-run
+reread must be true JSON integers, not floating-point numbers that compare
+equal to a reviewed numeric ID in Python. Two adversarial tests change each
+ID to an equivalent float only on the final API response. The shared
+source-free gate requires at least **77** unittest methods across each
+of three no-skip rounds. This is metadata verification, not Oreslang runtime
+certification or authorization to export private source.
