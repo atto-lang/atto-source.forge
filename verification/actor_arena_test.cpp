@@ -4,8 +4,23 @@
 #include <stdexcept>
 #include <thread>
 #include <atomic>
-#include <thread>
+#include <type_traits>
 using oresforge::runtime::ActorArena;
+// No host caller can manufacture a valid-looking arena authority from the
+// observable domain/slot/generation values. Handles remain copyable once
+// issued, so mailbox continuation code can carry them across turns.
+static_assert(!std::is_aggregate_v<ActorArena::Turn>);
+static_assert(!std::is_aggregate_v<ActorArena::Handle>);
+static_assert(!std::is_aggregate_v<ActorArena::Scratch>);
+static_assert(!std::is_default_constructible_v<ActorArena::Turn>);
+static_assert(!std::is_default_constructible_v<ActorArena::Handle>);
+static_assert(!std::is_default_constructible_v<ActorArena::Scratch>);
+static_assert(!std::is_constructible_v<ActorArena::Turn, std::uint64_t, std::uint64_t>);
+static_assert(!std::is_constructible_v<ActorArena::Handle, std::uint64_t, std::uint64_t, std::size_t>);
+static_assert(!std::is_constructible_v<ActorArena::Scratch, std::uint64_t, std::uint64_t, std::size_t, std::size_t>);
+static_assert(std::is_copy_constructible_v<ActorArena::Turn>);
+static_assert(std::is_copy_constructible_v<ActorArena::Handle>);
+static_assert(std::is_copy_constructible_v<ActorArena::Scratch>);
 static void ensure(bool ok) { if (!ok) throw std::runtime_error("actor arena invariant failed"); }
 template <typename F> static void rejects(F&& f) {
   bool caught = false;
@@ -27,16 +42,11 @@ int main() {
   ensure(output == value);
   auto scratch = a.scratch_alloc(ta, 2);
   a.scratch_write(ta, scratch, value);
-  // A scratch handle must identify an issued allocation, not an arbitrary
-  // in-bounds region of scratch memory.
-  auto subrange = scratch;
-  ++subrange.offset;
-  subrange.length = 1;
+  // Issued scratch handles are opaque capabilities. Even with a valid handle,
+  // wrong-size access must fail without touching its underlying contents.
   std::array<std::byte, 1> one{};
-  rejects([&] { a.scratch_read(ta, subrange, one); });
-  auto shortened = scratch;
-  shortened.length = 1;
-  rejects([&] { a.scratch_read(ta, shortened, one); });
+  rejects([&] { a.scratch_read(ta, scratch, one); });
+  rejects([&] { a.scratch_write(ta, scratch, one); });
   a.scratch_read(ta, scratch, output);
   ensure(output == value);
   a.end_turn(ta);
