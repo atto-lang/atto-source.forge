@@ -53,6 +53,18 @@ int main() {
     }
     ensure(interpret(parse_source("fnc main():int{return 42;} // import ignored"))==42,
            "import in a comment does not trigger module admission");
+
+    for (const auto& opaque : {"any", "unknown", "Any", "Unknown"}) {
+      reject_diagnostic([&] {
+        parse_source(std::string("fnc main():") + opaque + "{return 1;}");
+      }, "tagged opaque-value ABI");
+    }
+    reject_diagnostic([] {
+      parse_source("fnc main():int{return 1 ? 2 : 3;}");
+    }, "ternary expression requires bool typing and CFG branch-merge lowering");
+    ensure(interpret(parse_source("fnc main():int{return 42;} // any unknown ?"))==42,
+           "opaque-top and ternary tokens in comments remain invisible");
+
     ensure(interpret(source("2+3*4"))==14,"precedence");
     ensure(interpret(source("(2+3)*4"))==20,"parentheses");
     for (const auto& expression : {"3/2", "4/2", "5/0", "-9223372036854775808/-1"})
