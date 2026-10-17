@@ -91,12 +91,15 @@ class ActorArena final {
   Turn begin_turn(std::uint64_t actor, std::uint64_t incarnation) {
     std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
     if (!lock.owns_lock()) throw std::logic_error("actor arena busy");
-    if (retired_ || active_ || actor != actor_ || incarnation != incarnation_ ||
+    if (carrier_arena_ != nullptr || retired_ || active_ ||
+        actor != actor_ || incarnation != incarnation_ ||
         epoch_ == std::numeric_limits<std::uint64_t>::max())
       throw std::logic_error("actor arena admission denied");
     active_ = true;
-    owner_ = std::this_thread::get_id();
-    return {domain_, ++epoch_};
+    ++epoch_;
+    carrier_arena_ = this;
+    carrier_epoch_ = epoch_;
+    return {domain_, epoch_};
   }
   void end_turn(Turn turn) {
     std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
@@ -106,7 +109,8 @@ class ActorArena final {
     scratch_lengths_.fill(0);
     scratch_top_ = 0;
     active_ = false;
-    owner_ = {};
+    carrier_epoch_ = 0;
+    carrier_arena_ = nullptr;
   }
   Handle allocate(Turn turn, std::size_t length) {
     std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
@@ -186,6 +190,8 @@ class ActorArena final {
     bool live = false;
   };
   inline static std::atomic<std::uint64_t> next_domain_{1};
+  inline static thread_local ActorArena* carrier_arena_ = nullptr;
+  inline static thread_local std::uint64_t carrier_epoch_ = 0;
   std::uint64_t actor_, incarnation_, domain_, epoch_ = 0;
   std::array<Slot, Slots> slots_{};
   std::array<std::byte, ScratchBytes> scratch_{};
@@ -195,11 +201,10 @@ class ActorArena final {
   std::array<std::uint16_t, ScratchBytes> scratch_lengths_{};
   std::size_t scratch_top_ = 0;
   std::mutex mutex_;
-  std::thread::id owner_{};
   bool active_ = false, retired_ = false;
   void require_turn(Turn t) const {
-    if (!active_ || retired_ || owner_ != std::this_thread::get_id() ||
-        t.domain_ != domain_ || t.epoch_ != epoch_)
+    if (!active_ || retired_ || carrier_arena_ != this ||
+        carrier_epoch_ != t.epoch_ || t.domain_ != domain_ || t.epoch_ != epoch_)
       throw std::logic_error("wrong or stale actor turn");
   }
   Slot& slot(Turn t, Handle h) {
