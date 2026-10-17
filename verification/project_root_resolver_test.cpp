@@ -73,6 +73,18 @@ int main() {
         reject([&] { (void)project_root_source(project, "+/src/lib/answer"); },
                "oversized single-line manifest escaped bounded snapshot read");
         write(project / ".ores.pkg.toml", "schema_version = \"1\"\n");
+        // Schema and root extraction must use the same frozen snapshot,
+        // even if the path is changed between individual parser calls.
+        const auto captured = read_bounded_manifest_text(project / ".ores.pkg.toml");
+        write(project / ".ores.pkg.toml",
+              "schema_version = \"2\"\n[project]\nroot = \"../outside\"\n");
+        require_v1_manifest_text(captured);
+        check(configured_project_root_text(project, captured) ==
+                  fs::canonical(project),
+              "manifest snapshot root depended on a later pathname read");
+        reject([&] { (void)project_root_source(project, "+/src/lib/answer"); },
+               "changed schema admitted despite bounded manifest snapshot");
+        write(project / ".ores.pkg.toml", "schema_version = \"1\"\n");
         // TOML only permits LF and CRLF line endings. Bare CR after '#'
         // must not hide a nested [project] table or an unsafe root setting.
         write(project / ".ores.pkg.toml",
