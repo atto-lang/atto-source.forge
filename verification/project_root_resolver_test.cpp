@@ -94,6 +94,15 @@ int main() {
                "relative import crossed legacy nested-package boundary");
         reject([&] { (void)project_root_source(project, "+/src/routes/child/hidden"); },
                "rooted import crossed legacy nested-package boundary");
+        // A symlink target located in a nested legacy package remains
+        // child-owned even when spelled as a relative parent-directory file.
+        std::error_code nested_target_error;
+        fs::create_symlink(project / "src/routes/child/hidden.ores",
+                           project / "src/routes/child-alias.ores",
+                           nested_target_error);
+        if (!nested_target_error)
+            reject([&] { (void)relative_source(importer, "./child-alias", project); },
+                   "relative target alias bypassed nested package boundary");
         // A physical alias into the parent does not erase its spelled
         // importer path through the child package's legacy marker.
         std::error_code relative_alias_error;
