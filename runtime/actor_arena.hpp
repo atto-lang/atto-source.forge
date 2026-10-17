@@ -19,7 +19,12 @@ namespace detail {
 // accepts an independent counter so the production algorithm can be tested
 // near UINT64_MAX without mutating the actor runtime's global counter.
 inline std::uint64_t claim_actor_domain(
-    std::atomic<std::uint64_t>& next) {
+    std::atomic<std::uint64_t>& next,
+    std::uint64_t actor,
+    std::uint64_t incarnation) {
+  // Validate owner authority before consuming a non-recyclable domain ID.
+  if (!actor || !incarnation)
+    throw std::invalid_argument("invalid actor arena identity");
   auto candidate = next.load(std::memory_order_relaxed);
   constexpr auto limit = std::numeric_limits<std::uint64_t>::max();
   while (candidate != 0 && candidate < limit) {
@@ -72,18 +77,14 @@ class ActorArena final {
   static constexpr std::size_t ScratchBytes = 16 * 1024;
   explicit ActorArena(std::uint64_t actor, std::uint64_t incarnation)
       : actor_(actor), incarnation_(incarnation),
-        domain_(detail::claim_actor_domain(next_domain_)) {
-    if (!actor || !incarnation || !domain_ ||
-        domain_ == std::numeric_limits<std::uint64_t>::max())
-      throw std::invalid_argument("invalid actor arena identity");
-  }
+        domain_(detail::claim_actor_domain(next_domain_, actor, incarnation)) {}
   ActorArena(const ActorArena&) = delete;
   ActorArena& operator=(const ActorArena&) = delete;
   ~ActorArena() noexcept {
     // A live carrier must be quiesced by CONTROL before destruction. Never
     // scrub concurrently with an admitted turn or park awaiting its mutex.
     std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
-    if (!lock.owns_lock() || active_) std::terminate();
+    if (!lock.owns_lock() || active_ || !retired_) std::terminate();
     scrub();
   }
 
