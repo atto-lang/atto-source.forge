@@ -14,6 +14,10 @@ if(BUILD_TESTING)
   add_executable(oresforge_tests verification/tests.cpp)
   target_link_libraries(oresforge_tests PRIVATE oresforge_core)
   add_test(NAME oresforge_unit COMMAND oresforge_tests)
+  # Actor-private persistent/scratch arena host prototype (not guest lowering).
+  add_executable(oresforge_actor_arena_tests verification/actor_arena_test.cpp)
+  target_link_libraries(oresforge_actor_arena_tests PRIVATE oresforge_core)
+  add_test(NAME oresforge_actor_arena COMMAND oresforge_actor_arena_tests)
   # Already present in main via PR #34; keep these registrations exactly once.
   add_executable(oresforge_mailbox_destructor verification/actor_mailbox_destructor.cpp)
   target_link_libraries(oresforge_mailbox_destructor PRIVATE oresforge_core)
