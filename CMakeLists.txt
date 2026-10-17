@@ -73,4 +73,8 @@ if(BUILD_TESTING)
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/value_boundaries.py"
       "$<TARGET_FILE:oresforge>")
   set_tests_properties(value_boundary_admission PROPERTIES TIMEOUT 60)
+  add_test(NAME refinement_admission
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/refinement_admission_gate.py"
+      --compiler "$<TARGET_FILE:oresforge>")
+  set_tests_properties(refinement_admission PROPERTIES TIMEOUT 60)
 endif()
