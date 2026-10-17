@@ -130,6 +130,17 @@ int main() {
     ensure(interpret(parse_source("fnc main():int {return 3;} // caf\xc3\xa9"))==3,
            "valid UTF-8 comment");
 
+    const std::string block_comment="fnc main():int{return 1;} /* ";
+    reject_diagnostic([&] { parse_source(block_comment+
+        static_cast<char>(0xc0)+static_cast<char>(0xaf)+" */"); },
+        "not valid UTF-8");
+    reject_diagnostic([&] { std::string text=block_comment;
+        text.push_back('\0'); text+=" */"; parse_source(text); },
+        "source contains NUL byte");
+    ensure(interpret(parse_source(
+               "fnc main():int{return 3;} /* caf\xc3\xa9 enum */"))==3,
+           "valid UTF-8 in ignored block comment");
+
     reject([] { source(std::string(200, '(') + "1" + std::string(200, ')')); });
     reject([] { source(std::string(200, '-') + "1"); });
     reject([] {
