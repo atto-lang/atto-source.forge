@@ -46,6 +46,19 @@ int main() {
   rejects([&] { a.scratch_read(ta, shortened, one); });
   a.scratch_read(ta, scratch, output);
   ensure(output == value);
+  // A stolen turn token cannot be used to end the owner's turn or mutate
+  // scratch from a different physical carrier.
+  std::atomic<bool> foreignEndDenied{false}, foreignScratchDenied{false};
+  std::thread intruder([&] {
+    try { a.end_turn(ta); }
+    catch (const std::logic_error&) { foreignEndDenied.store(true); }
+    try { a.scratch_write(ta, scratch, value); }
+    catch (const std::logic_error&) { foreignScratchDenied.store(true); }
+  });
+  intruder.join();
+  ensure(foreignEndDenied.load() && foreignScratchDenied.load());
+  a.scratch_read(ta, scratch, output);
+  ensure(output == value);
   a.end_turn(ta);
   b.end_turn(tb);
   auto t2 = a.begin_turn(10, 1);
