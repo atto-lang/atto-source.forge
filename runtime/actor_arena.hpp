@@ -53,6 +53,7 @@ class ActorArena final {
     if (!lock.owns_lock()) throw std::logic_error("actor arena busy");
     require_turn(turn);
     zero_bytes(scratch_.data(), scratch_.size());
+    scratch_lengths_.fill(0);
     scratch_top_ = 0;
     active_ = false;
     owner_ = {};
@@ -103,6 +104,7 @@ class ActorArena final {
     if (!length || length > ScratchBytes - scratch_top_)
       throw std::out_of_range("scratch quota");
     const auto offset = scratch_top_;
+    scratch_lengths_[offset] = static_cast<std::uint16_t>(length);
     scratch_top_ += length;
     return {domain_, epoch_, offset, length};
   }
@@ -137,6 +139,10 @@ class ActorArena final {
   std::uint64_t actor_, incarnation_, domain_, epoch_ = 0;
   std::array<Slot, Slots> slots_{};
   std::array<std::byte, ScratchBytes> scratch_{};
+  // Each real scratch allocation records its exact starting offset and length.
+  // Bounds alone would authorize a forged subrange of another allocation.
+  // Fixed-size metadata avoids dynamic allocation during an admitted turn.
+  std::array<std::uint16_t, ScratchBytes> scratch_lengths_{};
   std::size_t scratch_top_ = 0;
   std::mutex mutex_;
   std::thread::id owner_{};
@@ -155,8 +161,10 @@ class ActorArena final {
   }
   void require_scratch(Turn t, Scratch h, std::size_t bytes) const {
     require_turn(t);
-    if (h.domain != domain_ || h.epoch != epoch_ || h.offset > scratch_top_ ||
-        h.length != bytes || h.length > scratch_top_ - h.offset)
+    if (h.domain != domain_ || h.epoch != epoch_ || h.offset >= ScratchBytes ||
+        h.offset >= scratch_top_ || h.length != bytes ||
+        h.length > scratch_top_ - h.offset ||
+        scratch_lengths_[h.offset] != h.length)
       throw std::logic_error("stale or oversized scratch");
   }
   // Volatile stores make security zeroization observable to the compiler even
@@ -172,6 +180,7 @@ class ActorArena final {
       s.length = 0;
     }
     zero_bytes(scratch_.data(), scratch_.size());
+    scratch_lengths_.fill(0);
     scratch_top_ = 0;
   }
 };
