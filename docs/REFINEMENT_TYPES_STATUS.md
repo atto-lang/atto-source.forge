@@ -15,3 +15,7 @@ Forge's current compiler is a deliberately narrow scalar bootstrap. The real `or
 The CTest `refinement_admission` invokes the built compiler through `verification/refinement_admission_gate.py`. A passing rejection gate means only that unsupported constraints are not silently erased; it is **not** refinement implementation parity.
 
 Future completion requires normalized constraint IR, checked construction, Unicode code-point length, structured errors, Zorde descriptors, actor/serialization/FFI boundary enforcement and native runtime evidence.
+
+## Inclusive comparison spelling
+
+Canonical textual inclusive bounds are `gte` and `lte`; symbolic `>=` and `<=` are equivalent source spellings. Legacy `ge` and `le` are deliberately invalid and must never be accepted as aliases. Until this backend implements checked refinement lowering, both canonical/symbolic valid refinements and legacy-invalid refinements remain fail-closed admission cases rather than erased base types.
