@@ -53,6 +53,11 @@ int main() {
     }
     ensure(interpret(parse_source("fnc main():int{return 42;} // import ignored"))==42,
            "import in a comment does not trigger module admission");
+    for (const auto& operation : {"ref", "unref", "deref", "raw"}) {
+      reject_diagnostic([&] {
+        parse_source(std::string("fnc main():int{return rt ")+operation+" value;}");
+      }, "requires provenance-checked pointer lowering");
+    }
     ensure(interpret(source("2+3*4"))==14,"precedence");
     ensure(interpret(source("(2+3)*4"))==20,"parentheses");
     for (const auto& expression : {"3/2", "4/2", "5/0", "-9223372036854775808/-1"})
