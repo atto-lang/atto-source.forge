@@ -185,14 +185,14 @@ class ActorArena final {
   }
   Slot& slot(Turn t, Handle h) {
     require_turn(t);
-    if (h.domain__ != domain_ || h.slot_ >= Slots) throw std::logic_error("foreign handle");
+    if (h.domain_ != domain_ || h.slot_ >= Slots) throw std::logic_error("foreign handle");
     auto& s = slots_[h.slot_];
     if (!s.live || s.generation != h.generation_) throw std::logic_error("stale handle");
     return s;
   }
   void require_scratch(Turn t, Scratch h, std::size_t bytes) const {
     require_turn(t);
-    if (h.domain__ != domain_ || h.epoch_ != epoch_ || h.offset_ >= ScratchBytes ||
+    if (h.domain_ != domain_ || h.epoch_ != epoch_ || h.offset_ >= ScratchBytes ||
         h.offset_ >= scratch_top_ || h.length_ != bytes ||
         h.length_ > scratch_top_ - h.offset_ ||
         scratch_lengths_[h.offset_] != h.length_)
