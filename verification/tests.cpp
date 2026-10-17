@@ -139,6 +139,15 @@ int main() {
     reject([] {
       parse_source("fnc take(structural (int,int,string?) v):int{return 1;}");
     });
+    // Mirror the .NET/LLVM bootstrap's conservative v2 admission boundary:
+    // these are future tuple semantics, not positive native execution proof.
+    for (const std::string_view candidate : {
+        "fnc take((int?,string,int) v):int{return 1;}",
+        "fnc take((int,Option<string>) v):int{return 1;}",
+        "fnc take(structural (&mut int,int) v):int{return 1;}"
+    }) {
+      reject([&] { (void)parse_source(std::string(candidate)); });
+    }
     reject([] { parse_source("fnc main():int {return 1;} garbage"); });
     reject([] { parse_source("fnc main():int {return x;}"); });
     reject([] { parse_source("pub pub fnc main():int {return 1;}"); });
