@@ -93,6 +93,20 @@ int main() {
         });
         expect_fail([&] { (void) executorRejected.get(); }, "executor budget");
 
+        // Accepted submission is NOT successful evaluation: arithmetic
+        // failure must fault the Future exactly once after admission, while
+        // a second executor delivery remains inert.
+        std::function<void()> overflowingWork;
+        auto overflowing = over.submit_cpu([&](std::function<void()> task) {
+            overflowingWork = std::move(task);
+        });
+        require(static_cast<bool>(overflowingWork) && !overflowing.ready(),
+                "overflow graph evaluated before scheduler admission");
+        overflowingWork();
+        overflowingWork();
+        require(overflowing.ready(), "overflow graph did not settle");
+        expect_fail([&] { (void) overflowing.get(); }, "overflow");
+
         // Admission failures can occur after the external scheduler retained
         // the closure. That rejected task must be inert if delivered later.
         std::function<void()> orphan;
