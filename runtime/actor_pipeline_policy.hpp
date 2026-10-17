@@ -155,11 +155,11 @@ class ActorPipePolicy {
     auto& choices=connected(source);
     auto& cursor=cursor_.at(source);
     auto i=cursor;
-    // Copy the selected route before committing RR advancement. A string
-    // allocation failure must not skip a route that was never delivered.
-    PipeEdge selected=edges_[choices[i]];
+    // Selection consumes the source+generation turn before any later copy or
+    // mailbox admission can fail. Routing-v1 never retries the same selected
+    // edge merely because delivery or result materialization fails afterward.
     cursor=(i+1)%choices.size();
-    return selected;
+    return edges_[choices[i]];
   }
   PipeEdge forward_to(const std::string& source,const std::string& target){
     std::scoped_lock lock(gate_);

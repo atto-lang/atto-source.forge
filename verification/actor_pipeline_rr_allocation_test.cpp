@@ -1,5 +1,5 @@
-// An allocation failure while copying a selected native host route must not
-// consume the preallocated round-robin cursor. Does not certify guest actors.
+// An allocation failure after selecting a native host route still consumes
+// that preallocated round-robin turn. Does not certify guest actors.
 #include "runtime/actor_pipeline_policy.hpp"
 #include <atomic>
 #include <cstdlib>
@@ -49,12 +49,12 @@ int main() {
   if (!allocation_rejected)
     throw std::runtime_error("allocation-failure fixture did not trigger");
 
-  // If forward_round_robin advanced before the edge copy, this first choice
-  // would incorrectly be 'second' even though the prior call never returned.
-  if (policy.forward_round_robin(root).target != first ||
-      policy.forward_round_robin(root).target != second ||
-      policy.forward_round_robin(root).target != first)
-    throw std::runtime_error("failed route selection consumed RR credit");
+  // The failed copy happened after selecting the first edge, so routing-v1
+  // requires that attempted turn to remain consumed.
+  if (policy.forward_round_robin(root).target != second ||
+      policy.forward_round_robin(root).target != first ||
+      policy.forward_round_robin(root).target != second)
+    throw std::runtime_error("failed route selection did not consume RR turn");
   policy.close();
   std::cout << "ACTOR_PIPELINE_RR_ALLOCATION_ATOMIC_PASS\n";
 }
