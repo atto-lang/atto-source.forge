@@ -52,6 +52,26 @@ int main() {
         write(project / ".ores.pkg.toml", oversized.c_str());
         reject([&] { (void)project_root_source(project, "+/src/lib/answer"); },
                "newline-only manifest exceeded 64 KiB budget");
+        // Exactly 64 KiB is valid even without a final LF. The old
+        // getline accounting incorrectly charged one nonexistent byte.
+        // Keep this fixture as many short blank lines to avoid unrelated
+        // std::regex recursion on a single enormous comment.
+        const auto valid_prefix = std::string("schema_version = \"1\"\n");
+        const auto exactly_max = valid_prefix +
+            std::string(65536 - valid_prefix.size() - 1, '\n') + " ";
+        check(exactly_max.size() == 65536, "manifest budget fixture size");
+        write(project / ".ores.pkg.toml", exactly_max.c_str());
+        check(project_root_source(project, "+/src/lib/answer") ==
+                  fs::canonical(project / "src/lib/answer.ores"),
+              "exact 64 KiB manifest without final LF was rejected");
+        const auto over_max = exactly_max + "\n";
+        write(project / ".ores.pkg.toml", over_max.c_str());
+        reject([&] { (void)project_root_source(project, "+/src/lib/answer"); },
+               "65,537-byte manifest without final LF was admitted");
+        const auto oversized_single_line = valid_prefix + std::string(65537, 'a');
+        write(project / ".ores.pkg.toml", oversized_single_line.c_str());
+        reject([&] { (void)project_root_source(project, "+/src/lib/answer"); },
+               "oversized single-line manifest escaped bounded snapshot read");
         write(project / ".ores.pkg.toml", "schema_version = \"1\"\n");
         // TOML only permits LF and CRLF line endings. Bare CR after '#'
         // must not hide a nested [project] table or an unsafe root setting.
