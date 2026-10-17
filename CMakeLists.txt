@@ -14,6 +14,13 @@ if(BUILD_TESTING)
   add_executable(oresforge_tests verification/tests.cpp)
   target_link_libraries(oresforge_tests PRIVATE oresforge_core)
   add_test(NAME oresforge_unit COMMAND oresforge_tests)
+  add_executable(oresforge_actor_max_threads_source_admission
+    verification/actor_max_threads_admission.cpp)
+  target_link_libraries(oresforge_actor_max_threads_source_admission
+    PRIVATE oresforge_core)
+  add_test(NAME oresforge_actor_max_threads_source_admission
+    COMMAND oresforge_actor_max_threads_source_admission)
+
   # Already present in main via PR #34; keep these registrations exactly once.
   add_executable(oresforge_mailbox_destructor verification/actor_mailbox_destructor.cpp)
   target_link_libraries(oresforge_mailbox_destructor PRIVATE oresforge_core)
