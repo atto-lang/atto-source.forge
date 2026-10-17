@@ -46,6 +46,9 @@ static int destruction_outcome(int scenario) {
 }
 #endif
 int main() {
+  // Invalid actor/incarnation must fail before consuming an irreversible ID.
+  rejects([] { ActorArena invalid(0, 1); });
+  rejects([] { ActorArena invalid(1, 0); });
 #if defined(__unix__) || defined(__APPLE__)
   ensure(destruction_outcome(0) == 77); // an unretired arena is rejected
   ensure(destruction_outcome(1) == 77); // an active turn blocks destruction
