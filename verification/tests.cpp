@@ -53,7 +53,7 @@ int main() {
     }
     ensure(interpret(parse_source("fnc main():int{return 42;} // import ignored"))==42,
            "import in a comment does not trigger module admission");
-    for (const auto& operation : {"ref", "unref", "deref", "raw"}) {
+    for (const auto& operation : {"ref", "unref", "deref", "deref mut", "raw"}) {
       reject_diagnostic([&] {
         parse_source(std::string("fnc main():int{return rt ")+operation+" value;}");
       }, "requires provenance-checked pointer lowering");
