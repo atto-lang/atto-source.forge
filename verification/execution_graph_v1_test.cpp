@@ -171,6 +171,26 @@ int main() {
                         "worker began before rejection");
         }
 
+        // Overflow is a deterministic CPU-evaluation sentinel: even when
+        // the executor starts the worker, a later scheduler rejection must
+        // win over any arithmetic failure from premature graph execution.
+        for (int trial = 0; trial < 64; ++trial) {
+            std::promise<void> launched;
+            auto launched_signal = launched.get_future();
+            std::thread early;
+            auto rejectedOverflow = over.submit_cpu([&](std::function<void()> job) {
+                early = std::thread([task = std::move(job), &launched]() mutable {
+                    launched.set_value();
+                    task();
+                });
+                launched_signal.wait();
+                throw std::runtime_error("scheduler rejected before CPU overflow");
+            });
+            early.join();
+            expect_fail([&] { (void) rejectedOverflow.get(); },
+                        "scheduler rejected before CPU overflow");
+        }
+
         // Cancellation vs actual execution can race. Exactly one terminal state
         // must prevail. No unhandled exception or double promise settlement.
         for (int i = 0; i < 64; ++i) {
