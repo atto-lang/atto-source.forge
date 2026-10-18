@@ -233,21 +233,4 @@ private:
     }
 };
 
-struct PureActorCommand final { std::uint64_t target; std::int64_t value; };
-class PureActorTransition final {
-public:
-    PersistentActorMap state;
-    std::vector<PureActorCommand> commands;
-    PureActorTransition(PersistentActorMap next,
-                        std::vector<PureActorCommand> effects)
-        : state(std::move(next)), commands(std::move(effects)) {
-        if (commands.size() > 64)
-            throw std::length_error("pure actor command budget");
-        for (const auto& command : commands)
-            if (!command.target)
-                throw std::invalid_argument("pure actor command target");
-    }
-};
-using PureActorReducer =
-    PureActorTransition (*)(const PersistentActorMap&, std::int64_t);
 } // namespace oresforge::runtime
