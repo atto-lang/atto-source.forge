@@ -46,6 +46,12 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/verification/cli_source_budget.py"
       "$<TARGET_FILE:oresforge>")
   set_tests_properties(oresforge_cli_source_budget PROPERTIES TIMEOUT 20)
+  # Source to IR interpreter (not machine code or native AOT parity).
+  add_test(NAME oresforge_source_i64_interpreter
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/source_i64_executable.py"
+      --compiler "$<TARGET_FILE:oresforge>")
+  set_tests_properties(oresforge_source_i64_interpreter PROPERTIES TIMEOUT 100)
 endif()
 if(ORESFORGE_FUZZ)
   if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
