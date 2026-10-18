@@ -29,6 +29,21 @@ int main() {
         parent.get("child")->storage()) == nested);
     assert(parent.with("child", PersistentActorMap::Value(nested)).size() == 1);
 
+    const std::string huge_key(4097, 'x');
+    assert(both.get(huge_key) == nullptr && !both.contains(huge_key));
+    for (const std::string key: {std::string(), huge_key}) {
+        bool rejected = false;
+        try { (void)both.without(key); }
+        catch (const std::invalid_argument&) { rejected = true; }
+        assert(rejected);
+    }
+    bool null_text_denied = false;
+    try { (void)empty.with("bad", PersistentActorMap::Value(
+        static_cast<const char*>(nullptr))); }
+    catch (const std::invalid_argument&) { null_text_denied = true; }
+    assert(null_text_denied);
+    assert(both.size() == 2);
+
     bool nonfiniteDenied = false;
     try { (void)empty.with("bad", PersistentActorMap::Value(
         std::numeric_limits<double>::infinity())); }
