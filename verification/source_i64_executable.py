@@ -98,8 +98,11 @@ def main():
     sha=hashlib.sha256(compiler.read_bytes()).hexdigest()
     cases=load_cases()
     records=[]
-    negatives=("3/2","9223372036854775808","9223372036854775807+1",
-               "-9223372036854775808-1","3037000500*3037000500")
+    negatives=(("3/2","division requires float result lowering"),
+               ("9223372036854775808","invalid i64"),
+               ("9223372036854775807+1","i64 add overflow"),
+               ("-9223372036854775808-1","i64 sub overflow"),
+               ("3037000500*3037000500","i64 mul overflow"))
     with tempfile.TemporaryDirectory(prefix="oresforge-source-i64-") as td:
         source=Path(td)/"probe.ores"
         for case in cases:
@@ -110,11 +113,12 @@ def main():
                     "real interpreter mismatch: "+case["id"]+" "+repr((code,out,err)))
             records.append({"id":case["id"],"observed":out.strip(),
                             "source_sha256":hashlib.sha256(program.encode()).hexdigest()})
-        for expr in negatives:
+        for expr,expected_error in negatives:
             source.write_text("pub fnc main():int{return "+expr+";}\n",encoding="utf-8")
             code,out,err=execute([str(compiler),"run",str(source)],td)
-            require(code==1 and out=="" and err.startswith("oresforge: "),
-                    "compiler failed to reject unsupported or overflowed source: "+expr+" "+repr((code,out,err)))
+            require(code==1 and out=="" and err.startswith("oresforge: ") and
+                    expected_error in err,
+                    "wrong failure reason for unsupported or overflowed source: "+expr+" "+repr((code,out,err)))
     receipt={"kind":"oreslang-source-i64-executed-ir-interpreter",
              "compiler_sha256":sha,"fixture_git_blob":BLOB,
              "fixture_sha256":BYTES_SHA256,
