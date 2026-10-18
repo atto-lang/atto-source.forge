@@ -88,4 +88,18 @@ int main() {
     try { (void)flood.with("AaAaAaAaAaAaBB", 65); }
     catch (const std::length_error&) { denied = true; }
     assert(denied);
+    // A rejected 65th colliding key does not mutate the immutable root.
+    // Removing one key from a new version must free exactly one bucket slot,
+    // without altering the original 64-key version or unrelated entries.
+    const std::string first_key = "AaAaAaAaAaAaAa";
+    const std::string new_key = "AaAaAaAaAaAaBB";
+    assert(flood.contains(first_key) && !flood.contains(new_key));
+    auto shortened = flood.without(first_key);
+    assert(shortened.size() == 63 && !shortened.contains(first_key));
+    assert(flood.size() == 64 && flood.contains(first_key));
+    auto refilled = shortened.with(new_key, 65);
+    assert(refilled.size() == 64 && refilled.contains(new_key));
+    assert(std::get<std::int64_t>(refilled.get(new_key)->storage()) == 65);
+    assert(!flood.contains(new_key));
+    assert(std::get<std::int64_t>(flood.get(first_key)->storage()) == 0);
 }
