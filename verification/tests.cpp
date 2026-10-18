@@ -55,6 +55,14 @@ int main() {
            "import in a comment does not trigger module admission");
     ensure(interpret(source("2+3*4"))==14,"precedence");
     ensure(interpret(source("(2+3)*4"))==20,"parentheses");
+    // Cross-backend Wave 2 scalar fixture (Git blob a8165323...).
+    // This is a genuine evaluated Oreslang source result, not a parser-only gate.
+    const std::string arithmetic76=R"ores(pub fnc main(): int {
+  return 100 - (3 + 2) - 19;
+}
+)ores";
+    ensure(interpret(parse_source(arithmetic76))==76,
+           "shared arithmetic-76 source execution");
     for (const auto& expression : {"3/2", "4/2", "5/0", "-9223372036854775808/-1"})
       reject_diagnostic([&] { source(expression); }, "float result lowering");
     // Internal checked-i64 IR division is distinct from the source / operator.
