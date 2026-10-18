@@ -24,7 +24,9 @@ public:
                 throw std::invalid_argument("nonfinite actor value");
         }
         Value(std::string v): value_(std::move(v)) {}
-        Value(const char* v): value_(std::string(v)) {}
+        Value(const char* v): value_(v ? std::string(v) : std::string()) {
+            if (!v) throw std::invalid_argument("null persistent actor text");
+        }
         explicit Value(MapRef v): value_(std::move(v)) {
             if (!std::get<MapRef>(value_))
                 throw std::invalid_argument("null nested actor map");
@@ -43,6 +45,7 @@ public:
     static PersistentActorMap empty() { return PersistentActorMap(nullptr, 0); }
     std::size_t size() const noexcept { return count_; }
     const Value* get(const std::string& key) const {
+        if (key.empty() || key.size() > 4096) return nullptr;
         return find(root_, key, hash(key), 0);
     }
     bool contains(const std::string& key) const { return get(key) != nullptr; }
@@ -57,7 +60,8 @@ public:
     }
 
     PersistentActorMap without(const std::string& key) const {
-        if (key.empty()) throw std::invalid_argument("persistent actor key empty");
+        if (key.empty() || key.size() > 4096)
+            throw std::invalid_argument("persistent actor key limit");
         bool removed = false;
         auto next = erase(root_, key, hash(key), 0, removed);
         if (!removed) return *this;
