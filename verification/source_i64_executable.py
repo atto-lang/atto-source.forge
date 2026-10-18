@@ -17,6 +17,7 @@ import tempfile
 import time
 
 BLOB = "bbc319c19ecd007109d33592e210091eb267e5a2"
+BYTES_SHA256 = "39bddbe558ad1c336271f91e6403c4555f2f16a7ed33a3355ee897721b6ab02a"
 CASES = Path(__file__).resolve().parents[1] / "contracts/v1/source-i64/portable-i64.v1.json"
 IDS = ("precedence","grouping","signed-multiplication","subtraction",
        "negative-result","max-minus-one","signed-minimum")
@@ -27,7 +28,9 @@ def require(ok, detail):
 def load_cases():
     raw = CASES.read_bytes()
     digest = hashlib.sha1(b"blob "+str(len(raw)).encode()+b"\0"+raw).hexdigest()
-    require(0<len(raw)<=8192 and digest==BLOB,"unreviewed source-i64 corpus")
+    require(0<len(raw)<=8192 and digest==BLOB and
+            hashlib.sha256(raw).hexdigest()==BYTES_SHA256,
+            "unreviewed source-i64 corpus")
     def nodups(pairs):
         result={}
         for k,v in pairs:
@@ -114,6 +117,7 @@ def main():
                     "compiler failed to reject unsupported or overflowed source: "+expr+" "+repr((code,out,err)))
     receipt={"kind":"oreslang-source-i64-executed-ir-interpreter",
              "compiler_sha256":sha,"fixture_git_blob":BLOB,
+             "fixture_sha256":BYTES_SHA256,
              "executed_positive":len(records),"executed_negative":len(negatives),
              "skipped":0,"native_aot_attested":False,"observed":records}
     if args.report:
