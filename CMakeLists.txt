@@ -20,6 +20,17 @@ if(BUILD_TESTING)
   target_link_libraries(oresforge_actor_arena_tests PRIVATE oresforge_core Threads::Threads)
   add_test(NAME oresforge_actor_arena COMMAND oresforge_actor_arena_tests)
   set_tests_properties(oresforge_actor_arena PROPERTIES TIMEOUT 25)
+  # Host integration: route selection -> authenticated bounded mailbox ->
+  # independently-owned actor arena, plus failed admission and restart.
+  add_executable(oresforge_actor_routing_arena_integration
+    verification/actor_routing_arena_integration.cpp)
+  target_link_libraries(oresforge_actor_routing_arena_integration
+    PRIVATE oresforge_core Threads::Threads)
+  add_test(NAME oresforge_actor_routing_arena_integration
+    COMMAND oresforge_actor_routing_arena_integration)
+  set_tests_properties(oresforge_actor_routing_arena_integration
+    PROPERTIES TIMEOUT 20)
+
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   # Host-only policy conformance (not source-compiled actor execution).
   add_executable(oresforge_actor_pipeline_policy_test
