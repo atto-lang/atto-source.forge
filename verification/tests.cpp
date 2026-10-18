@@ -53,6 +53,18 @@ int main() {
     }
     ensure(interpret(parse_source("fnc main():int{return 42;} // import ignored"))==42,
            "import in a comment does not trigger module admission");
+    reject_diagnostic([] {
+      parse_source("fnc main(tuple (int,int,string?) value):int{return 1;}");
+    }, "forge structural tuple v2 parameter ABI unsupported");
+    reject_diagnostic([] {
+      parse_source("fnc main((int,int,string?) value):int{return 1;}");
+    }, "forge structural tuple v2 parameter ABI unsupported");
+    reject_diagnostic([] {
+      parse_source("fnc main(structural (int,int,string?) value):int{return 1;}");
+    }, "forge structural tuple v2 readonly-view ABI unsupported");
+    ensure(interpret(parse_source(
+      "fnc main():int{return 42;} // fnc main((int,int,string?) x):int{return 0;}"))==42,
+      "tuple-v2 text in a line comment does not trigger admission");
     ensure(interpret(source("2+3*4"))==14,"precedence");
     ensure(interpret(source("(2+3)*4"))==20,"parentheses");
     for (const auto& expression : {"3/2", "4/2", "5/0", "-9223372036854775808/-1"})

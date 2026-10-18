@@ -55,7 +55,16 @@ class Parser {
       }
       next();
     }
-    expect("fnc"); expect("main"); expect("("); expect(")");
+    expect("fnc"); expect("main"); expect("(");
+    // Tuple-v2 syntax is known, but Forge has no aggregate value/ABI lowering.
+    // Reject on the first semantic token before ',' or '?' reaches the tiny
+    // scalar lexer, so unsupported capability cannot masquerade as a random
+    // character/grammar failure.
+    if (tok_.text=="(" || tok_.text=="tuple")
+      error("forge structural tuple v2 parameter ABI unsupported");
+    if (tok_.text=="structural")
+      error("forge structural tuple v2 readonly-view ABI unsupported");
+    expect(")");
     if (!take(":")) expect("->");
     expect("int"); expect("{"); expect("return");
     const int result=expr(0);
