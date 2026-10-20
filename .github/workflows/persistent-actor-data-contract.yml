@@ -6,18 +6,24 @@ on:
       - 'scripts/verify_persistent_actor_data_contract.py'
       - 'scripts/test_persistent_actor_data_contract.py'
       - '.github/workflows/persistent-actor-data-contract.yml'
-      - 'runtime/actor_arena.hpp'
-      - 'verification/actor_arena_test.cpp'
-      - 'CMakeLists.txt'
+      - 'src/main/java/dev/oreslang/runtime/ActorRuntime.java'
+      - 'src/main/java/dev/oreslang/runtime/PersistentActorMap.java'
+      - 'src/main/java/dev/oreslang/types/ActorStateModeContracts.java'
+      - 'src/test/java/dev/oreslang/runtime/PersistentActorMapTest.java'
+      - 'src/test/java/dev/oreslang/runtime/ActorSharedLocalMemoryTest.java'
+      - 'src/test/java/dev/oreslang/types/ActorStateModeContractsTest.java'
   push:
     paths:
       - 'contracts/v1/persistent_actor_data_v1.json'
       - 'scripts/verify_persistent_actor_data_contract.py'
       - 'scripts/test_persistent_actor_data_contract.py'
       - '.github/workflows/persistent-actor-data-contract.yml'
-      - 'runtime/actor_arena.hpp'
-      - 'verification/actor_arena_test.cpp'
-      - 'CMakeLists.txt'
+      - 'src/main/java/dev/oreslang/runtime/ActorRuntime.java'
+      - 'src/main/java/dev/oreslang/runtime/PersistentActorMap.java'
+      - 'src/main/java/dev/oreslang/types/ActorStateModeContracts.java'
+      - 'src/test/java/dev/oreslang/runtime/PersistentActorMapTest.java'
+      - 'src/test/java/dev/oreslang/runtime/ActorSharedLocalMemoryTest.java'
+      - 'src/test/java/dev/oreslang/types/ActorStateModeContractsTest.java'
   workflow_dispatch:
 permissions:
   contents: read
@@ -30,15 +36,18 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - name: Assert actual policy checkout matches PR head
+      - name: Assert source HEAD and tree checked out
         shell: bash
         env:
-          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
-          test "$(git rev-parse --verify HEAD)" = "$EXPECTED_HEAD"
+          [[ "$EXPECTED_SOURCE_HEAD" =~ ^[a-f0-9]{40}$ ]]
+          test "$(git rev-parse --verify HEAD)" = "$EXPECTED_SOURCE_HEAD"
           test -n "$(git rev-parse 'HEAD^{tree}')"
           test -z "$(git status --porcelain --untracked-files=all)"
+          echo "EXACT_TESTED_SOURCE_COMMIT=$EXPECTED_SOURCE_HEAD"
+          echo "EXACT_TESTED_SOURCE_TREE=$(git rev-parse 'HEAD^{tree}')"
       - name: Pin identical five-backend contract source blobs
         shell: bash
         run: |
@@ -48,11 +57,11 @@ jobs:
           test "$(git hash-object scripts/verify_persistent_actor_data_contract.py)" = "e423ef5aef92a48eb1fb5c38578b986f20da2130"
           test "$(git ls-tree HEAD -- scripts/verify_persistent_actor_data_contract.py | awk '{print $1 ":" $2 ":" $3}')" = "100644:blob:e423ef5aef92a48eb1fb5c38578b986f20da2130"
           test -f scripts/verify_persistent_actor_data_contract.py && test ! -L scripts/verify_persistent_actor_data_contract.py
-          test "$(git hash-object scripts/test_persistent_actor_data_contract.py)" = "544fca635d7ab77b6496b0a6c917bf17302b2ce0"
-          test "$(git ls-tree HEAD -- scripts/test_persistent_actor_data_contract.py | awk '{print $1 ":" $2 ":" $3}')" = "100644:blob:544fca635d7ab77b6496b0a6c917bf17302b2ce0"
+          test "$(git hash-object scripts/test_persistent_actor_data_contract.py)" = "f5bb43dce0888f347b91dd8d1d101e3376b6da8c"
+          test "$(git ls-tree HEAD -- scripts/test_persistent_actor_data_contract.py | awk '{print $1 ":" $2 ":" $3}')" = "100644:blob:f5bb43dce0888f347b91dd8d1d101e3376b6da8c"
           test -f scripts/test_persistent_actor_data_contract.py && test ! -L scripts/test_persistent_actor_data_contract.py
       - name: Reject capability and fixture drift
-        run: python3 scripts/verify_persistent_actor_data_contract.py
+        run: python3 -I scripts/verify_persistent_actor_data_contract.py
       - name: Execute exactly 47 source-free policy tests in three rounds
         shell: bash
         run: |
@@ -101,7 +110,7 @@ jobs:
           expected = {
               "contracts/v1/persistent_actor_data_v1.json": "83a40f637ab77437108d02fedc8cde997f753928",
               "scripts/verify_persistent_actor_data_contract.py": "e423ef5aef92a48eb1fb5c38578b986f20da2130",
-              "scripts/test_persistent_actor_data_contract.py": "544fca635d7ab77b6496b0a6c917bf17302b2ce0"}
+              "scripts/test_persistent_actor_data_contract.py": "f5bb43dce0888f347b91dd8d1d101e3376b6da8c"}
           counts = json.loads((pathlib.Path(os.environ["RUNNER_TEMP"])
                                / "persistent-actor-round-counts.json").read_text())
           if (blobs != expected or git("rev-parse", "HEAD") != os.environ["EXPECTED_HEAD"]
@@ -133,16 +142,20 @@ jobs:
           path: ${{ runner.temp }}/persistent-actor-sourcefree-47.json
           if-no-files-found: error
           retention-days: 7
-
-  host-arena:
+  java-runtime:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
-      - name: Configure and execute real Forge native actor arena CTest
-        run: |
-          cmake -S . -B build -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --target oresforge_actor_arena_tests -j 2
-          ctest --test-dir build --output-on-failure -R '^oresforge_actor_arena$'
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: graalvm/setup-graalvm@27b360dbb857524eaf0b4c4cef364d38e5b4f173
+        with:
+          java-version: '25'
+          distribution: graalvm
+          cache: maven
+      - name: HAMT and pure-actor runtime regression
+        run: mvn -B -ntp -Dtest=PersistentActorMapTest,ActorSharedLocalMemoryTest,ActorStateModeContractsTest test
+      - name: Full Java/GraalVM verification
+        run: mvn -B -ntp -Dores.runtime.carriers=native verify
