@@ -17,6 +17,17 @@ ctest --test-dir build --output-on-failure
 
 Requires CMake >= 3.20, a C++20-capable GCC/Clang, and a POSIX toolchain for native smoke testing. CI builds this experimental bootstrap and executes its CTest suite. The former `verification/smoke.sh` reference was removed because that file does not exist.
 
+## Self-hosting and native execution evidence
+
+**OresForge is not yet self-hosting.** Its current compiler is C++20, not
+Oreslang source compiled by Oreslang. See [the stage-by-stage self-hosting
+acceptance plan](docs/SELF_HOSTING.md). The Linux x86-64/ARM64 CTest
+`oresforge_native_asm_executable` now assembles, links and **runs** the
+compiler's constant-return assembly and compares results with the checked
+source interpreter, including fail-closed negative cases. This is native
+execution of a narrow scalar program, **not** general native code generation
+or stage-1 compiler bootstrap.
+
 ## Directories
 
 | Directory | Responsibility | State |

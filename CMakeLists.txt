@@ -95,3 +95,16 @@ if(BUILD_TESTING)
   set_tests_properties(scalar_parity_harness_selftest PROPERTIES TIMEOUT 30)
 
 endif()
+
+# A real host assembler/linker executes the emitted entry and compares its
+# printed i64 value with the checked source interpreter. This is a *stage-0*
+# native smoke only: it does not execute an Oreslang-written compiler.
+if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+   CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|aarch64|arm64)$")
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  add_test(NAME oresforge_native_asm_executable
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/native_asm_executable.py"
+      --compiler "$<TARGET_FILE:oresforge>")
+  set_tests_properties(oresforge_native_asm_executable PROPERTIES TIMEOUT 180)
+endif()
