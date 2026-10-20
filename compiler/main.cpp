@@ -21,7 +21,15 @@ int main(int argc,char** argv) {
     if (argc==3 && (std::string(argv[1])=="run" || std::string(argv[1])=="ir")) {
       auto program=oresforge::parse_source(read_file(argv[2]));
       if (std::string(argv[1])=="run") std::cout<<oresforge::interpret(program)<<'\n';
-      else std::cout<<oresforge::dump_ir(program);
+      else {
+        // Today all admitted source expressions are compile-time i64 values.
+        // Structural IR verification alone misses overflow: do not publish
+        // known-invalid scalar IR just because the dump path skips execution.
+        // Replace with typed constant-fold validation before supporting
+        // nonconstant programs, rather than evaluating runtime effects.
+        (void)oresforge::interpret(program);
+        std::cout<<oresforge::dump_ir(program);
+      }
       std::cout.flush();
       return 0;
     }
