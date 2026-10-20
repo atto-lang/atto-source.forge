@@ -80,6 +80,8 @@ class Parser {
     } else if ((c=='<'||c=='>'||c=='='||c=='!') &&
                at_<text_.size() && text_[at_]=='=') {
       ++at_;
+    } else if (c=='-' && at_<text_.size() && text_[at_]=='>') {
+      ++at_;
     } else if (std::string_view("()+-*{};:,<>=").find(c)==std::string_view::npos) {
       at_=begin;
       fail("invalid character");
