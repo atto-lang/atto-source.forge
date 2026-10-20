@@ -54,6 +54,78 @@ int main() {
     ensure(interpret(parse_source("fnc main():int{return 42;} // import ignored"))==42,
            "import in a comment does not trigger module admission");
     ensure(interpret(source("2+3*4"))==14,"precedence");
+
+    // Stage-0 typed-pure-function inliner. These check semantics and reject
+    // invalid whole-module definitions; they are NOT native stack-frame calls.
+    ensure(interpret(parse_source(
+      "fnc main():int{return mul_add(6,7)+mul_add(2,3);} "
+      "fnc mul_add(a:int,b:int):int{return a*b;}"))==48,
+      "typed two-parameter calls and repeated inlining");
+    ensure(interpret(parse_source(
+      "fnc twice(v:int):int{return v*2;} "
+      "define pub fnc main()->int{return twice(twice(7));}"))==28,
+      "nested call binding and arrow type");
+    ensure(interpret(parse_source(
+      "fnc main():int{return forward(-3);} "
+      "fnc forward(v:int):int{return v*v;}"))==9,
+      "forward definition and negative argument");
+    ensure(interpret(parse_source(
+      "fnc unused(x:int):int{return x+1;} "
+      "fnc main():int{return 17;}"))==17,
+      "unused valid function");
+    reject_diagnostic([] { parse_source(
+      "fnc main():int{return self(1);} "
+      "fnc self(x:int):int{return self(x);}"); },
+      "recursive calls not supported");
+    reject_diagnostic([] { parse_source(
+      "fnc a():int{return b();} fnc b():int{return a();} "
+      "fnc main():int{return 0;}"); },
+      "recursive calls not supported");
+    reject_diagnostic([] { parse_source(
+      "fnc unused():int{return missing();} fnc main():int{return 0;}"); },
+      "unknown function");
+    reject_diagnostic([] { parse_source(
+      "fnc unused():int{return ok(1,2);} fnc ok(a:int):int{return a;} "
+      "fnc main():int{return 0;}"); },
+      "arity mismatch");
+    reject_diagnostic([] { parse_source(
+      "fnc main():int{return 1;} fnc main():int{return 2;}"); },
+      "duplicate function");
+    reject_diagnostic([] { parse_source(
+      "fnc bad(x:int,x:int):int{return x;} fnc main():int{return 1;}"); },
+      "duplicate parameter");
+    reject_diagnostic([] { parse_source(
+      "fnc main(x:int):int{return x;}"); },
+      "main must have zero parameters");
+    reject_diagnostic([] { parse_source(
+      "fnc main():int{return missing(1);}"); },
+      "unknown function");
+
+    // DAG validation must be memoized and inlining itself must respect the
+    // existing instruction budget (never exponential unchecked allocation).
+    std::string expanding="fnc f0():int{return 1;}";
+    for (int i=1; i<19; ++i) {
+      const std::string prev="f"+std::to_string(i-1)+"()";
+      expanding+="fnc f"+std::to_string(i)+"():int{return "+
+                 prev+"+"+prev+";}";
+    }
+    expanding+="fnc main():int{return f18();}";
+    reject_diagnostic([&] { parse_source(expanding); }, "too many instructions");
+    // Even a linear, acyclic call chain must stop at the configured depth.
+    std::string deep;
+    for (int i=0; i<66; ++i)
+      deep+="fnc f"+std::to_string(i)+"():int{return "+
+            (i==65?std::string("1"):("f"+std::to_string(i+1)+"()"))+";}";
+    deep+="fnc main():int{return f0();}";
+    reject_diagnostic([&] { parse_source(deep); }, "function call depth exceeded");
+    reject_diagnostic([] { parse_source(
+      "fnc bad(x:int):int{return missing_param;} fnc main():int{return 1;}"); },
+      "expected integer at byte");
+
+    reject_diagnostic([] { interpret(parse_source(
+      "fnc main():int{return identity(9223372036854775807)+1;} "
+      "fnc identity(x:int):int{return x;}")); }, "i64 add overflow");
+
     ensure(interpret(source("(2+3)*4"))==20,"parentheses");
     // Cross-backend Wave 2 scalar fixture (Git blob a8165323...).
     // This is a genuine evaluated Oreslang source result, not a parser-only gate.
