@@ -1,5 +1,9 @@
 #include "compiler/frontend.hpp"
+#include <algorithm>
 #include <charconv>
+#include <memory>
+#include <unordered_map>
+#include <vector>
 #include <cctype>
 #include <cstdint>
 #include <limits>
@@ -40,27 +44,43 @@ void validate_source_utf8(std::string_view text) {
 }
 enum class Kind { Word, Number, Punct, End };
 struct Token { Kind kind; std::string_view text; std::size_t offset; };
+
+// This stage-0 subset has pure i64 return expressions only. Inlining is
+// semantically equivalent to invoking such a function, but NOT native ABI
+// calls, stack frames, mutable locals, recursion, or dynamic dispatch.
+struct Expr {
+  enum class Tag { Constant, Parameter, Negative, Add, Sub, Mul, Call };
+  Tag tag;
+  std::int64_t value = 0;
+  std::string name;
+  std::vector<std::unique_ptr<Expr>> children;
+  std::size_t depth = 1;
+};
+using ExprPtr = std::unique_ptr<Expr>;
+struct Function {
+  std::vector<std::string> parameters;
+  ExprPtr body;
+};
+
 class Parser {
  public:
   explicit Parser(std::string_view text): source_(text) { next(); }
   Program parse() {
-    bool defined=false, public_=false;
-    while (tok_.text=="define" || tok_.text=="pub") {
-      if (tok_.text=="define") {
-        if (defined) error("duplicate define");
-        defined=true;
-      } else {
-        if (public_) error("duplicate pub");
-        public_=true;
-      }
-      next();
+    while (tok_.kind != Kind::End) definition();
+    if (!functions_.contains("main")) error("missing main function");
+    if (!functions_.at("main").parameters.empty())
+      error("main must have zero parameters");
+    // Check every function, including unused ones; do not leave an invalid
+    // future entry behind an unreachable definition.
+    for (const auto& [name, fn] : functions_) {
+      (void)fn;
+      std::vector<std::string> active;
+      validate_calls(name, active);
     }
-    expect("fnc"); expect("main"); expect("("); expect(")");
-    if (!take(":")) expect("->");
-    expect("int"); expect("{"); expect("return");
-    const int result=expr(0);
-    expect(";"); expect("}");
-    if (tok_.kind!=Kind::End) error("trailing code");
+    std::vector<std::string> active;
+    const auto& main=functions_.at("main");
+    const std::unordered_map<std::string,int> empty;
+    const int result=lower(*main.body,empty,active,0);
     add(Op::Return,0,result);
     verify(program_);
     return std::move(program_);
@@ -70,17 +90,21 @@ class Parser {
   std::size_t at_=0;
   Token tok_{Kind::End,{},0};
   Program program_;
-  static constexpr std::size_t kMaxExpressionDepth = 128;
-  static constexpr std::size_t kMaxInstructions = 100000;
+  std::unordered_map<std::string,Function> functions_;
+  std::size_t node_count_=0;
+  static constexpr std::size_t kMaxExpressionDepth=128;
+  static constexpr std::size_t kMaxCallDepth=64;
+  static constexpr std::size_t kMaxInstructions=100000;
+  static constexpr std::size_t kMaxNodes=100000;
   static void check_depth(std::size_t depth) {
-    if (depth > kMaxExpressionDepth) throw std::runtime_error("expression nesting too deep");
+    if (depth>kMaxExpressionDepth) throw std::runtime_error("expression nesting too deep");
   }
   [[noreturn]] void error(const char* s) const {
     throw std::runtime_error(std::string(s)+" at byte "+std::to_string(tok_.offset));
   }
   void next() {
     while (at_<source_.size()) {
-      unsigned char c=static_cast<unsigned char>(source_[at_]);
+      const auto c=static_cast<unsigned char>(source_[at_]);
       if (std::isspace(c)) { ++at_; continue; }
       if (source_[at_]=='/' && at_+1<source_.size() && source_[at_+1]=='/') {
         at_+=2;
@@ -91,7 +115,7 @@ class Parser {
     }
     const auto start=at_;
     if (at_==source_.size()) { tok_={Kind::End,{},start}; return; }
-    unsigned char c=static_cast<unsigned char>(source_[at_]);
+    auto c=static_cast<unsigned char>(source_[at_]);
     if (std::isalpha(c) || c=='_') {
       ++at_;
       while (at_<source_.size()) {
@@ -100,9 +124,6 @@ class Parser {
         ++at_;
       }
       tok_={Kind::Word,source_.substr(start,at_-start),start};
-      // The bootstrap parser cannot resolve any Java/Graal import forms.
-      // Reject with a stable diagnostic rather than emitting an unrelated
-      // scalar result from a source that depends on external modules.
       if (tok_.text=="import") error("source imports require verified module graph lowering");
       return;
     }
@@ -113,11 +134,10 @@ class Parser {
       tok_={Kind::Number,source_.substr(start,at_-start),start}; return;
     }
     if (source_[at_]=='-' && at_+1<source_.size() && source_[at_+1]=='>') {
-      at_+=2;
-      tok_={Kind::Punct,source_.substr(start,2),start}; return;
+      at_+=2; tok_={Kind::Punct,source_.substr(start,2),start}; return;
     }
-    if (std::string_view("()+-*/{};:").find(static_cast<char>(c)) == std::string_view::npos)
-      error("invalid character");
+    if (std::string_view("()+-*/{};:,").find(static_cast<char>(c)) ==
+        std::string_view::npos) error("invalid character");
     ++at_;
     tok_={Kind::Punct,source_.substr(start,1),start};
   }
@@ -128,55 +148,193 @@ class Parser {
   void expect(std::string_view value) {
     if (!take(value)) error("unexpected token");
   }
-  int add(Op op, std::int64_t value=0, int a=-1, int b=-1) {
-    if (program_.instructions.size()>=kMaxInstructions)
-      error("too many instructions");
-    int index=static_cast<int>(program_.instructions.size());
-    program_.instructions.push_back({op,value,a,b});
-    return index;
+  std::string identifier() {
+    if (tok_.kind!=Kind::Word) error("expected identifier");
+    std::string name(tok_.text);
+    next(); return name;
   }
-  int expr(std::size_t depth) {
+  ExprPtr node(Expr::Tag tag, std::vector<ExprPtr> children={},
+               std::int64_t value=0, std::string name={}) {
+    if (++node_count_>kMaxNodes) error("expression AST budget exceeded");
+    std::size_t depth=1;
+    for (const auto& child : children) {
+      depth=std::max(depth,child->depth+1);
+    }
     check_depth(depth);
-    int left=term(depth+1);
+    auto e=std::make_unique<Expr>();
+    e->tag=tag; e->children=std::move(children); e->value=value;
+    e->name=std::move(name); e->depth=depth;
+    return e;
+  }
+  ExprPtr binary(Expr::Tag op,ExprPtr a,ExprPtr b) {
+    std::vector<ExprPtr> v;
+    v.push_back(std::move(a));
+    v.push_back(std::move(b));
+    return node(op,std::move(v));
+  }
+  void definition() {
+    bool defined=false, public_=false;
+    while (tok_.text=="define" || tok_.text=="pub") {
+      if (take("define")) { if (defined) error("duplicate define"); defined=true; }
+      else if (take("pub")) { if (public_) error("duplicate pub"); public_=true; }
+    }
+    expect("fnc");
+    const std::string name=identifier();
+    if (name=="int" || name=="fnc" || name=="return")
+      error("reserved function name");
+    expect("(");
+    Function fn;
+    if (tok_.text!=")") {
+      do {
+        const std::string parameter=identifier();
+        if (parameter=="int" || parameter=="fnc" || parameter=="return" ||
+            std::find(fn.parameters.begin(),fn.parameters.end(),parameter)!=fn.parameters.end())
+          error("invalid or duplicate parameter");
+        expect(":"); expect("int");
+        fn.parameters.push_back(parameter);
+        if (fn.parameters.size()>64) error("too many parameters");
+        if (!take(",")) break;
+      } while (true);
+    }
+    expect(")");
+    if (!take(":")) expect("->");
+    expect("int"); expect("{"); expect("return");
+    fn.body=expression(0);
+    expect(";"); expect("}");
+    if (functions_.contains(name)) error("duplicate function");
+    functions_.emplace(name,std::move(fn));
+  }
+  ExprPtr expression(std::size_t depth) {
+    check_depth(depth);
+    auto a=term(depth+1);
     while (tok_.text=="+" || tok_.text=="-") {
       bool plus=tok_.text=="+";
-      next(); int right=term(depth+1);
-      left=add(plus?Op::Add:Op::Sub,0,left,right);
+      next();
+      a=binary(plus?Expr::Tag::Add:Expr::Tag::Sub,
+               std::move(a),term(depth+1));
     }
-    return left;
+    return a;
   }
-  int term(std::size_t depth) {
+  ExprPtr term(std::size_t depth) {
     check_depth(depth);
-    int left=factor(depth+1);
+    auto a=factor(depth+1);
     while (tok_.text=="*" || tok_.text=="/") {
-      bool mult=tok_.text=="*";
-      if (!mult) error("division requires float result lowering; unsupported in the i64 source subset");
-      next(); int right=factor(depth+1);
-      left=add(mult?Op::Mul:Op::Div,0,left,right);
+      if (tok_.text=="/")
+        error("division requires float result lowering; unsupported in the i64 source subset");
+      next();
+      a=binary(Expr::Tag::Mul,std::move(a),factor(depth+1));
     }
-    return left;
+    return a;
   }
-  int factor(std::size_t depth) {
+  ExprPtr factor(std::size_t depth) {
     check_depth(depth);
     if (take("-")) {
-      // The signed i64 minimum is valid, though its positive magnitude
-      // cannot be represented as an i64. Admit only this exact negative lexeme.
       if (tok_.kind==Kind::Number && tok_.text=="9223372036854775808") {
         next();
-        return add(Op::Constant,std::numeric_limits<std::int64_t>::min());
+        return node(Expr::Tag::Constant,{},std::numeric_limits<std::int64_t>::min());
       }
-      int zero=add(Op::Constant,0);
-      int value=factor(depth+1);
-      return add(Op::Sub,0,zero,value);
+      std::vector<ExprPtr> v;
+      v.push_back(factor(depth+1));
+      return node(Expr::Tag::Negative,std::move(v));
     }
     if (take("+")) return factor(depth+1);
-    if (take("(")) { int value=expr(depth+1); expect(")"); return value; }
-    if (tok_.kind!=Kind::Number) error("expected integer");
-    std::int64_t n=0;
-    const char* begin=tok_.text.data();
-    auto parsed=std::from_chars(begin,begin+tok_.text.size(),n);
-    if (parsed.ec!=std::errc{} || parsed.ptr!=begin+tok_.text.size()) error("invalid i64");
-    next(); return add(Op::Constant,n);
+    if (take("(")) {
+      auto e=expression(depth+1); expect(")"); return e;
+    }
+    if (tok_.kind==Kind::Number) {
+      std::int64_t n=0;
+      const char* begin=tok_.text.data();
+      const auto parsed=std::from_chars(begin,begin+tok_.text.size(),n);
+      if (parsed.ec!=std::errc{} || parsed.ptr!=begin+tok_.text.size())
+        error("invalid i64");
+      next(); return node(Expr::Tag::Constant,{},n);
+    }
+    if (tok_.kind==Kind::Word) {
+      const std::string name=identifier();
+      if (!take("(")) return node(Expr::Tag::Parameter,{},0,name);
+      std::vector<ExprPtr> args;
+      if (tok_.text!=")") {
+        do {
+          args.push_back(expression(depth+1));
+          if (args.size()>64) error("too many call arguments");
+          if (!take(",")) break;
+        } while (true);
+      }
+      expect(")");
+      return node(Expr::Tag::Call,std::move(args),0,name);
+    }
+    error("expected integer");
+  }
+  int add(Op op,std::int64_t value=0,int a=-1,int b=-1) {
+    if (program_.instructions.size()>=kMaxInstructions)
+      error("too many instructions");
+    const int idx=static_cast<int>(program_.instructions.size());
+    program_.instructions.push_back({op,value,a,b}); return idx;
+  }
+  void walk_calls(const Expr& e,std::vector<std::string>& active) const {
+    if (e.tag==Expr::Tag::Call) {
+      auto found=functions_.find(e.name);
+      if (found==functions_.end()) throw std::runtime_error("unknown function: "+e.name);
+      if (found->second.parameters.size()!=e.children.size())
+        throw std::runtime_error("function arity mismatch: "+e.name);
+      if (std::find(active.begin(),active.end(),e.name)!=active.end())
+        throw std::runtime_error("recursive calls not supported: "+e.name);
+      if (active.size()>=kMaxCallDepth)
+        throw std::runtime_error("function call depth exceeded");
+      active.push_back(e.name);
+      walk_calls(*found->second.body,active);
+      active.pop_back();
+    }
+    for (const auto& child:e.children) walk_calls(*child,active);
+  }
+  void validate_calls(const std::string& name,std::vector<std::string>& active) const {
+    active.push_back(name);
+    walk_calls(*functions_.at(name).body,active);
+    active.pop_back();
+  }
+  int lower(const Expr& e,const std::unordered_map<std::string,int>& env,
+            std::vector<std::string>& active,std::size_t call_depth) {
+    if (call_depth>kMaxCallDepth)
+      throw std::runtime_error("function call depth exceeded");
+    switch (e.tag) {
+      case Expr::Tag::Constant: return add(Op::Constant,e.value);
+      case Expr::Tag::Parameter: {
+        auto found=env.find(e.name);
+        if (found==env.end()) error("expected integer");
+        return found->second;
+      }
+      case Expr::Tag::Negative: {
+        const int zero=add(Op::Constant,0);
+        const int x=lower(*e.children.at(0),env,active,call_depth);
+        return add(Op::Sub,0,zero,x);
+      }
+      case Expr::Tag::Add: case Expr::Tag::Sub: case Expr::Tag::Mul: {
+        const int a=lower(*e.children.at(0),env,active,call_depth);
+        const int b=lower(*e.children.at(1),env,active,call_depth);
+        const Op op=e.tag==Expr::Tag::Add?Op::Add:
+                    e.tag==Expr::Tag::Sub?Op::Sub:Op::Mul;
+        return add(op,0,a,b);
+      }
+      case Expr::Tag::Call: {
+        auto found=functions_.find(e.name);
+        if (found==functions_.end()) throw std::runtime_error("unknown function: "+e.name);
+        const auto& fn=found->second;
+        if (fn.parameters.size()!=e.children.size())
+          throw std::runtime_error("function arity mismatch: "+e.name);
+        if (std::find(active.begin(),active.end(),e.name)!=active.end())
+          throw std::runtime_error("recursive calls not supported: "+e.name);
+        if (call_depth>=kMaxCallDepth)
+          throw std::runtime_error("function call depth exceeded");
+        std::unordered_map<std::string,int> bound;
+        for (std::size_t i=0; i<e.children.size(); ++i)
+          bound.emplace(fn.parameters[i],lower(*e.children[i],env,active,call_depth));
+        active.push_back(e.name);
+        const int result=lower(*fn.body,bound,active,call_depth+1);
+        active.pop_back();
+        return result;
+      }
+    }
+    throw std::runtime_error("unknown expression tag");
   }
 };
 }
