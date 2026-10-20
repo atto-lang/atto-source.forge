@@ -78,12 +78,14 @@ struct Function {
 
 class Parser {
  public:
-  explicit Parser(std::string_view text): source_(text) { next(); }
+  explicit Parser(std::string_view text,bool runtime_entry=false): source_(text),runtime_entry_(runtime_entry) { next(); }
   Program parse() {
     while (tok_.kind != Kind::End) definition();
     if (!functions_.contains("main")) error("missing main function");
-    if (!functions_.at("main").parameters.empty())
+    if (!runtime_entry_ && !functions_.at("main").parameters.empty())
       error("main must have zero parameters");
+    if (runtime_entry_ && functions_.at("main").parameters.size()>4)
+      error("runtime entry parameter budget exceeded");
     // Validate all definitions, including unreachable ones. Memoized DFS is
     // linear in the call graph rather than exponential for diamond imports.
     std::unordered_set<std::string> complete;
@@ -96,14 +98,21 @@ class Parser {
       validate_calls(name,checking,complete);
     std::vector<std::string> active;
     const auto& main=functions_.at("main");
-    const std::unordered_map<std::string,int> empty;
-    const int result=lower(*main.body,empty,active,0);
+    std::unordered_map<std::string,int> bindings;
+    if (runtime_entry_) {
+      program_.parameter_count=main.parameters.size();
+      for (std::size_t i=0; i<main.parameters.size(); ++i)
+        bindings.emplace(main.parameters[i],add(Op::Parameter,
+                                               static_cast<std::int64_t>(i)));
+    }
+    const int result=lower(*main.body,bindings,active,0);
     add(Op::Return,0,result);
     verify(program_);
     return std::move(program_);
   }
  private:
   std::string_view source_;
+  bool runtime_entry_ = false;
   std::size_t at_=0;
   Token tok_{Kind::End,{},0};
   Program program_;
@@ -374,5 +383,11 @@ Program parse_source(std::string_view source) {
   if (source.size() > 1024 * 1024) throw std::runtime_error("source exceeds 1 MiB bootstrap limit");
   validate_source_utf8(source);
   return Parser(source).parse();
+}
+Program parse_runtime_source(std::string_view source) {
+  if (source.size() > 1024 * 1024)
+    throw std::runtime_error("source exceeds 1 MiB bootstrap limit");
+  validate_source_utf8(source);
+  return Parser(source,true).parse();
 }
 }

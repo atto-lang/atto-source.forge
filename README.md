@@ -28,6 +28,35 @@ source interpreter, including fail-closed negative cases. This is native
 execution of a narrow scalar program, **not** general native code generation
 or stage-1 compiler bootstrap.
 
+## Opt-in runtime-argument experiment (new)
+
+This experimental stage-0 profile accepts a `main` with **zero to four typed
+`int` parameters**, while helper functions are still statically inlined.
+The standard `run`, `ir`, and `emit-asm` commands retain their stricter
+zero-argument, compile-time checked behavior. New commands:
+
+~~~sh
+# Source example: fnc main(x:int,y:int):int{return x*3+y;}
+./build/oresforge run-runtime example.ores 7 8       # 29
+./build/oresforge ir-runtime example.ores             # param.i64 instructions
+./build/oresforge emit-runtime-asm x86_64 example.ores > entry.s
+~~~
+
+`emit-runtime-asm` generates **actual native integer operations on runtime
+ABI arguments** (System V x86-64 or AAPCS64 ARM64) rather than folding them
+to one constant return. Checked add/sub/multiply overflow emits a trapping
+instruction; the checked interpreter instead reports an exception. The
+native frame and IR are explicitly bounded. Source `/` still requires
+float lowering and remains rejected, as do recursion, mutable locals,
+conditionals, loops, native inter-function call frames, and self-hosting.
+This is not a generic cross-platform ABI or a C-callable error-return API.
+
+The Linux CTest `oresforge_runtime_argument_native_executable` links
+emitted assembly to an independently compiled C driver, calls it with
+different **runtime inputs** and compares results with the checked
+interpreter. Separate negative tests require native overflow to terminate
+via SIGILL/SIGTRAP, not silently wrap or return a bogus value.
+
 ## Directories
 
 | Directory | Responsibility | State |
