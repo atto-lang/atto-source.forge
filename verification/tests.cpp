@@ -1,4 +1,5 @@
 #include "compiler/frontend.hpp"
+#include "compiler/call_native.hpp"
 #include "compiler/ir.hpp"
 #include "codegen/native.hpp"
 #include "runtime/actor.hpp"
@@ -54,6 +55,46 @@ int main() {
     ensure(interpret(parse_source("fnc main():int{return 42;} // import ignored"))==42,
            "import in a comment does not trigger module admission");
     ensure(interpret(source("2+3*4"))==14,"precedence");
+
+    // Opt-in callable program has its own fully verified representation.
+    // Unlike the scalar profile, these helpers compile to real native calls.
+    auto fact=calls::parse(
+      "fnc fact(n:int):int{return if n<=1 then 1 else n*fact(n-1);}"
+      " fnc main(n:int):int{return fact(n);}");
+    ensure(calls::interpret(fact,std::array<std::int64_t,1>{5})==120,
+           "bounded direct recursion and lazy branch");
+    ensure(calls::interpret(fact,std::array<std::int64_t,1>{10})==3628800,
+           "recursive checked i64 return");
+    ensure(calls::emit_asm(fact,Arch::X86_64).find("  call .Lores_fn_")!=std::string::npos,
+           "real native call emitted");
+    auto mutually_recursive=calls::parse(
+      "fnc even(n:int):int{return if n==0 then 1 else odd(n-1);}"
+      " fnc odd(n:int):int{return if n==0 then 0 else even(n-1);}"
+      " fnc main(n:int):int{return even(n);}");
+    ensure(calls::interpret(mutually_recursive,std::array<std::int64_t,1>{7})==0,
+           "mutual recursion supported");
+    ensure(calls::interpret(mutually_recursive,std::array<std::int64_t,1>{8})==1,
+           "mutual recursion parity");
+    reject_diagnostic([&] { calls::interpret(fact,std::array<std::int64_t,1>{21}); },
+                      "i64 mul overflow");
+    reject_diagnostic([&] { calls::emit_asm(fact,Arch::ARM64); },
+                      "currently supports x86_64 only");
+    reject_diagnostic([] { calls::parse("fnc main():int{return other();}"); },
+                      "unknown function");
+    reject_diagnostic([] { calls::parse(
+      "fnc other(x:int):int{return x;}"
+      " fnc main():int{return other();}"); },"function arity mismatch");
+    auto corrupt=calls::parse("fnc main(x:int):int{return x+1;}");
+    corrupt.functions[0].nodes.back().children[0]=999;
+    reject_diagnostic([&] { calls::verify(corrupt); },
+                      "callable use before definition");
+    auto endless=calls::parse(
+      "fnc forever(n:int):int{return forever(n);}"
+      " fnc main(n:int):int{return forever(n);}");
+    reject_diagnostic([&] {
+      calls::interpret(endless,std::array<std::int64_t,1>{1});
+    },"call depth exceeded");
+
 
     // Separate runtime-entry profile lowers parameter IR rather than folding
     // the entire program to a constant. Helpers are STILL statically inlined.
