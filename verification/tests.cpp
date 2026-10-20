@@ -106,6 +106,26 @@ int main() {
     reject_diagnostic([] {
       parse_source("fnc main():int{match 1 over on _ -> {return 1;} end}");
     }, "expected");
+    // Task 70: structural and row syntax must fail closed across declaration,
+    // parameter, projection and pattern surfaces. The scalar bootstrap has
+    // neither row layout witnesses nor borrow/mutable-field capability checks.
+    const std::vector<std::string> unsupported_shapes={
+      "fnc take(record{foo:int} value):int{return value.foo;}",
+      "fnc take(struct{foo:int} value):int{return value.foo;}",
+      "fnc take(structural {foo:int} value):int{return value.foo;}",
+      "fnc take(structural Shape value):int{return 1;}",
+      "fnc take(List<record{foo:int}> value):int{return 1;}",
+      "fnc main():int{const x=infer struct{foo:1,bar:2};return 1;}",
+      "fnc main():int{const x=struct{foo:int}{foo:1};return 1;}",
+      "fnc main():int{match 1 over on structural {foo:int} as x {return 1;} end}",
+      "fnc take(record{foo:int,foo:string} value):int{return 1;}"
+    };
+    for (const auto& input : unsupported_shapes) {
+      reject([&] { parse_source(input); });
+    }
+    ensure(interpret(parse_source(
+      "fnc main():int{return 42;} // record{foo:int}, structural Shape"))==42,
+      "shape words in comments must not cause false-positive admission");
     // v2 tuple syntax is intentionally not executable on Forge bootstrap.
     reject([] {
       parse_source("fnc take(tuple (int,int,string?) v):int{return 1;}");
