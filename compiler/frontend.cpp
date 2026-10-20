@@ -3,6 +3,7 @@
 #include <charconv>
 #include <memory>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <cctype>
 #include <cstdint>
@@ -70,12 +71,13 @@ class Parser {
     if (!functions_.contains("main")) error("missing main function");
     if (!functions_.at("main").parameters.empty())
       error("main must have zero parameters");
-    // Check every function, including unused ones; do not leave an invalid
-    // future entry behind an unreachable definition.
+    // Validate all definitions, including unreachable ones. Memoized DFS is
+    // linear in the call graph rather than exponential for diamond imports.
+    std::unordered_set<std::string> complete;
+    std::vector<std::string> checking;
     for (const auto& [name, fn] : functions_) {
       (void)fn;
-      std::vector<std::string> active;
-      validate_calls(name, active);
+      validate_calls(name,checking,complete);
     }
     std::vector<std::string> active;
     const auto& main=functions_.at("main");
@@ -271,26 +273,37 @@ class Parser {
     const int idx=static_cast<int>(program_.instructions.size());
     program_.instructions.push_back({op,value,a,b}); return idx;
   }
-  void walk_calls(const Expr& e,std::vector<std::string>& active) const {
+  void walk_calls(const Expr& e,const Function& owner,
+                  std::vector<std::string>& active,
+                  std::unordered_set<std::string>& complete) const {
+    if (e.tag==Expr::Tag::Parameter &&
+        std::find(owner.parameters.begin(),owner.parameters.end(),e.name)==
+        owner.parameters.end())
+      throw std::runtime_error("expected integer: unknown parameter "+e.name);
     if (e.tag==Expr::Tag::Call) {
       auto found=functions_.find(e.name);
-      if (found==functions_.end()) throw std::runtime_error("unknown function: "+e.name);
+      if (found==functions_.end())
+        throw std::runtime_error("unknown function: "+e.name);
       if (found->second.parameters.size()!=e.children.size())
         throw std::runtime_error("function arity mismatch: "+e.name);
-      if (std::find(active.begin(),active.end(),e.name)!=active.end())
-        throw std::runtime_error("recursive calls not supported: "+e.name);
-      if (active.size()>=kMaxCallDepth)
-        throw std::runtime_error("function call depth exceeded");
-      active.push_back(e.name);
-      walk_calls(*found->second.body,active);
-      active.pop_back();
+      validate_calls(e.name,active,complete);
     }
-    for (const auto& child:e.children) walk_calls(*child,active);
+    for (const auto& child:e.children)
+      walk_calls(*child,owner,active,complete);
   }
-  void validate_calls(const std::string& name,std::vector<std::string>& active) const {
+  void validate_calls(const std::string& name,
+                      std::vector<std::string>& active,
+                      std::unordered_set<std::string>& complete) const {
+    if (std::find(active.begin(),active.end(),name)!=active.end())
+      throw std::runtime_error("recursive calls not supported: "+name);
+    if (complete.contains(name)) return;
+    if (active.size()>=kMaxCallDepth)
+      throw std::runtime_error("function call depth exceeded");
     active.push_back(name);
-    walk_calls(*functions_.at(name).body,active);
+    const auto& fn=functions_.at(name);
+    walk_calls(*fn.body,fn,active,complete);
     active.pop_back();
+    complete.insert(name);
   }
   int lower(const Expr& e,const std::unordered_map<std::string,int>& env,
             std::vector<std::string>& active,std::size_t call_depth) {
