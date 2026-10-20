@@ -57,6 +57,41 @@ different **runtime inputs** and compares results with the checked
 interpreter. Separate negative tests require native overflow to terminate
 via SIGILL/SIGTRAP, not silently wrap or return a bogus value.
 
+## Opt-in real native function calls and lazy `if`
+
+The **experimental** `run-calls` and `emit-call-asm` commands compile
+a separate, verified callable source subset. Unlike `run-runtime`, helper
+functions are **not statically inlined**: x86-64 code emits actual
+`call` and `ret` instructions, with real stack frames.
+
+~~~oreslang
+fnc factorial(n:int):int {
+  return if n <= 1 then 1 else n * factorial(n-1);
+}
+fnc main(n:int):int { return factorial(n); }
+~~~
+
+~~~sh
+./build/oresforge run-calls factorial.ores 10         # 3628800
+./build/oresforge emit-call-asm x86_64 factorial.ores > factorial.s
+~~~
+
+Supported here: signed 64-bit integer literals and parameters; arithmetic
+`+`, `-`, `*`; comparisons `<`, `<=`, `>`, `>=`, `==`, `!=`;
+lazy `if condition then expr else expr`; typed function calls, forward
+references, direct and mutual recursion with up to four `int` parameters.
+All calls use System V x86-64 integer registers with an internal hidden
+recursion-depth argument, limited to 128 frames. Bounded per-function ASTs
+also cap stack-frame sizes, and the checked interpreter has an evaluation
+step budget. Arithmetic overflow and excessive recursion trap in generated
+native code and raise explicit errors in the interpreter.
+
+This is an intentionally separate **stage-0 C++ compiler path**; it does not
+yet provide the general Oreslang ABI, mutable local bindings, statements,
+loops, closures, floating-point division, actors, native ARM64 call lowering,
+or compiler self-hosting. Only Linux x86-64 has executed native call and
+branch evidence. Do not treat this syntax subset as complete Oreslang syntax.
+
 ## Directories
 
 | Directory | Responsibility | State |
