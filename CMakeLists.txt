@@ -107,4 +107,9 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
       "${CMAKE_CURRENT_SOURCE_DIR}/verification/native_asm_executable.py"
       --compiler "$<TARGET_FILE:oresforge>")
   set_tests_properties(oresforge_native_asm_executable PROPERTIES TIMEOUT 180)
+  add_test(NAME oresforge_runtime_argument_native_executable
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/runtime_native_executable.py"
+      --compiler "$<TARGET_FILE:oresforge>")
+  set_tests_properties(oresforge_runtime_argument_native_executable PROPERTIES TIMEOUT 180)
 endif()
