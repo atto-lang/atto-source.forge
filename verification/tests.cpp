@@ -179,6 +179,21 @@ int main() {
     ensure(interpret(parse_source("fnc main():int {return 3;} // caf\xc3\xa9"))==3,
            "valid UTF-8 comment");
 
+    // UTF-8 source is accepted for comments, not grammar tokens.
+    // This must be stable under every process locale.
+    reject_diagnostic([] {
+      parse_source("fnc main():int {return caf\xc3\xa9;}");
+    }, "invalid character");
+    reject_diagnostic([] {
+      parse_source("fnc main():int {return 1\xc2\xa0;}");
+    }, "invalid character");
+    reject_diagnostic([] {
+      parse_source("fnc main():int {return \xce\xbb;}");
+    }, "invalid character");
+    ensure(interpret(parse_source("fnc main():int {return 42;} // \xf0\x9f\x8c\x9f"))==42,
+           "supplementary Unicode comment is lexically inert");
+
+
     reject([] { source(std::string(200, '(') + "1" + std::string(200, ')')); });
     reject([] { source(std::string(200, '-') + "1"); });
     reject([] {
