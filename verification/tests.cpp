@@ -88,6 +88,21 @@ int main() {
     corrupt.functions[0].nodes.back().children[0]=999;
     reject_diagnostic([&] { calls::verify(corrupt); },
                       "callable use before definition");
+
+    auto reused=calls::parse("fnc main():int{return 2+3;}");
+    reused.functions[0].nodes.back().children[1]=
+      reused.functions[0].nodes.back().children[0];
+    reject_diagnostic([&] { calls::verify(reused); },
+                      "callable AST shared node");
+    auto unreachable=calls::parse("fnc main():int{return 2+3;}");
+    unreachable.functions[0].result=0;
+    reject_diagnostic([&] { calls::verify(unreachable); },
+                      "invalid callable return/root");
+    auto invalid_kind=calls::parse("fnc main():int{return 2+3;}");
+    invalid_kind.functions[0].nodes[0].kind=static_cast<calls::Kind>(99);
+    reject_diagnostic([&] { calls::verify(invalid_kind); },
+                      "unknown callable opcode");
+
     auto endless=calls::parse(
       "fnc forever(n:int):int{return forever(n);}"
       " fnc main(n:int):int{return forever(n);}");
