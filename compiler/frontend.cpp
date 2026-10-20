@@ -76,10 +76,12 @@ class Parser {
     // linear in the call graph rather than exponential for diamond imports.
     std::unordered_set<std::string> complete;
     std::vector<std::string> checking;
-    for (const auto& [name, fn] : functions_) {
-      (void)fn;
+    std::vector<std::string> names;
+    names.reserve(functions_.size());
+    for (const auto& entry : functions_) names.push_back(entry.first);
+    std::sort(names.begin(),names.end());
+    for (const auto& name : names)
       validate_calls(name,checking,complete);
-    }
     std::vector<std::string> active;
     const auto& main=functions_.at("main");
     const std::unordered_map<std::string,int> empty;
