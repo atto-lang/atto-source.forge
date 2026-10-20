@@ -82,10 +82,10 @@ jobs:
           # with at least the previously reviewed 20,019 assertions rather
           # than treating a larger executed suite as a failure.
           awk '
-            /^typed graph IR security PASS: [0-9]+ assertions$/ {
+            /^typed graph IR security PASS:/ {
               found += 1
-              if ($6 !~ /^[0-9]+$/ || $6 + 0 < 20019) invalid = 1
-              count = $6
+              if ($0 !~ /^typed graph IR security PASS: [0-9]+ assertions$/ ||
+                  $6 + 0 < 20019) invalid = 1
             }
             END { if (found != 1 || invalid) exit 1 }
           ' "$RUNNER_TEMP/dop-forge-evidence/test-output.txt"
