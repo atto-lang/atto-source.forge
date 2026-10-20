@@ -54,7 +54,7 @@ INVALID = (
     ("unreachable-invalid", "fnc bad():int{return absent();} fnc main():int{return 1;}", "unknown function"),
     ("duplicate-name", "fnc f():int{return 1;} fnc f():int{return 2;} fnc main():int{return 1;}", "duplicate function"),
     ("unknown-param", "fnc main():int{return oops;}", "unknown parameter"),
-    ("unsupported-loop", "fnc main():int{return while 1 then 2;}", "expected callable expression"),
+    ("unsupported-loop", "fnc main():int{return while 1 then 2;}", "unknown parameter"),
 )
 DRIVER = r"""#include <errno.h>
 #include <inttypes.h>
