@@ -46,6 +46,12 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/verification/cli_source_budget.py"
       "$<TARGET_FILE:oresforge>")
   set_tests_properties(oresforge_cli_source_budget PROPERTIES TIMEOUT 20)
+  # Source to IR interpreter (not machine code or native AOT parity).
+  add_test(NAME oresforge_source_i64_interpreter
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/source_i64_executable.py"
+      --compiler "$<TARGET_FILE:oresforge>")
+  set_tests_properties(oresforge_source_i64_interpreter PROPERTIES TIMEOUT 100)
 endif()
 if(ORESFORGE_FUZZ)
   if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -73,6 +79,21 @@ if(BUILD_TESTING)
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/value_boundaries.py"
       "$<TARGET_FILE:oresforge>")
   set_tests_properties(value_boundary_admission PROPERTIES TIMEOUT 60)
+  # Shared Java-reference scalar source fixtures: executed guest values + negative admission.
+  add_test(NAME source_scalar_parity
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/contracts/scalar/v1/run.py"
+      --backend forge --mode stdout-i64 --command "$<TARGET_FILE:oresforge> run {source}")
+  set_tests_properties(source_scalar_parity PROPERTIES TIMEOUT 240)
+  # Bootstrap Forge must reject all source imports until a verified module
+  # graph exists; no successful scalar IR may be published from such source.
+  add_test(NAME source_import_parity_admission
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/import_parity_admission.py"
+      "$<TARGET_FILE:oresforge>")
+  set_tests_properties(source_import_parity_admission PROPERTIES TIMEOUT 60)
+  add_test(NAME scalar_parity_harness_selftest
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/contracts/scalar/v1/selftest.py")
+  set_tests_properties(scalar_parity_harness_selftest PROPERTIES TIMEOUT 30)
+
 endif()
 
 # Host-only typed CPU/GPU graph contract: no guest GPU launch capability.
