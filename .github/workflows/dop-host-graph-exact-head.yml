@@ -89,9 +89,9 @@ jobs:
             }
             END { if (found != 1 || invalid) exit 1 }
           ' "$RUNNER_TEMP/dop-forge-evidence/test-output.txt"
-          printf 'GRAPH_SECURITY_ASSERTIONS=%s\\n' \\
-            "$(awk '/^typed graph IR security PASS: [0-9]+ assertions$/ {print $6}' \\
-              "$RUNNER_TEMP/dop-forge-evidence/test-output.txt")" \\
+          printf 'GRAPH_SECURITY_ASSERTIONS=%s\n' \
+            "$(awk '/^typed graph IR security PASS: [0-9]+ assertions$/ {print $6}' \
+              "$RUNNER_TEMP/dop-forge-evidence/test-output.txt")" \
             >> "$RUNNER_TEMP/dop-forge-evidence/test-results.txt"
           test "$(grep -c '^PASS ' "$RUNNER_TEMP/dop-forge-evidence/test-results.txt")" = 2
           printf 'DOP_FORGE_GRAPH_TESTS=PASS\n' > "$RUNNER_TEMP/dop-forge-evidence/test-outcome.txt"
