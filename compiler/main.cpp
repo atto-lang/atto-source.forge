@@ -1,4 +1,5 @@
 #include "compiler/frontend.hpp"
+#include "compiler/call_native.hpp"
 #include "compiler/source_input.hpp"
 #include "compiler/ir.hpp"
 #include "codegen/native.hpp"
@@ -33,6 +34,30 @@ int main(int argc,char** argv) {
         (void)oresforge::interpret(program);
         std::cout<<oresforge::dump_ir(program);
       }
+      std::cout.flush();
+      return 0;
+    }
+    // A separate stage-0 callable profile: true SysV native calls and lazy
+    // runtime branches. Legacy scalar and runtime-entry modes remain intact.
+    if (argc>=3 && std::string(argv[1])=="run-calls") {
+      auto program=oresforge::calls::parse(read_file(argv[2]));
+      std::vector<std::int64_t> args;
+      for (int i=3;i<argc;++i) {
+        const std::string_view text(argv[i]);
+        std::int64_t value=0;
+        const auto parsed=std::from_chars(text.data(),text.data()+text.size(),value);
+        if(parsed.ec!=std::errc{} || parsed.ptr!=text.data()+text.size())
+          throw std::runtime_error("invalid callable i64 argument");
+        args.push_back(value);
+      }
+      std::cout<<oresforge::calls::interpret(program,args)<<'\n';
+      std::cout.flush();
+      return 0;
+    }
+    if (argc==4 && std::string(argv[1])=="emit-call-asm") {
+      const auto arch=oresforge::parse_arch(argv[2]);
+      auto program=oresforge::calls::parse(read_file(argv[3]));
+      std::cout<<oresforge::calls::emit_asm(program,arch);
       std::cout.flush();
       return 0;
     }
@@ -71,7 +96,7 @@ int main(int argc,char** argv) {
       std::cout.flush();
       return 0;
     }
-    std::cerr<<"usage: oresforge run|ir <file.ores> | emit-asm <arch> <file.ores> | run-runtime <file.ores> [i64-args...] | ir-runtime <file.ores> | emit-runtime-asm <arch> <file.ores>\n";
+    std::cerr<<"usage: oresforge run|ir <file.ores> | emit-asm <arch> <file.ores> | run-runtime <file.ores> [i64-args...] | ir-runtime <file.ores> | emit-runtime-asm <arch> <file.ores> | run-calls <file.ores> [i64-args...] | emit-call-asm x86_64 <file.ores>\n";
     return 2;
   } catch (const std::exception& e) {
     std::cerr<<"oresforge: "<<e.what()<<'\n';
