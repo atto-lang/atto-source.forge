@@ -406,13 +406,28 @@ void verify(const Module& m) {
       throw std::runtime_error("invalid callable function body");
     total+=fn.nodes.size();
     if(total>kMaxNodes)throw std::runtime_error("callable AST node budget exceeded");
-    if(fn.result<0||static_cast<std::size_t>(fn.result)>=fn.nodes.size())
-      throw std::runtime_error("invalid callable return");
+    if(fn.result<0||static_cast<std::size_t>(fn.result)!=fn.nodes.size()-1)
+      throw std::runtime_error("invalid callable return/root");
+    // This stage-0 AST must be an owned tree, not an arbitrary dataflow DAG.
+    // Otherwise a node on an untaken if-branch could be reused without ever
+    // initializing its stack slot. Enforce one reachable parent per child.
+    std::vector<unsigned> incoming(fn.nodes.size(),0);
     for(std::size_t i=0;i<fn.nodes.size();++i) {
       const auto& n=fn.nodes[i];
+      switch(n.kind) {
+        case Kind::Constant: case Kind::Parameter: case Kind::Add:
+        case Kind::Sub: case Kind::Mul: case Kind::Less: case Kind::LessEqual:
+        case Kind::Greater: case Kind::GreaterEqual: case Kind::Equal:
+        case Kind::NotEqual: case Kind::If: case Kind::Call: break;
+        default: throw std::runtime_error("unknown callable opcode");
+      }
+      if(n.kind!=Kind::Call && !n.name.empty())
+        throw std::runtime_error("unexpected callable symbol payload");
       for(int arg:n.children) {
         if(arg<0 || static_cast<std::size_t>(arg)>=i)
           throw std::runtime_error("callable use before definition");
+        if(++incoming[static_cast<std::size_t>(arg)]!=1)
+          throw std::runtime_error("callable AST shared node");
       }
       std::size_t size=2;
       if(n.kind==Kind::Constant||n.kind==Kind::Parameter)size=0;
@@ -430,6 +445,11 @@ void verify(const Module& m) {
         if(n.name!=m.functions[static_cast<std::size_t>(n.callee)].name)
           throw std::runtime_error("callable target/name mismatch");
       } else if(n.callee!=-1)throw std::runtime_error("unexpected callable target");
+    }
+    for(std::size_t i=0;i<fn.nodes.size();++i) {
+      const unsigned expected=(i==static_cast<std::size_t>(fn.result))?0u:1u;
+      if(incoming[i]!=expected)
+        throw std::runtime_error("callable AST unreachable node");
     }
   }
   if(m.functions[static_cast<std::size_t>(m.entry)].name!="main")
