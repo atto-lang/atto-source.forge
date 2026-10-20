@@ -65,6 +65,7 @@ extern int64_t oresforge_entry(PARAMS);
 int main(int argc,char **argv) {
  if (argc!=COUNT+1)return 2;
  int64_t v[4]={0,0,0,0};
+ (void)v; /* zero-argument native entries do not consume the array */
  for(int i=0;i<COUNT;i++){
   char *end=0;errno=0;
   const long long val=strtoll(argv[i+1],&end,10);
