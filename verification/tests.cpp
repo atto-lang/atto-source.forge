@@ -55,6 +55,53 @@ int main() {
            "import in a comment does not trigger module admission");
     ensure(interpret(source("2+3*4"))==14,"precedence");
 
+    // Separate runtime-entry profile lowers parameter IR rather than folding
+    // the entire program to a constant. Helpers are STILL statically inlined.
+    auto runtime=parse_runtime_source(
+      "fnc helper(x:int,y:int):int{return x*3-y;} "
+      "fnc main(a:int,b:int):int{return helper(a,b)+b*2;}");
+    ensure(runtime.parameter_count==2, "runtime param count");
+    ensure(interpret(runtime,std::array<std::int64_t,2>{7,13})==34,
+           "runtime parameters change checked result");
+    ensure(interpret(runtime,std::array<std::int64_t,2>{-7,13})==-8,
+           "negative runtime params");
+    ensure(dump_ir(runtime).find("param.i64 0")!=std::string::npos,
+           "parameter instruction not constant-folded");
+    reject_diagnostic([&] { interpret(runtime); },"runtime argument count mismatch");
+    reject_diagnostic([&] { interpret(runtime,std::array<std::int64_t,1>{1}); },
+                      "runtime argument count mismatch");
+    reject_diagnostic([&] { interpret(runtime,std::array<std::int64_t,2>{
+        std::numeric_limits<std::int64_t>::max(),2}); }, "i64 mul overflow");
+    const auto x86_native=emit_runtime_asm(runtime,Arch::X86_64);
+    ensure(x86_native.find("imulq ")!=std::string::npos &&
+           x86_native.find("jo .Loresforge_overflow")!=std::string::npos &&
+           x86_native.find("%rdi")!=std::string::npos,
+           "x86 checked runtime operations and ABI");
+    const auto arm_native=emit_runtime_asm(runtime,Arch::ARM64);
+    ensure(arm_native.find("smulh x12")!=std::string::npos &&
+           arm_native.find("b.vs .Loresforge_overflow")!=std::string::npos &&
+           arm_native.find("brk #0")!=std::string::npos,
+           "arm checked runtime operations and ABI");
+    reject_diagnostic([] {
+      parse_runtime_source(
+        "fnc main(a:int,b:int,c:int,d:int,e:int):int{return a;}");
+    }, "runtime entry parameter budget exceeded");
+    reject_diagnostic([] { parse_source("fnc main(a:int):int{return a;}"); },
+                      "main must have zero parameters");
+    Program broken_params{{{Op::Parameter,1},{Op::Return,0,0,-1}},1};
+    reject_diagnostic([&] { verify(broken_params); },
+                      "invalid runtime parameter index");
+    broken_params.instructions[0].value=0;
+    ensure(interpret(broken_params,std::array<std::int64_t,1>{99})==99,
+           "verified runtime parameter");
+    reject_diagnostic([&] { emit_asm(broken_params,Arch::X86_64); },
+                      "runtime argument count mismatch");
+    Program runtime_division{{{Op::Constant,8},{Op::Constant,2},
+                              {Op::Div,0,0,1},{Op::Return,0,2,-1}}};
+    reject_diagnostic([&] { emit_runtime_asm(runtime_division,Arch::X86_64); },
+                      "runtime i64 division lowering not supported");
+
+
     // Stage-0 typed-pure-function inliner. These check semantics and reject
     // invalid whole-module definitions; they are NOT native stack-frame calls.
     ensure(interpret(parse_source(
