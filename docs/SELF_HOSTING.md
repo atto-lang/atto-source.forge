@@ -2,16 +2,14 @@
 
 **Status (2026-10-20): not self-hosted.** The compiler on `main` is written in
 C++20. Its Oreslang source frontend accepts only a zero-argument `main(): int`
-whose return is a checked i64 arithmetic expression. General functions,
-arguments, calls, loops, strings, modules/import resolution, collections,
-ownership, error handling, and async are not implemented in this bootstrap.
+whose return is a checked i64 arithmetic expression on the main branch.\nOn the proposed Forge typed-function branch, pure helper functions, typed i64\nparameters and calls are statically inlined into that expression; there are\nstill **no true native function calls, stack frames, runtime inputs, loops,\nstrings, modules/import resolution, collections, ownership, error handling,\nor async support**. A multi-function source returning a constant after static\ninlining is not a general-purpose guest compiler.
 The assembly emitter currently compiles **constant-evaluated** entrypoints,
 not arbitrary executable IR.
 
 The `verification/native_asm_executable.py` CTest runs the real compiler's
 `run` and `emit-asm` commands on identical source, assembles/links the
 output with a local C host driver, and executes it. It compares exact signed
-i64 stdout for positive cases, and requires interpreter/IR/assembly commands
+i64 stdout for positive cases, including the typed-helper call inliner\nonce that feature branch is merged, and requires interpreter/IR/assembly commands
 to reject unsupported or overflowing source without emitting stdout. Its
 JSON receipt declares `self_hosted: false` and explicitly limits native
 codegen to a constant entrypoint. This is a **stage-0 native assembly smoke**,

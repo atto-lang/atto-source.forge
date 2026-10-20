@@ -5,7 +5,6 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-#include <cctype>
 #include <cstdint>
 #include <limits>
 #include <stdexcept>
@@ -42,6 +41,19 @@ void validate_source_utf8(std::string_view text) {
     }
     i+=following+1;
   }
+}
+// Grammar admission is deliberately ASCII-only. C-library isalpha/isspace
+// change across locales, which is incompatible with reproducible bootstraps.
+// UTF-8 remains accepted in comments but not identifiers/spacing.
+constexpr bool ascii_space(unsigned char c) {
+  return c==' ' || c=='\t' || c=='\n' || c=='\r' || c=='\v' || c=='\f';
+}
+constexpr bool ascii_alpha(unsigned char c) {
+  return (c>='A' && c<='Z') || (c>='a' && c<='z');
+}
+constexpr bool ascii_digit(unsigned char c) { return c>='0' && c<='9'; }
+constexpr bool ascii_alnum(unsigned char c) {
+  return ascii_alpha(c) || ascii_digit(c);
 }
 enum class Kind { Word, Number, Punct, End };
 struct Token { Kind kind; std::string_view text; std::size_t offset; };
@@ -110,7 +122,7 @@ class Parser {
   void next() {
     while (at_<source_.size()) {
       const auto c=static_cast<unsigned char>(source_[at_]);
-      if (std::isspace(c)) { ++at_; continue; }
+      if (ascii_space(c)) { ++at_; continue; }
       if (source_[at_]=='/' && at_+1<source_.size() && source_[at_+1]=='/') {
         at_+=2;
         while (at_<source_.size() && source_[at_]!='\n') ++at_;
@@ -121,21 +133,21 @@ class Parser {
     const auto start=at_;
     if (at_==source_.size()) { tok_={Kind::End,{},start}; return; }
     auto c=static_cast<unsigned char>(source_[at_]);
-    if (std::isalpha(c) || c=='_') {
+    if (ascii_alpha(c) || c=='_') {
       ++at_;
       while (at_<source_.size()) {
         c=static_cast<unsigned char>(source_[at_]);
-        if (!std::isalnum(c) && c!='_') break;
+        if (!ascii_alnum(c) && c!='_') break;
         ++at_;
       }
       tok_={Kind::Word,source_.substr(start,at_-start),start};
       if (tok_.text=="import") error("source imports require verified module graph lowering");
       return;
     }
-    if (std::isdigit(c)) {
+    if (ascii_digit(c)) {
       ++at_;
       while (at_<source_.size() &&
-        std::isdigit(static_cast<unsigned char>(source_[at_]))) ++at_;
+        ascii_digit(static_cast<unsigned char>(source_[at_]))) ++at_;
       tok_={Kind::Number,source_.substr(start,at_-start),start}; return;
     }
     if (source_[at_]=='-' && at_+1<source_.size() && source_[at_+1]=='>') {
