@@ -54,6 +54,7 @@ struct Expr {
   Tag tag;
   std::int64_t value = 0;
   std::string name;
+  std::size_t offset = 0;
   std::vector<std::unique_ptr<Expr>> children;
   std::size_t depth = 1;
 };
@@ -156,7 +157,8 @@ class Parser {
     next(); return name;
   }
   ExprPtr node(Expr::Tag tag, std::vector<ExprPtr> children={},
-               std::int64_t value=0, std::string name={}) {
+               std::int64_t value=0, std::string name={},
+               std::size_t offset=0) {
     if (++node_count_>kMaxNodes) error("expression AST budget exceeded");
     std::size_t depth=1;
     for (const auto& child : children) {
@@ -165,7 +167,7 @@ class Parser {
     check_depth(depth);
     auto e=std::make_unique<Expr>();
     e->tag=tag; e->children=std::move(children); e->value=value;
-    e->name=std::move(name); e->depth=depth;
+    e->name=std::move(name); e->depth=depth; e->offset=offset;
     return e;
   }
   ExprPtr binary(Expr::Tag op,ExprPtr a,ExprPtr b) {
@@ -252,8 +254,11 @@ class Parser {
       next(); return node(Expr::Tag::Constant,{},n);
     }
     if (tok_.kind==Kind::Word) {
+      const std::size_t offset=tok_.offset;
+      if (tok_.text=="match" || tok_.text=="switch")
+        error("expected integer");
       const std::string name=identifier();
-      if (!take("(")) return node(Expr::Tag::Parameter,{},0,name);
+      if (!take("(")) return node(Expr::Tag::Parameter,{},0,name,offset);
       std::vector<ExprPtr> args;
       if (tok_.text!=")") {
         do {
@@ -279,7 +284,7 @@ class Parser {
     if (e.tag==Expr::Tag::Parameter &&
         std::find(owner.parameters.begin(),owner.parameters.end(),e.name)==
         owner.parameters.end())
-      throw std::runtime_error("expected integer: unknown parameter "+e.name);
+      throw std::runtime_error("expected integer at byte "+std::to_string(e.offset));
     if (e.tag==Expr::Tag::Call) {
       auto found=functions_.find(e.name);
       if (found==functions_.end())
