@@ -100,6 +100,28 @@ int main() {
     reject_diagnostic([] { parse_source(
       "fnc main():int{return missing(1);}"); },
       "unknown function");
+
+    // DAG validation must be memoized and inlining itself must respect the
+    // existing instruction budget (never exponential unchecked allocation).
+    std::string expanding="fnc f0():int{return 1;}";
+    for (int i=1; i<19; ++i) {
+      const std::string prev="f"+std::to_string(i-1)+"()";
+      expanding+="fnc f"+std::to_string(i)+"():int{return "+
+                 prev+"+"+prev+";}";
+    }
+    expanding+="fnc main():int{return f18();}";
+    reject_diagnostic([&] { parse_source(expanding); }, "too many instructions");
+    // Even a linear, acyclic call chain must stop at the configured depth.
+    std::string deep;
+    for (int i=0; i<66; ++i)
+      deep+="fnc f"+std::to_string(i)+"():int{return "+
+            (i==65?std::string("1"):("f"+std::to_string(i+1)+"()"))+";}";
+    deep+="fnc main():int{return f0();}";
+    reject_diagnostic([&] { parse_source(deep); }, "function call depth exceeded");
+    reject_diagnostic([] { parse_source(
+      "fnc bad(x:int):int{return missing_param;} fnc main():int{return 1;}"); },
+      "expected integer at byte");
+
     reject_diagnostic([] { interpret(parse_source(
       "fnc main():int{return identity(9223372036854775807)+1;} "
       "fnc identity(x:int):int{return x;}")); }, "i64 add overflow");
