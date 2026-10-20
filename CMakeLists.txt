@@ -138,3 +138,16 @@ if(BUILD_TESTING)
       "$<TARGET_FILE:oresforge>")
   set_tests_properties(value_boundary_admission PROPERTIES TIMEOUT 60)
 endif()
+
+if(BUILD_TESTING)
+  # Host-only persistent immutable actor map. PersistentVector/source lowering stay gated.
+  add_executable(oresforge_persistent_actor_map verification/persistent_actor_map_test.cpp)
+  target_include_directories(oresforge_persistent_actor_map PRIVATE .)
+  target_compile_features(oresforge_persistent_actor_map PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_persistent_actor_map PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME oresforge_persistent_actor_map_host_prototype
+    COMMAND oresforge_persistent_actor_map)
+  set_tests_properties(oresforge_persistent_actor_map_host_prototype PROPERTIES TIMEOUT 20)
+endif()
