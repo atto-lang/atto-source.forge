@@ -78,7 +78,21 @@ jobs:
             printf 'PASS %s\n' "$name" >> "$RUNNER_TEMP/dop-forge-evidence/test-results.txt"
           done
           grep -Fq 'typed native CPU/GPU graph host contract: PASS' "$RUNNER_TEMP/dop-forge-evidence/test-output.txt"
-          grep -Fq 'typed graph IR security PASS: 20019 assertions' "$RUNNER_TEMP/dop-forge-evidence/test-output.txt"
+          # The security suite may grow. Require a unique valid PASS record
+          # with at least the previously reviewed 20,019 assertions rather
+          # than treating a larger executed suite as a failure.
+          awk '
+            /^typed graph IR security PASS: [0-9]+ assertions$/ {
+              found += 1
+              if ($6 !~ /^[0-9]+$/ || $6 + 0 < 20019) invalid = 1
+              count = $6
+            }
+            END { if (found != 1 || invalid) exit 1 }
+          ' "$RUNNER_TEMP/dop-forge-evidence/test-output.txt"
+          printf 'GRAPH_SECURITY_ASSERTIONS=%s\\n' \\
+            "$(awk '/^typed graph IR security PASS: [0-9]+ assertions$/ {print $6}' \\
+              "$RUNNER_TEMP/dop-forge-evidence/test-output.txt")" \\
+            >> "$RUNNER_TEMP/dop-forge-evidence/test-results.txt"
           test "$(grep -c '^PASS ' "$RUNNER_TEMP/dop-forge-evidence/test-results.txt")" = 2
           printf 'DOP_FORGE_GRAPH_TESTS=PASS\n' > "$RUNNER_TEMP/dop-forge-evidence/test-outcome.txt"
       - name: Retain bounded exact-head evidence
