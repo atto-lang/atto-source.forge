@@ -20,6 +20,17 @@ if(BUILD_TESTING)
   target_link_libraries(oresforge_actor_arena_tests PRIVATE oresforge_core Threads::Threads)
   add_test(NAME oresforge_actor_arena COMMAND oresforge_actor_arena_tests)
   set_tests_properties(oresforge_actor_arena PROPERTIES TIMEOUT 25)
+  # Host integration: route selection -> authenticated bounded mailbox ->
+  # independently-owned actor arena, plus failed admission and restart.
+  add_executable(oresforge_actor_routing_arena_integration
+    verification/actor_routing_arena_integration.cpp)
+  target_link_libraries(oresforge_actor_routing_arena_integration
+    PRIVATE oresforge_core Threads::Threads)
+  add_test(NAME oresforge_actor_routing_arena_integration
+    COMMAND oresforge_actor_routing_arena_integration)
+  set_tests_properties(oresforge_actor_routing_arena_integration
+    PROPERTIES TIMEOUT 20)
+
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   # Host-only policy conformance (not source-compiled actor execution).
   add_executable(oresforge_actor_pipeline_policy_test
@@ -126,4 +137,17 @@ if(BUILD_TESTING)
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/value_boundaries.py"
       "$<TARGET_FILE:oresforge>")
   set_tests_properties(value_boundary_admission PROPERTIES TIMEOUT 60)
+endif()
+
+if(BUILD_TESTING)
+  # Host-only persistent immutable actor map. PersistentVector/source lowering stay gated.
+  add_executable(oresforge_persistent_actor_map verification/persistent_actor_map_test.cpp)
+  target_include_directories(oresforge_persistent_actor_map PRIVATE .)
+  target_compile_features(oresforge_persistent_actor_map PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_persistent_actor_map PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME oresforge_persistent_actor_map_host_prototype
+    COMMAND oresforge_persistent_actor_map)
+  set_tests_properties(oresforge_persistent_actor_map_host_prototype PROPERTIES TIMEOUT 20)
 endif()
