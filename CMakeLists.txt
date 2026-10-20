@@ -53,6 +53,19 @@ if(BUILD_TESTING)
       --compiler "$<TARGET_FILE:oresforge>")
   set_tests_properties(oresforge_source_i64_interpreter PROPERTIES TIMEOUT 100)
 endif()
+# Static-facts v0: only literal main admitted, with actual Forge verified IR.
+if(BUILD_TESTING)
+  add_test(NAME oresforge_static_facts_v0_negative
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/static_facts_v0.py" --self-test)
+  add_test(NAME oresforge_static_facts_v0_real_compiler
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/static_facts_v0.py"
+      --compiler "$<TARGET_FILE:oresforge>"
+      --source "${CMAKE_CURRENT_SOURCE_DIR}/contracts/scalar/v1/fixtures/literal-42.ores")
+  set_tests_properties(oresforge_static_facts_v0_negative oresforge_static_facts_v0_real_compiler
+    PROPERTIES TIMEOUT 30)
+endif()
 if(ORESFORGE_FUZZ)
   if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     message(FATAL_ERROR "libFuzzer requires Clang")
