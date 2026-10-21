@@ -22,3 +22,9 @@ common=(-Wall -Wextra -Wpedantic -Werror -I"$root" -I"$root/runtime/arena")
 "$work/heap"
 "$cxx" -std=c++20 "${common[@]}" "${flags[@]}" "$root/runtime/scalar_actor.cpp" "$root/verification/scalar_actor.cpp" "$work/heap.o" -pthread "${wrap[@]}" -o "$work/actor"
 "$work/actor"
+"$cxx" -std=c++20 "${common[@]}" "${flags[@]}" "$root/verification/native_memory_model_test.cpp" \
+  "$work/arena.o" "$work/heap.o" -pthread -o "$work/memory-model"
+"$cxx" -std=c++20 "${common[@]}" "${flags[@]}" -DORES_PARITY_FORGE \
+  "$root/verification/native_actor_model_test.cpp" "$root/runtime/scalar_actor.cpp" "$work/heap.o" \
+  -pthread -o "$work/actor-model"
+python3 "$root/scripts/test_native_memory_parity.py" --runner "$work/memory-model" --actor-runner "$work/actor-model"
