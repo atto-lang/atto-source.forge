@@ -56,6 +56,24 @@ int main() {
            "import in a comment does not trigger module admission");
     ensure(interpret(source("2+3*4"))==14,"precedence");
 
+    // CPU/GPU Task v2 is reserved fail-closed until the Forge scheduler/device
+    // graph is implemented. 'task' remains contextual: only task { ... } is special.
+    reject_diagnostic([] {
+      parse_source("pub fnc main():int{return cpu { 42 };}");
+    }, "execution region requires verified CPU/GPU Task lowering");
+    reject_diagnostic([] {
+      parse_source("pub fnc main():int{return cpu task { 42 };}");
+    }, "execution region requires verified CPU/GPU Task lowering");
+    reject_diagnostic([] {
+      parse_source("pub fnc main():int{return gpu task { 42 };}");
+    }, "execution region requires verified CPU/GPU Task lowering");
+    reject_diagnostic([] {
+      parse_source("pub fnc main():int{return task { 42 };}");
+    }, "execution task requires scheduler-aware Future/continuation lowering");
+    reject_diagnostic([] {
+      parse_source("pub fnc main():int{return nb { 42 };}");
+    }, "execution region requires verified CPU/GPU Task lowering");
+
     // Opt-in callable program has its own fully verified representation.
     // Unlike the scalar profile, these helpers compile to real native calls.
     auto fact=calls::parse(
