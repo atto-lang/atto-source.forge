@@ -255,6 +255,25 @@ class Parser {
   }
   ExprPtr factor(std::size_t depth) {
     check_depth(depth);
+    if (tok_.text=="rt") {
+      next();
+      const std::string operation(tok_.text);
+      if (operation=="ref" || operation=="unref" || operation=="deref" || operation=="raw")
+        error("pointer-style runtime operation is not valid Oreslang source; use explicit ownership operations");
+      if (operation=="borrow") {
+        next();
+        if (tok_.text=="mut")
+          error("legacy 'rt borrow mut' is not valid Oreslang; use 'rt mut borrow value'");
+        error("runtime ownership operation requires typed lowering in Forge");
+      }
+      if (operation=="mut") {
+        next();
+        if (tok_.text!="borrow")
+          error("'rt mut' only supports borrowing; use 'rt mut borrow value'");
+        error("runtime ownership operation requires typed lowering in Forge");
+      }
+      error("runtime ownership operation requires typed lowering in Forge");
+    }
     if (take("-")) {
       if (tok_.kind==Kind::Number && tok_.text=="9223372036854775808") {
         next();
