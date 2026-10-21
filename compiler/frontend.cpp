@@ -151,6 +151,15 @@ class Parser {
       }
       tok_={Kind::Word,source_.substr(start,at_-start),start};
       if (tok_.text=="import") error("source imports require verified module graph lowering");
+      if (tok_.text=="cpu" || tok_.text=="gpu" || tok_.text=="nb")
+        error("execution region requires verified CPU/GPU Task lowering; no implicit CPU fallback");
+      if (tok_.text=="task") {
+        auto look=at_;
+        while (look<source_.size() &&
+               ascii_space(static_cast<unsigned char>(source_[look]))) ++look;
+        if (look<source_.size() && source_[look]=='{')
+          error("execution task requires scheduler-aware Future/continuation lowering; no implicit inline execution");
+      }
       return;
     }
     if (ascii_digit(c)) {
