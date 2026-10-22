@@ -53,6 +53,21 @@ int main() {
     }
     ensure(interpret(parse_source("fnc main():int{return 42;} // import ignored"))==42,
            "import in a comment does not trigger module admission");
+    reject_diagnostic([] {
+      parse_source("fnc main(tuple (int,int) value):int{return 1;}");
+    },"tuple-v2 parameter requires typed ownership/ABI lowering");
+    reject_diagnostic([] {
+      parse_source("fnc main(structural (int,int) value):int{return 1;}");
+    },"tuple-v2 parameter requires typed ownership/ABI lowering");
+    reject_diagnostic([] {
+      parse_source("fnc main((int,int) value):int{return 1;}");
+    },"tuple-v2 parameter requires typed ownership/ABI lowering");
+    reject_diagnostic([] {
+      parse_source("fnc main():tuple (int,int){return 1;}");
+    },"tuple-v2 return requires typed ABI lowering");
+    reject_diagnostic([] {
+      parse_source("fnc main():int{return call(...pair);}");
+    },"tuple-v2 explicit spread requires single-evaluation checked lowering");
     ensure(interpret(source("2+3*4"))==14,"precedence");
     ensure(interpret(source("(2+3)*4"))==20,"parentheses");
     for (const auto& expression : {"3/2", "4/2", "5/0", "-9223372036854775808/-1"})

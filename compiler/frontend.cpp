@@ -55,8 +55,13 @@ class Parser {
       }
       next();
     }
-    expect("fnc"); expect("main"); expect("("); expect(")");
+    expect("fnc"); expect("main"); expect("(");
+    if (tok_.text=="tuple" || tok_.text=="structural" || tok_.text=="(")
+      error("tuple-v2 parameter requires typed ownership/ABI lowering");
+    expect(")");
     if (!take(":")) expect("->");
+    if (tok_.text=="tuple" || tok_.text=="structural" || tok_.text=="(")
+      error("tuple-v2 return requires typed ABI lowering");
     expect("int"); expect("{"); expect("return");
     const int result=expr(0);
     expect(";"); expect("}");
@@ -115,6 +120,9 @@ class Parser {
     if (source_[at_]=='-' && at_+1<source_.size() && source_[at_+1]=='>') {
       at_+=2;
       tok_={Kind::Punct,source_.substr(start,2),start}; return;
+    }
+    if (source_.substr(at_,3)=="...") {
+      error("tuple-v2 explicit spread requires single-evaluation checked lowering");
     }
     if (std::string_view("()+-*/{};:").find(static_cast<char>(c)) == std::string_view::npos)
       error("invalid character");
