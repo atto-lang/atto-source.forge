@@ -69,6 +69,20 @@ int main() {
     reject_diagnostic([] {
       parse_source("fnc pair():int{return 1;} fnc main():int{return pair(...pair);}");
     },"tuple-v2 explicit spread requires single-evaluation checked lowering");
+
+    reject_diagnostic([] { parse_source("fnc main():int{return rt ref value;}"); },
+                      "pointer-style runtime operation is not valid Oreslang source");
+    reject_diagnostic([] { parse_source("fnc main():int{return rt deref value;}"); },
+                      "pointer-style runtime operation is not valid Oreslang source");
+    reject_diagnostic([] { parse_source("fnc main():int{return rt borrow mut value;}"); },
+                      "legacy 'rt borrow mut' is not valid Oreslang");
+    reject_diagnostic([] { parse_source("fnc main():int{return rt mut borrow value;}"); },
+                      "runtime ownership operation requires typed lowering in Forge");
+    reject([] { parse_source("fnc main():int{return &value;}"); });
+    reject([] { parse_source("fnc main():int{return &mut value;}"); });
+    reject([] { parse_source("fnc main():int{return *value;}"); });
+    reject([] { parse_source("fnc main():Pointer<int>{return value;}"); });
+
     ensure(interpret(source("2+3*4"))==14,"precedence");
 
     // Opt-in callable program has its own fully verified representation.
