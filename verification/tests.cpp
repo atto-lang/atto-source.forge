@@ -54,6 +54,22 @@ int main() {
     }
     ensure(interpret(parse_source("fnc main():int{return 42;} // import ignored"))==42,
            "import in a comment does not trigger module admission");
+    reject_diagnostic([] {
+      parse_source("fnc take(tuple (int,int) value):int{return 1;} fnc main():int{return 1;}");
+    },"tuple-v2 parameter requires typed ownership/ABI lowering");
+    reject_diagnostic([] {
+      parse_source("fnc take(structural (int,int) value):int{return 1;} fnc main():int{return 1;}");
+    },"tuple-v2 parameter requires typed ownership/ABI lowering");
+    reject_diagnostic([] {
+      parse_source("fnc take((int,int) value):int{return 1;} fnc main():int{return 1;}");
+    },"tuple-v2 parameter requires typed ownership/ABI lowering");
+    reject_diagnostic([] {
+      parse_source("fnc take():tuple (int,int){return 1;} fnc main():int{return 1;}");
+    },"tuple-v2 return requires typed ABI lowering");
+    reject_diagnostic([] {
+      parse_source("fnc pair():int{return 1;} fnc main():int{return pair(...pair);}");
+    },"tuple-v2 explicit spread requires single-evaluation checked lowering");
+
     reject_diagnostic([] { parse_source("fnc main():int{return rt ref value;}"); },
                       "pointer-style runtime operation is not valid Oreslang source");
     reject_diagnostic([] { parse_source("fnc main():int{return rt deref value;}"); },
