@@ -24,7 +24,7 @@ static void write(const fs::path& file, const char* text) {
 }
 int main() {
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
-    const auto tmp = fs::temp_directory_path() /
+    const auto tmp = fs::canonical(fs::temp_directory_path()) /
         ("oresforge-root-contract-" + std::to_string(stamp));
     fs::create_directories(tmp);
     struct Cleanup {
