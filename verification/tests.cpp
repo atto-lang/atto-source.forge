@@ -433,7 +433,7 @@ int main() {
     }, "expected");
     reject_diagnostic([] {
       parse_source("fnc main(structural Shape value):int{return 1;}");
-    }, "expected");
+    }, "tuple-v2 parameter requires typed ownership/ABI lowering");
     reject_diagnostic([] {
       parse_source("fnc main():int{match 1 over on _ -> {return 1;} end}");
     }, "expected");
