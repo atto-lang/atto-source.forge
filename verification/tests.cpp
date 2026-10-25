@@ -4,6 +4,8 @@
 #include "codegen/native.hpp"
 #include "runtime/actor.hpp"
 #include "jit/tiered.hpp"
+#include "generated_numeric_i64_cases.hpp"
+#include "generated_numeric_overflow_cases.hpp"
 #include <array>
 #include <cstdint>
 #include <functional>
@@ -14,6 +16,7 @@
 #include <string_view>
 #include <type_traits>
 #include <vector>
+#include <utility>
 namespace {
 void ensure(bool yes,const char* message) {
   if (!yes) throw std::runtime_error(message);
@@ -41,6 +44,30 @@ oresforge::Program source(const std::string& expr) {
 int main() {
   try {
     using namespace oresforge;
+    // Cross-backend i64 positive controls run against the real Forge parser,
+    // verified IR and checked interpreter. These are not Python-only data tests.
+    for (const auto& [expression, expected] : kPortableNumericalCases) {
+      ensure(interpret(source(expression))==expected,"numeric parity i64 source");
+    }
+    // The four byte-pinned shared negative cases exercise the *actual*
+    // Forge source parser, verified i64 IR and interpreter. An exception
+    // from either admission or execution is allowed; wrapping is not.
+    constexpr std::array<std::string_view,4> overflow_diagnostics{
+      "i64 add overflow", "i64 sub overflow",
+      "i64 mul overflow", "i64 sub overflow"
+    };
+    for (std::size_t i=0; i<kOverflowNumericalCases.size(); ++i) {
+      const std::string expression{kOverflowNumericalCases[i]};
+      // No unrelated source-parse/IR error may count as a numeric pass.
+      reject_diagnostic([&] { (void)interpret(source(expression)); },
+                        overflow_diagnostics[i]);
+    }
+    // The bootstrap intentionally has NO BigInt, Decimal or binary64 lowering.
+    // Fail closed rather than treating those spellings as signed i64.
+    reject([] { source("1.25"); });
+    reject([] { source("2.0i"); });
+    reject([] { parse_source("fnc main():bigint{return 1;}"); });
+    reject([] { parse_source("fnc main():decimal{return 1;}"); });
     // Import graph linking is not available in the Forge scalar bootstrap.
     // Reject with the *right* diagnostic before IR or assembly emission.
     for (const auto& path : {"+/src/helper", "+/../outside", "+/src/../helper",

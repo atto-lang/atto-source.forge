@@ -26,14 +26,15 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-      - name: Prove exact Oreslang PR-head checkout (not merge ref)
-        shell: bash
+      - name: Verify exact source commit and Git tree
         env:
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-          git rev-parse 'HEAD^{tree}'
+          git diff --quiet --exit-code
+          echo "EXACT_SOURCE_COMMIT=$(git rev-parse HEAD)"
+          echo "EXACT_SOURCE_TREE=$(git rev-parse HEAD^{tree})"
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DCMAKE_CXX_COMPILER=${{ matrix.compiler }}
       - name: Compile
@@ -65,14 +66,15 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-      - name: Prove exact Oreslang PR-head checkout (not merge ref)
-        shell: bash
+      - name: Verify exact source commit and Git tree
         env:
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-          git rev-parse 'HEAD^{tree}'
+          git diff --quiet --exit-code
+          echo "EXACT_SOURCE_COMMIT=$(git rev-parse HEAD)"
+          echo "EXACT_SOURCE_TREE=$(git rev-parse HEAD^{tree})"
       - name: Configure ASan and UBSan
         run: >-
           cmake -S . -B build-sanitized -DCMAKE_BUILD_TYPE=Debug
@@ -95,14 +97,15 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-      - name: Prove exact Oreslang PR-head checkout (not merge ref)
-        shell: bash
+      - name: Verify exact source commit and Git tree
         env:
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-          git rev-parse 'HEAD^{tree}'
+          git diff --quiet --exit-code
+          echo "EXACT_SOURCE_COMMIT=$(git rev-parse HEAD)"
+          echo "EXACT_SOURCE_TREE=$(git rev-parse HEAD^{tree})"
       - name: Configure instrumented libFuzzer
         run: >-
           cmake -S . -B build-fuzz -DCMAKE_BUILD_TYPE=Debug

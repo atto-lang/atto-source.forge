@@ -11,6 +11,32 @@ add_executable(oresforge compiler/main.cpp)
 target_link_libraries(oresforge PRIVATE oresforge_core)
 include(CTest)
 if(BUILD_TESTING)
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  set(ORE_NUMERIC_I64_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated_numeric_i64_cases.hpp")
+  add_custom_command(
+    OUTPUT "${ORE_NUMERIC_I64_HEADER}"
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/generate_numeric_i64_cases.py"
+      --corpus "${CMAKE_CURRENT_SOURCE_DIR}/contracts/v1/numeric-parity/source-i64-cases.json"
+      --output "${ORE_NUMERIC_I64_HEADER}"
+    DEPENDS
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/generate_numeric_i64_cases.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/contracts/v1/numeric-parity/source-i64-cases.json"
+    VERBATIM)
+  add_custom_target(oresforge_numeric_i64_cases DEPENDS "${ORE_NUMERIC_I64_HEADER}")
+  set(ORE_NUMERIC_OVERFLOW_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated_numeric_overflow_cases.hpp")
+  add_custom_command(
+    OUTPUT "${ORE_NUMERIC_OVERFLOW_HEADER}"
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/generate_numeric_overflow_cases.py"
+      --corpus "${CMAKE_CURRENT_SOURCE_DIR}/contracts/v1/numeric-parity/source-i64-overflow-cases.json"
+      --output "${ORE_NUMERIC_OVERFLOW_HEADER}"
+    DEPENDS
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/generate_numeric_overflow_cases.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/generate_numeric_i64_cases.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/contracts/v1/numeric-parity/source-i64-overflow-cases.json"
+    VERBATIM)
+  add_custom_target(oresforge_numeric_overflow_cases DEPENDS "${ORE_NUMERIC_OVERFLOW_HEADER}")
   # Host-policy substrate only; guest syscall interception remains unimplemented.
   add_executable(oresforge_scoped_policy_tests
     contracts/v1/scoped_permission_policy_test.cpp)
@@ -37,6 +63,8 @@ if(BUILD_TESTING)
   set_tests_properties(native_pinned_tcp_host_boundary PROPERTIES TIMEOUT 15)
 
   add_executable(oresforge_tests verification/tests.cpp)
+  add_dependencies(oresforge_tests oresforge_numeric_i64_cases oresforge_numeric_overflow_cases)
+  target_include_directories(oresforge_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
   target_link_libraries(oresforge_tests PRIVATE oresforge_core)
   add_test(NAME oresforge_unit COMMAND oresforge_tests)
   # Host-only positive filesystem resolution substrate, not guest import linking.
@@ -126,6 +154,10 @@ if(BUILD_TESTING)
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/value_boundaries.py"
       "$<TARGET_FILE:oresforge>")
   set_tests_properties(value_boundary_admission PROPERTIES TIMEOUT 60)
+  add_test(NAME numeric_reference_and_capability_admission
+    COMMAND "${Python3_EXECUTABLE}" -m unittest discover
+      -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_numeric_*.py" -v)
+  set_tests_properties(numeric_reference_and_capability_admission PROPERTIES TIMEOUT 30)
   add_test(NAME refinement_admission
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/refinement_admission_gate.py"
       --compiler "$<TARGET_FILE:oresforge>")
