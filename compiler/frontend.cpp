@@ -158,7 +158,7 @@ class Parser {
       // scalar result from a source that depends on external modules.
       if (tok_.text=="import") error("source imports require verified module graph lowering");
       if (tok_.text=="cpu" || tok_.text=="gpu" || tok_.text=="nb")
-        error("execution region requires verified CPU/GPU Task lowering; no implicit CPU fallback");
+        error("execution region requires verified CPU/GPU Task lowering; unsupported execution domain: typed effect graph required; no implicit CPU fallback");
       if (tok_.text=="task") {
         auto look=at_;
         while (look<source_.size() &&
