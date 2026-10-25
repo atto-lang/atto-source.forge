@@ -24,11 +24,34 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Prove exact Oreslang PR-head checkout (not merge ref)
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git rev-parse 'HEAD^{tree}'
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DCMAKE_CXX_COMPILER=${{ matrix.compiler }}
       - name: Compile
         run: cmake --build build --parallel 2
+      - name: Self-test fail-closed Option-pattern evidence harness (synthetic only)
+        run: python3 -m unittest discover -s scripts -p test_option_pattern_contract.py -v
+      - name: Reject unsupported Option pattern syntax using real Forge compiler
+        run: |
+          python3 scripts/check_option_pattern_contract.py --backend forge \
+            --revision "${{ github.event.pull_request.head.sha || github.sha }}" --report build/option-pattern-forge.json \
+            -- ./build/oresforge ir '{source}'
+      - name: Preserve Option-pattern admission report (not parity)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: option-pattern-forge-admission-${{ matrix.compiler }}
+          path: build/option-pattern-forge.json
+          if-no-files-found: ignore
       - name: Run regression tests
         run: ctest --test-dir build --output-on-failure
       - name: Execute documented source fixture
@@ -40,7 +63,16 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Prove exact Oreslang PR-head checkout (not merge ref)
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git rev-parse 'HEAD^{tree}'
       - name: Configure ASan and UBSan
         run: >-
           cmake -S . -B build-sanitized -DCMAKE_BUILD_TYPE=Debug
@@ -61,7 +93,16 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Prove exact Oreslang PR-head checkout (not merge ref)
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git rev-parse 'HEAD^{tree}'
       - name: Configure instrumented libFuzzer
         run: >-
           cmake -S . -B build-fuzz -DCMAKE_BUILD_TYPE=Debug
@@ -87,7 +128,16 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Prove exact Oreslang PR-head checkout (not merge ref)
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git rev-parse 'HEAD^{tree}'
       - name: GCC ThreadSanitizer on actual actor mailbox concurrency
         shell: bash
         run: |

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 project(OresForge VERSION 0.1.0 LANGUAGES CXX)
 option(ORESFORGE_FUZZ "Build Clang libFuzzer target" OFF)
-add_library(oresforge_core STATIC compiler/frontend.cpp compiler/ir.cpp codegen/native.cpp runtime/actor.cpp jit/tiered.cpp)
+add_library(oresforge_core STATIC compiler/frontend.cpp compiler/ir.cpp compiler/call_native.cpp codegen/native.cpp runtime/actor.cpp jit/tiered.cpp)
 target_include_directories(oresforge_core PUBLIC .)
 target_compile_features(oresforge_core PUBLIC cxx_std_20)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -46,6 +46,25 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/verification/cli_source_budget.py"
       "$<TARGET_FILE:oresforge>")
   set_tests_properties(oresforge_cli_source_budget PROPERTIES TIMEOUT 20)
+  # Source to IR interpreter (not machine code or native AOT parity).
+  add_test(NAME oresforge_source_i64_interpreter
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/source_i64_executable.py"
+      --compiler "$<TARGET_FILE:oresforge>")
+  set_tests_properties(oresforge_source_i64_interpreter PROPERTIES TIMEOUT 100)
+endif()
+# Static-facts v0: only literal main admitted, with actual Forge verified IR.
+if(BUILD_TESTING)
+  add_test(NAME oresforge_static_facts_v0_negative
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/static_facts_v0.py" --self-test)
+  add_test(NAME oresforge_static_facts_v0_real_compiler
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/static_facts_v0.py"
+      --compiler "$<TARGET_FILE:oresforge>"
+      --source "${CMAKE_CURRENT_SOURCE_DIR}/contracts/scalar/v1/fixtures/literal-42.ores")
+  set_tests_properties(oresforge_static_facts_v0_negative oresforge_static_facts_v0_real_compiler
+    PROPERTIES TIMEOUT 30)
 endif()
 if(ORESFORGE_FUZZ)
   if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -73,4 +92,51 @@ if(BUILD_TESTING)
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/value_boundaries.py"
       "$<TARGET_FILE:oresforge>")
   set_tests_properties(value_boundary_admission PROPERTIES TIMEOUT 60)
+  add_test(NAME refinement_admission
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/refinement_admission_gate.py"
+      --compiler "$<TARGET_FILE:oresforge>")
+  set_tests_properties(refinement_admission PROPERTIES TIMEOUT 60)
+  # Shared Java-reference scalar source fixtures: executed guest values + negative admission.
+  add_test(NAME source_scalar_parity
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/contracts/scalar/v1/run.py"
+      --backend forge --mode stdout-i64 --command "$<TARGET_FILE:oresforge> run {source}")
+  set_tests_properties(source_scalar_parity PROPERTIES TIMEOUT 240)
+  # Bootstrap Forge must reject all source imports until a verified module
+  # graph exists; no successful scalar IR may be published from such source.
+  add_test(NAME source_import_parity_admission
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/import_parity_admission.py"
+      "$<TARGET_FILE:oresforge>")
+  set_tests_properties(source_import_parity_admission PROPERTIES TIMEOUT 60)
+  add_test(NAME scalar_parity_harness_selftest
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/contracts/scalar/v1/selftest.py")
+  set_tests_properties(scalar_parity_harness_selftest PROPERTIES TIMEOUT 30)
+
 endif()
+
+# A real host assembler/linker executes the emitted entry and compares its
+# printed i64 value with the checked source interpreter. This is a *stage-0*
+# native smoke only: it does not execute an Oreslang-written compiler.
+if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+   CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|aarch64|arm64)$")
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  add_test(NAME oresforge_native_asm_executable
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/native_asm_executable.py"
+      --compiler "$<TARGET_FILE:oresforge>")
+  set_tests_properties(oresforge_native_asm_executable PROPERTIES TIMEOUT 180)
+  add_test(NAME oresforge_runtime_argument_native_executable
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/runtime_native_executable.py"
+      --compiler "$<TARGET_FILE:oresforge>")
+  set_tests_properties(oresforge_runtime_argument_native_executable PROPERTIES TIMEOUT 180)
+  # New opt-in callable language: real x86-64 interfunction calls, lazy if,
+  # direct/mutual recursion and bounded native stack-depth traps.
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64)$")
+    add_test(NAME oresforge_real_native_recursive_calls
+      COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/verification/native_call_executable.py"
+        --compiler "$<TARGET_FILE:oresforge>")
+    set_tests_properties(oresforge_real_native_recursive_calls PROPERTIES TIMEOUT 180)
+  endif()
+endif()
+
