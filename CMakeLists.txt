@@ -92,6 +92,10 @@ if(BUILD_TESTING)
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/value_boundaries.py"
       "$<TARGET_FILE:oresforge>")
   set_tests_properties(value_boundary_admission PROPERTIES TIMEOUT 60)
+  add_test(NAME refinement_admission
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/refinement_admission_gate.py"
+      --compiler "$<TARGET_FILE:oresforge>")
+  set_tests_properties(refinement_admission PROPERTIES TIMEOUT 60)
   # Shared Java-reference scalar source fixtures: executed guest values + negative admission.
   add_test(NAME source_scalar_parity
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/contracts/scalar/v1/run.py"
@@ -135,3 +139,4 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
     set_tests_properties(oresforge_real_native_recursive_calls PROPERTIES TIMEOUT 180)
   endif()
 endif()
+
