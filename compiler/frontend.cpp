@@ -150,6 +150,12 @@ class Parser {
         ++at_;
       }
       tok_={Kind::Word,source_.substr(start,at_-start),start};
+      if (tok_.text=="any" || tok_.text=="unknown" ||
+          tok_.text=="Any" || tok_.text=="Unknown")
+        error("any/unknown requires tagged opaque-value ABI and runtime type descriptors");
+      // The bootstrap parser cannot resolve any Java/Graal import forms.
+      // Reject with a stable diagnostic rather than emitting an unrelated
+      // scalar result from a source that depends on external modules.
       if (tok_.text=="import") error("source imports require verified module graph lowering");
       if (tok_.text=="cpu" || tok_.text=="gpu" || tok_.text=="nb")
         error("execution region requires verified CPU/GPU Task lowering; no implicit CPU fallback");
@@ -200,7 +206,7 @@ class Parser {
     }
     if (source_.substr(at_,3)=="...")
       error("tuple-v2 explicit spread requires single-evaluation checked lowering");
-    if (std::string_view("()+-*/{};:,").find(static_cast<char>(c)) ==
+    if (std::string_view("()+-*/{};:,?").find(static_cast<char>(c)) ==
         std::string_view::npos) error("invalid character");
     ++at_;
     tok_={Kind::Punct,source_.substr(start,1),start};
@@ -282,6 +288,8 @@ class Parser {
       a=binary(plus?Expr::Tag::Add:Expr::Tag::Sub,
                std::move(a),term(depth+1));
     }
+    if (tok_.text=="?")
+      error("ternary expression requires bool typing and CFG branch-merge lowering");
     if (tok_.text=="|>")
       error("value pipeline requires named callable lowering; unsupported in Forge i64 bootstrap");
     return a;
