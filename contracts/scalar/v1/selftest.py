@@ -274,7 +274,7 @@ class ScalarHarnessTest(unittest.TestCase):
             "forge": {
                 "reject.unknown": "oresforge: expected integer at byte 29",
                 "reject.division": "oresforge: division requires float result lowering; unsupported in the i64 source subset at byte 30",
-                "reject.actor": "oresforge: unexpected token at byte 7",
+                "reject.actor": "oresforge: class/actor methods require typed native lowering at byte 7",
                 "reject.async": "oresforge: unexpected token at byte 4",
                 "reject.structural": "oresforge: expected integer at byte 29",
             },

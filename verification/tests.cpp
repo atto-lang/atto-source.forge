@@ -54,6 +54,48 @@ int main() {
     }
     ensure(interpret(parse_source("fnc main():int{return 42;} // import ignored"))==42,
            "import in a comment does not trigger module admission");
+    // No private-abstract class can be lowered by the scalar bootstrap.
+    // A specific typed-vtable diagnostic is required (not an accidental
+    // generic parser exception that could mask partial code publication).
+    reject_diagnostic([&] {
+      parse_source("define abstract class Framework as "
+                   "private abstract receive(int x): int; end");
+    }, "private abstract hooks require typed native vtables");
+
+    // The scalar bootstrap has no class vtable, receiver loan, or closure
+    // representation. New language constructs must fail closed until their
+    // actual native codegen and ownership checking are present.
+    for (const char* program : {
+      "define class Foo as fnc read(self, int x): int { return x; } end",
+      "define actor Foo as receive(self, int x): void { return; } end",
+      "define actor Foo as on_start(self): void { return; } end",
+      "define actor Foo as receive(ActorMail<int> mail): void { self.receive(mail); } end",
+      "define class Foo as private abstract receive(int x): int; end",
+      "fnc main():int{return lex[x] || -> x;}",
+      "fnc main():int{return nlex[x] || -> x;}",
+      "fnc main():int{return nlex || -> 1;}",
+      "fnc main():int{return lex[self] || -> 1;}",
+      "define class Foo as fnc read(mut self, int x): int { return x; } end",
+      "define class Foo as fnc read(self Foo)(int x): int { return x; } end",
+      "fnc main():int{return lex[x,x] || -> x;}",
+      "fnc main():int{return lex[missing] || -> x;}",
+      "fnc main():int{return lex[] || -> x;}",
+      "fnc main():int{return nlex[self] || -> x;}",
+      "fnc main():int{return nlex[] || -> x;}",
+      "fnc main():int{return lex[x] |x| -> x;}",
+      "fnc main():int{return |y| -> x;}",
+      "fnc main():int{return lex[x] || -> nlex || -> x;}",
+      "fnc main():int{return nlex[self] critical |state| -> 1;}",
+    }) {
+      // A catch-all parser exception is not proof of fail-closed feature
+      // admission. Check that the unsupported feature itself was diagnosed.
+      const std::string_view text(program);
+      const bool method = text.find("define class") != std::string_view::npos ||
+                          text.find("define actor") != std::string_view::npos;
+      reject_diagnostic([&] { parse_source(program); }, method
+                        ? "class/actor methods require typed native lowering"
+                        : "lexical captures require checked closure lowering");
+    }
 
     for (const auto& opaque : {"any", "unknown", "Any", "Unknown"}) {
       reject_diagnostic([&] {
