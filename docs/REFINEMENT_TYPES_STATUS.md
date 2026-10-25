@@ -19,3 +19,4 @@ Future completion requires normalized constraint IR, checked construction, Unico
 ## Inclusive comparison spelling
 
 Canonical textual inclusive bounds are `gte` and `lte`; symbolic `>=` and `<=` are equivalent source spellings. Legacy `ge` and `le` are deliberately invalid and must never be accepted as aliases. Until this backend implements checked refinement lowering, both canonical/symbolic valid refinements and legacy-invalid refinements remain fail-closed admission cases rather than erased base types.
+
