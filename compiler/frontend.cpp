@@ -157,6 +157,27 @@ class Parser {
       ++at_;
       while (at_<source_.size() &&
         ascii_digit(static_cast<unsigned char>(source_[at_]))) ++at_;
+      // Forge is a checked i64 bootstrap: do not lex 1.25 or 1e10 as
+      // integer tokens followed by unrelated punctuation/identifiers.
+      bool unsupported_real = false;
+      if (at_+1<source_.size() && source_[at_]=='.' &&
+          ascii_digit(static_cast<unsigned char>(source_[at_+1])))
+        unsupported_real=true;
+      if (at_+1<source_.size() &&
+          (source_[at_]=='e' || source_[at_]=='E') &&
+          (ascii_digit(static_cast<unsigned char>(source_[at_+1])) ||
+           ((source_[at_+1]=='+' || source_[at_+1]=='-') &&
+            at_+2<source_.size() &&
+            ascii_digit(static_cast<unsigned char>(source_[at_+2])))))
+        unsupported_real=true;
+      if (at_<source_.size() && source_[at_]=='d' &&
+          (at_+1==source_.size() ||
+           (!ascii_alnum(static_cast<unsigned char>(source_[at_+1])) &&
+            source_[at_+1]!='_')))
+        unsupported_real=true;
+      if (unsupported_real)
+        throw std::runtime_error("floating-point/decimal literal requires typed "
+                                 "numeric lowering at byte "+std::to_string(start));
       tok_={Kind::Number,source_.substr(start,at_-start),start}; return;
     }
     if (source_[at_]=='-' && at_+1<source_.size() && source_[at_+1]=='>') {
@@ -416,3 +437,4 @@ Program parse_runtime_source(std::string_view source) {
   return Parser(source,true).parse();
 }
 }
+
