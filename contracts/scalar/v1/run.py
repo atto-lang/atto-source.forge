@@ -165,7 +165,7 @@ NEGATIVE_DIAGNOSTICS = {
     "forge": {
         "reject.unknown": r"oresforge: expected integer at byte (?P<offset>[0-9]+)",
         "reject.division": r"oresforge: division requires float result lowering; unsupported in the i64 source subset at byte (?P<offset>[0-9]+)",
-        "reject.actor": r"oresforge: unexpected token at byte (?P<offset>[0-9]+)",
+        "reject.actor": r"oresforge: class/actor methods require typed native lowering at byte (?P<offset>[0-9]+)",
         "reject.async": r"oresforge: unexpected token at byte (?P<offset>[0-9]+)",
         "reject.structural": r"oresforge: expected integer at byte (?P<offset>[0-9]+)",
     },

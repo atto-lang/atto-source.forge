@@ -67,6 +67,48 @@ int main() {
            "CR-only trailing comment must stay a comment");
     ensure(interpret(parse_source("fnc main():int{return 42;} // import ignored"))==42,
            "import in a comment does not trigger module admission");
+    // No private-abstract class can be lowered by the scalar bootstrap.
+    // A specific typed-vtable diagnostic is required (not an accidental
+    // generic parser exception that could mask partial code publication).
+    reject_diagnostic([&] {
+      parse_source("define abstract class Framework as "
+                   "private abstract receive(int x): int; end");
+    }, "private abstract hooks require typed native vtables");
+
+    // The scalar bootstrap has no class vtable, receiver loan, or closure
+    // representation. New language constructs must fail closed until their
+    // actual native codegen and ownership checking are present.
+    for (const char* program : {
+      "define class Foo as fnc read(self, int x): int { return x; } end",
+      "define actor Foo as receive(self, int x): void { return; } end",
+      "define actor Foo as on_start(self): void { return; } end",
+      "define actor Foo as receive(ActorMail<int> mail): void { self.receive(mail); } end",
+      "define class Foo as private abstract receive(int x): int; end",
+      "fnc main():int{return lex[x] || -> x;}",
+      "fnc main():int{return nlex[x] || -> x;}",
+      "fnc main():int{return nlex || -> 1;}",
+      "fnc main():int{return lex[self] || -> 1;}",
+      "define class Foo as fnc read(mut self, int x): int { return x; } end",
+      "define class Foo as fnc read(self Foo)(int x): int { return x; } end",
+      "fnc main():int{return lex[x,x] || -> x;}",
+      "fnc main():int{return lex[missing] || -> x;}",
+      "fnc main():int{return lex[] || -> x;}",
+      "fnc main():int{return nlex[self] || -> x;}",
+      "fnc main():int{return nlex[] || -> x;}",
+      "fnc main():int{return lex[x] |x| -> x;}",
+      "fnc main():int{return |y| -> x;}",
+      "fnc main():int{return lex[x] || -> nlex || -> x;}",
+      "fnc main():int{return nlex[self] critical |state| -> 1;}",
+    }) {
+      // A catch-all parser exception is not proof of fail-closed feature
+      // admission. Check that the unsupported feature itself was diagnosed.
+      const std::string_view text(program);
+      const bool method = text.find("define class") != std::string_view::npos ||
+                          text.find("define actor") != std::string_view::npos;
+      reject_diagnostic([&] { parse_source(program); }, method
+                        ? "class/actor methods require typed native lowering"
+                        : "lexical captures require checked closure lowering");
+    }
 
     for (const auto& opaque : {"any", "unknown", "Any", "Unknown"}) {
       reject_diagnostic([&] {
@@ -397,6 +439,47 @@ int main() {
     });
     reject([] { interpret(source("9223372036854775807 + 1")); });
     reject([] { interpret(source("3/0")); });
+    // Structural declarations, argument shape matching and match-over are not
+    // implemented by the arithmetic bootstrap. Never silently accept them.
+    reject_diagnostic([] {
+      parse_source("structural fnc main():int{return 1;}");
+    }, "expected");
+    reject_diagnostic([] {
+      parse_source("fnc main(structural Shape value):int{return 1;}");
+    }, "tuple-v2 parameter requires typed ownership/ABI lowering");
+    reject_diagnostic([] {
+      parse_source("fnc main():int{match 1 over on _ -> {return 1;} end}");
+    }, "expected");
+    // Task 70: structural and row syntax must fail closed across declaration,
+    // parameter, projection and pattern surfaces. The scalar bootstrap has
+    // neither row layout witnesses nor borrow/mutable-field capability checks.
+    const std::vector<std::string> unsupported_shapes={
+      "fnc take(record{foo:int} value):int{return value.foo;}",
+      "fnc take(struct{foo:int} value):int{return value.foo;}",
+      "fnc take(structural {foo:int} value):int{return value.foo;}",
+      "fnc take(structural Shape value):int{return 1;}",
+      "fnc take(List<record{foo:int}> value):int{return 1;}",
+      "fnc main():int{const x=infer struct{foo:1,bar:2};return 1;}",
+      "fnc main():int{const x=struct{foo:int}{foo:1};return 1;}",
+      "fnc main():int{match 1 over on structural {foo:int} as x {return 1;} end}",
+      "fnc take(record{foo:int,foo:string} value):int{return 1;}"
+    };
+    for (const auto& input : unsupported_shapes) {
+      reject([&] { parse_source(input); });
+    }
+    ensure(interpret(parse_source(
+      "fnc main():int{return 42;} // record{foo:int}, structural Shape"))==42,
+      "shape words in comments must not cause false-positive admission");
+    // v2 tuple syntax is intentionally not executable on Forge bootstrap.
+    reject([] {
+      parse_source("fnc take(tuple (int,int,string?) v):int{return 1;}");
+    });
+    reject([] {
+      parse_source("fnc take((int,int,string?) v):int{return 1;}");
+    });
+    reject([] {
+      parse_source("fnc take(structural (int,int,string?) v):int{return 1;}");
+    });
     reject([] { parse_source("fnc main():int {return 1;} garbage"); });
     reject([] { parse_source("fnc main():int {return x;}"); });
     reject([] { parse_source("pub pub fnc main():int {return 1;}"); });
