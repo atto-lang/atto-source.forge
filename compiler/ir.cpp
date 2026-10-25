@@ -10,6 +10,7 @@ bool before(int index, std::size_t offset) {
 const char* opcode(Op op) {
   switch (op) {
     case Op::Constant: return "const.i64";
+    case Op::Parameter: return "param.i64";
     case Op::Add: return "add.i64.checked";
     case Op::Sub: return "sub.i64.checked";
     case Op::Mul: return "mul.i64.checked";
@@ -40,12 +41,17 @@ std::int64_t checked(Op op, std::int64_t a, std::int64_t b) {
 }
 }
 void verify(const Program& p) {
+  if (p.parameter_count > 4) throw std::runtime_error("runtime entry parameter budget exceeded");
   if (p.instructions.empty()) throw std::runtime_error("empty IR");
   if (p.instructions.size() > 100000) throw std::runtime_error("IR instruction budget exceeded");
   for (std::size_t i=0; i<p.instructions.size(); ++i) {
     const auto& ins = p.instructions[i];
     if (ins.op == Op::Constant) {
       if (ins.a != -1 || ins.b != -1) throw std::runtime_error("constant operands");
+    } else if (ins.op == Op::Parameter) {
+      if (ins.a != -1 || ins.b != -1 || ins.value < 0 ||
+          static_cast<std::uint64_t>(ins.value) >= p.parameter_count)
+        throw std::runtime_error("invalid runtime parameter index");
     } else if (ins.op == Op::Return) {
       if (i+1 != p.instructions.size() || !before(ins.a,i) || ins.b != -1)
         throw std::runtime_error("return must be valid and terminal");
@@ -60,17 +66,23 @@ void verify(const Program& p) {
   }
   if (p.instructions.back().op != Op::Return) throw std::runtime_error("missing return");
 }
-std::int64_t interpret(const Program& p) {
+std::int64_t interpret(const Program& p,std::span<const std::int64_t> args) {
   verify(p);
+  if (args.size()!=p.parameter_count) throw std::runtime_error("runtime argument count mismatch");
   std::vector<std::int64_t> values;
   values.reserve(p.instructions.size());
   for (const auto& ins : p.instructions) {
     if (ins.op == Op::Return) return values.at(static_cast<std::size_t>(ins.a));
     if (ins.op == Op::Constant) values.push_back(ins.value);
+    else if (ins.op == Op::Parameter)
+      values.push_back(args[static_cast<std::size_t>(ins.value)]);
     else values.push_back(checked(ins.op, values.at(static_cast<std::size_t>(ins.a)),
                                            values.at(static_cast<std::size_t>(ins.b))));
   }
   throw std::runtime_error("missing return");
+}
+std::int64_t interpret(const Program& p) {
+  return interpret(p,std::span<const std::int64_t>{});
 }
 std::string dump_ir(const Program& p) {
   verify(p);
@@ -80,7 +92,7 @@ std::string dump_ir(const Program& p) {
     if (ins.op == Op::Return) out << "ret %" << ins.a;
     else {
       out << '%' << i << " = " << opcode(ins.op);
-      if (ins.op == Op::Constant) out << ' ' << ins.value;
+      if (ins.op == Op::Constant || ins.op == Op::Parameter) out << ' ' << ins.value;
       else out << " %" << ins.a << ", %" << ins.b;
     }
     out << '\n';
