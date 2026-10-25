@@ -118,6 +118,7 @@ inline void require_v1_manifest(const fs::path& manifest) {
 // exists. Reject unsupported root forms; this is not a full TOML parser.
 inline fs::path configured_project_root_text(const fs::path& manifest_dir,
                                              const std::string& snapshot) {
+    const auto physical_manifest_dir = fs::canonical(manifest_dir);
     std::istringstream input{snapshot};
     std::string line, root_text = ".";
     bool in_project = false, seen_project_table = false, found_root = false;
@@ -169,7 +170,7 @@ inline fs::path configured_project_root_text(const fs::path& manifest_dir,
     const fs::path relative(root_text);
     if (relative.is_absolute())
         throw std::invalid_argument("absolute project.root unsupported in Forge bootstrap");
-    auto inspected = manifest_dir;
+    auto inspected = physical_manifest_dir;
     for (const auto& part : relative) {
         if (part == ".." || part.empty() || (part == "." && root_text != "."))
             throw std::invalid_argument("project.root escapes manifest directory");
@@ -181,10 +182,10 @@ inline fs::path configured_project_root_text(const fs::path& manifest_dir,
         }
     }
     std::error_code root_error;
-    const auto selected = fs::canonical(manifest_dir / relative, root_error);
+    const auto selected = fs::canonical(physical_manifest_dir / relative, root_error);
     if (root_error || !fs::is_directory(selected))
         throw std::invalid_argument("project.root is not an existing directory");
-    if (!within(manifest_dir, selected))
+    if (!within(physical_manifest_dir, selected))
         throw std::invalid_argument("project.root escapes physical manifest directory");
     return selected;
 }
