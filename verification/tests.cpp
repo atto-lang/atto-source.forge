@@ -96,6 +96,7 @@ int main() {
       for (int i=0; i<129; ++i) excessive+="*/";
       reject_diagnostic([&] { parse_source(excessive); },
                         "block comment nesting too deep");
+    }
     // No private-abstract class can be lowered by the scalar bootstrap.
     // A specific typed-vtable diagnostic is required (not an accidental
     // generic parser exception that could mask partial code publication).
