@@ -134,7 +134,7 @@ class Parser {
       if (ascii_space(c)) { ++at_; continue; }
       if (source_[at_]=='/' && at_+1<source_.size() && source_[at_+1]=='/') {
         at_+=2;
-        while (at_<source_.size() && source_[at_]!='\n') ++at_;
+        while (at_<source_.size() && source_[at_]!='\n' && source_[at_]!='\r') ++at_;
         continue;
       }
       break;

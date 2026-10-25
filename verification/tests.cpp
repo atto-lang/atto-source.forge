@@ -43,15 +43,28 @@ int main() {
     using namespace oresforge;
     // Import graph linking is not available in the Forge scalar bootstrap.
     // Reject with the *right* diagnostic before IR or assembly emission.
-    for (const auto& path : {"+/src/helper", "+src/helper", "@/src/helper", "pkg:math/src/helper",
-                             "./helper", "../helper", "common/helper",
-                             ".hidden/helper"}) {
+    for (const auto& path : {"+/src/helper", "+/../outside", "+/src/../helper",
+                             "+//src/helper", "+/src\\\\helper", "+src/helper",
+                             "@/src/helper", "pkg:math/src/helper", "pkg:missing/helper",
+                             "+/nested/lib/child", "+/nested/parent-alias",
+                             "+/dangling/lib/child", "./helper", "../helper",
+                             "common/helper", ".hidden/helper"}) {
       reject_diagnostic([&] {
         parse_source(std::string("import fnc helper from ") +
                      static_cast<char>(34) + path + static_cast<char>(34) +
                      "; fnc main():int{return 42;}");
       }, "source imports require verified module graph lowering");
     }
+    // A comment ends at CR as well as LF. Otherwise a CR-only import line
+    // is silently skipped and the scalar artifact could look successful.
+    for (const std::string ending : {"\r", "\r\n", "\n"}) {
+      reject_diagnostic([&] {
+        parse_source("fnc main():int{return 42;} // comment"+ending+
+                     "import fnc helper from \"./other\";");
+      }, "source imports require verified module graph lowering");
+    }
+    ensure(interpret(parse_source("fnc main():int{return 42;} // import ignored\r"))==42,
+           "CR-only trailing comment must stay a comment");
     ensure(interpret(parse_source("fnc main():int{return 42;} // import ignored"))==42,
            "import in a comment does not trigger module admission");
     // No private-abstract class can be lowered by the scalar bootstrap.
