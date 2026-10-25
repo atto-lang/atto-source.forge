@@ -65,6 +65,19 @@ int main() {
     }, "ternary expression requires bool typing and CFG branch-merge lowering");
     ensure(interpret(parse_source("fnc main():int{return 42;} // any unknown ?"))==42,
            "opaque-top and ternary tokens in comments remain invisible");
+    // Named-call and tagged pipeline lowering are still unavailable in
+    // Forge's i64 bootstrap. Verify explicit rejection before codegen.
+    for (const auto& expression : {
+        "1 |> twice", "(1 |> twice)", "1+2 |> plus(3)",
+        "1 |> Option.map(inc)", "1 |> Result.map_err(annotate)",
+        "1 |> Option /*comment*/ . map(inc)",
+        "1 |> plus(2 |> Result.map_err(f))"
+    }) {
+      reject_diagnostic([&] { source(expression); },
+                        "value pipeline requires named callable lowering");
+    }
+    ensure(interpret(parse_source("fnc main():int{return 1;} // |> ignored"))==1,
+           "value pipeline syntax inside comments must not be tokenized");
     reject_diagnostic([] {
       parse_source("fnc take(tuple (int,int) value):int{return 1;} fnc main():int{return 1;}");
     },"tuple-v2 parameter requires typed ownership/ABI lowering");
@@ -280,6 +293,8 @@ int main() {
            "shared arithmetic-76 source execution");
     for (const auto& expression : {"3/2", "4/2", "5/0", "-9223372036854775808/-1"})
       reject_diagnostic([&] { source(expression); }, "float result lowering");
+    for (const auto& expression : {"0.125", "1e10", "1E-10", "123.456d", "123d"})
+      reject_diagnostic([&] { source(expression); }, "typed numeric lowering");
     // Internal checked-i64 IR division is distinct from the source / operator.
     Program internal_division{{{Op::Constant,-3},{Op::Constant,2},
                               {Op::Div,0,0,1},{Op::Return,0,2,-1}}};

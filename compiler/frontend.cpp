@@ -163,7 +163,34 @@ class Parser {
       ++at_;
       while (at_<source_.size() &&
         ascii_digit(static_cast<unsigned char>(source_[at_]))) ++at_;
+      // Forge is a checked i64 bootstrap: do not lex 1.25 or 1e10 as
+      // integer tokens followed by unrelated punctuation/identifiers.
+      bool unsupported_real = false;
+      if (at_+1<source_.size() && source_[at_]=='.' &&
+          ascii_digit(static_cast<unsigned char>(source_[at_+1])))
+        unsupported_real=true;
+      if (at_+1<source_.size() &&
+          (source_[at_]=='e' || source_[at_]=='E') &&
+          (ascii_digit(static_cast<unsigned char>(source_[at_+1])) ||
+           ((source_[at_+1]=='+' || source_[at_+1]=='-') &&
+            at_+2<source_.size() &&
+            ascii_digit(static_cast<unsigned char>(source_[at_+2])))))
+        unsupported_real=true;
+      if (at_<source_.size() && source_[at_]=='d' &&
+          (at_+1==source_.size() ||
+           (!ascii_alnum(static_cast<unsigned char>(source_[at_+1])) &&
+            source_[at_+1]!='_')))
+        unsupported_real=true;
+      if (unsupported_real)
+        throw std::runtime_error("floating-point/decimal literal requires typed "
+                                 "numeric lowering at byte "+std::to_string(start));
       tok_={Kind::Number,source_.substr(start,at_-start),start}; return;
+    }
+    // Recognize the contiguous operator, but defer execution until named
+    // callable and tagged value lowering are actually implemented.
+    if (source_[at_]=='|' && at_+1<source_.size() && source_[at_+1]=='>') {
+      at_+=2;
+      tok_={Kind::Punct,source_.substr(start,2),start}; return;
     }
     if (source_[at_]=='-' && at_+1<source_.size() && source_[at_+1]=='>') {
       at_+=2; tok_={Kind::Punct,source_.substr(start,2),start}; return;
@@ -254,6 +281,8 @@ class Parser {
     }
     if (tok_.text=="?")
       error("ternary expression requires bool typing and CFG branch-merge lowering");
+    if (tok_.text=="|>")
+      error("value pipeline requires named callable lowering; unsupported in Forge i64 bootstrap");
     return a;
   }
   ExprPtr term(std::size_t depth) {
