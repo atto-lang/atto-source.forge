@@ -96,3 +96,5 @@ The .NET and Forge engines currently implement small checked-i64 subsets;
 Wasm is LLVM-dependent and exposes only a core `() -> i64` ABI. Neither
 running the reference Python oracle nor checking these manifests establishes
 numerical feature parity.
+
+The precision fixture preserves the common binary64/decimal base blob `cb28b5678d380f02c5e4e43bd763da04bdb996fe` and adds four complex128 reference cases in blob `80436f21a95816e2d5e40274daba9b923b3bcec9`. The admission test reconstructs and checks the exact common base. This additive reference extension is not a claim that other backends have adopted or executed the complex cases.

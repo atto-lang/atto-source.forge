@@ -98,7 +98,7 @@ class NumericGeneratorTest(unittest.TestCase):
             ast.parse("(-9223372036854775808)+1", mode="eval").body),
             -(1 << 63) + 1)
 
-    def test_positive_two_to_sixty_three_is_rejected_as_final_i64(self):
+    def test_positive_two_to_sixty_three_is_rejected_at_literal_admission(self):
         # Lexer admission of the magnitude 2^63 is necessary to spell the
         # signed minimum using unary minus. As the final value it is invalid.
         with tempfile.TemporaryDirectory() as d:
@@ -109,7 +109,7 @@ class NumericGeneratorTest(unittest.TestCase):
             payload = json.dumps(changed).encode("utf-8")
             path.write_bytes(payload)
             with mock.patch.object(MODULE, "FIXTURE_SHA", sha_blob(payload)):
-                with self.assertRaisesRegex(ValueError, "final value out of bounds"):
+                with self.assertRaisesRegex(ValueError, "portable integer literal out of bounds"):
                     MODULE.generate(path)
 
     def test_duplicate_case_ids_are_rejected_even_with_updated_pin(self):

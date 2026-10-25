@@ -11,7 +11,8 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "contracts/v1/numeric-parity/backend.json"
 GOLDEN = ROOT / "contracts/v1/numeric-precision/cases.json"
-SHA = "cb28b5678d380f02c5e4e43bd763da04bdb996fe"
+SHA = "80436f21a95816e2d5e40274daba9b923b3bcec9"
+BASE_SHA = "cb28b5678d380f02c5e4e43bd763da04bdb996fe"
 FEATURES = frozenset((
     "source_i64", "checked_i64_overflow", "binary64_ordering",
     "binary32_arithmetic", "bigint_exact", "decimal_exact",
@@ -33,7 +34,7 @@ def check_claim_is_not_self_attested(status, proof):
 
 
 class NumericParityAdmissionTest(unittest.TestCase):
-    def test_reference_fixture_is_byte_identical_across_backends(self):
+    def test_reference_fixture_preserves_shared_base_and_pins_complex_extension(self):
         raw = GOLDEN.read_bytes()
         actual = hashlib.sha1(
             b"blob " + str(len(raw)).encode("ascii") + bytes((0,)) + raw).hexdigest()
@@ -41,6 +42,16 @@ class NumericParityAdmissionTest(unittest.TestCase):
         data = json.loads(raw)
         self.assertEqual(data["schema_version"], "1.0.0")
         self.assertEqual(data["status"], "reference-only-not-guest-execution")
+        # Preserve the exact common binary64/decimal reference population.
+        # The four complex128 cases are an explicit additive reference extension.
+        base = dict(data)
+        self.assertEqual(len(base.pop("complex128_division")), 4)
+        base.pop("complex128_policy")
+        base["notes"] = "Golden vectors for future Java/LLVM numeric conformance. Binary64 operands use raw IEEE bits and decimal matrices use exact base-10 strings; no backend may claim success simply by parsing this file."
+        projected = (json.dumps(base, indent=2) + "\n").encode()
+        digest = hashlib.sha1(b"blob " + str(len(projected)).encode() + b"\0" + projected).hexdigest()
+        self.assertEqual(digest, BASE_SHA, "shared numeric base drifted")
+
 
     def test_manifest_does_not_claim_unexecuted_guest_parity(self):
         d = json.loads(MANIFEST.read_text(encoding="utf-8"))
