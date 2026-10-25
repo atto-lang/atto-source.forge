@@ -54,6 +54,17 @@ int main() {
     }
     ensure(interpret(parse_source("fnc main():int{return 42;} // import ignored"))==42,
            "import in a comment does not trigger module admission");
+
+    for (const auto& opaque : {"any", "unknown", "Any", "Unknown"}) {
+      reject_diagnostic([&] {
+        parse_source(std::string("fnc main():") + opaque + "{return 1;}");
+      }, "tagged opaque-value ABI");
+    }
+    reject_diagnostic([] {
+      parse_source("fnc main():int{return 1 ? 2 : 3;}");
+    }, "ternary expression requires bool typing and CFG branch-merge lowering");
+    ensure(interpret(parse_source("fnc main():int{return 42;} // any unknown ?"))==42,
+           "opaque-top and ternary tokens in comments remain invisible");
     // Named-call and tagged pipeline lowering are still unavailable in
     // Forge's i64 bootstrap. Verify explicit rejection before codegen.
     for (const auto& expression : {
