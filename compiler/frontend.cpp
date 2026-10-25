@@ -166,11 +166,40 @@ class Parser {
       ++at_;
       while (at_<source_.size() &&
         ascii_digit(static_cast<unsigned char>(source_[at_]))) ++at_;
+      // Forge is a checked i64 bootstrap: do not lex 1.25 or 1e10 as
+      // integer tokens followed by unrelated punctuation/identifiers.
+      bool unsupported_real = false;
+      if (at_+1<source_.size() && source_[at_]=='.' &&
+          ascii_digit(static_cast<unsigned char>(source_[at_+1])))
+        unsupported_real=true;
+      if (at_+1<source_.size() &&
+          (source_[at_]=='e' || source_[at_]=='E') &&
+          (ascii_digit(static_cast<unsigned char>(source_[at_+1])) ||
+           ((source_[at_+1]=='+' || source_[at_+1]=='-') &&
+            at_+2<source_.size() &&
+            ascii_digit(static_cast<unsigned char>(source_[at_+2])))))
+        unsupported_real=true;
+      if (at_<source_.size() && source_[at_]=='d' &&
+          (at_+1==source_.size() ||
+           (!ascii_alnum(static_cast<unsigned char>(source_[at_+1])) &&
+            source_[at_+1]!='_')))
+        unsupported_real=true;
+      if (unsupported_real)
+        throw std::runtime_error("floating-point/decimal literal requires typed "
+                                 "numeric lowering at byte "+std::to_string(start));
       tok_={Kind::Number,source_.substr(start,at_-start),start}; return;
+    }
+    // Recognize the contiguous operator, but defer execution until named
+    // callable and tagged value lowering are actually implemented.
+    if (source_[at_]=='|' && at_+1<source_.size() && source_[at_+1]=='>') {
+      at_+=2;
+      tok_={Kind::Punct,source_.substr(start,2),start}; return;
     }
     if (source_[at_]=='-' && at_+1<source_.size() && source_[at_+1]=='>') {
       at_+=2; tok_={Kind::Punct,source_.substr(start,2),start}; return;
     }
+    if (source_.substr(at_,3)=="...")
+      error("tuple-v2 explicit spread requires single-evaluation checked lowering");
     if (std::string_view("()+-*/{};:,").find(static_cast<char>(c)) ==
         std::string_view::npos) error("invalid character");
     ++at_;
@@ -222,6 +251,8 @@ class Parser {
     Function fn;
     if (tok_.text!=")") {
       do {
+        if (tok_.text=="tuple" || tok_.text=="structural" || tok_.text=="(")
+          error("tuple-v2 parameter requires typed ownership/ABI lowering");
         const std::string parameter=identifier();
         if (parameter=="int" || parameter=="fnc" || parameter=="return" ||
             std::find(fn.parameters.begin(),fn.parameters.end(),parameter)!=fn.parameters.end())
@@ -234,6 +265,8 @@ class Parser {
     }
     expect(")");
     if (!take(":")) expect("->");
+    if (tok_.text=="tuple" || tok_.text=="structural" || tok_.text=="(")
+      error("tuple-v2 return requires typed ABI lowering");
     expect("int"); expect("{"); expect("return");
     fn.body=expression(0);
     expect(";"); expect("}");
@@ -249,6 +282,8 @@ class Parser {
       a=binary(plus?Expr::Tag::Add:Expr::Tag::Sub,
                std::move(a),term(depth+1));
     }
+    if (tok_.text=="|>")
+      error("value pipeline requires named callable lowering; unsupported in Forge i64 bootstrap");
     return a;
   }
   ExprPtr term(std::size_t depth) {
@@ -264,6 +299,25 @@ class Parser {
   }
   ExprPtr factor(std::size_t depth) {
     check_depth(depth);
+    if (tok_.text=="rt") {
+      next();
+      const std::string operation(tok_.text);
+      if (operation=="ref" || operation=="unref" || operation=="deref" || operation=="raw")
+        error("pointer-style runtime operation is not valid Oreslang source; use explicit ownership operations");
+      if (operation=="borrow") {
+        next();
+        if (tok_.text=="mut")
+          error("legacy 'rt borrow mut' is not valid Oreslang; use 'rt mut borrow value'");
+        error("runtime ownership operation requires typed lowering in Forge");
+      }
+      if (operation=="mut") {
+        next();
+        if (tok_.text!="borrow")
+          error("'rt mut' only supports borrowing; use 'rt mut borrow value'");
+        error("runtime ownership operation requires typed lowering in Forge");
+      }
+      error("runtime ownership operation requires typed lowering in Forge");
+    }
     if (take("-")) {
       if (tok_.kind==Kind::Number && tok_.text=="9223372036854775808") {
         next();
@@ -400,3 +454,4 @@ Program parse_runtime_source(std::string_view source) {
   return Parser(source,true).parse();
 }
 }
+
