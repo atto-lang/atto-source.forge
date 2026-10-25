@@ -67,9 +67,35 @@ jobs:
           cmake -S . -B build-fuzz -DCMAKE_BUILD_TYPE=Debug
           -DBUILD_TESTING=OFF -DORESFORGE_FUZZ=ON
           -DCMAKE_CXX_COMPILER=clang++
-      - name: Compile fuzz target and instrumented compiler
-        run: cmake --build build-fuzz --target oresforge_fuzz --parallel 2
-      - name: Deterministic bounded fuzz corpus regression
+      - name: Compile instrumented frontend and actor mailbox fuzz targets
+        run: cmake --build build-fuzz --target oresforge_fuzz oresforge_mailbox_fuzz --parallel 2
+      - name: Deterministic bounded frontend fuzz corpus regression
         run: >-
           ./build-fuzz/oresforge_fuzz -runs=3000 -max_len=4096
           -timeout=3 -rss_limit_mb=1024 verification/fuzz-corpus
+      - name: Differential actor mailbox fuzz regression
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1
+        run: >-
+          ./build-fuzz/oresforge_mailbox_fuzz -runs=3000 -max_len=4096
+          -timeout=3 -rss_limit_mb=1024 -seed=20261016
+
+  mailbox-thread-safety:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: GCC ThreadSanitizer on actual actor mailbox concurrency
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++20 -O1 -g -pthread -Wall -Wextra -Wconversion -Werror \
+            -fno-omit-frame-pointer -fsanitize=thread -I. \
+            runtime/actor.cpp verification/actor_mailbox_concurrency.cpp \
+            -o "$RUNNER_TEMP/oresforge-mailbox-tsan"
+          for i in 1 2 3; do
+            TSAN_OPTIONS=halt_on_error=1 "$RUNNER_TEMP/oresforge-mailbox-tsan"
+          done
