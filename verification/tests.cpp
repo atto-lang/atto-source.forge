@@ -67,6 +67,36 @@ int main() {
            "CR-only trailing comment must stay a comment");
     ensure(interpret(parse_source("fnc main():int{return 42;} // import ignored"))==42,
            "import in a comment does not trigger module admission");
+    // Nominal enums and same-arity virtual method dispatch are not part of
+    // this scalar frontend. Deny the declaration with a specific diagnostic,
+    // rather than claiming parity from a synthetic policy helper.
+    for (const auto& invalid : {
+        "define enum Color as\n  Red\nend\nfnc main():int{return 1;}",
+        "define enum Color as\n  Red\nend\ndefine enum Mode as\n  Fast\nend\n"
+            "fnc pick(Color x):int{return 1;} fnc pick(Mode x):int{return 2;} "
+            "fnc main():int{return 0;}"
+    }) {
+      reject_diagnostic([&] { parse_source(invalid); },
+                        "nominal enum overloads require compiler-bound dispatch");
+    }
+    ensure(interpret(parse_source("fnc main():int{return 1;} // enum comment"))==1,
+           "enum spelling in a comment is not a declaration");
+    ensure(interpret(parse_source(
+               "fnc main():int{/* enum Color /* enum Mode */ nested */return 1;}"))==1,
+           "nested enum comments do not become declarations");
+    ensure(interpret(parse_source(
+               "fnc main():int{return 1;} /* enum Color */"))==1,
+           "trailing block-comment enum is not executable");
+    reject_diagnostic([] {
+      parse_source("fnc main():int{return 1;} /* enum Color");
+    }, "unterminated block comment");
+    {
+      std::string excessive="fnc main():int{return 1;} ";
+      for (int i=0; i<129; ++i) excessive+="/*";
+      for (int i=0; i<129; ++i) excessive+="*/";
+      reject_diagnostic([&] { parse_source(excessive); },
+                        "block comment nesting too deep");
+    }
     // No private-abstract class can be lowered by the scalar bootstrap.
     // A specific typed-vtable diagnostic is required (not an accidental
     // generic parser exception that could mask partial code publication).
@@ -410,6 +440,16 @@ int main() {
     ensure(interpret(parse_source("fnc main():int {return 3;} // caf\xc3\xa9"))==3,
            "valid UTF-8 comment");
 
+    const std::string block_comment="fnc main():int{return 1;} /* ";
+    reject_diagnostic([&] { parse_source(block_comment+
+        static_cast<char>(0xc0)+static_cast<char>(0xaf)+" */"); },
+        "not valid UTF-8");
+    reject_diagnostic([&] { std::string text=block_comment;
+        text.push_back('\0'); text+=" */"; parse_source(text); },
+        "source contains NUL byte");
+    ensure(interpret(parse_source(
+               "fnc main():int{return 3;} /* caf\xc3\xa9 enum */"))==3,
+           "valid UTF-8 in ignored block comment");
     // UTF-8 source is accepted for comments, not grammar tokens.
     // This must be stable under every process locale.
     reject_diagnostic([] {
