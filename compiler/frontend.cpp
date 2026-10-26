@@ -339,8 +339,18 @@ class Parser {
         error("[EXPORT_KIND_MISMATCH] Symbol literal does not match typed export kind");
     } else {
       if (kind=="symbol") {
-        if (tok_.kind==Kind::Word)
+        if (tok_.kind==Kind::Word) {
+          // Preserve the canonical diagnostic ordering for the explicit
+          // alias forms even though Forge does not lower Symbol declarations.
+          (void)identifier();
+          if (take("as")) {
+            if (tok_.kind==Kind::String)
+              error("[EXPORT_LITERAL_ALIAS_UNSUPPORTED] runtime literals are not export binding names");
+            if (tok_.text=="#")
+              error("[EXPORT_SYMBOL_IDENTITY_TARGET_REQUIRES_SYMBOL_SOURCE] a Symbol identity target requires a #symbol source");
+          }
           error("[EXPORT_SYMBOL_LITERAL_REQUIRED] Symbol exports name nominal #symbol identities");
+        }
         error("[EXPORT_MALFORMED_TARGET] expected Symbol literal");
       }
       item.local_name=identifier();
