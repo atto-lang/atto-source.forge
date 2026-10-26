@@ -219,6 +219,98 @@ int main() {
     reject([] { parse_source("fnc main():int{return *value;}"); });
     reject([] { parse_source("fnc main():Pointer<int>{return value;}"); });
 
+    // Explicit export v1 source metadata for the actual Forge bootstrap
+    // subset. The bootstrap only lowers pure fnc families, so other declaration
+    // kinds remain fail-closed rather than being represented synthetically.
+    {
+      const auto baseline=parse_source(
+        "fnc helper():int{return 42;} pub fnc main():int{return helper();}");
+      const auto exported=parse_source(
+        "export fnc helper as public_helper; "
+        "fnc helper():int{return 42;} pub fnc main():int{return helper();}");
+      ensure(exported.source_export_bindings.size()==2,
+             "explicit helper plus implicit pub main source bindings");
+      const auto helper=std::find_if(
+        exported.source_export_bindings.begin(),
+        exported.source_export_bindings.end(),
+        [](const SourceExportBinding& binding) {
+          return binding.local_name=="helper";
+        });
+      ensure(helper!=exported.source_export_bindings.end(),"explicit helper binding");
+      ensure(helper->local_symbol_id=="$root::fnc::helper","stable Forge export local identity");
+      ensure(helper->external_name=="public_helper","Forge export alias");
+      ensure(helper->scope==SourceExportScope::Public,"Forge public export scope");
+      ensure(helper->origin==SourceExportOrigin::ExplicitExport,"Forge explicit export origin");
+      ensure(dump_ir(exported)==dump_ir(baseline),
+             "source export metadata must not change Forge IR");
+      ensure(emit_asm(exported,Arch::X86_64)==emit_asm(baseline,Arch::X86_64),
+             "source export metadata must not change x86 native assembly");
+      ensure(emit_asm(exported,Arch::ARM64)==emit_asm(baseline,Arch::ARM64),
+             "source export metadata must not change arm native assembly");
+      ensure(emit_asm(exported,Arch::X86_64).find("public_helper")==std::string::npos,
+             "source export alias must not become a native symbol");
+    }
+    {
+      const auto scoped=parse_source(
+        "export[pkg] fnc helper; "
+        "fnc helper():int{return 1;} pub fnc main():int{return helper();}");
+      const auto helper=std::find_if(
+        scoped.source_export_bindings.begin(),
+        scoped.source_export_bindings.end(),
+        [](const SourceExportBinding& binding) { return binding.local_name=="helper"; });
+      ensure(helper!=scoped.source_export_bindings.end() &&
+             helper->scope==SourceExportScope::Package,
+             "Forge package source export metadata");
+    }
+    {
+      const auto idempotent=parse_source(
+        "export fnc main; pub fnc main():int{return 1;}");
+      ensure(idempotent.source_export_bindings.size()==1,
+             "inline pub plus identical explicit export is idempotent");
+      ensure(idempotent.source_export_bindings.front().origin==
+             SourceExportOrigin::ImplicitPub,
+             "implicit pub wins identical Forge export binding");
+    }
+    reject_diagnostic([] {
+      parse_source("export fnc A as Public; export fnc B as Public; "
+                   "fnc A():int{return 1;} fnc B():int{return 2;} "
+                   "pub fnc main():int{return A();}");
+    }, "EXPORT_ALIAS_COLLISION");
+    reject_diagnostic([] {
+      parse_source("export[pkg] fnc main; pub fnc main():int{return 1;}");
+    }, "EXPORT_SCOPE_CONFLICT");
+    reject_diagnostic([] {
+      parse_source("export class helper; fnc helper():int{return 1;} "
+                   "pub fnc main():int{return helper();}");
+    }, "EXPORT_KIND_MISMATCH");
+    reject_diagnostic([] {
+      parse_source("export class Missing; pub fnc main():int{return 1;}");
+    }, "EXPORT_BACKEND_UNSUPPORTED_KIND");
+    reject_diagnostic([] {
+      parse_source("export fnc missing; pub fnc main():int{return 1;}");
+    }, "EXPORT_UNKNOWN_TARGET");
+    reject_diagnostic([] {
+      parse_source("export {}; pub fnc main():int{return 1;}");
+    }, "EXPORT_EMPTY_GROUP");
+    reject_diagnostic([] {
+      parse_source("export fnc {,main}; pub fnc main():int{return 1;}");
+    }, "EXPORT_MALFORMED_LIST");
+    reject_diagnostic([] {
+      parse_source("export fnc {main,,other}; pub fnc main():int{return 1;}");
+    }, "EXPORT_MALFORMED_LIST");
+    reject_diagnostic([] {
+      parse_source("export *; pub fnc main():int{return 1;}");
+    }, "EXPORT_WILDCARD_UNSUPPORTED");
+    reject_diagnostic([] {
+      parse_source("export dep::main; pub fnc main():int{return 1;}");
+    }, "EXPORT_QUALIFIED_TARGET_UNSUPPORTED");
+    reject_diagnostic([] {
+      parse_source("export main(int); pub fnc main():int{return 1;}");
+    }, "EXPORT_CALLABLE_SIGNATURE_UNSUPPORTED");
+    reject_diagnostic([] {
+      parse_source("export fnc main as 'ready'; pub fnc main():int{return 1;}");
+    }, "EXPORT_LITERAL_ALIAS_UNSUPPORTED");
+
     ensure(interpret(source("2+3*4"))==14,"precedence");
 
     // CPU/GPU Task v2 is reserved fail-closed until the Forge scheduler/device
