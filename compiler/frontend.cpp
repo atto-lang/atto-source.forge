@@ -370,7 +370,7 @@ class Parser {
     return item;
   }
   void reject_export_suffix() {
-    if (tok_.text=="." || tok_.text=="::" || tok_.text=="/")
+    if (tok_.text=="." || tok_.text==":" || tok_.text=="::" || tok_.text=="/")
       error("[EXPORT_QUALIFIED_TARGET_UNSUPPORTED] v1 local exports use simple local names only");
     if (tok_.text=="<" || tok_.text==">")
       error("[EXPORT_GENERIC_TARGET_UNSUPPORTED] export generic instantiations are not supported");
@@ -385,8 +385,9 @@ class Parser {
     export_context_=true;
     expect("export");
 
-    if (take("[") || take("(")) {
-      const std::string close=source_[tok_.offset-1]=='[' ? "]" : ")";
+    if (tok_.text=="[" || tok_.text=="(") {
+      const std::string close=tok_.text=="[" ? "]" : ")";
+      next();
       if (tok_.text=="file") declaration.scope=SourceExportScope::File;
       else if (tok_.text=="pkg" || tok_.text=="package")
         declaration.scope=SourceExportScope::Package;
