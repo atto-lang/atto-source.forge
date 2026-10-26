@@ -8,3 +8,11 @@
 /.github/private-ci-independent-reviewer.json @ORESoftware
 /.github/private-ci-required-checks.json @ORESoftware
 /.github/workflows/private-ci-policy.yml @ORESoftware
+
+# Independent native compiler/runtime and conformance trust boundaries.
+/runtime/ @ORESoftware
+/tests/ @ORESoftware
+/contracts/ @ORESoftware
+/verification/ @ORESoftware
+/scripts/ @ORESoftware
+/CMakeLists.txt @ORESoftware
