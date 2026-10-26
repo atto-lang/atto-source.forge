@@ -6,6 +6,7 @@
 #include "jit/tiered.hpp"
 #include "generated_numeric_i64_cases.hpp"
 #include "generated_numeric_overflow_cases.hpp"
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <functional>
