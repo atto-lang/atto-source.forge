@@ -24,11 +24,12 @@ struct SourceExportBinding {
 
 struct Program {
   std::vector<Instruction> instructions;
+  // Stage-0 native ABI: up to four signed i64 arguments, in source order.
+  // Keep this second for compatibility with existing aggregate tests.
+  std::size_t parameter_count = 0;
   // Stage-0 source-interface metadata. The bootstrap only understands fnc
   // families; this never changes native assembly symbol exposure.
   std::vector<SourceExportBinding> source_export_bindings;
-  // Stage-0 native ABI: up to four signed i64 arguments, in source order.
-  std::size_t parameter_count = 0;
 };
 void verify(const Program&);
 std::int64_t interpret(const Program&);
