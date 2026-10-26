@@ -508,6 +508,21 @@ int main() {
     reject([] { interpret(source("3/0")); });
     // Structural declarations, argument shape matching and match-over are not
     // implemented by the arithmetic bootstrap. Never silently accept them.
+    // PR #18: preserve these less common surfaces alongside the newer tuple,
+    // shape, numeric and import regressions already on main. A runtime error
+    // is not sufficient: unsupported syntax must fail at source admission.
+    for (const auto candidate : {
+      "structural routine main():int{return 1;}",
+      "routine main(structural Shape value):int{return 1;}",
+      "fnc main():int{return match 1 over on _ -> {return 1;} end;}",
+      "fnc main():int{do match 1 over on structural {x:int} v when true -> {return 1;} on _ -> {return 0;} end}",
+      "fnc main():int{do match 1 over on _ -> {return 1;} end}"
+    }) {
+      reject_diagnostic([&] { (void)parse_source(candidate); }, "expected");
+    }
+    reject_diagnostic([] {
+      (void)parse_source("@structural\nfnc main():int{return 1;}");
+    }, "invalid character");
     reject_diagnostic([] {
       parse_source("structural fnc main():int{return 1;}");
     }, "expected");
@@ -609,4 +624,3 @@ int main() {
     return 1;
   }
 }
-

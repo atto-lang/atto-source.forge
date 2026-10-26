@@ -103,3 +103,17 @@ rejection tests green; after implementation, replace their negative
 expectations with positive + negative typed and executable conformance suites.
 Do not weaken the restrictive bootstrap grammars merely to make a fixture
 appear to pass.
+
+## Structural admission regressions
+
+`verification/tests.cpp` exercises the real scalar parser and IR interpreter,
+including structural callable declarations, structural routine parameters,
+annotation syntax, value-producing match and procedural `do match` with
+structural guarded arms. These must reject during parsing; a later interpreter
+exception cannot qualify as successful admission denial. Scalar/numeric positive
+controls run in the same executable.
+
+This is rejection coverage, not positive structural typing or match lowering.
+The existing target contract above remains NOT AT PARITY. The old PR #18
+Python inventory workflow is not introduced by this reconciliation; no new
+Python tooling or alternate source-transfer workflow is added.
