@@ -55,7 +55,7 @@ constexpr bool ascii_digit(unsigned char c) { return c>='0' && c<='9'; }
 constexpr bool ascii_alnum(unsigned char c) {
   return ascii_alpha(c) || ascii_digit(c);
 }
-enum class Kind { Word, Number, Punct, End };
+enum class Kind { Word, Number, String, Punct, End };
 struct Token { Kind kind; std::string_view text; std::size_t offset; };
 
 // This stage-0 subset has pure i64 return expressions only. Inlining is
@@ -74,13 +74,31 @@ using ExprPtr = std::unique_ptr<Expr>;
 struct Function {
   std::vector<std::string> parameters;
   ExprPtr body;
+  bool source_public = false;
+};
+
+struct PendingExport {
+  SourceExportScope scope = SourceExportScope::Public;
+  std::string kind; // empty means untyped
+  struct Item {
+    std::string local_name;
+    std::string external_name;
+    bool symbol_literal = false;
+    bool self_identity = false;
+  };
+  std::vector<Item> items;
+  std::size_t offset = 0;
 };
 
 class Parser {
  public:
   explicit Parser(std::string_view text,bool runtime_entry=false): source_(text),runtime_entry_(runtime_entry) { next(); }
   Program parse() {
-    while (tok_.kind != Kind::End) definition();
+    while (tok_.kind != Kind::End) {
+      if (tok_.text=="export") export_declaration();
+      else definition();
+    }
+    resolve_exports();
     if (!functions_.contains("main")) error("missing main function");
     if (!runtime_entry_ && !functions_.at("main").parameters.empty())
       error("main must have zero parameters");
@@ -117,6 +135,8 @@ class Parser {
   Token tok_{Kind::End,{},0};
   Program program_;
   std::unordered_map<std::string,Function> functions_;
+  std::vector<PendingExport> pending_exports_;
+  bool export_context_ = false;
   std::size_t node_count_=0;
   static constexpr std::size_t kMaxExpressionDepth=128;
   static constexpr std::size_t kMaxCallDepth=64;
@@ -164,6 +184,28 @@ class Parser {
     const auto start=at_;
     if (at_==source_.size()) { tok_={Kind::End,{},start}; return; }
     auto c=static_cast<unsigned char>(source_[at_]);
+    if (c=='"' || c=='\'') {
+      const char quote=static_cast<char>(c);
+      ++at_;
+      const auto body_start=at_;
+      bool escaped=false;
+      while (at_<source_.size()) {
+        const char ch=source_[at_];
+        if (ch=='\n' || ch=='\r')
+          throw std::runtime_error("raw newline in string literal at byte "+
+                                   std::to_string(start));
+        if (!escaped && ch==quote) break;
+        if (!escaped && ch=='\\') escaped=true;
+        else escaped=false;
+        ++at_;
+      }
+      if (at_==source_.size())
+        throw std::runtime_error("unterminated string literal at byte "+
+                                 std::to_string(start));
+      tok_={Kind::String,source_.substr(body_start,at_-body_start),start};
+      ++at_;
+      return;
+    }
     if (ascii_alpha(c) || c=='_') {
       ++at_;
       while (at_<source_.size()) {
@@ -181,13 +223,13 @@ class Parser {
       if (tok_.text=="import") error("source imports require verified module graph lowering");
       // Scalar bootstrap lacks nominal enum declarations and compiler-owned
       // prebound virtual method slots. Never attempt arity-only fallback.
-      if (tok_.text=="enum") error("nominal enum overloads require compiler-bound dispatch");
+      if (tok_.text=="enum" && !export_context_) error("nominal enum overloads require compiler-bound dispatch");
       // Fail closed on named language features before the scalar grammar
       // gives a misleading generic syntax error (or ever learns to skip them).
       // These require typed method dispatch and ownership-checked closure IR.
       if (tok_.text=="abstract")
         error("private abstract hooks require typed native vtables and superclass-only dispatch");
-      if (tok_.text=="class" || tok_.text=="actor")
+      if ((tok_.text=="class" || tok_.text=="actor") && !export_context_)
         error("class/actor methods require typed native lowering");
       if (tok_.text=="lex" || tok_.text=="nlex")
         error("lexical captures require checked closure lowering");
@@ -244,7 +286,7 @@ class Parser {
     }
     if (source_.substr(at_,3)=="...")
       error("tuple-v2 explicit spread requires single-evaluation checked lowering");
-    if (std::string_view("()+-*/{};:,?").find(static_cast<char>(c)) ==
+    if (std::string_view("()[]+-*/{};:,?#.<>").find(static_cast<char>(c)) ==
         std::string_view::npos) error("invalid character");
     ++at_;
     tok_={Kind::Punct,source_.substr(start,1),start};
@@ -281,6 +323,170 @@ class Parser {
     v.push_back(std::move(b));
     return node(op,std::move(v));
   }
+  static bool export_kind_word(std::string_view word) {
+    return word=="module" || word=="actor" || word=="class" ||
+           word=="fnc" || word=="routine" || word=="interface" ||
+           word=="contract" || word=="trait" || word=="struct" ||
+           word=="type" || word=="const" || word=="val" ||
+           word=="let" || word=="symbol" || word=="model";
+  }
+  PendingExport::Item export_item(const std::string& kind) {
+    PendingExport::Item item;
+    if (take("#")) {
+      item.symbol_literal=true;
+      item.local_name="#"+identifier();
+      if (!kind.empty() && kind!="symbol")
+        error("[EXPORT_KIND_MISMATCH] Symbol literal does not match typed export kind");
+    } else {
+      if (kind=="symbol") {
+        if (tok_.kind==Kind::Word)
+          error("[EXPORT_SYMBOL_LITERAL_REQUIRED] Symbol exports name nominal #symbol identities");
+        error("[EXPORT_MALFORMED_TARGET] expected Symbol literal");
+      }
+      item.local_name=identifier();
+    }
+
+    if (!take("as")) return item;
+    if (item.symbol_literal) {
+      if (take("#")) {
+        const std::string target="#"+identifier();
+        if (target!=item.local_name)
+          error("[EXPORT_SYMBOL_IDENTITY_MISMATCH] Symbol export identity must be unchanged");
+        item.self_identity=true;
+        return item;
+      }
+      if (tok_.kind==Kind::String)
+        error("[EXPORT_LITERAL_ALIAS_UNSUPPORTED] runtime literals are not export binding names");
+      if (tok_.kind==Kind::Word)
+        error("[EXPORT_SYMBOL_BINDING_ALIAS_UNSUPPORTED] Symbol identities are not ordinary binding aliases");
+      error("[EXPORT_MALFORMED_ALIAS] expected same Symbol identity after as");
+    }
+
+    if (tok_.text=="#")
+      error("[EXPORT_SYMBOL_IDENTITY_TARGET_REQUIRES_SYMBOL_SOURCE] only a Symbol source may use Symbol identity after as");
+    if (tok_.kind==Kind::String)
+      error("[EXPORT_LITERAL_ALIAS_UNSUPPORTED] runtime literals are not export binding names");
+    item.external_name=identifier();
+    return item;
+  }
+  void reject_export_suffix() {
+    if (tok_.text=="." || tok_.text=="::" || tok_.text=="/")
+      error("[EXPORT_QUALIFIED_TARGET_UNSUPPORTED] v1 local exports use simple local names only");
+    if (tok_.text=="<" || tok_.text==">")
+      error("[EXPORT_GENERIC_TARGET_UNSUPPORTED] export generic instantiations are not supported");
+    if (tok_.text=="(")
+      error("[EXPORT_CALLABLE_SIGNATURE_UNSUPPORTED] export overload selectors use logical family name");
+    if (tok_.text=="{")
+      error("[EXPORT_NESTED_GROUP] nested export groups are not supported");
+  }
+  void export_declaration() {
+    PendingExport declaration;
+    declaration.offset=tok_.offset;
+    export_context_=true;
+    expect("export");
+
+    if (take("[") || take("(")) {
+      const std::string close=source_[tok_.offset-1]=='[' ? "]" : ")";
+      if (tok_.text=="file") declaration.scope=SourceExportScope::File;
+      else if (tok_.text=="pkg" || tok_.text=="package")
+        declaration.scope=SourceExportScope::Package;
+      else error("[EXPORT_UNKNOWN_SCOPE] expected file, pkg, or package export scope");
+      next(); expect(close);
+      if (tok_.text=="[" || tok_.text=="(")
+        error("[EXPORT_MULTIPLE_SCOPES] export accepts exactly one scope");
+    }
+
+    if (take("*")) {
+      if (take("from"))
+        error("[EXPORT_REEXPORT_UNSUPPORTED] export * from is reserved for future re-export syntax");
+      error("[EXPORT_WILDCARD_UNSUPPORTED] wildcard exports are not enabled in v1");
+    }
+    if (take("from"))
+      error("[EXPORT_REEXPORT_UNSUPPORTED] export from is reserved for future re-export syntax");
+
+    if (export_kind_word(tok_.text)) {
+      declaration.kind=std::string(tok_.text);
+      next();
+    } else if (tok_.text=="string" || tok_.text=="String" ||
+               tok_.text=="int" || tok_.text=="bool" || tok_.text=="void") {
+      error("[EXPORT_UNKNOWN_DECLARATION_KIND] typed export prefixes are declaration families, not runtime value types");
+    }
+
+    if (take("{")) {
+      if (take("}")) error("[EXPORT_EMPTY_GROUP] export groups cannot be empty");
+      for (;;) {
+        if (tok_.text==",")
+          error("[EXPORT_MALFORMED_LIST] leading or repeated comma in export group");
+        if (tok_.text=="{")
+          error("[EXPORT_NESTED_GROUP] nested export groups are not supported");
+        if (export_kind_word(tok_.text))
+          error("[EXPORT_KIND_PREFIX_IN_GROUP] typed export kind belongs before group");
+        declaration.items.push_back(export_item(declaration.kind));
+        if (take(",")) { if (take("}")) break; continue; }
+        if (take("}")) break;
+        reject_export_suffix();
+        error("[EXPORT_MALFORMED_LIST] expected comma or closing brace after export item");
+      }
+    } else {
+      declaration.items.push_back(export_item(declaration.kind));
+    }
+    reject_export_suffix();
+    if (!take(";"))
+      error("[EXPORT_SEMICOLON_REQUIRED] export declarations must end with semicolon");
+    export_context_=false;
+    pending_exports_.push_back(std::move(declaration));
+  }
+  void resolve_exports() {
+    std::unordered_map<std::string,std::size_t> external;
+    auto add_binding=[&](SourceExportBinding binding) {
+      const auto found=external.find(binding.external_name);
+      if (found!=external.end()) {
+        const auto& prior=program_.source_export_bindings.at(found->second);
+        if (prior.local_symbol_id==binding.local_symbol_id &&
+            prior.scope==binding.scope) return;
+        if (prior.local_symbol_id==binding.local_symbol_id)
+          throw std::runtime_error("[EXPORT_SCOPE_CONFLICT] source binding has conflicting scopes");
+        throw std::runtime_error("[EXPORT_ALIAS_COLLISION] external export name already bound");
+      }
+      external.emplace(binding.external_name,program_.source_export_bindings.size());
+      program_.source_export_bindings.push_back(std::move(binding));
+    };
+
+    std::vector<std::string> names;
+    names.reserve(functions_.size());
+    for (const auto& entry:functions_) names.push_back(entry.first);
+    std::sort(names.begin(),names.end());
+    for (const auto& name:names) {
+      if (!functions_.at(name).source_public) continue;
+      add_binding(SourceExportBinding{
+        "$root","$root::fnc::"+name,name,name,
+        SourceExportScope::Public,SourceExportOrigin::ImplicitPub});
+    }
+
+    for (const auto& declaration:pending_exports_) {
+      for (const auto& item:declaration.items) {
+        if (!declaration.kind.empty() && declaration.kind!="fnc") {
+          if (functions_.contains(item.local_name))
+            throw std::runtime_error("[EXPORT_KIND_MISMATCH] typed export kind does not match local fnc declaration");
+          throw std::runtime_error("[EXPORT_BACKEND_UNSUPPORTED_KIND] Forge bootstrap only lowers fnc export families");
+        }
+        if (item.symbol_literal)
+          throw std::runtime_error("[EXPORT_BACKEND_UNSUPPORTED_KIND] Forge bootstrap has no Symbol declarations");
+        const auto found=functions_.find(item.local_name);
+        if (found==functions_.end())
+          throw std::runtime_error("[EXPORT_UNKNOWN_TARGET] no local fnc declaration matches export target");
+        if (found->second.source_public &&
+            declaration.scope!=SourceExportScope::Public)
+          throw std::runtime_error("[EXPORT_SCOPE_CONFLICT] public fnc cannot be exported at narrower scope");
+        const std::string external_name=item.external_name.empty()
+          ? item.local_name : item.external_name;
+        add_binding(SourceExportBinding{
+          "$root","$root::fnc::"+item.local_name,item.local_name,external_name,
+          declaration.scope,SourceExportOrigin::ExplicitExport});
+      }
+    }
+  }
+
   void definition() {
     bool defined=false, public_=false;
     while (tok_.text=="define" || tok_.text=="pub") {
@@ -293,6 +499,7 @@ class Parser {
       error("reserved function name");
     expect("(");
     Function fn;
+    fn.source_public=public_;
     if (tok_.text!=")") {
       do {
         if (tok_.text=="tuple" || tok_.text=="structural" || tok_.text=="(")
@@ -345,6 +552,8 @@ class Parser {
   }
   ExprPtr factor(std::size_t depth) {
     check_depth(depth);
+    if (tok_.text=="export")
+      error("[EXPORT_LOCAL_SCOPE] export declarations are only valid at file/root scope");
     if (tok_.text=="rt") {
       next();
       const std::string operation(tok_.text);
