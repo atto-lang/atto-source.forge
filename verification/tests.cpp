@@ -311,6 +311,9 @@ int main() {
     reject_diagnostic([] {
       parse_source("export fnc main as 'ready'; pub fnc main():int{return 1;}");
     }, "EXPORT_LITERAL_ALIAS_UNSUPPORTED");
+    reject_diagnostic([] {
+      parse_source("export symbol ready as 'ready'; pub fnc main():int{return 1;}");
+    }, "EXPORT_LITERAL_ALIAS_UNSUPPORTED");
 
     ensure(interpret(source("2+3*4"))==14,"precedence");
 
