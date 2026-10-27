@@ -47,6 +47,14 @@ def main():
         expect_success(exe, ["--opt-escape=off", *command], {"ORES_OPT_ESCAPE": "safe"})
         expect_success(exe, ["--opt-escape-report=false", *command],
                        {"ORES_OPT_ESCAPE_REPORT": "true"})
+        # Direct overrides take precedence even over malformed mapped values.
+        # The overridden env is not an additional invalid CLI argument.
+        expect_success(exe, ["--opt-escape-report=false", *command],
+                       {"ORES_OPT_ESCAPE_REPORT": "not-a-boolean"})
+        expect_success(exe, ["--jit=off", *command], {"ORES_JIT": "unsupported"})
+        expect_success(exe, ["--opt-escape=off", *command],
+                       {"ORES_OPT_ESCAPE": "invalid"})
+        # With no override, malformed mapped bool must fail closed.
 
         for mode in ("safe", "verify"):
             expect_reject(exe, ["--opt-escape=" + mode, *command],
