@@ -70,7 +70,7 @@ def main(binary):
         'non-scalar': ordinary + bytes([0xf4, 0x90, 0x80, 0x80]),
         'embedded-nul': ordinary + bytes([0]),
     }
-    for mode in (('run',), ('run-calls',)):
+    for mode in MODES:
         for name, source in bad_bytes.items():
             result = execute_bytes(binary, mode, source)
             expected = 'source contains NUL byte' if name == 'embedded-nul' else 'source is not valid UTF-8'
@@ -78,7 +78,7 @@ def main(binary):
                     expected not in result.stderr):
                 raise AssertionError((mode, name, result.returncode,
                                       result.stdout, result.stderr))
-    print('Forge unsafe G0 lexical admission: PASS (80 mode/case rejects, 4 safe comments, 2 depth rejects, 8 malformed-source rejects)')
+    print('Forge unsafe G0 lexical admission: PASS (80 mode/case rejects, 4 safe comments, 2 depth rejects, 32 malformed-source rejects)')
 
 
 if __name__ == '__main__':
