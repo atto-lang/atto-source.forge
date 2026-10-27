@@ -47,7 +47,13 @@ def main(binary):
             if result.returncode != 0 or result.stdout.strip() != '42':
                 raise AssertionError((mode, name, result.returncode,
                                       result.stdout, result.stderr))
-    print('Forge unsafe G0 lexical rejection: PASS (CLI source subset only)')
+    for mode in (('run',), ('run-calls',)):
+        excessive_nesting = 'fnc main():int{return 42;} ' + ('/*' * 129) + ('*/' * 129)
+        result = execute(binary, mode, excessive_nesting)
+        if (result.returncode == 0 or result.stdout.strip() or
+                'block comment nesting too deep' not in result.stderr):
+            raise AssertionError((mode, 'nested-comment-budget', result.stderr))
+    print('Forge unsafe G0 lexical admission: 80 negative mode/case pairs, 4 safe positives, 2 nesting-budget rejects')
 
 
 if __name__ == '__main__':
