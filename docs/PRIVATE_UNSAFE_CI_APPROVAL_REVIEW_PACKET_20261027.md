@@ -51,6 +51,16 @@ The shared contract draft now contains **52 semantic scenarios**, including an e
 
 LLVM #1082 now bounds nested source and template block comments to 128 levels, with ordinary/template overdepth negatives and an exact-boundary safe positive; these LLVM tests are **committed, not runtime verified**. Java #2148 now adds a 128-level nested block-comment budget and fail-closed regression tests; .NET #184 adds six line-ending forms, nesting-limit and invalid UTF-16/NUL cases across both parser entry points; WASM #150 has locally executed 6/6 unsafe-preflight tests, a 256-brace interpolation budget, and a deterministic 2,000-input lexical regression. **Those source-level facts are not backend compiler or Native AOT parity evidence.** Prior cross-org approval (if later obtained) must match the new exact heads, not an earlier snapshot.
 
+### Exact-source local compiler G0 receipt (not cross-org CI)
+
+At current draft Forge PR #114 commit `5fce70fbee1724999ba556b5facd47aefb8aceb2` / root tree `ef9750ae9a124ae0df643f6793495a32ec559a88` (complete 177-blob listing), the actual `oresforge` CLI was built locally from ten production source/header Git blobs plus the exact unmodified `verification/unsafe_admission.py` file. All **11 blobs** matched GitHub via `git hash-object` before compilation.
+
+- **GCC 14.2 / ASan + UBSan:** 94/94 G0 CLI admission tests passed (80 negative, four safe, two depth, eight malformed-source), plus 3/3 emitted x86-64 programs assembled/linked/executed returning 42 and 2/2 supplemental depth-128 lexical checks. Compiler binary SHA-256: `a8863686f7b182d057231d374dee1a1e4e39c8dc31102ebf89ef908b3e93432b`.
+- **Clang 17 / ASan + UBSan:** same **94/94 + 3/3 + 2/2** passed. Binary SHA-256: `2e61966a5d436688ee661fa241f775b4139b39f8ef6a1ff1fc0c01378eb1d7b6`.
+- No sanitizer findings or compiler warnings. The current `compiler/call_native.cpp` exact blob is `93e8b39408385e47e6bbc2e73992dc21b1428721`; the full local suites were rerun after its update.
+
+**Scope limit:** this is execution of the *real compiler CLI and exact Python suite directly*, not a full upstream 177-blob CMake/CTest run or official GitHub Actions evidence. It does not prove G1/G2, private CI authorization or other backend parity. Independent source-export security issue #115 remains open and the protected allowlists/reviewer policy must stay unchanged.
+
 ### Evidence distinction
 
 The existing alternate-carrier canary checks toolchain availability and independent source-free lexical expectations only. It **does not compile or run any Oreslang code**. Source-org zero-step workflow failures and source-free carrier success cannot satisfy release, sanitizer or AOT gates. All `unsafe` source PRs must stay draft until real executable exact-source evidence exists.
