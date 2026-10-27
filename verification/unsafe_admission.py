@@ -29,6 +29,14 @@ def execute(binary, mode, source):
                               capture_output=True, text=True, timeout=20)
 
 
+def execute_bytes(binary, mode, raw):
+    with tempfile.TemporaryDirectory(prefix='oresforge-unsafe-bytes-') as tmp:
+        path = pathlib.Path(tmp) / 'input.ores'
+        path.write_bytes(raw)
+        return subprocess.run([binary, *mode, str(path)],
+                              capture_output=True, text=True, timeout=20)
+
+
 def main(binary):
     for mode in MODES:
         for name, source in INVALID.items():
