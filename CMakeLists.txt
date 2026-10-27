@@ -1,6 +1,13 @@
 cmake_minimum_required(VERSION 3.20)
 project(OresForge VERSION 0.1.0 LANGUAGES CXX)
 option(ORESFORGE_FUZZ "Build Clang libFuzzer target" OFF)
+option(ORESFORGE_ACTOR_MEMORY_HOST_ONLY "Build only host actor memory tests" OFF)
+if(ORESFORGE_ACTOR_MEMORY_HOST_ONLY)
+  include(CTest)
+  find_package(Threads REQUIRED)
+  include(cmake/ActorMemoryTests.cmake)
+  return()
+endif()
 add_library(oresforge_core STATIC compiler/frontend.cpp compiler/ir.cpp compiler/call_native.cpp codegen/native.cpp runtime/actor.cpp jit/tiered.cpp)
 target_include_directories(oresforge_core PUBLIC .)
 target_compile_features(oresforge_core PUBLIC cxx_std_20)
@@ -89,6 +96,7 @@ if(BUILD_TESTING)
   # Exercise the real mailbox with concurrent sends, deep-copy ownership,
   # backpressure, byte-credit recovery and generation/authority fencing.
   find_package(Threads REQUIRED)
+  include(cmake/ActorMemoryTests.cmake)
   add_executable(oresforge_mailbox_stress verification/actor_mailbox_concurrency.cpp)
   target_link_libraries(oresforge_mailbox_stress PRIVATE oresforge_core Threads::Threads)
   add_test(NAME oresforge_actor_mailbox_concurrency COMMAND oresforge_mailbox_stress)
@@ -205,4 +213,5 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
     set_tests_properties(oresforge_real_native_recursive_calls PROPERTIES TIMEOUT 180)
   endif()
 endif()
+
 

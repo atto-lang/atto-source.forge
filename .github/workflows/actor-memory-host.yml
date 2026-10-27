@@ -1,0 +1,53 @@
+name: Forge actor memory host integration
+on:
+  pull_request:
+    paths:
+      - 'runtime/actor*'
+      - 'verification/actor_arena_test.cpp'
+      - 'verification/actor_memory_integration.cpp'
+      - 'cmake/ActorMemoryTests.cmake'
+      - 'CMakeLists.txt'
+      - '.github/workflows/actor-memory-host.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  host-memory:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        cc: [gcc, clang]
+        opt: [O1, O2]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify exact head
+        env:
+          EXPECTED: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -eu
+          test "$(git rev-parse HEAD)" = "$EXPECTED"
+          test -z "$(git status --porcelain)"
+          git rev-parse 'HEAD^{tree}'
+          git ls-files -s runtime/actor_arena.hpp verification/actor_arena_test.cpp verification/actor_memory_integration.cpp
+      - name: Host-only CMake and real CTests, optimized then sanitized
+        env:
+          CC: ${{ matrix.cc }}
+          OPT: ${{ matrix.opt }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cxx=g++
+          if [[ "$CC" == clang ]]; then cxx=clang++; fi
+          for mode in plain sanitized; do
+            flags="-$OPT"
+            if [[ "$mode" == sanitized ]]; then flags="$flags -fsanitize=address,undefined -fno-omit-frame-pointer"; fi
+            build="$RUNNER_TEMP/actor-memory-$mode"
+            cmake -S . -B "$build" -DORESFORGE_ACTOR_MEMORY_HOST_ONLY=ON -DCMAKE_CXX_COMPILER="$cxx" -DCMAKE_CXX_FLAGS="$flags"
+            cmake --build "$build" --parallel 2
+            ASAN_OPTIONS=detect_leaks=0 ctest --test-dir "$build" --output-on-failure --no-tests=error
+          done
