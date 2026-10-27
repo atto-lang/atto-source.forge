@@ -116,6 +116,10 @@ inline std::vector<Decision> analyze(const Program& program,
       case UseKind::StoreGlobal: preserve(use.allocation, "global-store"); break;
       case UseKind::UnsafePointer: preserve(use.allocation, "unsafe-pointer"); break;
       case UseKind::Transfer: preserve(use.allocation, "ownership-transfer"); break;
+      default:
+        // Deserialized/corrupt MIR enum values must never become implicit
+        // no-effect uses and accidentally authorize scalar replacement.
+        throw std::invalid_argument("unknown allocation use kind");
     }
   }
   std::vector<Decision> decisions;
