@@ -11,6 +11,8 @@ INVALID = {
     'unsafe-name': 'fnc unsafe():int{return 42;}',
     'unsafe-parameter': 'fnc main(unsafe:int):int{return 42;}',
     'unsafe-after-main': 'fnc main():int{return 42;} unsafe',
+    'unsafe-after-cr-comment': 'fnc main():int{return 42;} // comment\runsafe',
+    'unsafe-after-crlf-comment': 'fnc main():int{return 42;} // comment\r\nunsafe',
 }
 MODES = [('run',), ('ir',), ('run-runtime',), ('ir-runtime',),
          ('emit-asm', 'x86_64'), ('run-calls',), ('emit-call-asm', 'x86_64')]
