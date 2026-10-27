@@ -71,9 +71,15 @@ def source(x="a", y="b", result="p.x + p.y"):
         "}\n"
     )
 
-def command(argv, timeout=15):
+def command(argv, timeout=15, *, compiler=False):
+    env = os.environ.copy()
+    if compiler:
+        # CI and developer shells may set unrelated Oreslang flags; validate
+        # only the explicit per-case policy being exercised by this test.
+        for key in ("ORES_OPT_ESCAPE", "ORES_JIT", "ORES_OPT_ESCAPE_REPORT"):
+            env.pop(key, None)
     return subprocess.run(argv, text=True, capture_output=True, check=False,
-                          timeout=timeout)
+                          timeout=timeout, env=env)
 
 def check(ok, description):
     if not ok:
@@ -83,7 +89,7 @@ def emit(compiler, src, safe):
     argv = [compiler, "emit-alloc-asm", "x86_64", str(src)]
     if safe:
         argv.insert(1, "--opt-escape=safe")
-    p = command(argv)
+    p = command(argv, compiler=True)
     check(p.returncode == 0 and p.stdout and not p.stderr,
           f"compiler emission failed: {argv!r}: {p!r}")
     text = p.stdout
@@ -129,7 +135,7 @@ def negative_compilation(compiler, folder):
             argv = [compiler, "emit-alloc-asm", "x86_64", str(case)]
             if safe:
                 argv.insert(1, "--opt-escape=safe")
-            p = command(argv)
+            p = command(argv, compiler=True)
             check(p.returncode == 1 and not p.stdout and
                   "oresforge:" in p.stderr,
                   f"unsafe source emitted assembly: {name} safe={safe} {p!r}")
@@ -142,7 +148,7 @@ def negative_compilation(compiler, folder):
         ["--jit=on", "emit-alloc-asm", "x86_64", str(invalid)],
         ["--opt-escape=safe", "emit-alloc-asm", "arm64", str(invalid)],
     ):
-        p = command([compiler, *args])
+        p = command([compiler, *args], compiler=True)
         check(p.returncode == 1 and not p.stdout and "oresforge:" in p.stderr,
               f"failed to reject unsupported feature: {args}: {p!r}")
 
@@ -176,7 +182,7 @@ def main():
         for case_id, text, vectors in cases:
             src = folder / (case_id + ".ores")
             src.write_text(text, encoding="utf-8")
-            ir = command([compiler, "ir-alloc", str(src)])
+            ir = command([compiler, "ir-alloc", str(src)], compiler=True)
             check(ir.returncode == 0 and not ir.stderr and
                   "alloc Point[2]" in ir.stdout and "ret add.i64.checked" in ir.stdout,
                   f"typed allocation IR not admitted: {case_id}")
