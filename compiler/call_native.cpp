@@ -87,6 +87,10 @@ class Parser {
       fail("invalid character");
     }
     token_={text_.substr(begin,at_-begin),begin};
+    // The independent native-call frontend must not circumvent G0 unsafe
+    // admission via a callable/parameter named unsafe.
+    if (token_.text=="unsafe")
+      fail("unsafe boundary unsupported: checked native grants and effects required");
   }
   bool take(std::string_view s) {
     if (token_.text!=s) return false;
