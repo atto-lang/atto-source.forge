@@ -14,9 +14,10 @@ these through **flags-2-env** to `ORES_OPT_ESCAPE`, `ORES_JIT`, and
 ./build/oresforge run examples/hello.ores --opt-escape=off
 ~~~
 
-**Only `off` is executable in this Forge revision.** `safe`, `verify`,
-`speculative`, `--jit=on`, and an enabled report are rejected *before*
-reading source or emitting IR/assembly. This is intentional: Forge's tiered
+**General Forge compilation still supports `off` only.** `safe` is
+accepted exclusively for the new opt-in `emit-alloc-asm x86_64` closed-world
+source profile described below. `verify`, `speculative`, `--jit=on`, and
+enabled allocation reports remain rejected *before* source or IR publication. This is intentional: Forge's tiered
 JIT module currently requests tiers but always interprets, and the scalar
 compiler has no guest heap-object allocation IR to optimize. The flags are
 not proof of escape analysis, native JIT, stack promotion, or backend parity.
@@ -48,6 +49,48 @@ typed-MIR checks. **No source-to-MIR lowering or machine-code allocation
 elimination is implemented.** `--opt-escape=safe` remains explicitly
 unsupported. A separate ownership/loan verifier, exception-edge coverage,
 MIR lowering and executable optimized/off equivalence tests are prerequisites.
+
+## First executable scalar-replacement experiment
+
+The strict x86-64 `Point` fixture has two `int` fields, two runtime integer
+inputs, one initialized local, and a checked addition of field reads. The
+special parser consumes **every token** and rejects additional statements,
+captures, actor messages, calls, returns of references, `await`, imports,
+unsafe pointers, and unknown effects. Its typed MIR is constructed only by
+this closed grammar; the producer's completeness condition is not supplied by
+user source or accepted as an arbitrary generic MIR certificate.
+
+~~~oreslang
+define struct Point as
+    int x
+    int y
+end
+define pub fnc main(a:int,b:int):int {
+    let p = Point { x: a, y: b };
+    return p.x + p.y;
+}
+~~~
+
+~~~sh
+./build/oresforge ir-alloc point.ores
+./build/oresforge --opt-escape=off emit-alloc-asm x86_64 point.ores > heap.s
+./build/oresforge --opt-escape=safe emit-alloc-asm x86_64 point.ores > scalar.s
+~~~
+
+The baseline generates real `malloc(16)` / `free` calls around the owned
+temporary, while the safe version applies the existing scalar-candidate
+analyzer and emits native arithmetic without either call. Both use checked
+overflow traps. `verification/native_alloc_executable.py` assembles and
+**executes both versions** under a Linux x86-64 C driver that instruments
+`malloc` and `free`, compares multiple runtime inputs, and checks overflow
+signals. This is a limited stage-0 executable experiment, **not** complete
+Oreslang object lowering, generic stack promotion, allocation-failure
+equivalence under externally hooked allocators, or `safe` support for normal
+`run`, `ir`, `run-calls`, or `emit-asm`.
+
+There is no `--opt-escape=verify` evidence provider or speculative JIT.
+Production enablement still requires general MIR ownership/alias/exception
+proofs and cross-backend executed tests.
 
 ## Getting started
 
