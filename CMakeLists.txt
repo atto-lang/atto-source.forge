@@ -132,6 +132,17 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/verification/optimization_cli_admission.py"
       "$<TARGET_FILE:oresforge>")
   set_tests_properties(oresforge_optimization_cli_admission PROPERTIES TIMEOUT 40)
+  # Execute the isolated allocation source subset through real Forge, ELF
+  # assembler/linker and wrapped malloc/free on Linux x86-64.
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+     CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64)$")
+    add_test(NAME oresforge_allocation_native_elision
+      COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/verification/alloc_native_exec.py"
+        --compiler "$<TARGET_FILE:oresforge>")
+    set_tests_properties(oresforge_allocation_native_elision
+      PROPERTIES TIMEOUT 180)
+  endif()
   add_test(NAME oresforge_cli_source_budget
     COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/verification/cli_source_budget.py"
