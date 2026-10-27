@@ -41,7 +41,7 @@ The protected Forge policy permits only one active canary. Evaluate further mirr
 | Backend | Source commit | Root tree |
 | --- | --- | --- |
 | Java #2148 | `1cb80acfb11a8fca3edd4946435e943278ed32eb` | `24fb9ea9799093b8fe0c95b7edb16a642cb3f62d` |
-| LLVM #1082 | `7da66554bb59f07fc8678969f45023c162cea5e2` | `420c6dbe3807e840f105cefe4181901c90bf8b60` |
+| LLVM #1082 | `1eed545b6b810d7f89e5e3ff4144b49a9ae445b8` | `225601b58e59ca0856ed35c6ca0f21255bee7f00` |
 | .NET #184 | `1010d1056274ec63b7d41e64a15f88d391ac3650` | `9da6d88af39deae4ffbda6156818522b0bc49ba5` |
 | WASM #150 | `b77963befd17cea056270ba31854f25ce066f621` | `42a162b79d69ed8f503e7310f8d46b40b4c309dd` |
 
@@ -49,7 +49,7 @@ Shared contracts #170 at `4e341d49a2b295af9efab8ff7e5bda9d6cb37771` / tree `40ce
 
 Forge now has 80 negative CLI-mode cases, 4 supported positive comment cases, 2 excessive-nesting rejections, and 8 malformed-source byte rejections specified in draft tests. These numbers are **planned**, not executed compiler evidence. The target Forge tree was rechecked as a complete 177-blob listing, without submodules or symlinks.
 
-Java #2148 now adds a 128-level nested block-comment budget and fail-closed regression tests; .NET #184 adds six line-ending forms, nesting-limit and invalid UTF-16/NUL cases across both parser entry points; WASM #150 has locally executed 6/6 unsafe-preflight tests, a 256-brace interpolation budget, and a deterministic 2,000-input lexical regression. **Those source-level facts are not backend compiler or Native AOT parity evidence.** Prior cross-org approval (if later obtained) must match the new exact heads, not an earlier snapshot.
+LLVM #1082 now bounds nested source and template block comments to 128 levels, with ordinary/template overdepth negatives and an exact-boundary safe positive; these LLVM tests are **committed, not runtime verified**. Java #2148 now adds a 128-level nested block-comment budget and fail-closed regression tests; .NET #184 adds six line-ending forms, nesting-limit and invalid UTF-16/NUL cases across both parser entry points; WASM #150 has locally executed 6/6 unsafe-preflight tests, a 256-brace interpolation budget, and a deterministic 2,000-input lexical regression. **Those source-level facts are not backend compiler or Native AOT parity evidence.** Prior cross-org approval (if later obtained) must match the new exact heads, not an earlier snapshot.
 
 ### Evidence distinction
 
