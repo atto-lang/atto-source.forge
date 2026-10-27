@@ -61,7 +61,24 @@ def main(binary):
         if (result.returncode == 0 or result.stdout.strip() or
                 'block comment nesting too deep' not in result.stderr):
             raise AssertionError((mode, 'nested-comment-budget', result.stderr))
-    print('Forge unsafe G0 lexical admission: 80 negative mode/case pairs, 4 safe positives, 2 nesting-budget rejects')
+    # Source bytes must be well-formed even when malformed sequences occur
+    # inside comments. Both public parsers must fail before source execution.
+    ordinary = b'fnc main():int{return 42;} // ignored'
+    bad_bytes = {
+        'invalid-lead': ordinary + bytes([0xff]),
+        'overlong': ordinary + bytes([0xc0, 0xaf]),
+        'non-scalar': ordinary + bytes([0xf4, 0x90, 0x80, 0x80]),
+        'embedded-nul': ordinary + bytes([0]),
+    }
+    for mode in (('run',), ('run-calls',)):
+        for name, source in bad_bytes.items():
+            result = execute_bytes(binary, mode, source)
+            expected = 'source contains NUL byte' if name == 'embedded-nul' else 'source is not valid UTF-8'
+            if (result.returncode == 0 or result.stdout.strip() or
+                    expected not in result.stderr):
+                raise AssertionError((mode, name, result.returncode,
+                                      result.stdout, result.stderr))
+    print('Forge unsafe G0 lexical admission: PASS (80 mode/case rejects, 4 safe comments, 2 depth rejects, 8 malformed-source rejects)')
 
 
 if __name__ == '__main__':
