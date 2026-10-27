@@ -44,11 +44,10 @@ calls, suspension, identity checks, global writes, unsafe pointers, and
 ownership transfer preserve the original allocation. Size/alignment budgets,
 unknown types and custom drops also prevent promotion.
 
-The CTest `oresforge_escape_candidate_analysis` runs positive and negative
-typed-MIR checks. **No source-to-MIR lowering or machine-code allocation
-elimination is implemented.** `--opt-escape=safe` remains explicitly
-unsupported. A separate ownership/loan verifier, exception-edge coverage,
-MIR lowering and executable optimized/off equivalence tests are prerequisites.
+The CTest `oresforge_escape_candidate_analysis` checks the standalone
+candidate model. Actual x86-64 scalarization is available **only** in the
+separate closed `Point` source profile below; general source-to-MIR lowering,
+stack promotion and actor/async lifetime verification are still missing.
 
 ## First executable scalar-replacement experiment
 
@@ -87,6 +86,20 @@ signals. This is a limited stage-0 executable experiment, **not** complete
 Oreslang object lowering, generic stack promotion, allocation-failure
 equivalence under externally hooked allocators, or `safe` support for normal
 `run`, `ir`, `run-calls`, or `emit-asm`.
+
+An additional native differential test
+(`ctest -R oresforge_allocation_native_elision`) uses
+`verification/alloc_native_exec.py`, builds both variants with GNU linker
+`--wrap=malloc/free`, and checks observed allocation counts plus more source
+shapes: reversed/repeated field reads, literal field values, checked signed
+overflow, and fail-closed unsupported constructs. The standalone fixture is
+`examples/escape-point-stage0.ores`. Both native harnesses are Linux x86-64
+only and should be run against an exact compiler head.
+
+The baseline traps on an out-of-memory `malloc` failure whereas optimized
+scalarization has no such allocation. The strict fixture does not expose
+catchable allocation failures or allocator callbacks as guest effects; this
+does **not** establish allocation-failure equivalence for the general language.
 
 There is no `--opt-escape=verify` evidence provider or speculative JIT.
 Production enablement still requires general MIR ownership/alias/exception
