@@ -73,6 +73,17 @@ if(BUILD_TESTING)
   endif()
   add_test(NAME oresforge_escape_candidate_analysis COMMAND oresforge_escape_analysis_tests)
   set_tests_properties(oresforge_escape_candidate_analysis PROPERTIES TIMEOUT 20)
+  # Strict, separately admitted source -> typed allocation MIR -> native scalar
+  # lowering. General Oreslang source still rejects --opt-escape=safe.
+  add_executable(oresforge_alloc_source_tests verification/alloc_experiment_tests.cpp)
+  target_include_directories(oresforge_alloc_source_tests PRIVATE .)
+  target_compile_features(oresforge_alloc_source_tests PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_alloc_source_tests PRIVATE
+      -Wall -Wextra -Wconversion -Wpedantic -Werror)
+  endif()
+  add_test(NAME oresforge_closed_allocation_source COMMAND oresforge_alloc_source_tests)
+  set_tests_properties(oresforge_closed_allocation_source PROPERTIES TIMEOUT 20)
   add_executable(oresforge_tests verification/tests.cpp)
   add_dependencies(oresforge_tests oresforge_numeric_i64_cases oresforge_numeric_overflow_cases)
   target_include_directories(oresforge_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
@@ -203,6 +214,13 @@ endif()
 if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
    CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|aarch64|arm64)$")
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64)$")
+    add_test(NAME oresforge_native_allocation_elision
+      COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/verification/native_alloc_executable.py"
+        "$<TARGET_FILE:oresforge>")
+    set_tests_properties(oresforge_native_allocation_elision PROPERTIES TIMEOUT 120)
+  endif()
   add_test(NAME oresforge_native_asm_executable
     COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/verification/native_asm_executable.py"
