@@ -2,6 +2,7 @@
 #include "compiler/call_native.hpp"
 #include "compiler/source_input.hpp"
 #include "compiler/ir.hpp"
+#include "compiler/optimization_cli.hpp"
 #include "codegen/native.hpp"
 #include <array>
 #include <charconv>
@@ -22,6 +23,9 @@ int main(int argc,char** argv) {
   try {
     // Report failed publication (e.g. read-only stdout) as compilation failure.
     std::cout.exceptions(std::ios::badbit | std::ios::failbit);
+    auto optimization = oresforge::cli::parse_optimization_options(argc, argv);
+    argc = static_cast<int>(optimization.positional.size());
+    argv = optimization.positional.data();
     if (argc==3 && (std::string(argv[1])=="run" || std::string(argv[1])=="ir")) {
       auto program=oresforge::parse_source(read_file(argv[2]));
       if (std::string(argv[1])=="run") std::cout<<oresforge::interpret(program)<<'\n';
