@@ -62,6 +62,17 @@ if(BUILD_TESTING)
   add_test(NAME native_pinned_tcp_host_boundary COMMAND oresforge_pinned_tcp_tests)
   set_tests_properties(native_pinned_tcp_host_boundary PROPERTIES TIMEOUT 15)
 
+  # Standalone typed allocation-MIR candidate analysis. This does NOT
+  # perform heap-to-stack lowering or enable --opt-escape=safe yet.
+  add_executable(oresforge_escape_analysis_tests verification/escape_analysis_tests.cpp)
+  target_include_directories(oresforge_escape_analysis_tests PRIVATE .)
+  target_compile_features(oresforge_escape_analysis_tests PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_escape_analysis_tests PRIVATE
+      -Wall -Wextra -Wconversion -Wpedantic -Werror)
+  endif()
+  add_test(NAME oresforge_escape_candidate_analysis COMMAND oresforge_escape_analysis_tests)
+  set_tests_properties(oresforge_escape_candidate_analysis PROPERTIES TIMEOUT 20)
   add_executable(oresforge_tests verification/tests.cpp)
   add_dependencies(oresforge_tests oresforge_numeric_i64_cases oresforge_numeric_overflow_cases)
   target_include_directories(oresforge_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
