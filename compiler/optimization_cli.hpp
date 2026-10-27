@@ -29,8 +29,10 @@ inline OptimizationOptions parse_optimization_options(int argc, char** argv) {
   OptimizationOptions options;
   if (const char* value = std::getenv("ORES_OPT_ESCAPE")) options.escape = value;
   if (const char* value = std::getenv("ORES_JIT")) options.jit = value;
-  if (const char* value = std::getenv("ORES_OPT_ESCAPE_REPORT"))
-    options.report = parse_bool(value);
+  // Do not validate mapped env values until CLI overrides have been parsed.
+  // In particular, an invalid mapped bool must not defeat an explicit
+  // --opt-escape-report=false (direct flags have higher precedence).
+  const char* mapped_report = std::getenv("ORES_OPT_ESCAPE_REPORT");
 
   // Support direct flags as well as flags-2-env. Explicit CLI overrides env;
   // duplicate CLI spellings are an error rather than a last-writer-wins rule.
@@ -61,6 +63,9 @@ inline OptimizationOptions parse_optimization_options(int argc, char** argv) {
       options.positional.push_back(argv[i]);
     }
   }
+
+  if (!seen_report && mapped_report)
+    options.report = parse_bool(mapped_report);
 
   if (options.escape != "off" && options.escape != "safe" &&
       options.escape != "verify" && options.escape != "speculative")
