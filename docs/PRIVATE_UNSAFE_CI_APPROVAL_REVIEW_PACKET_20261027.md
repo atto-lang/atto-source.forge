@@ -7,8 +7,8 @@
 | Property | Verified value |
 | --- | --- |
 | Source | `ores-truffle-oreslang/oreslang-source.forge`, draft PR #114 |
-| Source commit | `a6351ace83809865bb12e03f1fdf3d4a0b4ce55d` |
-| Exact source root tree | `61055deacd2a9eeb4faf1f79793e85b3f08b4884` |
+| Source commit | `9e3e08f308ccaba6ba838f79fe75ab20570f7b0c` |
+| Exact source root tree | `413ff47e77b9a44bc510f96c5294b4073ff23ca9` |
 | Source tree listing | 206 entries, 177 blobs, not truncated; no symlinks/submodules |
 | Destination | `honeypot-r-us-test/hnpt-e2e` |
 | Destination repository ID | `1346492776` |
@@ -21,7 +21,7 @@
 After an independent, authorized reviewer is selected and verified, owner-approved protected changes would list **exactly one** destination and **exactly one** source snapshot:
 
 - `.github/private-ci-approved-repositories.txt`: `honeypot-r-us-test/hnpt-e2e 1346492776`
-- `.github/private-ci-approved-source-snapshots.txt`: `a6351ace83809865bb12e03f1fdf3d4a0b4ce55d 61055deacd2a9eeb4faf1f79793e85b3f08b4884 1346492776`
+- `.github/private-ci-approved-source-snapshots.txt`: `9e3e08f308ccaba6ba838f79fe75ab20570f7b0c 413ff47e77b9a44bc510f96c5294b4073ff23ca9 1346492776`
 
 The protected independent-reviewer policy has schema 2; reviewer identity, numeric GitHub ID, write/maintain/admin permissions, required-check identity, CODEOWNERS review and source-branch protections **must be validated independently**. Never invent reviewer identity, populate placeholder reviewer IDs, bypass a failed check, or claim a zero-step workflow pass. If the approved PR head changes, redo the tree attestation and authorization.
 
@@ -45,7 +45,9 @@ The protected Forge policy permits only one active canary. Evaluate further mirr
 | .NET #184 | `b7f8e68e62a646cff295417116730c0777d2cb6b` | `066b380a09228ac955b34e95f7d5a49d54808144` |
 | WASM #150 | `ba60dd4bdadd3c3cc075f97609c7d82fa1b07b8d` | `f5bd0d402805df601a3f5f628d883007baf246a2` |
 
-Shared contracts #170 at `4e1bd2a7933a294669646f5a6acf40f5f67a83dc` / tree `5ec7eb290a630acc68257be13448cba78730c3e7` likewise need explicit authorization if copied.
+Shared contracts #170 at `4e341d49a2b295af9efab8ff7e5bda9d6cb37771` / tree `40ce1fc14cd0a18da4d3ae205c273a573fe02c3c` likewise need explicit authorization if copied.
+
+Forge now has 80 negative CLI-mode cases, 4 supported positive comment cases, 2 excessive-nesting rejections, and 8 malformed-source byte rejections specified in draft tests. These numbers are **planned**, not executed compiler evidence. The target Forge tree was rechecked as a complete 177-blob listing, without submodules or symlinks.
 
 ### Evidence distinction
 
