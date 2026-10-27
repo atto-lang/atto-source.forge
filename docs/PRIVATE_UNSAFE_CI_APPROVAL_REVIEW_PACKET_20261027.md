@@ -45,9 +45,9 @@ The protected Forge policy permits only one active canary. Evaluate further mirr
 | .NET #184 | `1010d1056274ec63b7d41e64a15f88d391ac3650` | `9da6d88af39deae4ffbda6156818522b0bc49ba5` |
 | WASM #150 | `b77963befd17cea056270ba31854f25ce066f621` | `42a162b79d69ed8f503e7310f8d46b40b4c309dd` |
 
-Shared contracts #170 at `4e341d49a2b295af9efab8ff7e5bda9d6cb37771` / tree `40ce1fc14cd0a18da4d3ae205c273a573fe02c3c` likewise need explicit authorization if copied.
+Shared contracts #170 at `3b74ede7f8a48ade58519a12eb2ebd17dbb64e18` / tree `0420527af53ee1a74ae6de90ed468265544a2933` likewise need explicit authorization if copied.
 
-Forge now has 80 negative CLI-mode cases, 4 supported positive comment cases, 2 excessive-nesting rejections, and 8 malformed-source byte rejections specified in draft tests. These numbers are **planned**, not executed compiler evidence. The target Forge tree was rechecked as a complete 177-blob listing, without submodules or symlinks.
+The shared contract draft now contains **52 semantic scenarios**, including an explicit 128/129 nested-comment boundary across all five backends; this remains contract-only and unexecuted across most compilers. Forge now has 80 negative CLI-mode cases, 4 supported positive comment cases, 2 excessive-nesting rejections, and 8 malformed-source byte rejections specified in draft tests. These numbers are **planned**, not executed compiler evidence. The target Forge tree was rechecked as a complete 177-blob listing, without submodules or symlinks.
 
 LLVM #1082 now bounds nested source and template block comments to 128 levels, with ordinary/template overdepth negatives and an exact-boundary safe positive; these LLVM tests are **committed, not runtime verified**. Java #2148 now adds a 128-level nested block-comment budget and fail-closed regression tests; .NET #184 adds six line-ending forms, nesting-limit and invalid UTF-16/NUL cases across both parser entry points; WASM #150 has locally executed 6/6 unsafe-preflight tests, a 256-brace interpolation budget, and a deterministic 2,000-input lexical regression. **Those source-level facts are not backend compiler or Native AOT parity evidence.** Prior cross-org approval (if later obtained) must match the new exact heads, not an earlier snapshot.
 
