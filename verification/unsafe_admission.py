@@ -40,10 +40,13 @@ def main(binary):
     # Positives guard against a blanket substring scan. Only supported
     # scalar source is expected to run (no FFI or unsafe execution).
     for mode in (('run',), ('run-calls',)):
-        result = execute(binary, mode,
-                         'fnc main():int{return 42;} // unsafe must stay comment')
-        if result.returncode != 0 or result.stdout.strip() != '42':
-            raise AssertionError((mode, 'safe-comment', result.stderr))
+        for name, suffix in (
+                ('line-comment', ' // unsafe must stay comment'),
+                ('nested-block-comment', ' /* outer /* unsafe */ outer */')):
+            result = execute(binary, mode, 'fnc main():int{return 42;}' + suffix)
+            if result.returncode != 0 or result.stdout.strip() != '42':
+                raise AssertionError((mode, name, result.returncode,
+                                      result.stdout, result.stderr))
     print('Forge unsafe G0 lexical rejection: PASS (CLI source subset only)')
 
 
