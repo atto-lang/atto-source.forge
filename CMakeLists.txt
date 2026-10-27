@@ -150,6 +150,11 @@ endif()
 # Admission gates for language surfaces that this backend does not lower yet.
 if(BUILD_TESTING)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  # G0 only: no source unsafe lowering; every independent CLI mode rejects it.
+  add_test(NAME unsafe_source_fail_closed
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/unsafe_admission.py"
+      "$<TARGET_FILE:oresforge>")
+  set_tests_properties(unsafe_source_fail_closed PROPERTIES TIMEOUT 100)
   add_test(NAME value_boundary_admission
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/value_boundaries.py"
       "$<TARGET_FILE:oresforge>")
