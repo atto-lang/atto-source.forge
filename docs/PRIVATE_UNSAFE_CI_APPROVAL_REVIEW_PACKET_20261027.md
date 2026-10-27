@@ -43,7 +43,7 @@ The protected Forge policy permits only one active canary. Evaluate further mirr
 | Java #2148 | `53601ca7861602b891d99b2a1f376f322f7f4d92` | `d06fdddaf76cfc7ba303aa60ac2776b4eadef8d4` |
 | LLVM #1082 | `7da66554bb59f07fc8678969f45023c162cea5e2` | `420c6dbe3807e840f105cefe4181901c90bf8b60` |
 | .NET #184 | `b7f8e68e62a646cff295417116730c0777d2cb6b` | `066b380a09228ac955b34e95f7d5a49d54808144` |
-| WASM #150 | `ba60dd4bdadd3c3cc075f97609c7d82fa1b07b8d` | `f5bd0d402805df601a3f5f628d883007baf246a2` |
+| WASM #150 | `8a578733cba2a9665ba235d5c6bc86262c108be6` | `4b092685a53fe010290c3343546486b61a078877` |
 
 Shared contracts #170 at `4e341d49a2b295af9efab8ff7e5bda9d6cb37771` / tree `40ce1fc14cd0a18da4d3ae205c273a573fe02c3c` likewise need explicit authorization if copied.
 
