@@ -61,6 +61,14 @@ def main(binary):
         if (result.returncode == 0 or result.stdout.strip() or
                 'block comment nesting too deep' not in result.stderr):
             raise AssertionError((mode, 'nested-comment-budget', result.stderr))
+    # Exact boundary: 128 nested comments are inert source, but 129
+    # layers must be rejected. Avoid accepting a blanket substring check.
+    accepted_depth = 'fnc main():int{return 42;} ' + ('/*' * 128) + 'unsafe' + ('*/' * 128)
+    for mode in (('run',), ('run-calls',)):
+        result = execute(binary, mode, accepted_depth)
+        if result.returncode != 0 or result.stdout.strip() != '42':
+            raise AssertionError((mode, 'nested-comment-depth-128', result.returncode,
+                                  result.stdout, result.stderr))
     # Source bytes must be well-formed even when malformed sequences occur
     # inside comments. Both public parsers must fail before source execution.
     ordinary = b'fnc main():int{return 42;} // ignored'
@@ -78,7 +86,7 @@ def main(binary):
                     expected not in result.stderr):
                 raise AssertionError((mode, name, result.returncode,
                                       result.stdout, result.stderr))
-    print('Forge unsafe G0 lexical admission: PASS (80 mode/case rejects, 4 safe comments, 2 depth rejects, 32 malformed-source rejects)')
+    print('Forge unsafe G0 lexical admission: PASS (80 mode/case rejects, 4 safe comments, 2 depth rejects, 2 depth-128 positives, 32 malformed-source rejects; 120 checks)')
 
 
 if __name__ == '__main__':
