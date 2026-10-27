@@ -172,6 +172,9 @@ class Parser {
         ++at_;
       }
       tok_={Kind::Word,source_.substr(start,at_-start),start};
+      // Native escape hatches require typed grants and unsafe effect proof.
+      // G0 deliberately rejects the keyword before any IR/asm emission.
+      if (tok_.text=="unsafe") error("unsafe boundary unsupported: checked native grants and effects required");
       if (tok_.text=="any" || tok_.text=="unknown" ||
           tok_.text=="Any" || tok_.text=="Unknown")
         error("any/unknown requires tagged opaque-value ABI and runtime type descriptors");
