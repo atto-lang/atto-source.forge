@@ -70,15 +70,21 @@ inline OptimizationOptions parse_optimization_options(int argc, char** argv) {
   if (options.escape == "speculative" && options.jit != "on")
     throw std::runtime_error("--opt-escape=speculative requires --jit=on");
 
-  // Refuse before reading guest source or publishing any output. In particular
-  // Forge's requested JIT tier is NOT an executable compiler tier.
+  return options;
+}
+
+// Enforce once the subcommand is known. Only a strictly parsed closed-world
+// allocation fixture may request safe scalarization. All general commands
+// remain fail-closed, and the tiered interpreter is never advertised as JIT.
+inline void enforce_optimization_support(const OptimizationOptions& options,
+                                         bool closed_alloc_asm = false) {
   if (options.jit == "on")
     throw std::runtime_error("--jit=on unsupported: Forge has no executable JIT");
-  if (options.escape != "off")
+  if (options.escape != "off" &&
+      !(closed_alloc_asm && options.escape == "safe"))
     throw std::runtime_error("--opt-escape=" + options.escape +
                              " unsupported: verified escape optimization not implemented");
   if (options.report)
     throw std::runtime_error("--opt-escape-report unsupported: no allocation evidence to report");
-  return options;
 }
 } // namespace oresforge::cli
