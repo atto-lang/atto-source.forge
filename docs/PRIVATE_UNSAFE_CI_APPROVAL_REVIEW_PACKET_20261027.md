@@ -7,8 +7,8 @@
 | Property | Verified value |
 | --- | --- |
 | Source | `ores-truffle-oreslang/oreslang-source.forge`, draft PR #114 |
-| Source commit | `24c4c4649fa5b82a88ced0761f2808a90b689f30` |
-| Exact source root tree | `fb400d7eff6e3ddad5de14f5c9b034077a2a61bd` |
+| Source commit | `a6351ace83809865bb12e03f1fdf3d4a0b4ce55d` |
+| Exact source root tree | `61055deacd2a9eeb4faf1f79793e85b3f08b4884` |
 | Source tree listing | 206 entries, 177 blobs, not truncated; no symlinks/submodules |
 | Destination | `honeypot-r-us-test/hnpt-e2e` |
 | Destination repository ID | `1346492776` |
@@ -21,7 +21,7 @@
 After an independent, authorized reviewer is selected and verified, owner-approved protected changes would list **exactly one** destination and **exactly one** source snapshot:
 
 - `.github/private-ci-approved-repositories.txt`: `honeypot-r-us-test/hnpt-e2e 1346492776`
-- `.github/private-ci-approved-source-snapshots.txt`: `24c4c4649fa5b82a88ced0761f2808a90b689f30 fb400d7eff6e3ddad5de14f5c9b034077a2a61bd 1346492776`
+- `.github/private-ci-approved-source-snapshots.txt`: `a6351ace83809865bb12e03f1fdf3d4a0b4ce55d 61055deacd2a9eeb4faf1f79793e85b3f08b4884 1346492776`
 
 The protected independent-reviewer policy has schema 2; reviewer identity, numeric GitHub ID, write/maintain/admin permissions, required-check identity, CODEOWNERS review and source-branch protections **must be validated independently**. Never invent reviewer identity, populate placeholder reviewer IDs, bypass a failed check, or claim a zero-step workflow pass. If the approved PR head changes, redo the tree attestation and authorization.
 
@@ -31,7 +31,7 @@ The protected independent-reviewer policy has schema 2; reviewer identity, numer
 2. Authorized reviewer approves the exact source snapshot and destination ID on protected policy files; preserve the required `private-ci-policy` check issued by GitHub Actions app ID 15368 and CODEOWNERS controls.
 3. Confirm the approved policy is effective on the intended protected source revision before copying source.
 4. Source and target Git tree operations must be driven by the GitHub connector, not by a destination `GITHUB_TOKEN` with cross-org source access. Reject paths/modes not represented in the source tree, symlinks, submodules, truncated listings and blob/content hash mismatches; prove reconstructed root tree is byte-for-byte identical.
-5. Run exact-head Forge CMake/CTest `unsafe_source_fail_closed` with 49 negative CLI/mode combinations; require reject status, explicit diagnostics and no successful output. Add scalar conformance, positive safe execution, GCC/Clang, ASan/UBSan and AOT coverage as supported. Capture exact run/job ID, compiler versions and immutable commit/tree receipt.
+5. Run exact-head Forge CMake/CTest `unsafe_source_fail_closed` with 80 negative CLI/mode combinations; require reject status, explicit diagnostics and no successful output. Add scalar conformance, positive safe execution, GCC/Clang, ASan/UBSan and AOT coverage as supported. Capture exact run/job ID, compiler versions and immutable commit/tree receipt.
 6. Delete temporary private carrier branch/artifacts after review-approved retention and record cleanup.
 
 ### Four other backends
