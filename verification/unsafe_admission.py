@@ -15,7 +15,7 @@ INVALID = {
     'unsafe-after-crlf-comment': 'fnc main():int{return 42;} // comment\r\nunsafe',
 }
 MODES = [('run',), ('ir',), ('run-runtime',), ('ir-runtime',),
-         ('emit-asm', 'x86_64'), ('run-calls',), ('emit-call-asm', 'x86_64')]
+         ('emit-asm', 'x86_64'), ('emit-runtime-asm', 'x86_64'), ('run-calls',), ('emit-call-asm', 'x86_64')]
 
 
 def execute(binary, mode, source):
