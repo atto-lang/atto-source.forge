@@ -182,6 +182,8 @@ class Parser {
       // Scalar bootstrap lacks nominal enum declarations and compiler-owned
       // prebound virtual method slots. Never attempt arity-only fallback.
       if (tok_.text=="enum") error("nominal enum overloads require compiler-bound dispatch");
+      if (tok_.text=="gen" || tok_.text=="generator")
+        error("generator declarations require iterator-frame and continuation lowering");
       // Fail closed on named language features before the scalar grammar
       // gives a misleading generic syntax error (or ever learns to skip them).
       // These require typed method dispatch and ownership-checked closure IR.
