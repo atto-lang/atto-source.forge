@@ -78,9 +78,10 @@ inline std::vector<Decision> analyze(const Program& program,
       throw std::invalid_argument("allocation names must be unique and nonempty");
     if (alloc.size_bytes == 0 || !is_power_of_two(alloc.alignment))
       throw std::invalid_argument("invalid allocation size or alignment");
-    if (alloc.fields == 0 && (alloc.type == ValueKind::NominalRecord ||
-                              alloc.type == ValueKind::FixedArray))
-      throw std::invalid_argument("aggregate must declare nonzero field count");
+    if ((alloc.type == ValueKind::NominalRecord ||
+         alloc.type == ValueKind::FixedArray) &&
+        (alloc.fields == 0 || alloc.fields > alloc.size_bytes))
+      throw std::invalid_argument("aggregate field count incompatible with byte layout");
   }
   // Ordered field writes/reads are the only modeled initialization effects.
   // Full initialization via constructors, branches and inter-object stores
@@ -155,6 +156,10 @@ inline std::vector<Decision> analyze(const Program& program,
     } else if (alloc.type != ValueKind::NominalRecord &&
                alloc.type != ValueKind::FixedArray) {
       decisions.push_back({Storage::PreserveAllocation, "unmodeled-value-type"});
+    } else if (initialized[i].size() != alloc.fields) {
+      // This stage-0 MIR has no constructor/default initializer opcode.
+      // Promotion requires explicit writes for *every* aggregate field.
+      decisions.push_back({Storage::PreserveAllocation, "partial-initialization"});
     } else if (preserved[i]) {
       decisions.push_back({Storage::PreserveAllocation, reason[i]});
     } else if (!borrowed[i]) {
