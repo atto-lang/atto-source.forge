@@ -82,6 +82,10 @@ inline std::vector<Decision> analyze(const Program& program,
                               alloc.type == ValueKind::FixedArray))
       throw std::invalid_argument("aggregate must declare nonzero field count");
   }
+  // Ordered field writes/reads are the only modeled initialization effects.
+  // Full initialization via constructors, branches and inter-object stores
+  // must be represented by a richer verified MIR before enabling promotion.
+  std::vector<std::unordered_set<std::size_t>> initialized(program.allocations.size());
   std::vector<bool> borrowed(program.allocations.size(), false);
   std::vector<bool> preserved(program.allocations.size(), false);
   std::vector<std::string> reason(program.allocations.size());
@@ -96,14 +100,25 @@ inline std::vector<Decision> analyze(const Program& program,
       throw std::invalid_argument("allocation use index out of range");
     const auto& alloc = program.allocations[use.allocation];
     switch (use.kind) {
-      case UseKind::FieldRead:
       case UseKind::FieldWrite:
         if (use.field >= alloc.fields)
           throw std::invalid_argument("field index out of range");
+        initialized[use.allocation].insert(use.field);
+        break;
+      case UseKind::FieldRead:
+        if (use.field >= alloc.fields)
+          throw std::invalid_argument("field index out of range");
+        if (!initialized[use.allocation].contains(use.field))
+          throw std::invalid_argument("allocation field read before initialization");
         break;
       case UseKind::LocalBorrow:
-        if (use.lifetime_proven) borrowed[use.allocation] = true;
-        else preserve(use.allocation, "unproven-local-borrow-lifetime");
+        if (use.lifetime_proven &&
+            initialized[use.allocation].size() == alloc.fields)
+          borrowed[use.allocation] = true;
+        else if (!use.lifetime_proven)
+          preserve(use.allocation, "unproven-local-borrow-lifetime");
+        else
+          preserve(use.allocation, "borrow-before-full-initialization");
         break;
       case UseKind::Return: preserve(use.allocation, "return-escape"); break;
       case UseKind::Capture: preserve(use.allocation, "closure-capture"); break;
