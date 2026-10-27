@@ -7,8 +7,8 @@
 | Property | Verified value |
 | --- | --- |
 | Source | `ores-truffle-oreslang/oreslang-source.forge`, draft PR #114 |
-| Source commit | `5fce70fbee1724999ba556b5facd47aefb8aceb2` |
-| Exact source root tree | `ef9750ae9a124ae0df643f6793495a32ec559a88` |
+| Source commit | `8ab5dcbaf2d1590c0bc4b63d1ced54d72b384511` |
+| Exact source root tree | `b088e379d3638b66dfc9f7dfb9c459b87685bcc4` |
 | Source tree listing | 206 entries, 177 blobs, not truncated; no symlinks/submodules |
 | Destination | `honeypot-r-us-test/hnpt-e2e` |
 | Destination repository ID | `1346492776` |
@@ -21,9 +21,12 @@
 After an independent, authorized reviewer is selected and verified, owner-approved protected changes would list **exactly one** destination and **exactly one** source snapshot:
 
 - `.github/private-ci-approved-repositories.txt`: `honeypot-r-us-test/hnpt-e2e 1346492776`
-- `.github/private-ci-approved-source-snapshots.txt`: `5fce70fbee1724999ba556b5facd47aefb8aceb2 ef9750ae9a124ae0df643f6793495a32ec559a88 1346492776`
+- `.github/private-ci-approved-source-snapshots.txt`: `8ab5dcbaf2d1590c0bc4b63d1ced54d72b384511 b088e379d3638b66dfc9f7dfb9c459b87685bcc4 1346492776`
 
 The protected independent-reviewer policy has schema 2; reviewer identity, numeric GitHub ID, write/maintain/admin permissions, required-check identity, CODEOWNERS review and source-branch protections **must be validated independently**. Never invent reviewer identity, populate placeholder reviewer IDs, bypass a failed check, or claim a zero-step workflow pass. If the approved PR head changes, redo the tree attestation and authorization.
+
+
+**Updated 2026-10-27, new draft head above:** `verification/unsafe_admission.py` now defines **120 checks**: 80 rejected unsafe mode/cases, 4 safe comment cases, 2 depth-129 rejects, **2 depth-128 accepts**, and **32 malformed-byte mode cases** covering all 8 CLI entry points. The test file's new Git blob is `a0e87636a01fde8fc1fff28ef542e3dbd3e068d6`. The earlier 94-case local execution evidence was on the previous immutable head; **the 120-case suite has not been executed against the new compiler commit**. Do not reuse an earlier pass as a new exact-head pass. Only after independent approval of the revised snapshot may the private cross-org carrier transfer proceed.
 
 ### Approval prerequisites
 
@@ -47,13 +50,13 @@ The protected Forge policy permits only one active canary. Evaluate further mirr
 
 Shared contracts #170 at `3b74ede7f8a48ade58519a12eb2ebd17dbb64e18` / tree `0420527af53ee1a74ae6de90ed468265544a2933` likewise need explicit authorization if copied.
 
-The shared contract draft now contains **52 semantic scenarios**, including an explicit 128/129 nested-comment boundary across all five backends; this remains contract-only and unexecuted across most compilers. Forge now has 80 negative CLI-mode cases, 4 supported positive comment cases, 2 excessive-nesting rejections, and 8 malformed-source byte rejections specified in draft tests. These **94** checks now passed under the *actual local Forge CLI* built from the exact listed draft head under GCC 14.2, Clang 17, GCC+ASan/UBSan, and Clang+ASan/UBSan. Both GCC/Clang local CTest runs passed using a **minimal verification-only CMake project** calling the exact Git-blob-verified `unsafe_admission.py`, not the repository-wide upstream CMake test configuration. Six emitted native executables (3 assembly modes × 2 toolchains) were assembled, linked and executed, all returned 42. There is **no approved cross-org mirror, no full upstream repository-wide CI run, and no five-backend parity claim**. The exact callable-emitter initialization fix is `Native{m, {}, 0}` (new blob `93e8b39408385e47e6bbc2e73992dc21b1428721`). The target Forge tree was rechecked as a complete 177-blob listing, without submodules or symlinks.
+The shared contract draft now contains **52 semantic scenarios**, including an explicit 128/129 nested-comment boundary across all five backends; this remains contract-only and unexecuted across most compilers. Forge now has 80 negative CLI-mode cases, 4 supported positive comment cases, 2 excessive-nesting rejections, and 8 malformed-source byte rejections specified in draft tests. At the **previous** Forge head `5fce70fbee1724999ba556b5facd47aefb8aceb2`, these **94** checks passed under the *actual local Forge CLI* under GCC 14.2, Clang 17, GCC+ASan/UBSan, and Clang+ASan/UBSan. Both GCC/Clang local CTest runs passed using a **minimal verification-only CMake project** calling the exact Git-blob-verified `unsafe_admission.py`, not the repository-wide upstream CMake test configuration. Six emitted native executables (3 assembly modes × 2 toolchains) were assembled, linked and executed, all returned 42. There is **no approved cross-org mirror, no full upstream repository-wide CI run, and no five-backend parity claim**. The exact callable-emitter initialization fix is `Native{m, {}, 0}` (new blob `93e8b39408385e47e6bbc2e73992dc21b1428721`). The target Forge tree was rechecked as a complete 177-blob listing, without submodules or symlinks.
 
 LLVM #1082 now bounds nested source and template block comments to 128 levels, with ordinary/template overdepth negatives and an exact-boundary safe positive; these LLVM tests are **committed, not runtime verified**. Java #2148 now adds a 128-level nested block-comment budget and fail-closed regression tests; .NET #184 adds six line-ending forms, nesting-limit and invalid UTF-16/NUL cases across both parser entry points; WASM #150 has locally executed 6/6 unsafe-preflight tests, a 256-brace interpolation budget, and a deterministic 2,000-input lexical regression. **Those source-level facts are not backend compiler or Native AOT parity evidence.** Prior cross-org approval (if later obtained) must match the new exact heads, not an earlier snapshot.
 
 ### Exact-source local compiler G0 receipt (not cross-org CI)
 
-At current draft Forge PR #114 commit `5fce70fbee1724999ba556b5facd47aefb8aceb2` / root tree `ef9750ae9a124ae0df643f6793495a32ec559a88` (complete 177-blob listing), the actual `oresforge` CLI was built locally from ten production source/header Git blobs plus the exact unmodified `verification/unsafe_admission.py` file. All **11 blobs** matched GitHub via `git hash-object` before compilation.
+At current draft Forge PR #114 commit `8ab5dcbaf2d1590c0bc4b63d1ced54d72b384511` / root tree `b088e379d3638b66dfc9f7dfb9c459b87685bcc4` (complete 177-blob listing), the actual `oresforge` CLI was built locally from ten production source/header Git blobs plus the exact unmodified `verification/unsafe_admission.py` file. All **11 blobs** matched GitHub via `git hash-object` before compilation.
 
 - **GCC 14.2 / ASan + UBSan:** 94/94 G0 CLI admission tests passed (80 negative, four safe, two depth, eight malformed-source), plus 3/3 emitted x86-64 programs assembled/linked/executed returning 42 and 2/2 supplemental depth-128 lexical checks. Compiler binary SHA-256: `a8863686f7b182d057231d374dee1a1e4e39c8dc31102ebf89ef908b3e93432b`.
 - **Clang 17 / ASan + UBSan:** same **94/94 + 3/3 + 2/2** passed. Binary SHA-256: `2e61966a5d436688ee661fa241f775b4139b39f8ef6a1ff1fc0c01378eb1d7b6`.
