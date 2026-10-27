@@ -87,6 +87,23 @@ int main() {
     p = base(); p.uses.push_back({0, UseKind::FieldRead, 2});
     invalid([&] { (void)analyze(p); });
     p = base();
+    p.uses = {{0, UseKind::FieldRead, 0}};
+    invalid([&] { (void)analyze(p); });
+    p = base();
+    p.uses = {{0, UseKind::FieldWrite, 0},
+              {0, UseKind::FieldRead, 1},
+              {0, UseKind::FieldWrite, 1}};
+    invalid([&] { (void)analyze(p); });
+    p = base();
+    p.uses = {{0, UseKind::FieldWrite, 0},
+              {0, UseKind::LocalBorrow, 0, true}};
+    ensure(analyze(p)[0].storage == Storage::PreserveAllocation,
+           "partially initialized record cannot be stack-promoted via a borrow");
+    p = base(); p.allocations.push_back(record("another"));
+    p.uses = {{0, UseKind::FieldWrite, 0}, {0, UseKind::FieldWrite, 1},
+              {1, UseKind::FieldRead, 0}};
+    invalid([&] { (void)analyze(p); });
+    p = base();
     invalid([&] { (void)analyze(p, 0); });
     need(std::string(storage_name(Storage::ScalarCandidate)) == "scalar-candidate",
          "report storage names");
