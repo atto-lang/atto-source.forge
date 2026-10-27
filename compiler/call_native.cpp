@@ -68,6 +68,28 @@ class Parser {
         while (at_<text_.size() && text_[at_]!='\n' && text_[at_]!='\r') ++at_;
         continue;
       }
+      // Match the scalar frontend: nested comments are inert source text,
+      // not unsafe grants. Malformed and oversized comments fail closed.
+      if (c=='/' && at_+1<text_.size() && text_[at_+1]=='*') {
+        const auto start=at_;
+        at_+=2;
+        std::size_t depth=1;
+        while (depth) {
+          if (at_==text_.size())
+            throw std::runtime_error("unterminated block comment at byte " +
+                                     std::to_string(start));
+          if (at_+1<text_.size() && text_.substr(at_,2)=="/*") {
+            if (++depth>128)
+              throw std::runtime_error("block comment nesting too deep at byte " +
+                                       std::to_string(start));
+            at_+=2;
+          } else if (at_+1<text_.size() && text_.substr(at_,2)=="*/") {
+            --depth;
+            at_+=2;
+          } else ++at_;
+        }
+        continue;
+      }
       break;
     }
     const std::size_t begin=at_;
