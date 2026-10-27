@@ -103,6 +103,13 @@ if(BUILD_TESTING)
   add_test(NAME oresforge_actor_mailbox_model COMMAND oresforge_mailbox_model)
   set_tests_properties(oresforge_actor_mailbox_model PROPERTIES TIMEOUT 30)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  # A real CLI execution gate, not a model-only parser test. Safe/verify/JIT
+  # must reject rather than implying implemented allocation optimization.
+  add_test(NAME oresforge_optimization_cli_admission
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/optimization_cli_admission.py"
+      "$<TARGET_FILE:oresforge>")
+  set_tests_properties(oresforge_optimization_cli_admission PROPERTIES TIMEOUT 40)
   add_test(NAME oresforge_cli_source_budget
     COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/verification/cli_source_budget.py"
