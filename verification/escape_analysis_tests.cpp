@@ -97,7 +97,7 @@ int main() {
     p = base();
     p.uses = {{0, UseKind::FieldWrite, 0},
               {0, UseKind::LocalBorrow, 0, true}};
-    ensure(analyze(p)[0].storage == Storage::PreserveAllocation,
+    need(analyze(p)[0].storage == Storage::PreserveAllocation,
            "partially initialized record cannot be stack-promoted via a borrow");
     p = base(); p.allocations.push_back(record("another"));
     p.uses = {{0, UseKind::FieldWrite, 0}, {0, UseKind::FieldWrite, 1},
