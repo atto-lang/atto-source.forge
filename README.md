@@ -2,6 +2,31 @@
 
 An **independent, experimental C++20 compiler and execution stack** for Oreslang, distinct from GraalVM/Truffle and LLVM. This is a working **bootstrap prototype**, not a production Oreslang compiler.
 
+## Allocation optimization and JIT CLI admission (experimental)
+
+The public flag names are `--opt-escape=off|safe|verify|speculative`,
+`--jit=off|on`, and `--opt-escape-report`. A `.cli-flags.toml` maps
+these through **flags-2-env** to `ORES_OPT_ESCAPE`, `ORES_JIT`, and
+`ORES_OPT_ESCAPE_REPORT`. This bootstrap also accepts direct spellings:
+
+~~~sh
+./build/oresforge --opt-escape=off --jit=off run examples/hello.ores
+./build/oresforge run examples/hello.ores --opt-escape=off
+~~~
+
+**Only `off` is executable in this Forge revision.** `safe`, `verify`,
+`speculative`, `--jit=on`, and an enabled report are rejected *before*
+reading source or emitting IR/assembly. This is intentional: Forge's tiered
+JIT module currently requests tiers but always interprets, and the scalar
+compiler has no guest heap-object allocation IR to optimize. The flags are
+not proof of escape analysis, native JIT, stack promotion, or backend parity.
+The parser rejects invalid/duplicate flags and values; explicit direct
+CLI values override the corresponding environment mapping.
+
+The `oresforge_optimization_cli_admission` CTest executes the real compiler
+and verifies supported controls, environment mapping, unsupported modes,
+negative diagnostics, and zero output for rejected configurations.
+
 ## Getting started
 
 ~~~sh
