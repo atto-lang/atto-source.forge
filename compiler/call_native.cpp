@@ -65,7 +65,7 @@ class Parser {
       if (space(c)) {++at_; continue;}
       if (c=='/' && at_+1<text_.size() && text_[at_+1]=='/') {
         at_+=2;
-        while (at_<text_.size() && text_[at_]!='\n') ++at_;
+        while (at_<text_.size() && text_[at_]!='\n' && text_[at_]!='\r') ++at_;
         continue;
       }
       break;
