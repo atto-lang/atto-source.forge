@@ -27,6 +27,28 @@ The `oresforge_optimization_cli_admission` CTest executes the real compiler
 and verifies supported controls, environment mapping, unsupported modes,
 negative diagnostics, and zero output for rejected configurations.
 
+## Typed allocation MIR candidate analysis (experimental)
+
+`compiler/escape_analysis.hpp` introduces a separate **typed model**, not
+source compilation or an optimization pass in the shipping scalar compiler.
+An allocation carries its nominal value kind, field count, bounded layout,
+observable allocator effects, custom drop, and dynamic/atomic restrictions.
+Every use is modeled explicitly; the model is fail-closed until a verified MIR
+builder certifies a *complete* effect graph.
+
+Candidate classification is `scalar-candidate`, `stack-candidate`, or
+`preserve-allocation`. Only verified local borrows qualify for a bounded
+stack candidate; returning, capturing, actor/channel sends, FFI, unknown
+calls, suspension, identity checks, global writes, unsafe pointers, and
+ownership transfer preserve the original allocation. Size/alignment budgets,
+unknown types and custom drops also prevent promotion.
+
+The CTest `oresforge_escape_candidate_analysis` runs positive and negative
+typed-MIR checks. **No source-to-MIR lowering or machine-code allocation
+elimination is implemented.** `--opt-escape=safe` remains explicitly
+unsupported. A separate ownership/loan verifier, exception-edge coverage,
+MIR lowering and executable optimized/off equivalence tests are prerequisites.
+
 ## Getting started
 
 ~~~sh
