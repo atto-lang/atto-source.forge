@@ -116,19 +116,19 @@ def result(exe, a, b):
 
 def negative_compilation(compiler, folder):
     wrong = [
-        ("escape-by-return", source(result="p"), "unsupported allocation"),
+        ("escape-by-return", source(result="p"), "unsupported allocation source grammar"),
         ("extra-statement", source().replace("return p.x", "p.x; return p.x"),
-         "unsupported allocation"),
-        ("foreign-call", source(x="read_env()"), "unsupported allocation"),
-        ("unknown-field", source(result="p.z + p.x"), "unsupported allocation"),
-        ("wrong-layout", source().replace("int y", "int z"), "unsupported allocation"),
-        ("non-ascii", source().replace("Point", "Pöint"), "unsupported allocation"),
-        ("suspend", source(result="await p.x + p.y"), "unsupported allocation"),
+         "unsupported allocation source grammar"),
+        ("foreign-call", source(x="read_env()"), "invalid allocation initializer"),
+        ("unknown-field", source(result="p.z + p.x"), "unsupported allocation field read"),
+        ("wrong-layout", source().replace("int y", "int z"), "unsupported allocation source grammar"),
+        ("non-ascii", source().replace("Point", "Pöint"), "unsupported allocation source character"),
+        ("suspend", source(result="await p.x + p.y"), "unsupported allocation source grammar"),
         ("trailing-expr", source() + "\n0\n", "unexpected trailing allocation"),
         ("shadow-parameter", source().replace("let p =", "let a ="),
          "allocation local shadows parameter"),
     ]
-    for name, text, _diagnostic in wrong:
+    for name, text, diagnostic in wrong:
         case = folder / (name + ".ores")
         case.write_text(text, encoding="utf-8")
         for safe in (False, True):
@@ -137,8 +137,8 @@ def negative_compilation(compiler, folder):
                 argv.insert(1, "--opt-escape=safe")
             p = command(argv, compiler=True)
             check(p.returncode == 1 and not p.stdout and
-                  "oresforge:" in p.stderr,
-                  f"unsafe source emitted assembly: {name} safe={safe} {p!r}")
+                  "oresforge:" in p.stderr and diagnostic in p.stderr,
+                  f"unsafe source emitted assembly or rejected for wrong reason: {name} safe={safe} {p!r}")
 
     invalid = folder / "not-here.ores"
     for args in (
