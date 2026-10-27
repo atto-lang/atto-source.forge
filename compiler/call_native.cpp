@@ -440,8 +440,9 @@ struct Native {
 }
 Module parse(std::string_view source) {
   if (source.size()>kMaxSource)throw std::runtime_error("callable source budget exceeded");
-  if (source.find('\0')!=std::string_view::npos)
-    throw std::runtime_error("source contains NUL byte");
+  // Match the independent scalar parser's strict source-byte admission.
+  // Invalid UTF-8 must not become inert comment text or a hidden identifier.
+  validate_call_source_utf8(source);
   return Parser(source).parse();
 }
 void verify(const Module& m) {
