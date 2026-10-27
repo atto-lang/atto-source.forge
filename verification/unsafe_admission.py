@@ -13,6 +13,9 @@ INVALID = {
     'unsafe-after-main': 'fnc main():int{return 42;} unsafe',
     'unsafe-after-cr-comment': 'fnc main():int{return 42;} // comment\runsafe',
     'unsafe-after-crlf-comment': 'fnc main():int{return 42;} // comment\r\nunsafe',
+    'unsafe-after-lf-comment': 'fnc main():int{return 42;} // comment\nunsafe',
+    'unsafe-after-block-comment': 'fnc main():int{return 42;} /* unsafe inside */ unsafe',
+    'unsafe-after-nested-comment': 'fnc main():int{return 42;} /* outer /* unsafe */ outer */ unsafe',
 }
 MODES = [('run',), ('ir',), ('run-runtime',), ('ir-runtime',),
          ('emit-asm', 'x86_64'), ('emit-runtime-asm', 'x86_64'), ('run-calls',), ('emit-call-asm', 'x86_64')]
