@@ -82,6 +82,8 @@ int main() {
     invalid([&] { (void)analyze(p); });
     p = base(); p.uses.push_back({10, UseKind::ActorSend});
     invalid([&] { (void)analyze(p); });
+    p = base(); p.uses.push_back({0, static_cast<UseKind>(255)});
+    invalid([&] { (void)analyze(p); });
     p = base(); p.uses.push_back({0, UseKind::FieldRead, 2});
     invalid([&] { (void)analyze(p); });
     p = base();
