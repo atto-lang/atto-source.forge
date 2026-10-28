@@ -86,6 +86,16 @@ int main() {
     invalid([&] { (void)analyze(p); });
     p = base(); p.uses.push_back({0, UseKind::FieldRead, 2});
     invalid([&] { (void)analyze(p); });
+    p = base(); p.uses.push_back({0, UseKind::FieldRead, 0, true});
+    invalid([&] { (void)analyze(p); });
+    p = base(); p.uses.push_back({0, UseKind::FieldWrite, 1, true});
+    invalid([&] { (void)analyze(p); });
+    p = base(); p.uses.push_back({0, UseKind::LocalBorrow, 1, true});
+    invalid([&] { (void)analyze(p); });
+    p = base(); p.uses.push_back({0, UseKind::ActorSend, 5});
+    invalid([&] { (void)analyze(p); });
+    p = base(); p.uses.push_back({0, UseKind::UnknownCall, 0, true});
+    invalid([&] { (void)analyze(p); });
     p = base();
     p.uses = {{0, UseKind::FieldRead, 0}};
     invalid([&] { (void)analyze(p); });
