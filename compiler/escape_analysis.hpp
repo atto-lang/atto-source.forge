@@ -112,6 +112,11 @@ inline std::vector<Decision> analyze(const Program& program,
       case UseKind::FieldWrite:
         if (use.field >= alloc.fields)
           throw std::invalid_argument("field index out of range");
+        // This ordered stage-0 model has no end-borrow event. A write
+        // after a certified loan might race with or invalidate that loan.
+        // Preserve the existing allocation until explicit loan ends exist.
+        if (borrowed[use.allocation])
+          preserve(use.allocation, "write-after-local-borrow");
         initialized[use.allocation].insert(use.field);
         break;
       case UseKind::FieldRead:
