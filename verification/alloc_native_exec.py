@@ -184,6 +184,11 @@ def main():
              [(99, -5, 94), (0, 1, 1)]),
             ("repeated-field", source(result="p.x + p.x"),
              [(13, 5, 26), (-8, 1, -16)]),
+            ("repeated-y", source(result="p.y + p.y"),
+             [(99, -5, -10), (0, 1, 2), (2**62 - 1, 0, 0)]),
+            ("swapped-and-repeated", source(x="b", y="a",
+                                             result="p.x + p.x"),
+             [(10, 20, 40), (-30, 7, 14), (0, -8, -16)]),
             ("literal", source(x="7", y="35"),
              [(10, 20, 42), (-11, 200, 42)]),
         )
@@ -208,20 +213,22 @@ def main():
                       f"{left.stdout!r} vs {right.stdout!r}")
                 evaluations += 1
             # Both paths must trap on signed i64 overflow rather than wrap.
-            if case_id != "literal":
-                for a, b in ((2**63 - 1, 1), (-(2**63), -1)):
-                    baseline_overflow = result(baseline, a, b)
-                    optimized_overflow = result(optimized, a, b)
-                    # repeated-field doubles x, regardless of b.
-                    if case_id == "repeated-field":
-                        a, b = 2**63 - 1, 0
-                        baseline_overflow = result(baseline, a, b)
-                        optimized_overflow = result(optimized, a, b)
-                    check(baseline_overflow.returncode == -signal.SIGILL and
-                          optimized_overflow.returncode == -signal.SIGILL and
-                          not baseline_overflow.stdout and not optimized_overflow.stdout,
-                          f"overflow not trapped: {case_id}: "
-                          f"{baseline_overflow!r} {optimized_overflow!r}")
+            overflow_pairs = {
+                "params": ((2**63 - 1, 1), (-(2**63), -1)),
+                "reversed": ((2**63 - 1, 1), (-(2**63), -1)),
+                "repeated-field": ((2**63 - 1, 0), (-(2**63), 0)),
+                "repeated-y": ((0, 2**63 - 1), (0, -(2**63))),
+                "swapped-and-repeated": ((0, 2**63 - 1), (0, -(2**63))),
+                "literal": (),
+            }
+            for a, b in overflow_pairs[case_id]:
+                baseline_overflow = result(baseline, a, b)
+                optimized_overflow = result(optimized, a, b)
+                check(baseline_overflow.returncode == -signal.SIGILL and
+                      optimized_overflow.returncode == -signal.SIGILL and
+                      not baseline_overflow.stdout and not optimized_overflow.stdout,
+                      f"overflow not trapped: {case_id} {(a, b)}: "
+                      f"{baseline_overflow!r} {optimized_overflow!r}")
         negative_compilation(compiler, folder)
     print(f"native heap-vs-scalar equivalence passed ({evaluations} vectors; "
           "observed malloc/free 1/1 vs 0/0; overflow & negative admission)")
