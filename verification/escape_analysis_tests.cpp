@@ -70,10 +70,18 @@ int main() {
     need(analyze(p)[0].storage == Storage::PreserveAllocation, "overaligned stack");
     p = base(); p.allocations.push_back(record("q", 32, 16));
     p.uses.push_back({0, UseKind::LocalBorrow, 0, true});
+    // Initialize q independently before borrowing it. Otherwise q would be
+    // preserved for partial initialization, never exercising frame budget.
+    p.uses.push_back({1, UseKind::FieldWrite, 0});
+    p.uses.push_back({1, UseKind::FieldWrite, 1});
     p.uses.push_back({1, UseKind::LocalBorrow, 0, true});
     auto d = analyze(p, 32);
     need(d[0].storage == Storage::StackCandidate &&
-         d[1].storage == Storage::PreserveAllocation, "aggregate frame budget");
+         d[1].storage == Storage::PreserveAllocation &&
+         d[1].reason == "stack-budget-or-alignment", "aggregate frame budget");
+    d = analyze(p, 48);
+    need(d[0].storage == Storage::StackCandidate &&
+         d[1].storage == Storage::StackCandidate, "aggregate frame within budget");
     p = base(); p.allocations.push_back(record("p"));
     invalid([&] { (void)analyze(p); });
     p = base(); p.allocations[0].alignment = 3;
