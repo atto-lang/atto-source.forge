@@ -175,8 +175,12 @@ inline std::vector<Decision> analyze(const Program& program,
     } else {
       // Count actual rounded slot size, not just payload, to bound stack usage.
       const std::size_t mask = alloc.alignment - 1;
+      // Reserve only the padding actually required by this allocation. The
+      // old worst-case guard rejected an already-aligned 32-byte record in
+      // an exactly 32-byte remaining frame, despite a 32-byte rounded slot.
+      // Check the addition for overflow before rounding up.
       if (alloc.alignment > 64 || alloc.size_bytes > stack_remaining ||
-          mask > stack_remaining - alloc.size_bytes) {
+          alloc.size_bytes > std::numeric_limits<std::size_t>::max() - mask) {
         decisions.push_back({Storage::PreserveAllocation, "stack-budget-or-alignment"});
       } else {
         const std::size_t slot = (alloc.size_bytes + mask) & ~mask;
