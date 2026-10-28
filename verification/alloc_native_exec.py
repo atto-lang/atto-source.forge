@@ -141,16 +141,25 @@ def negative_compilation(compiler, folder):
                   f"unsafe source emitted assembly or rejected for wrong reason: {name} safe={safe} {p!r}")
 
     invalid = folder / "not-here.ores"
-    for args in (
-        ["--opt-escape=safe", "run", str(invalid)],
-        ["--opt-escape=safe", "ir-alloc", str(invalid)],
-        ["--opt-escape=speculative", "emit-alloc-asm", "x86_64", str(invalid)],
-        ["--jit=on", "emit-alloc-asm", "x86_64", str(invalid)],
-        ["--opt-escape=safe", "emit-alloc-asm", "arm64", str(invalid)],
+    # A missing file by itself also produces exit 1. Require the intended
+    # policy/architecture diagnostic so "failure for the wrong reason" cannot
+    # falsely certify unsupported optimization admission.
+    for args, diagnostic in (
+        (["--opt-escape=safe", "run", str(invalid)],
+         "verified escape optimization not implemented"),
+        (["--opt-escape=safe", "ir-alloc", str(invalid)],
+         "verified escape optimization not implemented"),
+        (["--opt-escape=speculative", "emit-alloc-asm", "x86_64", str(invalid)],
+         "requires --jit=on"),
+        (["--jit=on", "emit-alloc-asm", "x86_64", str(invalid)],
+         "Forge has no executable JIT"),
+        (["--opt-escape=safe", "emit-alloc-asm", "arm64", str(invalid)],
+         "allocation native profile supports only x86_64"),
     ):
         p = command([compiler, *args], compiler=True)
-        check(p.returncode == 1 and not p.stdout and "oresforge:" in p.stderr,
-              f"failed to reject unsupported feature: {args}: {p!r}")
+        check(p.returncode == 1 and not p.stdout and
+              "oresforge:" in p.stderr and diagnostic in p.stderr,
+              f"failed to reject unsupported feature for expected reason: {args}: {p!r}")
 
 def main():
     parser = argparse.ArgumentParser()
