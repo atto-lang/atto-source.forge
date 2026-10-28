@@ -100,6 +100,14 @@ inline std::vector<Decision> analyze(const Program& program,
     if (use.allocation >= program.allocations.size())
       throw std::invalid_argument("allocation use index out of range");
     const auto& alloc = program.allocations[use.allocation];
+    // Only LocalBorrow may carry a lifetime proof. Field indices are
+    // meaningful only for FieldRead/FieldWrite, never for a borrow/escape.
+    // Refuse contradictory metadata instead of silently ignoring it.
+    if (use.kind != UseKind::LocalBorrow && use.lifetime_proven)
+      throw std::invalid_argument("spurious lifetime proof on non-borrow use");
+    if (use.kind != UseKind::FieldRead && use.kind != UseKind::FieldWrite &&
+        use.field != 0)
+      throw std::invalid_argument("spurious field index on non-field use");
     switch (use.kind) {
       case UseKind::FieldWrite:
         if (use.field >= alloc.fields)
