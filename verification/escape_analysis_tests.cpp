@@ -40,6 +40,10 @@ int main() {
     p.uses.push_back({0, UseKind::LocalBorrow, 0, true});
     need(analyze(p)[0].storage == Storage::StackCandidate,
          "verified short local loan permits stack candidate");
+    p.uses.push_back({0, UseKind::FieldWrite, 0});
+    need(analyze(p)[0].storage == Storage::PreserveAllocation,
+         "write following a loan cannot stack-promote without an end-borrow event");
+    p.uses.pop_back();
     need(analyze(p, 8)[0].storage == Storage::PreserveAllocation,
          "stack budget enforced");
     p.uses.back().lifetime_proven = false;
