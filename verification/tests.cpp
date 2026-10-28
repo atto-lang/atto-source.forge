@@ -239,6 +239,21 @@ int main() {
       parse_source("pub fnc main():int{return nb { 42 };}");
     }, "execution region requires verified CPU/GPU Task lowering");
 
+    // Both source frontends must validate bytes before ignoring comments.
+    // A lexical skip is not permission to admit malformed source encodings.
+    const std::string callable_comment="fnc main():int{return 1;} // ";
+    for (const std::string bad : {
+        std::string("\xc0\xaf",2), std::string("\xed\xa0\x80",3),
+        std::string("\xe2\x82",2), std::string("\xf4\x90\x80\x80",4),
+        std::string("\x80",1)}) {
+      reject_diagnostic([&] { calls::parse(callable_comment+bad); },
+                        "not valid UTF-8");
+    }
+    reject_diagnostic([&] {
+      calls::parse(callable_comment+std::string(1,'\0'));
+    }, "source contains NUL byte");
+    ensure(calls::parse(callable_comment+"caf\xc3\xa9").functions.size()==1,
+           "valid UTF-8 callable comment");
     // Opt-in callable program has its own fully verified representation.
     // Unlike the scalar profile, these helpers compile to real native calls.
     auto fact=calls::parse(

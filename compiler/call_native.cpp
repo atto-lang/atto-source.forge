@@ -1,3 +1,4 @@
+#include "compiler/source_utf8.hpp"
 #include "compiler/call_native.hpp"
 #include <algorithm>
 #include <charconv>
@@ -387,8 +388,7 @@ struct Native {
 }
 Module parse(std::string_view source) {
   if (source.size()>kMaxSource)throw std::runtime_error("callable source budget exceeded");
-  if (source.find('\0')!=std::string_view::npos)
-    throw std::runtime_error("source contains NUL byte");
+  oresforge::source::validate_utf8(source);
   return Parser(source).parse();
 }
 void verify(const Module& m) {
