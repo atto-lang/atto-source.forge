@@ -65,3 +65,32 @@ does not share any code or runtime dependency with Cranelift.
 CTest: `oresforge_tenant_isolate_host_admission`.
 The exact header/test passed local GCC C++20 and Clang ASan/UBSan; full
 Forge repository CMake/CTest CI is still required.
+
+
+## Executable source-to-native IsolateVM slice (follow-up)
+
+The host registry now exposes a synchronous **trusted native scalar**
+entrypoint `invoke_trusted_scalar(handle, entry, delta)`. This retrieves
+the current tenant-local i64 value, invokes the Forge-compiled
+`oresforge_entry(old,delta)` machine-code function and commits the returned
+value to **only that tenant**. The native code receives only scalar
+parameters, not a mutable OresVM/IsolateVM pointer. A per-tenant mutex
+protects read/modify/write while a host call pin fences shutdown, including
+queued invocations. Nested native entries are rejected.
+
+The new `oresforge_compiled_tenant_isolate_native` CTest runs the **real
+source compiler** on `verification/tenant_scalar_entry.ores`, emits
+x86-64 System V assembly, assembles/links it with an independent C++ host
+driver, and executes two tenants concurrently for 1,000 increments each.
+It validates separate signed values, shutdown admission, neighbor progress
+and fresh state after tenant reincarnation. This is an opt-in stage-0
+profile, not general actor lowering.
+
+Local independent evidence: the exact committed `runtime/isolate.hpp`
+Git blob `a6e5e7a5a4c8e7e75501d158579dc4a51656af8b` passed both GCC
+C++20 and Clang AddressSanitizer/UBSan harness tests with a **manually
+assembled** scalar entry. That is strong host-layer evidence, **not** proof
+that the Forge compiler/assembler CTest executed. The source-compiler
+integration gate must pass on a Linux x86-64 runner at the exact PR head.
+Forge currently traps on native checked arithmetic overflow; a nontrapping
+status-plus-result ABI is a future compiler change.
