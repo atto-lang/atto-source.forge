@@ -115,6 +115,8 @@ class Parser {
     }
     expect("fnc");
     const std::string name=identifier();
+    if (name=="init")
+      fail("init lifecycle requires once-only reachable initialization lowering");
     if (name=="int"||name=="return"||name=="if"||name=="else"||name=="then")
       fail("reserved function name");
     if (names_.contains(name))fail("duplicate function");

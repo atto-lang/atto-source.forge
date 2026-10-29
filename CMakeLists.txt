@@ -206,3 +206,11 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
   endif()
 endif()
 
+
+if(BUILD_TESTING)
+  add_test(NAME oresforge_namespace_lifecycle_fail_closed
+    COMMAND "${CMAKE_COMMAND}" "-DCOMPILER=$<TARGET_FILE:oresforge>"
+      "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/namespace-parity"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/namespace_lifecycle_parity.cmake")
+  set_tests_properties(oresforge_namespace_lifecycle_fail_closed PROPERTIES TIMEOUT 60)
+endif()

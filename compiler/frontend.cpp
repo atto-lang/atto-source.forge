@@ -150,7 +150,8 @@ class Parser {
       // The bootstrap parser cannot resolve any Java/Graal import forms.
       // Reject with a stable diagnostic rather than emitting an unrelated
       // scalar result from a source that depends on external modules.
-      if (tok_.text=="import") error("source imports require verified module graph lowering");
+      if (tok_.text=="import")
+        error("source imports, including import namespace, require a verified manifest package graph");
       // Scalar bootstrap lacks nominal enum declarations and compiler-owned
       // prebound virtual method slots. Never attempt arity-only fallback.
       if (tok_.text=="enum") error("nominal enum overloads require compiler-bound dispatch");
@@ -261,6 +262,8 @@ class Parser {
     }
     expect("fnc");
     const std::string name=identifier();
+    if (name=="init")
+      error("init lifecycle requires once-only reachable initialization lowering");
     if (name=="int" || name=="fnc" || name=="return")
       error("reserved function name");
     expect("(");
