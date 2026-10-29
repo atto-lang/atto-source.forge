@@ -1,4 +1,5 @@
 #include "runtime/TenantIsolationAdmission.hpp"
+#include "runtime/actor.hpp"
 #include <cassert>
 #include <stdexcept>
 
@@ -21,6 +22,11 @@ int main() {
     assert(rejected([] {
         require_tenant_isolation(TenantIsolationMode::SandboxedProcess, true);
     }));
+    // The real mailbox constructor cannot bypass the same admission gate.
+    assert(rejected([] { oresforge::runtime::Mailbox mailbox(7, 10, 1024,
+        TenantIsolationMode::SandboxedProcess); }));
+    assert(rejected([] { oresforge::runtime::Mailbox mailbox(7, 10, 1024,
+        TenantIsolationMode::TrustedInProcess, true); }));
     // Unknown/corrupt enum values cannot become a trusted fallback.
     assert(rejected([] {
         require_tenant_isolation(static_cast<TenantIsolationMode>(127), false);
