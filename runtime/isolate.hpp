@@ -1,4 +1,5 @@
 #pragma once
+#include "runtime/durable_lock_queues.hpp"
 #include <cstddef>
 #include <algorithm>
 #include <cstdint>
@@ -16,7 +17,7 @@ enum class IsolatePhase { Created, Running, Quiescing, Stopped };
 class OresVM final {
   struct State final {
     explicit State(std::string t, std::uint64_t g, std::size_t max_actors)
-      : tenant(std::move(t)), generation(g), actor_limit(max_actors) {}
+      : tenant(std::move(t)), generation(g), actor_limit(max_actors), durable(g) {}
     std::string tenant;
     std::uint64_t generation;
     std::size_t actor_limit;
@@ -28,6 +29,7 @@ class OresVM final {
     std::size_t active_guest_calls = 0;
     std::int64_t scalar_state = 0;
     std::mutex guest_turn_mutex;
+    DurableLockQueues durable;
   };
 public:
   class IsolateHandle final {
@@ -106,7 +108,8 @@ public:
   }
   void retire_actor(const IsolateHandle& h,const ActorTicket& a){
     std::lock_guard lock(mu_);auto s=checked(h);check_actor(s,a);
-    if(s->actor_pins.at(a.actor_id_)!=0)throw std::logic_error("outstanding actor operation");
+    if(s->actor_pins.at(a.actor_id_)!=0 || s->durable.has_actor({a.actor_id_,a.actor_epoch_}))
+      throw std::logic_error("outstanding actor operation or durable ticket");
     s->actors.erase(a.actor_id_);s->actor_pins.erase(a.actor_id_);
   }
   // Trusted scalar source-to-native path. The emitted Forge symbol takes
@@ -164,11 +167,47 @@ public:
     }
     return next;
   }
+  // Trusted host-only queue methods; not an Oreslang guest ABI. Every enqueue
+  // authenticates its actor ticket before creating a scheduler work token.
+  DurableLockQueues::Admission enqueue_durable(const IsolateHandle& h, const ActorTicket& a,
+      std::uint64_t lock_id, std::uint64_t op_id, std::size_t bytes) {
+    std::lock_guard lock(mu_);auto s=checked(h);check_actor(s,a);
+    if(s->phase!=IsolatePhase::Running) throw std::logic_error("durable admission closed");
+    return s->durable.enqueue({a.actor_id_,a.actor_epoch_},lock_id,op_id,bytes);
+  }
+  bool claim_durable(const IsolateHandle& h, DurableLockQueues::Ticket t) {
+    std::lock_guard lock(mu_);auto s=checked(h);
+    if(s->phase!=IsolatePhase::Running) throw std::logic_error("durable claim closed");
+    return s->durable.claim(t);
+  }
+  std::optional<DurableLockQueues::Ticket> finish_durable(const IsolateHandle& h,
+      DurableLockQueues::Ticket t) {
+    std::lock_guard lock(mu_);auto s=checked(h);
+    if(s->phase!=IsolatePhase::Running&&s->phase!=IsolatePhase::Quiescing)
+      throw std::logic_error("durable finish denied");
+    return s->durable.finish(t);
+  }
+  std::optional<DurableLockQueues::Ticket> cancel_durable_head(const IsolateHandle& h,
+      DurableLockQueues::Ticket t) {
+    std::lock_guard lock(mu_);auto s=checked(h);
+    if(s->phase!=IsolatePhase::Running&&s->phase!=IsolatePhase::Quiescing)
+      throw std::logic_error("durable cancellation denied");
+    return s->durable.cancel_unstarted_head(t);
+  }
+  void cancel_durable_waiter(const IsolateHandle& h, DurableLockQueues::Ticket t) {
+    std::lock_guard lock(mu_);auto s=checked(h);
+    if(s->phase!=IsolatePhase::Running&&s->phase!=IsolatePhase::Quiescing)
+      throw std::logic_error("durable cancellation denied");
+    s->durable.cancel_waiter(t);
+  }
+  DurableLockQueues::Snapshot durable_snapshot(const IsolateHandle& h) const {
+    std::lock_guard lock(mu_);return checked(h)->durable.snapshot();
+  }
   void begin_shutdown(const IsolateHandle& h){std::lock_guard lock(mu_);auto s=checked(h);
     if(s->phase!=IsolatePhase::Running&&s->phase!=IsolatePhase::Created)throw std::logic_error("shutdown phase");
-    s->phase=IsolatePhase::Quiescing;}
+    s->durable.quiesce();s->phase=IsolatePhase::Quiescing;}
   void complete_shutdown(const IsolateHandle& h){std::lock_guard lock(mu_);auto s=checked(h);
-    if(s->phase!=IsolatePhase::Quiescing||!s->actors.empty()||s->pinned_operations!=0||s->active_guest_calls!=0)
+    if(s->phase!=IsolatePhase::Quiescing||!s->actors.empty()||s->pinned_operations!=0||s->active_guest_calls!=0||!s->durable.drained())
       throw std::logic_error("isolate has live operations or actors");
     s->phase=IsolatePhase::Stopped;}
   void destroy(const IsolateHandle& h){std::lock_guard lock(mu_);auto s=checked(h);
