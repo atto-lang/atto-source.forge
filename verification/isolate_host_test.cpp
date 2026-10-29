@@ -1,6 +1,7 @@
 #include "runtime/isolate.hpp"
 #include <cassert>
 #include <stdexcept>
+#include <limits>
 #include <atomic>
 #include <thread>
 using namespace oresforge::runtime;
@@ -13,6 +14,10 @@ static std::int64_t blocked_guest(std::int64_t old, std::int64_t delta){
 }
 int main(){
  OresVM vm{2};auto a=vm.create_isolate("tenant-a",1),b=vm.create_isolate("tenant-b",1);
+ assert(rejected([&]{vm.create_isolate("bad\nnamespace",1);}));
+ assert(rejected([&]{vm.create_isolate("bad\ttenant",1);}));
+ assert(rejected([&]{vm.create_isolate("non\x7fprint",1);}));
+ assert(rejected([&]{vm.create_isolate("spaces invalid",1);}));
  assert(rejected([&]{vm.create_isolate("tenant-c",1);}));
  vm.start(a);vm.start(b);
  auto actor=vm.register_actor(a,7);auto other=vm.register_actor(b,7);
@@ -41,4 +46,11 @@ int main(){
  worker.join();
  assert(nativeVm.snapshot(native).scalar_state==7);
  nativeVm.complete_shutdown(native);nativeVm.destroy(native);
+ OresVM overflowVm{1};auto ov=overflowVm.create_isolate("ov",1);overflowVm.start(ov);
+ auto plus=[](std::int64_t lhs,std::int64_t rhs){return lhs+rhs;};
+ assert(overflowVm.invoke_trusted_scalar(ov,plus,std::numeric_limits<std::int64_t>::max())==std::numeric_limits<std::int64_t>::max());
+ assert(rejected([&]{overflowVm.invoke_trusted_scalar(ov,plus,1);}));
+ assert(overflowVm.snapshot(ov).scalar_state==std::numeric_limits<std::int64_t>::max());
+ assert(overflowVm.snapshot(ov).active_guest_calls==0);
+ overflowVm.begin_shutdown(ov);overflowVm.complete_shutdown(ov);overflowVm.destroy(ov);
 }
