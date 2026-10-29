@@ -9,6 +9,8 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <fstream>
+#include <set>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -44,6 +46,44 @@ oresforge::Program source(const std::string& expr) {
 int main() {
   try {
     using namespace oresforge;
+    // Shared language admission floor: both Forge source frontends must reject
+    // semantic attributes, while ordinary annotation-looking comments remain legal.
+    std::ifstream annotation_manifest("annotation-admission-v1.tsv");
+    ensure(static_cast<bool>(annotation_manifest), "missing annotation admission corpus");
+    std::set<std::string> annotation_ids;
+    std::string annotation_row;
+    while (std::getline(annotation_manifest, annotation_row)) {
+      if (annotation_row.empty() || annotation_row.front()=='#') continue;
+      const auto first=annotation_row.find('\t');
+      const auto second=first==std::string::npos
+        ? std::string::npos : annotation_row.find('\t',first+1);
+      if (first==std::string::npos || second==std::string::npos ||
+          annotation_row.find('\t',second+1)!=std::string::npos)
+        throw std::runtime_error("malformed annotation admission TSV row");
+      const auto kind=annotation_row.substr(0,first);
+      const auto id=annotation_row.substr(first+1,second-first-1);
+      const auto encoded=annotation_row.substr(second+1);
+      if (id.empty() || encoded.empty() || !annotation_ids.insert(id).second)
+        throw std::runtime_error("empty/duplicate annotation admission ID");
+      std::string program;
+      for (std::size_t i=0; i<encoded.size(); ++i) {
+        if (encoded[i]=='\\' && i+1<encoded.size() && encoded[i+1]=='n') {
+          program.push_back('\n'); ++i;
+        } else {
+          program.push_back(encoded[i]);
+        }
+      }
+      if (kind=="shared-deny" || kind=="bootstrap-deny") {
+        reject_diagnostic([&] { (void)parse_source(program); }, "annotations require");
+        reject_diagnostic([&] { (void)calls::parse(program); }, "annotations require");
+      } else if (kind=="shared-allow") {
+        ensure(interpret(parse_source(program))==42, "Forge annotation scalar positive");
+        (void)calls::parse(program);
+      } else {
+        throw std::runtime_error("unknown annotation admission case kind");
+      }
+    }
+    ensure(annotation_ids.size()>=12, "incomplete annotation admission corpus");
     // Cross-backend i64 positive controls run against the real Forge parser,
     // verified IR and checked interpreter. These are not Python-only data tests.
     for (const auto& [expression, expected] : kPortableNumericalCases) {
