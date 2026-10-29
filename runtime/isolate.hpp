@@ -24,6 +24,9 @@ class OresVM final {
     std::unordered_map<std::uint64_t, std::size_t> actor_pins;
     std::uint64_t next_actor_epoch = 1;
     std::size_t pinned_operations = 0;
+    std::size_t active_guest_calls = 0;
+    std::int64_t scalar_state = 0;
+    std::mutex guest_turn_mutex;
   };
 public:
   class IsolateHandle final {
@@ -100,19 +103,66 @@ public:
     if(s->actor_pins.at(a.actor_id_)!=0)throw std::logic_error("outstanding actor operation");
     s->actors.erase(a.actor_id_);s->actor_pins.erase(a.actor_id_);
   }
+  // Trusted scalar source-to-native path. The emitted Forge symbol takes
+  // (old, delta) and returns i64. It gets NO OresVM pointer and uses one
+  // immutable native code body for independently mutable tenant state.
+  // Overflow in this stage-0 Forge ABI *traps*; use only trusted input here.
+  // Production error/status ABI and hostile tenant sandbox remain TODO.
+  std::int64_t invoke_trusted_scalar(const IsolateHandle& h,
+                                     std::int64_t(*entry)(std::int64_t,std::int64_t),
+                                     std::int64_t delta) {
+    if (!entry) throw std::invalid_argument("null compiled guest entry");
+    static thread_local bool in_guest_turn = false;
+    if (in_guest_turn) throw std::logic_error("nested native entry forbidden");
+    struct EntryGuard {bool& active; ~EntryGuard(){active=false;}};
+    in_guest_turn=true;
+    EntryGuard thread_guard{in_guest_turn};
+    std::shared_ptr<State> s;
+    {
+      std::lock_guard lock(mu_);
+      s=checked(h);
+      if(s->phase!=IsolatePhase::Running)
+        throw std::logic_error("native guest admission closed");
+      if(s->active_guest_calls>=64)
+        throw std::logic_error("native guest quota exhausted");
+      ++s->active_guest_calls;
+    }
+    struct CallPin {
+      OresVM& vm;
+      std::shared_ptr<State> state;
+      ~CallPin(){std::lock_guard lock(vm.mu_);--state->active_guest_calls;}
+    } pin{*this,s};
+    std::unique_lock turn(s->guest_turn_mutex);
+    std::int64_t old=0;
+    {
+      std::lock_guard lock(mu_);
+      if(s->phase!=IsolatePhase::Running)
+        throw std::logic_error("queued native guest cancelled on shutdown");
+      old=s->scalar_state;
+    }
+    // Do not hold the root registry mutex while executing guest machine code.
+    const auto next=entry(old,delta);
+    {
+      std::lock_guard lock(mu_);
+      if(s->phase!=IsolatePhase::Running && s->phase!=IsolatePhase::Quiescing)
+        throw std::logic_error("native guest cannot commit to stopped isolate");
+      s->scalar_state=next;
+    }
+    return next;
+  }
   void begin_shutdown(const IsolateHandle& h){std::lock_guard lock(mu_);auto s=checked(h);
     if(s->phase!=IsolatePhase::Running&&s->phase!=IsolatePhase::Created)throw std::logic_error("shutdown phase");
     s->phase=IsolatePhase::Quiescing;}
   void complete_shutdown(const IsolateHandle& h){std::lock_guard lock(mu_);auto s=checked(h);
-    if(s->phase!=IsolatePhase::Quiescing||!s->actors.empty()||s->pinned_operations!=0)
+    if(s->phase!=IsolatePhase::Quiescing||!s->actors.empty()||s->pinned_operations!=0||s->active_guest_calls!=0)
       throw std::logic_error("isolate has live operations or actors");
     s->phase=IsolatePhase::Stopped;}
   void destroy(const IsolateHandle& h){std::lock_guard lock(mu_);auto s=checked(h);
     if(s->phase!=IsolatePhase::Stopped)throw std::logic_error("must stop");
     states_.erase(s->tenant);}
-  struct Snapshot{IsolatePhase phase;std::size_t actors,operations;std::uint64_t generation;};
+  struct Snapshot{IsolatePhase phase;std::size_t actors,operations;std::uint64_t generation;std::int64_t scalar_state;std::size_t active_guest_calls;};
   Snapshot snapshot(const IsolateHandle& h) const{std::lock_guard lock(mu_);auto s=checked(h);
-    return{s->phase,s->actors.size(),s->pinned_operations,s->generation};}
+    return{s->phase,s->actors.size(),s->pinned_operations,s->generation,s->scalar_state,s->active_guest_calls};}
 private:
   std::shared_ptr<State> checked(const IsolateHandle& h) const{
     auto s=h.state_.lock();if(!s||s->generation!=h.epoch_)throw std::logic_error("expired handle");
