@@ -136,6 +136,11 @@ class Parser {
     const auto start=at_;
     if (at_==source_.size()) { tok_={Kind::End,{},start}; return; }
     auto c=static_cast<unsigned char>(source_[at_]);
+    // Source annotations are not compiler-validated in the scalar bootstrap.
+    // Never erase them before verified IR/assembly admission.
+    if (c=='@')
+      throw std::runtime_error("source annotations require compiler-validated lowering at byte "+
+                               std::to_string(start));
     if (ascii_alpha(c) || c=='_') {
       ++at_;
       while (at_<source_.size()) {
