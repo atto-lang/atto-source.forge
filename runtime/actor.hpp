@@ -8,6 +8,7 @@
 #include <span>
 #include <vector>
 #include <utility>
+#include "runtime/TenantIsolationAdmission.hpp"
 namespace oresforge::runtime {
 inline constexpr std::size_t kMaxMessageBytes=1024*1024;
 inline constexpr std::size_t kMaxMailboxMessages=4096;
@@ -27,7 +28,9 @@ struct ActorRef {
 class Mailbox {
  public:
   Mailbox(std::uint64_t id,std::size_t capacity=1024,
-          std::size_t byte_capacity=4*kMaxMessageBytes);
+          std::size_t byte_capacity=4*kMaxMessageBytes,
+          TenantIsolationMode isolation=TenantIsolationMode::TrustedInProcess,
+          bool untrusted=false);
   // No concurrent calls may outlive mailbox destruction.
   ~Mailbox() noexcept;
   ActorRef ref() const;
