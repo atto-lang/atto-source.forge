@@ -1,8 +1,16 @@
 #include "runtime/isolate.hpp"
 #include <cassert>
 #include <stdexcept>
+#include <atomic>
+#include <thread>
 using namespace oresforge::runtime;
 template<class F>bool rejected(F&& f){try{f();}catch(const std::exception&){return true;}return false;}
+static std::atomic<bool> entered{false}, can_exit{false};
+static std::int64_t blocked_guest(std::int64_t old, std::int64_t delta){
+  entered.store(true,std::memory_order_release);
+  while(!can_exit.load(std::memory_order_acquire))std::this_thread::yield();
+  return old+delta;
+}
 int main(){
  OresVM vm{2};auto a=vm.create_isolate("tenant-a",1),b=vm.create_isolate("tenant-b",1);
  assert(rejected([&]{vm.create_isolate("tenant-c",1);}));
@@ -21,4 +29,16 @@ int main(){
  assert(rejected([&]{vm.retire_actor(anew,actor);}));
  vm.begin_shutdown(anew);vm.complete_shutdown(anew);vm.destroy(anew);
  vm.retire_actor(b,other);vm.begin_shutdown(b);vm.complete_shutdown(b);vm.destroy(b);
+ // Shutdown must wait for a physically running native invocation, not only
+ // empty actor and I/O resource registries.
+ OresVM nativeVm{1};auto native=nativeVm.create_isolate("native",1);nativeVm.start(native);
+ std::thread worker([&]{assert(nativeVm.invoke_trusted_scalar(native,blocked_guest,7)==7);});
+ while(!entered.load(std::memory_order_acquire))std::this_thread::yield();
+ nativeVm.begin_shutdown(native);
+ assert(nativeVm.snapshot(native).active_guest_calls==1);
+ assert(rejected([&]{nativeVm.complete_shutdown(native);}));
+ can_exit.store(true,std::memory_order_release);
+ worker.join();
+ assert(nativeVm.snapshot(native).scalar_state==7);
+ nativeVm.complete_shutdown(native);nativeVm.destroy(native);
 }
