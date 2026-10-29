@@ -544,6 +544,9 @@ int main() {
       reject_diagnostic([&] {
         (void)parse_source(std::string(attribute)+"\nfnc main():int{return 1;}");
       }, "annotations require");
+      reject_diagnostic([&] {
+        (void)calls::parse(std::string(attribute)+"\nfnc main():int{return 1;}");
+      }, "annotations require");
     }
     ensure(interpret(parse_source("fnc main():int{return 42;} // @CallerRole(Admin)"))==42,
            "annotation-looking text in comments is not source metadata");
