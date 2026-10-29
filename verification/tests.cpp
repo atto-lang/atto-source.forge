@@ -537,7 +537,16 @@ int main() {
     }
     reject_diagnostic([] {
       (void)parse_source("@structural\nfnc main():int{return 1;}");
-    }, "invalid character");
+    }, "annotations require");
+    for (const auto& attribute : {
+        "@FromJson(\"id\")", "@CallerRole(Admin)", "@CallableBy(Admin)",
+        "@DefaultArgVals(x=1)", "@UnknownPolicy"}) {
+      reject_diagnostic([&] {
+        (void)parse_source(std::string(attribute)+"\nfnc main():int{return 1;}");
+      }, "annotations require");
+    }
+    ensure(interpret(parse_source("fnc main():int{return 42;} // @CallerRole(Admin)"))==42,
+           "annotation-looking text in comments is not source metadata");
     reject_diagnostic([] {
       parse_source("structural fnc main():int{return 1;}");
     }, "expected");
