@@ -5,6 +5,9 @@ from pathlib import Path
 import subprocess
 import tempfile
 
+if not __debug__:
+    raise SystemExit("annotation admission gate forbids python -O")
+
 def invoke(binary, command, source):
     return subprocess.run([binary, command, str(source)],
                           capture_output=True, text=True, timeout=30)
