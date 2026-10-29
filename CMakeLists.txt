@@ -218,3 +218,18 @@ if(BUILD_TESTING)
   add_test(NAME oresforge_tenant_isolate_host_admission COMMAND oresforge_isolate_host_test)
   set_tests_properties(oresforge_tenant_isolate_host_admission PROPERTIES TIMEOUT 30)
 endif()
+
+# First verified native Forge IsolateVM bridge: compile .ores to actual
+# runtime-argument x86-64 assembly, link with an independent C++ host driver,
+# run two tenant states against the same guest machine code.
+if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+   CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64)$")
+  add_test(NAME oresforge_compiled_tenant_isolate_native
+    COMMAND "${CMAKE_COMMAND}"
+      "-DORESFORGE_COMPILER=$<TARGET_FILE:oresforge>"
+      "-DORESFORGE_CXX=${CMAKE_CXX_COMPILER}"
+      "-DROOT=${CMAKE_CURRENT_SOURCE_DIR}"
+      "-DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/tenant_native_entry"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/verification/tenant_native_entry.cmake")
+  set_tests_properties(oresforge_compiled_tenant_isolate_native PROPERTIES TIMEOUT 90)
+endif()
