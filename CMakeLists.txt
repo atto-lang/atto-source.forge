@@ -206,3 +206,15 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
   endif()
 endif()
 
+
+# Host-only tenant isolate admission. Executable native guest sandboxing is NOT proven.
+if(BUILD_TESTING)
+  add_executable(oresforge_isolate_host_test verification/isolate_host_test.cpp)
+  target_include_directories(oresforge_isolate_host_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_isolate_host_test PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_isolate_host_test PRIVATE -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+  endif()
+  add_test(NAME oresforge_tenant_isolate_host_admission COMMAND oresforge_isolate_host_test)
+  set_tests_properties(oresforge_tenant_isolate_host_admission PROPERTIES TIMEOUT 30)
+endif()
