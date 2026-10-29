@@ -2,6 +2,7 @@
 #include <cassert>
 #include <cstdint>
 #include <stdexcept>
+#include <limits>
 #include <thread>
 
 // Linked from the ACTUAL Forge emit-runtime-asm output. The callable x86-64
@@ -43,5 +44,17 @@ int main() {
   assert(vm.invoke_trusted_scalar(again,oresforge_entry,8)==8);
   assert(rejects([&]{vm.snapshot(a);}));
   vm.begin_shutdown(again);vm.complete_shutdown(again);vm.destroy(again);
+  // Native trap must be rejected before machine-code entry for the
+  // admitted old+delta scalar profile, preserving the host process.
+  oresforge::runtime::OresVM max_vm{1};
+  auto extreme=max_vm.create_isolate("extreme",1);
+  max_vm.start(extreme);
+  assert(max_vm.invoke_trusted_scalar(extreme,oresforge_entry,
+         std::numeric_limits<std::int64_t>::max())==
+         std::numeric_limits<std::int64_t>::max());
+  assert(rejects([&]{max_vm.invoke_trusted_scalar(extreme,oresforge_entry,1);}));
+  assert(max_vm.snapshot(extreme).scalar_state==std::numeric_limits<std::int64_t>::max());
+  assert(max_vm.snapshot(extreme).active_guest_calls==0);
+  max_vm.begin_shutdown(extreme);max_vm.complete_shutdown(extreme);max_vm.destroy(extreme);
   vm.begin_shutdown(b);vm.complete_shutdown(b);vm.destroy(b);
 }
