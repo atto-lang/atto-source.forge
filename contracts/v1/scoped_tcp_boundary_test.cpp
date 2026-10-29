@@ -66,6 +66,9 @@ int main() {
 
     Guard client{ScopedTcpBoundary::connect_selected_ipv4(grant, endpoint, endpoint, 2000)};
     if (client.fd < 0) throw std::runtime_error("allowed TCP connect failed");
+    const int returnedFlags = ::fcntl(client.fd, F_GETFL, 0);
+    if (returnedFlags < 0 || (returnedFlags & O_NONBLOCK) == 0)
+        throw std::runtime_error("trusted TCP adapter returned a blocking descriptor");
     Guard accepted{::accept(listener, nullptr, nullptr)};
     if (accepted.fd < 0) throw std::runtime_error("loopback accept failed");
     sockaddr_in peer{};
