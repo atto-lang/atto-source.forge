@@ -19,6 +19,8 @@ PATHS = [
     "std/unsafe", "std/unsafe/native",
     "ores.std.unsafe.memory", "std.unsafe.ffi",
     "ores.std:unsafe", "std:unsafe.ffi",
+    "./std/unsafe/ffi", "../ores.std/unsafe/native",
+    "pkg/../std/unsafe/memory",
 ]
 
 
