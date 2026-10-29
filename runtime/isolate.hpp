@@ -1,5 +1,6 @@
 #pragma once
 #include <cstddef>
+#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -64,7 +65,12 @@ public:
   }
   OresVM(const OresVM&)=delete;OresVM& operator=(const OresVM&)=delete;
   IsolateHandle create_isolate(std::string tenant,std::size_t max_actors){
-    if(tenant.empty()||tenant.size()>128||max_actors==0||max_actors>65536)
+    const bool invalid_tenant = tenant.empty() || tenant.size()>128 ||
+      !std::all_of(tenant.begin(),tenant.end(),[](unsigned char c){
+        return (c>='a'&&c<='z') || (c>='A'&&c<='Z') ||
+               (c>='0'&&c<='9') || c=='-' || c=='_' || c=='.';
+      });
+    if(invalid_tenant||max_actors==0||max_actors>65536)
       throw std::invalid_argument("tenant identity or actor quota");
     std::lock_guard lock(mu_);
     if(states_.count(tenant))throw std::logic_error("duplicate tenant");
@@ -140,6 +146,14 @@ public:
         throw std::logic_error("queued native guest cancelled on shutdown");
       old=s->scalar_state;
     }
+    // This stage-0 trusted profile is explicitly old + delta. Its existing
+    // Forge assembly traps on overflow (ud2), which would kill the host.
+    // Reject before native entry, under the serial guest turn, so overflow
+    // cannot escape tenant status handling as a host-process crash.
+    // The general compiler needs a versioned status/out-value ABI instead.
+    if ((delta>0 && old>std::numeric_limits<std::int64_t>::max()-delta) ||
+        (delta<0 && old<std::numeric_limits<std::int64_t>::min()-delta))
+      throw std::overflow_error("trusted scalar add would trap on overflow");
     // Do not hold the root registry mutex while executing guest machine code.
     const auto next=entry(old,delta);
     {
