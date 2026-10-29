@@ -206,3 +206,18 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
   endif()
 endif()
 
+# HOST-ONLY AI dispatch fencing parity v1; NOT an Oreslang guest / durable store.
+if(BUILD_TESTING)
+  add_executable(ores_agent_host_dispatch_parity_v1
+    contracts/v1/agent-dispatch/agent_host_dispatch_test.cpp)
+  target_include_directories(ores_agent_host_dispatch_parity_v1 PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/contracts/v1/agent-dispatch")
+  target_compile_features(ores_agent_host_dispatch_parity_v1 PRIVATE cxx_std_17)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(ores_agent_host_dispatch_parity_v1 PRIVATE
+      -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+  endif()
+  add_test(NAME agent_model_dispatch_host_fencing_v1
+    COMMAND ores_agent_host_dispatch_parity_v1)
+  set_tests_properties(agent_model_dispatch_host_fencing_v1 PROPERTIES TIMEOUT 15)
+endif()
