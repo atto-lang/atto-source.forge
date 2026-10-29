@@ -1,5 +1,12 @@
 # OresForge
 
+## VM isolate execution architecture
+
+A C++20 `OresVM` host registry now tracks IsolateVM lifecycles, actor-incarnation tickets and outstanding operation pins. Forge's native machine code remains **trusted in-process**; it does not depend on Cranelift.
+
+See [the shared tenant IsolateVM contract](docs/VM_ISOLATE_CONTRACT.md) for lifecycle, V8 lessons, resource retirement, restrictions and remaining acceptance gates.
+
+
 An **independent, experimental C++20 compiler and execution stack** for Oreslang, distinct from GraalVM/Truffle and LLVM. This is a working **bootstrap prototype**, not a production Oreslang compiler.
 
 ## Getting started
