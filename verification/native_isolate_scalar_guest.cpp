@@ -2,6 +2,7 @@
 #include <cassert>
 #include <cstdint>
 #include <stdexcept>
+#include <thread>
 
 // Linked from the ACTUAL Forge emit-runtime-asm output. The callable x86-64
 // guest has exactly two signed i64 params and no mutable process-global data.
@@ -21,9 +22,20 @@ int main() {
   assert(vm.invoke_trusted_scalar(b,oresforge_entry,2)==102);
   assert(vm.snapshot(a).scalar_state==-3);
   assert(vm.snapshot(b).scalar_state==102);
+  // Same emitted native program runs on two carriers; no process-global
+  // counter and no tenant memory aliasing under parallel guest calls.
+  std::thread ta([&]{
+    for(int i=0;i<1000;++i) (void)vm.invoke_trusted_scalar(a,oresforge_entry,1);
+  });
+  std::thread tb([&]{
+    for(int i=0;i<1000;++i) (void)vm.invoke_trusted_scalar(b,oresforge_entry,1);
+  });
+  ta.join();tb.join();
+  assert(vm.snapshot(a).scalar_state==997);
+  assert(vm.snapshot(b).scalar_state==1102);
   vm.begin_shutdown(a);
   assert(rejects([&]{vm.invoke_trusted_scalar(a,oresforge_entry,1);}));
-  assert(vm.invoke_trusted_scalar(b,oresforge_entry,1)==103);
+  assert(vm.invoke_trusted_scalar(b,oresforge_entry,1)==1103);
   vm.complete_shutdown(a);vm.destroy(a);
   assert(rejects([&]{vm.snapshot(a);}));
   auto again=vm.create_isolate("tenant-a",1);
