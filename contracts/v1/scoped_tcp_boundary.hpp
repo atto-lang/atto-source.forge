@@ -97,8 +97,13 @@ public:
                 break;
             }
         }
-        if (::fcntl(socket.fd, F_SETFL, flags) < 0)
-            throw std::system_error(errno, std::generic_category(), "TCP connect restore flags");
+        // Keep the returned socket NONBLOCKING: restoring the initial flags
+        // would return a blocking data-plane descriptor despite async policy.
+        const int connected_flags = ::fcntl(socket.fd, F_GETFL, 0);
+        if (connected_flags < 0)
+            throw std::system_error(errno, std::generic_category(), "TCP connect descriptor flags");
+        if ((connected_flags & O_NONBLOCK) == 0)
+            throw std::logic_error("trusted TCP socket lost O_NONBLOCK");
         return socket.release();  // Trusted host owns returned fd and MUST close.
 #else
         throw std::runtime_error("native pinned TCP is unsupported on this platform");
