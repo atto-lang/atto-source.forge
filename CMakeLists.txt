@@ -160,6 +160,10 @@ if(BUILD_TESTING)
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/unsafe_stdlib_import_admission.py"
       "$<TARGET_FILE:oresforge>")
   set_tests_properties(unsafe_stdlib_import_fail_closed PROPERTIES TIMEOUT 120)
+  # Audits the Python oracle itself, not a native compiler or guest.
+  add_test(NAME unsafe_stdlib_import_harness_selftest
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/unsafe_stdlib_import_harness_selftest.py")
+  set_tests_properties(unsafe_stdlib_import_harness_selftest PROPERTIES TIMEOUT 30)
   # Source-free meta-test: fail if the admission matrix stops covering
   # its 120 intended subprocess paths or misses injected unsafe regressions.
   add_test(NAME unsafe_source_harness_selftest
