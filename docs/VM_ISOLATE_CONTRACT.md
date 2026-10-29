@@ -86,11 +86,20 @@ It validates separate signed values, shutdown admission, neighbor progress
 and fresh state after tenant reincarnation. This is an opt-in stage-0
 profile, not general actor lowering.
 
-Local independent evidence: the exact committed `runtime/isolate.hpp`
-Git blob `a6e5e7a5a4c8e7e75501d158579dc4a51656af8b` passed both GCC
-C++20 and Clang AddressSanitizer/UBSan harness tests with a **manually
-assembled** scalar entry. That is strong host-layer evidence, **not** proof
-that the Forge compiler/assembler CTest executed. The source-compiler
-integration gate must pass on a Linux x86-64 runner at the exact PR head.
-Forge currently traps on native checked arithmetic overflow; a nontrapping
-status-plus-result ABI is a future compiler change.
+The narrow old+delta native guest is guarded by an explicit checked
+host preflight under the per-tenant turn lock. It rejects integer overflow
+before entering machine code that would otherwise trap with ud2. It also
+rejects malformed tenant IDs before registration. This is NOT a general
+replacement for a status/result guest ABI: arbitrary trusted Forge native
+guest code may still trap or access host memory.
+
+Local evidence: the exact committed hardening blobs for
+`runtime/isolate.hpp` (`c7ee3d9e04a0f6e49782f9269ca2e078430626e9`),
+`verification/isolate_host_test.cpp`
+(`b590d07ca9363f3f48d1adf24b7ccae62ee52f65`) and
+`verification/native_isolate_scalar_guest.cpp`
+(`468fdbbdbbd0c607994c554a2cf673e995daff23`) passed GCC C++20
+and Clang AddressSanitizer/UBSan local checks. The native guest in these
+local checks is **manually assembled**, not Forge compiler output.
+The full Forge compiler/assembler CTest remains unverified until
+executed by a GitHub Actions runner at the exact source SHA.
