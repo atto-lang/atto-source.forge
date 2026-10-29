@@ -140,6 +140,10 @@ class Parser {
     // admission via a callable/parameter named unsafe.
     if (token_.text=="unsafe")
       fail("unsafe boundary unsupported: checked native grants and effects required");
+    // Independent native-call parsing must never treat an unsupported
+    // import as an ordinary callable or admit any unsafe stdlib package.
+    if (token_.text=="import")
+      fail("source imports require verified module graph lowering");
   }
   bool take(std::string_view s) {
     if (token_.text!=s) return false;
