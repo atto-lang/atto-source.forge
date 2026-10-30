@@ -75,7 +75,7 @@ int main() {
     }
     reject_diagnostic([&] {
       (void)parse_source(
-        "fnc main():int{ let xs=InvertedArray<Point>.with_capacity(1); return 42; }");
+        "fnc main():int{return InvertedArray<Point>.with_capacity(1); }");
     }, "inverted collection requires typed owned SoA columns");
     ensure(interpret(parse_source(
               "fnc main():int{return 42;} // define inverted struct ignored"))==42,
