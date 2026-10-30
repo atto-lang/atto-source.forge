@@ -62,6 +62,14 @@ if(BUILD_TESTING)
   add_test(NAME native_pinned_tcp_host_boundary COMMAND oresforge_pinned_tcp_tests)
   set_tests_properties(native_pinned_tcp_host_boundary PROPERTIES TIMEOUT 15)
 
+  find_package(Threads REQUIRED)
+  add_executable(oresforge_singleton_shared_runtime verification/singleton_shared_runtime.cpp)
+  target_include_directories(oresforge_singleton_shared_runtime PRIVATE .)
+  target_compile_features(oresforge_singleton_shared_runtime PRIVATE cxx_std_20)
+  target_link_libraries(oresforge_singleton_shared_runtime PRIVATE Threads::Threads)
+  add_test(NAME oresforge_singleton_shared_runtime COMMAND oresforge_singleton_shared_runtime)
+  set_tests_properties(oresforge_singleton_shared_runtime PROPERTIES TIMEOUT 30)
+
   add_executable(oresforge_singleton_admission verification/singleton_admission.cpp)
   target_link_libraries(oresforge_singleton_admission PRIVATE oresforge_core)
   add_test(NAME oresforge_singleton_admission COMMAND oresforge_singleton_admission)
@@ -210,4 +218,5 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
     set_tests_properties(oresforge_real_native_recursive_calls PROPERTIES TIMEOUT 180)
   endif()
 endif()
+
 

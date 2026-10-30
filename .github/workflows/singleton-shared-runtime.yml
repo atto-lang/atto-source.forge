@@ -1,0 +1,36 @@
+name: Singleton and shared-table runtime slice
+on:
+  pull_request:
+    paths:
+      - runtime/singleton_cell.hpp
+      - runtime/shared_i64_table.hpp
+      - verification/singleton_shared_runtime.cpp
+      - verification/singleton_admission.cpp
+      - compiler/**
+      - codegen/native.hpp
+      - scripts/test-singleton-shared-runtime.sh
+      - .github/workflows/singleton-shared-runtime.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  host-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [release, sanitized]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Record exact tested source
+        run: |
+          git rev-parse HEAD
+          git rev-parse 'HEAD^{tree}'
+      - name: Test host substrate and unsupported guest admission
+        env:
+          PROFILE: ${{ matrix.profile }}
+        run: bash scripts/test-singleton-shared-runtime.sh "$PROFILE"

@@ -1,7 +1,7 @@
 # Singleton and ETS sharing audit — 2026-10-29
 
 Status: proposed cross-backend semantics; singleton/ETS guest execution remains unverified.
-The implemented change in this PR is ONLY Forge declaration admission and its regression test.
+The PR includes Forge declaration admission and a C++ host runtime slice; guest singleton/table execution remains unsupported. See SINGLETON_SHARED_RUNTIME_SLICE.md for implemented behavior and remaining integration gates.
 
 ## Audit finding
 
@@ -118,3 +118,4 @@ Reproduce from repository root:
 g++ -std=c++20 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -Wall -Wextra -Werror -Wno-missing-field-initializers -I. compiler/frontend.cpp compiler/ir.cpp compiler/call_native.cpp verification/singleton_admission.cpp -o /tmp/ores-singleton-admission
 ASAN_OPTIONS=detect_leaks=0 /tmp/ores-singleton-admission
 ```
+
