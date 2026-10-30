@@ -92,6 +92,13 @@ int main() {
     reject([] { source("2.0i"); });
     reject([] { parse_source("fnc main():bigint{return 1;}"); });
     reject([] { parse_source("fnc main():decimal{return 1;}"); });
+    reject([] { parse_source("fnc main():f32{return 1;}"); });
+    reject([] { parse_source("fnc main():f64{return 1;}"); });
+    reject([] { parse_source("fnc main():float{return 1;}"); });
+    reject_diagnostic([] { (void)source("Math.sqrt(4)"); },
+                      "unsupported Math intrinsic");
+    reject([] { (void)source("Math.abs(1,2)"); });
+    reject([] { (void)source("Math.neg()"); });
     // Import graph linking is not available in the Forge scalar bootstrap.
     // Reject with the *right* diagnostic before IR or assembly emission.
     for (const auto& path : {"+/src/helper", "+/../outside", "+/src/../helper",
