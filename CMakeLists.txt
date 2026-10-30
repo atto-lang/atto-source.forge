@@ -92,6 +92,21 @@ if(BUILD_TESTING)
   add_executable(oresforge_mailbox_stress verification/actor_mailbox_concurrency.cpp)
   target_link_libraries(oresforge_mailbox_stress PRIVATE oresforge_core Threads::Threads)
   add_test(NAME oresforge_actor_mailbox_concurrency COMMAND oresforge_mailbox_stress)
+
+  # Provenance-only callback scope: no heap/actor/scheduler authority and no
+  # dynamic allocation in the context helper itself.
+  add_executable(oresforge_execution_callback_context
+    verification/execution_callback_context_test.cpp)
+  target_include_directories(oresforge_execution_callback_context PRIVATE .)
+  target_link_libraries(oresforge_execution_callback_context PRIVATE Threads::Threads)
+  target_compile_features(oresforge_execution_callback_context PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_execution_callback_context PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME oresforge_execution_callback_context
+    COMMAND oresforge_execution_callback_context)
+  set_tests_properties(oresforge_execution_callback_context PROPERTIES TIMEOUT 20)
   set_tests_properties(oresforge_actor_mailbox_concurrency PROPERTIES TIMEOUT 60)
   add_executable(oresforge_mailbox_mpmc verification/actor_mailbox_mpmc.cpp)
   target_link_libraries(oresforge_mailbox_mpmc PRIVATE oresforge_core Threads::Threads)
