@@ -76,7 +76,7 @@ class Mailbox {
   const std::size_t capacity_,byte_capacity_;
   mutable std::mutex mutex_;
   std::uint64_t generation_=1;
-  std::shared_ptr<const CapabilityToken> authority_;
+  std::shared_ptr<CapabilityToken> authority_;
   std::size_t queued_bytes_=0;
   bool closed_=false;
   std::deque<std::vector<std::uint8_t>> queue_;
