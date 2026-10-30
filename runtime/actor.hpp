@@ -13,9 +13,22 @@ namespace oresforge::runtime {
 inline constexpr std::size_t kMaxMessageBytes=1024*1024;
 inline constexpr std::size_t kMaxMailboxMessages=4096;
 inline constexpr std::size_t kMaxMailboxBytes=16*kMaxMessageBytes;
+// Actor-owned host resources register a weak lifecycle observer. The actor
+// authority never owns the resource, so actor/resource teardown cannot cycle.
+class ActorLifetimeResource {
+ public:
+  virtual ~ActorLifetimeResource() = default;
+  virtual void actor_owner_stopped() noexcept = 0;
+};
+
 // Opaque, local-only authority; never serialize or expose it through guest FFI.
 struct CapabilityToken final {
   std::atomic<bool> active{true};
+  bool attach_owned_resource(const std::shared_ptr<ActorLifetimeResource>& resource) const noexcept;
+  void invalidate() noexcept;
+ private:
+  mutable std::mutex resource_mutex_;
+  mutable std::vector<std::weak_ptr<ActorLifetimeResource>> resources_;
 };
 class Mailbox;
 class ActorContext {
@@ -32,6 +45,9 @@ class ActorContext {
     return domain_ == other.domain_ && actor_ == other.actor_ &&
            incarnation_ == other.incarnation_ && authority_ == other.authority_;
   }
+  // Trusted host-runtime hook. This is not a guest FFI surface.
+  bool attach_owned_resource(
+      const std::shared_ptr<ActorLifetimeResource>& resource) const noexcept;
  private:
   std::uint64_t domain_ = 0;
   std::uint64_t actor_ = 0;
