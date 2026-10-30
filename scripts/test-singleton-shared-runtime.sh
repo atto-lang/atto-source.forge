@@ -11,7 +11,7 @@ case "${1:-release}" in
 esac
 "${CXX:-c++}" --version
 "${CXX:-c++}" -std=c++20 "${flags[@]}" -pthread -Wall -Wextra -Werror -I. \
-  verification/singleton_shared_runtime.cpp -o "$test_dir/runtime"
+  verification/singleton_shared_runtime.cpp runtime/actor.cpp -o "$test_dir/runtime"
 sha256sum "$test_dir/runtime"
 timeout 30 "$test_dir/runtime"
 "${CXX:-c++}" -std=c++20 "${flags[@]}" -Wall -Wextra -Werror \
