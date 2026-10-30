@@ -67,7 +67,8 @@ void table_authority() {
   error(TableErrorCode::Denied, [&] { SharedI64Table<2> invalid(owner, static_cast<TableAccess>(9)); });
   // Explicit close is idempotent while the owning actor incarnation is live.
   table.close(own, owner);
-  error(TableErrorCode::Closed, [&] { table.lookup(read, restarted, 7); });
+  error(TableErrorCode::Denied, [&] { table.lookup(read, restarted, 7); });
+  error(TableErrorCode::Closed, [&] { table.lookup(own, owner, 7); });
   error(TableErrorCode::Closed, [&] { table.insert(own, owner, 7, 20); });
   error(TableErrorCode::Closed, [&] { table.delegate(own, owner, restarted); });
   table.close(own, owner);
