@@ -88,16 +88,20 @@ Retirement logically clears slots; secure physical zeroization is not claimed.
 From repository root:
 ```sh
 bash scripts/test-singleton-shared-runtime.sh release
-ASAN_OPTIONS=detect_leaks=0 bash scripts/test-singleton-shared-runtime.sh sanitized
+bash scripts/test-singleton-shared-runtime.sh sanitized
+bash scripts/test-singleton-shared-runtime.sh sanitized-leaks
 ```
 
 The script records the compiler version and SHA-256 of each test executable,
 builds directly without Python, and applies 30-second execution timeouts.
-The release profile uses O2; sanitized uses O1 with ASan/UBSan.
-Leak detection has not yet produced runner-executed hosted evidence. The current
-hosted workflow attempts release and sanitizer profiles, but recent Actions runs
-failed before runner assignment and executed zero steps; those runs are not test
-evidence. CMake registers `oresforge_singleton_shared_runtime` and the existing
+The release profile uses O2; sanitized uses O1 with ASan/UBSan. The
+`sanitized-leaks` profile uses the same instrumentation but first runs an
+intentional leak capability probe and requires LeakSanitizer to report it with
+the configured nonzero exit code before executing the real tests with
+`detect_leaks=1`. Leak detection has not yet produced runner-executed hosted
+evidence. The current hosted workflow attempts release, sanitizer, and explicit
+leak profiles, but recent Actions runs failed before runner assignment and
+executed zero steps; those runs are not test evidence. CMake registers `oresforge_singleton_shared_runtime` and the existing
 admission test.
 
 Runtime tests exercise:
