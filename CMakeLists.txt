@@ -66,7 +66,7 @@ if(BUILD_TESTING)
   add_executable(oresforge_singleton_shared_runtime verification/singleton_shared_runtime.cpp)
   target_include_directories(oresforge_singleton_shared_runtime PRIVATE .)
   target_compile_features(oresforge_singleton_shared_runtime PRIVATE cxx_std_20)
-  target_link_libraries(oresforge_singleton_shared_runtime PRIVATE Threads::Threads)
+  target_link_libraries(oresforge_singleton_shared_runtime PRIVATE Threads::Threads oresforge_core)
   add_test(NAME oresforge_singleton_shared_runtime COMMAND oresforge_singleton_shared_runtime)
   set_tests_properties(oresforge_singleton_shared_runtime PROPERTIES TIMEOUT 30)
 
