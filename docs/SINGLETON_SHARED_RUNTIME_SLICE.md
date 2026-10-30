@@ -25,6 +25,27 @@ A future compiler/scheduler adapter must enforce these effects before guest admi
 Cell destruction requires host quiescence; `close()` does not join initializer threads.
 Cancellation and deadline-aware waits are not implemented.
 
+`runtime/singleton_registry.hpp` provides a bounded application-domain registry:
+- The registry is bound to one nonzero runtime domain and accepts only live,
+  runtime-minted `ActorContext` callers from that domain.
+- Singleton declarations are addressed by a two-part
+  `SingletonDeclarationId { module, declaration }`. This is a trusted
+  compiler/runtime identity, not a guest-supplied numeric key. Resolved import
+  aliases must carry the exact same declaration ID.
+- Concurrent actors resolving the same declaration converge on one
+  `SingletonCell<T>` and therefore one published immutable reader identity.
+  A restarted actor in the same domain can resolve the existing singleton;
+  its stale pre-restart context is denied.
+- Different declaration IDs never alias. Initialization failure remains sticky
+  because the declaration slot is retained for the registry lifetime.
+- Registry capacity is fixed at compile time. There is no hot-unload/reuse
+  protocol yet, so every first-resolved declaration permanently consumes one
+  slot until domain teardown.
+- `close()` marks the registry closed before closing used cells outside the
+  registry mutex, allowing reentrant payload cleanup without holding the
+  registry lock. Existing immutable reader leases remain valid.
+
+
 `runtime/shared_i64_table.hpp` provides `SharedI64Table<Capacity>`:
 - Fixed slot storage, exact i64 keys and values, copy-based lookup.
 - Private, protected (default), and explicitly writable public modes.
@@ -115,6 +136,9 @@ Runtime tests exercise:
 - Filling the 256-resource lifecycle registry, deterministic capacity failure,
   expired-slot reuse, and full-set retirement on restart.
 - Concurrent singleton publication with identical reader identities and complete values.
+- Domain registry resolution from multiple actors, import-alias identity,
+  foreign/stale caller rejection, declaration isolation, sticky registry
+  failure, bounded declaration capacity and registry close behavior.
 - Sticky failure, recursion, cross-thread initializer cycles and cross-type nesting.
 - Allowed published dependencies, close before/during/after initialization,
   retained reader leases and reentrant initializer/destructor cleanup.
@@ -125,7 +149,8 @@ compiled guest singleton/table semantics or parity with Erlang.
 
 ## Next compiler integration gate
 
-1. Add declaration identity and a domain-owned cell registry, with budgets and shutdown.
+1. Bind compiler-resolved module/declaration identity to the existing bounded
+   domain registry; guest code must never manufacture declaration IDs.
 2. Prove complete initialization, no receiver escape, deep immutable sharing and effects.
 3. Bind guest table dispatch to scheduler-derived identity and map typed errors;
    host owner lifecycle is already automatically wired to mailbox incarnations.
