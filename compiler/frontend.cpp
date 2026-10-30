@@ -34,7 +34,7 @@ struct Token { Kind kind; std::string_view text; std::size_t offset; };
 // semantically equivalent to invoking such a function, but NOT native ABI
 // calls, stack frames, mutable locals, recursion, or dynamic dispatch.
 struct Expr {
-  enum class Tag { Constant, Parameter, Negative, Add, Sub, Mul, Call };
+  enum class Tag { Constant, Parameter, Negative, Abs, Add, Sub, Mul, Call };
   Tag tag;
   std::int64_t value = 0;
   std::string name;
@@ -216,7 +216,7 @@ class Parser {
     }
     if (source_.substr(at_,3)=="...")
       error("tuple-v2 explicit spread requires single-evaluation checked lowering");
-    if (std::string_view("()+-*/{};:,?").find(static_cast<char>(c)) ==
+    if (std::string_view("()+-*/{};:,.?").find(static_cast<char>(c)) ==
         std::string_view::npos) error("invalid character");
     ++at_;
     tok_={Kind::Punct,source_.substr(start,1),start};
@@ -362,6 +362,17 @@ class Parser {
       if (tok_.text=="match" || tok_.text=="switch")
         error("expected integer");
       const std::string name=identifier();
+      if (name=="Math" && take(".")) {
+        const std::string method=identifier();
+        expect("(");
+        auto argument=expression(depth+1);
+        expect(")");
+        std::vector<ExprPtr> args;
+        args.push_back(std::move(argument));
+        if (method=="abs") return node(Expr::Tag::Abs,std::move(args),0,method,offset);
+        if (method=="neg") return node(Expr::Tag::Negative,std::move(args),0,method,offset);
+        error("unsupported Math intrinsic");
+      }
       if (!take("(")) return node(Expr::Tag::Parameter,{},0,name,offset);
       std::vector<ExprPtr> args;
       if (tok_.text!=")") {
@@ -429,6 +440,10 @@ class Parser {
         const int zero=add(Op::Constant,0);
         const int x=lower(*e.children.at(0),env,active,call_depth);
         return add(Op::Sub,0,zero,x);
+      }
+      case Expr::Tag::Abs: {
+        const int x=lower(*e.children.at(0),env,active,call_depth);
+        return add(Op::Abs,0,x);
       }
       case Expr::Tag::Add: case Expr::Tag::Sub: case Expr::Tag::Mul: {
         const int a=lower(*e.children.at(0),env,active,call_depth);
