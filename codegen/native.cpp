@@ -62,6 +62,15 @@ std::string emit_runtime_asm(const Program& p,Arch arch) {
       } else if (ins.op==Op::Return) {
         out<<"  movq "<<slot(ins.a)<<", %rax\n"
            <<"  addq $"<<bytes<<", %rsp\n  ret\n";
+      } else if (ins.op==Op::Abs) {
+        const auto label=".Loresforge_abs_ok_"+std::to_string(i);
+        out<<"  movq "<<slot(ins.a)<<", %rax\n"
+           <<"  testq %rax, %rax\n"
+           <<"  jns "<<label<<"\n"
+           <<"  negq %rax\n"
+           <<"  jo .Loresforge_overflow\n"
+           <<label<<":\n"
+           <<"  movq %rax, "<<slot(static_cast<int>(i))<<"\n";
       } else {
         out<<"  movq "<<slot(ins.a)<<", %rax\n";
         switch(ins.op) {
@@ -105,6 +114,16 @@ std::string emit_runtime_asm(const Program& p,Arch arch) {
         out<<"  ldr x0, "<<slot(ins.a)<<"\n";
         adjust(false);
         out<<"  ret\n";
+      } else if (ins.op==Op::Abs) {
+        const auto label=".Loresforge_abs_ok_"+std::to_string(i);
+        out<<"  ldr x9, "<<slot(ins.a)<<"\n"
+           <<"  mov x11, x9\n"
+           <<"  cmp x9, #0\n"
+           <<"  b.ge "<<label<<"\n"
+           <<"  negs x11, x9\n"
+           <<"  b.vs .Loresforge_overflow\n"
+           <<label<<":\n"
+           <<"  str x11, "<<slot(static_cast<int>(i))<<"\n";
       } else {
         out<<"  ldr x9, "<<slot(ins.a)<<"\n"
            <<"  ldr x10, "<<slot(ins.b)<<"\n";
