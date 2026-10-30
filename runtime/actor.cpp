@@ -12,8 +12,13 @@ bool CapabilityToken::attach_owned_resource(
   try {
     std::scoped_lock lock(resource_mutex_);
     if (!active.load(std::memory_order_acquire)) return false;
-    resources_.emplace_back(resource);
-    return true;
+    for (auto& slot : resources_) {
+      if (slot.expired()) {
+        slot = resource;
+        return true;
+      }
+    }
+    return false;
   } catch (...) {
     return false;
   }
@@ -24,9 +29,10 @@ void CapabilityToken::invalidate() noexcept {
   active.store(false, std::memory_order_release);
   try {
     std::scoped_lock lock(resource_mutex_);
-    for (auto& weak : resources_)
+    for (auto& weak : resources_) {
       if (auto resource = weak.lock()) resource->actor_owner_stopped();
-    resources_.clear();
+      weak.reset();
+    }
   } catch (...) {
     // Actor teardown itself must not throw. The authority remains fenced even
     // if a host mutex/allocation primitive reports a fatal platform failure.
