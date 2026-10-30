@@ -6,10 +6,15 @@
 #include <latch>
 #include <limits>
 #include <thread>
+#include <type_traits>
 #include <vector>
 
 using namespace oresforge::shared;
 using oresforge::runtime::Mailbox;
+static_assert(!std::is_constructible_v<ActorContext, std::uint64_t, std::uint64_t,
+                                       std::uint64_t,
+                                       std::shared_ptr<const oresforge::runtime::CapabilityToken>>,
+              "guest/FFI code must not be able to forge ActorContext");
 namespace {
 void check(bool value, const char* message) {
   if (!value) throw std::runtime_error(message);
@@ -75,6 +80,35 @@ void table_authority() {
     expired = retired.owner_capability(owner);
   }
   error(TableErrorCode::Denied, [&] { replacement.lookup(expired, owner, 7); });
+}
+
+void actor_context_lifecycle() {
+  Mailbox mailbox{50};
+  const auto first = mailbox.context();
+  check(first.valid(), "fresh actor context invalid");
+  (void)mailbox.restart();
+  const auto second = mailbox.context();
+  check(!first.valid() && second.valid() && first != second,
+        "restart did not fence the old actor incarnation");
+
+  SharedI64Table<1> table(second, TableAccess::Public);
+  const auto cap = table.owner_capability(second);
+  table.insert(cap, second, 1, 42);
+  (void)mailbox.restart();
+  const auto third = mailbox.context();
+  check(!second.valid() && third.valid(),
+        "second incarnation remained live after restart");
+  error(TableErrorCode::Denied, [&] { table.lookup(cap, second, 1); });
+  error(TableErrorCode::Denied, [&] { table.lookup(cap, third, 1); });
+  // Lifecycle retirement is a trusted scheduler hook keyed to the exact old
+  // opaque context; it remains usable for teardown after the actor is fenced.
+  table.owner_stopped(second);
+
+  Mailbox closed{60};
+  const auto before_close = closed.context();
+  closed.close();
+  check(!before_close.valid(), "close did not fence actor context");
+  throws<std::runtime_error>([&] { (void)closed.context(); });
 }
 
 void table_atomic_failures() {
@@ -253,11 +287,12 @@ void singleton_dependencies_and_close() {
 int main() {
   try {
     table_authority();
+    actor_context_lifecycle();
     table_atomic_failures();
     table_concurrency();
     singleton_once_and_failure();
     singleton_dependencies_and_close();
-    std::cout << "PASS: authority, capacity, overflow, 80000 atomic increments, insert/CAS winners, retirement, once publication, sticky failure, cycles and close\n";
+    std::cout << "PASS: runtime-minted actor identity, restart/close fencing, authority, capacity, overflow, 80000 atomic increments, insert/CAS winners, retirement, once publication, sticky failure, cycles and close\n";
     return 0;
   } catch (const std::exception& e) {
     std::cerr << e.what() << '\n';
