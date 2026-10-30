@@ -42,6 +42,13 @@ FUNCTION_CASES = (
      "fnc twice(x:int):int{return x*2;}"
      " fnc main():int{return twice(10)+twice(3);}", "26"),
 )
+PORTABLE_FIXTURE_DIR = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "numeric-v1"
+PORTABLE_SUCCESS = ("math-i64-ok.ores", "84")
+PORTABLE_TRAPS = (
+    ("math-i64-abs-min.ores", "i64 abs overflow"),
+    ("math-i64-neg-min.ores", "i64 sub overflow"),
+)
+
 FUNCTION_REJECTIONS = (
     ("direct-recursion",
      "fnc main():int{return recur(1);}"
@@ -156,6 +163,64 @@ def main():
                 status, out, err = run(argv, cwd=root)
                 require(status == 1 and out == "" and diagnostic in err,
                         "invalid source leaked output or used wrong diagnostic: " + label + "/" + mode)
+        # The byte-identical common-source Math corpus must also survive the
+        # non-folding runtime IR/native path. This proves actual machine-code
+        # overflow traps rather than counting compile-time interpretation.
+        portable_name, portable_expected = PORTABLE_SUCCESS
+        portable_source = PORTABLE_FIXTURE_DIR / portable_name
+        require(portable_source.is_file(), "missing portable numeric fixture " + portable_name)
+        portable_bytes = portable_source.read_bytes()
+        require(len(portable_bytes) <= 4096, "portable numeric fixture exceeds bound")
+        status, out, err = run([str(compiler), "run-runtime", str(portable_source)], cwd=root)
+        require((status, out, err) == (0, portable_expected + "\n", ""),
+                "portable runtime interpreter mismatch")
+        status, assembly, err = run(
+            [str(compiler), "emit-runtime-asm", arch, str(portable_source)], cwd=root)
+        require(status == 0 and err == "" and ".Loresforge_overflow:" in assembly,
+                "portable runtime assembly missing checked overflow path")
+        asm.write_text(assembly, encoding="ascii")
+        status, out, err = run([cc, "-std=c11", "-Wall", "-Wextra", "-Werror",
+                                str(driver), str(asm), "-o", str(executable)], cwd=root)
+        require(status == 0, "portable assembler/link failed: " + err)
+        status, out, err = run([str(executable)], cwd=root)
+        require((status, out, err) == (0, portable_expected + "\n", ""),
+                "portable native Math success divergence")
+        observations.append({
+            "case": "portable-" + portable_name,
+            "value": portable_expected,
+            "source_sha256": hashlib.sha256(portable_bytes).hexdigest(),
+            "assembly_sha256": hashlib.sha256(assembly.encode()).hexdigest(),
+        })
+
+        expected_signal = 4 if arch == "x86_64" else 5
+        portable_traps = []
+        for portable_name, diagnostic in PORTABLE_TRAPS:
+            portable_source = PORTABLE_FIXTURE_DIR / portable_name
+            require(portable_source.is_file(), "missing portable numeric fixture " + portable_name)
+            portable_bytes = portable_source.read_bytes()
+            require(len(portable_bytes) <= 4096, "portable numeric fixture exceeds bound")
+            status, out, err = run([str(compiler), "run-runtime", str(portable_source)], cwd=root)
+            require(status == 1 and out == "" and diagnostic in err,
+                    "portable checked interpreter used wrong overflow diagnostic: " + portable_name)
+            status, assembly, err = run(
+                [str(compiler), "emit-runtime-asm", arch, str(portable_source)], cwd=root)
+            require(status == 0 and err == "" and ".Loresforge_overflow:" in assembly,
+                    "portable overflow source did not emit checked native trap path")
+            asm.write_text(assembly, encoding="ascii")
+            status, out, err = run([cc, "-std=c11", "-Wall", "-Wextra", "-Werror",
+                                    str(driver), str(asm), "-o", str(executable)], cwd=root)
+            require(status == 0, "portable overflow assembler/link failed: " + err)
+            status, out, err = run([str(executable)], cwd=root)
+            require(status == -expected_signal and out == "",
+                    "portable overflow native binary did not terminate with expected signal: "
+                    + portable_name + " got " + str(status))
+            portable_traps.append({
+                "case": portable_name,
+                "signal": expected_signal,
+                "source_sha256": hashlib.sha256(portable_bytes).hexdigest(),
+                "assembly_sha256": hashlib.sha256(assembly.encode()).hexdigest(),
+            })
+
     print(json.dumps({
         "kind": "forge-stage0-native-assembly-execution",
         "compiler_sha256": compiler_sha,
@@ -166,6 +231,7 @@ def main():
         "rejected_function_negative_by_all_three_modes": len(FUNCTION_REJECTIONS),
         "self_hosted": False,
         "native_codegen_scope": "constant-folded i64 entry only",
+        "portable_runtime_native_traps": portable_traps,
         "observations": observations,
     }, sort_keys=True))
     return 0
