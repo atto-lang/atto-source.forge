@@ -62,6 +62,11 @@ if(BUILD_TESTING)
   add_test(NAME native_pinned_tcp_host_boundary COMMAND oresforge_pinned_tcp_tests)
   set_tests_properties(native_pinned_tcp_host_boundary PROPERTIES TIMEOUT 15)
 
+  add_executable(oresforge_singleton_admission verification/singleton_admission.cpp)
+  target_link_libraries(oresforge_singleton_admission PRIVATE oresforge_core)
+  add_test(NAME oresforge_singleton_admission COMMAND oresforge_singleton_admission)
+  set_tests_properties(oresforge_singleton_admission PROPERTIES TIMEOUT 15)
+
   add_executable(oresforge_tests verification/tests.cpp)
   add_dependencies(oresforge_tests oresforge_numeric_i64_cases oresforge_numeric_overflow_cases)
   target_include_directories(oresforge_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")

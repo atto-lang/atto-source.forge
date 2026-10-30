@@ -259,6 +259,11 @@ class Parser {
       if (take("define")) { if (defined) error("duplicate define"); defined=true; }
       else if (take("pub")) { if (public_) error("duplicate pub"); public_=true; }
     }
+    // Singleton identity, once initialization and shared-state authority are
+    // not implemented by the scalar/runtime bootstrap. Classify this gap
+    // before any IR is returned; a generic syntax rejection is not parity.
+    if (tok_.text=="singleton")
+      error("ORES-SINGLETON-UNSUPPORTED: singleton declarations require once initialization and capability-checked shared-state lowering");
     expect("fnc");
     const std::string name=identifier();
     if (name=="int" || name=="fnc" || name=="return")
@@ -472,4 +477,5 @@ Program parse_runtime_source(std::string_view source) {
   return Parser(source,true).parse();
 }
 }
+
 

@@ -113,6 +113,9 @@ class Parser {
       if (take("define")) {if(defining)fail("duplicate define");defining=true;}
       else if (take("pub")) {if(public_)fail("duplicate pub");public_=true;}
     }
+    // Keep the opt-in native-call profile behind the same admission gate.
+    if (token_.text=="singleton")
+      fail("ORES-SINGLETON-UNSUPPORTED: singleton declarations require once initialization and capability-checked shared-state lowering");
     expect("fnc");
     const std::string name=identifier();
     if (name=="int"||name=="return"||name=="if"||name=="else"||name=="then")
@@ -467,3 +470,4 @@ std::string emit_asm(const Module& m,Arch arch) {
   return Native{m}.build();
 }
 }
+
