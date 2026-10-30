@@ -123,6 +123,16 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/verification/cli_source_budget.py"
       "$<TARGET_FILE:oresforge>")
   set_tests_properties(oresforge_cli_source_budget PROPERTIES TIMEOUT 20)
+  # Exact canonical callback-source fixture. Forge remains fail-closed
+  # until async/Future continuation lowering exists; a working scalar control
+  # prevents a broken compiler from masquerading as expected rejection.
+  add_test(NAME oresforge_execution_context_callback_source_expected_reject
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/execution_context_callback_source_gate.py"
+      --compiler "$<TARGET_FILE:oresforge>"
+      --fixture "${CMAKE_CURRENT_SOURCE_DIR}/verification/fixtures/execution-context-callbacks/v1/callback_sync_resolve.ores")
+  set_tests_properties(oresforge_execution_context_callback_source_expected_reject
+    PROPERTIES TIMEOUT 45)
   # Source to IR interpreter (not machine code or native AOT parity).
   add_test(NAME oresforge_source_i64_interpreter
     COMMAND "${Python3_EXECUTABLE}"
