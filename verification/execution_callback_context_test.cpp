@@ -12,6 +12,8 @@ using ores::runtime::ExecutionCallbackContextScope;
 using ores::runtime::ExecutionContextValue;
 using ores::runtime::capture_execution_callback_context;
 using ores::runtime::current_execution_callback_context;
+using ores::runtime::derive_execution_callback_context;
+using ores::runtime::max_callback_trace_boundaries;
 
 int main() {
     static_assert(std::is_trivially_copyable_v<ExecutionCallbackContext>);
@@ -29,6 +31,9 @@ int main() {
     assert(capture_execution_callback_context(
         active, CallbackBoundary::host_callback, outer));
     assert(outer.execution == 41);
+    assert(outer.trace_count == 1);
+    assert(outer.trace_boundaries[0] == CallbackBoundary::host_callback);
+    assert(outer.trace_elided == 0);
     assert(current_execution_callback_context() == nullptr);
 
     ExecutionContextValue nested_active = active;
@@ -93,6 +98,8 @@ int main() {
                 .parent_execution = 41,
                 .continuation = 9,
                 .boundary = CallbackBoundary::io,
+                .trace_boundaries = {CallbackBoundary::io},
+                .trace_count = 1,
             });
         const auto* observed = current_execution_callback_context();
         assert(observed != nullptr);
@@ -100,6 +107,66 @@ int main() {
         assert(observed->boundary == CallbackBoundary::io);
     }
     assert(current_execution_callback_context() == nullptr);
+
+    ExecutionCallbackContext traced = outer;
+    ExecutionCallbackContext derived{};
+    assert(derive_execution_callback_context(
+        traced, CallbackBoundary::io, derived));
+    assert(traced.trace_count == 1);
+    assert(derived.trace_count == 2);
+    assert(derived.trace_boundaries[0] == CallbackBoundary::host_callback);
+    assert(derived.trace_boundaries[1] == CallbackBoundary::io);
+
+    const CallbackBoundary sequence[] = {
+        CallbackBoundary::timer,
+        CallbackBoundary::await,
+        CallbackBoundary::actor_message,
+        CallbackBoundary::supervisor_control,
+        CallbackBoundary::task_join,
+        CallbackBoundary::spawn,
+        CallbackBoundary::host_callback,
+        CallbackBoundary::io,
+        CallbackBoundary::timer,
+        CallbackBoundary::await,
+        CallbackBoundary::actor_message,
+        CallbackBoundary::spawn,
+    };
+    traced = derived;
+    for (CallbackBoundary boundary : sequence) {
+        ExecutionCallbackContext next{};
+        assert(derive_execution_callback_context(traced, boundary, next));
+        traced = next;
+    }
+    assert(traced.trace_count == max_callback_trace_boundaries);
+    assert(traced.trace_elided == 6);
+    assert(traced.trace_boundaries[0] == CallbackBoundary::task_join);
+    assert(traced.trace_boundaries[1] == CallbackBoundary::spawn);
+    assert(traced.trace_boundaries[2] == CallbackBoundary::host_callback);
+    assert(traced.trace_boundaries[3] == CallbackBoundary::io);
+    assert(traced.trace_boundaries[4] == CallbackBoundary::timer);
+    assert(traced.trace_boundaries[5] == CallbackBoundary::await);
+    assert(traced.trace_boundaries[6] == CallbackBoundary::actor_message);
+    assert(traced.trace_boundaries[7] == CallbackBoundary::spawn);
+    assert(outer.trace_count == 1);
+    assert(outer.trace_elided == 0);
+
+    const CallbackBoundary required[] = {
+        CallbackBoundary::await,
+        CallbackBoundary::host_callback,
+        CallbackBoundary::timer,
+        CallbackBoundary::io,
+        CallbackBoundary::actor_message,
+        CallbackBoundary::supervisor_control,
+        CallbackBoundary::task_join,
+        CallbackBoundary::spawn,
+    };
+    for (CallbackBoundary boundary : required) {
+        ExecutionCallbackContext one{};
+        assert(capture_execution_callback_context(active, boundary, one));
+        assert(one.boundary == boundary);
+        assert(one.trace_count == 1);
+        assert(one.trace_boundaries[0] == boundary);
+    }
 
     bool invalid_scope_rejected = false;
     try {
