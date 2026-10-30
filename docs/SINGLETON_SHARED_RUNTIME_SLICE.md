@@ -35,9 +35,12 @@ Cancellation and deadline-aware waits are not implemented.
   public tables still require an explicit write capability.
 - Mutex-linearized lookup, insert, insert-if-absent, CAS, erase and checked counter
   update. Capacity/overflow/missing-key errors leave contents unchanged.
-- Each table weakly registers as an actor-owned runtime resource. Mailbox close,
-  restart, and destruction automatically retire every table owned by that exact
-  incarnation under the same mutex as operations. The explicit trusted
+- Each table weakly registers as an actor-owned runtime resource in a fixed
+  256-slot per-incarnation registry. Registration does not dynamically grow;
+  exhaustion fails table construction with `Capacity`, and expired slots are
+  reusable. Mailbox close, restart, and destruction automatically retire every
+  table owned by that exact incarnation under the same mutex as operations.
+  The explicit trusted
   `owner_stopped()` hook remains available for scheduler adapters, but ordinary
   lifecycle correctness no longer depends on callers remembering to invoke it.
   Old handles cannot authorize a replacement table, including after destruction.
@@ -63,11 +66,13 @@ Keeping C++ fields private does not create an FFI security boundary. Do not
 serialize/export these host structs or permit native memory manipulation.
 
 Each table allocates its fixed slot storage once, then uses bounded linear scans
-(no hash collision variability). Successful operations create no dynamic slot
+(no hash collision variability). Actor-resource registration is a fixed 256-slot
+scan and does not grow a container. Successful operations create no dynamic slot
 allocation, call no guest code and expose no borrowed storage. Exception delivery
 and host locks/reference-counting still use host runtime machinery. Per-application
-table count, total byte budgets, compiler Error/Result mapping, heir transfer,
-fine-grained capability revocation, and guest permission checks remain pending.
+domain-wide table count/byte budgets beyond the per-actor 256-resource ceiling,
+compiler Error/Result mapping, heir transfer, fine-grained capability revocation,
+and guest permission checks remain pending.
 
 A `shared_ptr<const T>` does not prove deep immutability of reachable objects.
 Compiler checking must reject mutable/actor-private aliases and initializer
@@ -103,6 +108,8 @@ Runtime tests exercise:
 - Exactly one insert-if-absent winner and one CAS winner.
 - Automatic owner retirement on restart, close and mailbox destruction, including
   retirement racing reads, stale replacement handles and expired capabilities.
+- Filling the 256-resource lifecycle registry, deterministic capacity failure,
+  expired-slot reuse, and full-set retirement on restart.
 - Concurrent singleton publication with identical reader identities and complete values.
 - Sticky failure, recursion, cross-thread initializer cycles and cross-type nesting.
 - Allowed published dependencies, close before/during/after initialization,
