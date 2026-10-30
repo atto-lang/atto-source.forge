@@ -161,6 +161,8 @@ class Parser {
         error("private abstract hooks require typed native vtables and superclass-only dispatch");
       if (tok_.text=="class" || tok_.text=="actor")
         error("class/actor methods require typed native lowering");
+      if (tok_.text=="InvertedArray")
+        error("inverted collection requires typed owned SoA columns and generation-checked row lowering");
       if (tok_.text=="lex" || tok_.text=="nlex")
         error("lexical captures require checked closure lowering");
       if (tok_.text=="cpu" || tok_.text=="gpu" || tok_.text=="nb")
@@ -259,6 +261,11 @@ class Parser {
       if (take("define")) { if (defined) error("duplicate define"); defined=true; }
       else if (take("pub")) { if (public_) error("duplicate pub"); public_=true; }
     }
+    // An explicitly inverted declaration is a nominal row-layout request,
+    // never a scalar function. The Stage-0 frontend must reject it before
+    // parsing a subsequent unrelated function or emitting native code.
+    if (tok_.text=="inverted")
+      error("inverted struct/class requires one-level typed SoA and ownership lowering");
     expect("fnc");
     const std::string name=identifier();
     if (name=="int" || name=="fnc" || name=="return")
