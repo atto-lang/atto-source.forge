@@ -1,4 +1,5 @@
 #include "runtime/state_region_provenance.hpp"
+#include "compiler/state_region_requirement.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -6,6 +7,7 @@
 using oresforge::runtime::StateRegionAccess;
 using oresforge::runtime::StateRegionAction;
 using oresforge::runtime::StateRegionLoanProvenance;
+using oresforge::compiler::StateRegionLoanRequirement;
 
 #define CHECK(x) do { if (!(x)) {   std::fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #x);   std::abort(); } } while (false)
 
@@ -59,6 +61,19 @@ int main() {
   CHECK(!invalid.valid());
   CHECK(!invalid.authorizes_release(release));
 
-  std::puts("PASS Forge state-region provenance v1 (1 positive, 9 negative vectors)");
+  constexpr StateRegionLoanRequirement requirement{
+      "inventory", true, true, 501, "inventory.stock",
+      StateRegionAccess::write, StateRegionAction::borrow};
+  static_assert(requirement.valid());
+  constexpr auto requirement_release = requirement.release_requirement();
+  static_assert(requirement.authorizes_release(requirement_release));
+  auto unfenced = requirement;
+  unfenced.require_generation_fence = false;
+  CHECK(!unfenced.valid());
+  auto other_binding = requirement_release;
+  other_binding.region_binding = "orders";
+  CHECK(!requirement.authorizes_release(other_binding));
+
+  std::puts("PASS Forge state-region requirement/provenance v1");
   return 0;
 }
