@@ -6,7 +6,6 @@
 #include <deque>
 #include <vector>
 namespace oresforge::runtime {
-struct CapabilityToken final {}; // unique per mailbox incarnation
 namespace {
 // Only pending mailbox-owned copies may be wiped. Already-delivered values
 // belong to the receiver. Volatile byte stores prevent dead-store elimination
@@ -21,11 +20,15 @@ void discard_queued(std::deque<std::vector<std::uint8_t>>& queue) noexcept {
 } // namespace
 // Clean pending mailbox-owned data on destruction, not just explicit close.
 // As with any C++ object, destruction requires all users to have stopped.
-Mailbox::~Mailbox() noexcept { discard_queued(queue_); }
-Mailbox::Mailbox(std::uint64_t id,std::size_t capacity,std::size_t bytes):
-    id_(id),capacity_(capacity),byte_capacity_(bytes) {
+Mailbox::~Mailbox() noexcept {
+  if (authority_) authority_->active.store(false, std::memory_order_release);
+  discard_queued(queue_);
+}
+Mailbox::Mailbox(std::uint64_t id,std::size_t capacity,std::size_t bytes,
+                 std::uint64_t domain):
+    id_(id),domain_(domain),capacity_(capacity),byte_capacity_(bytes) {
   // Reject invalid admission budgets before allocating a capability.
-  if (id==0 || capacity==0 || capacity>kMaxMailboxMessages ||
+  if (id==0 || domain==0 || capacity==0 || capacity>kMaxMailboxMessages ||
       bytes==0 || bytes>kMaxMailboxBytes)
     throw std::invalid_argument("invalid or unbounded mailbox capacity");
   authority_=std::make_shared<CapabilityToken>();
@@ -33,6 +36,13 @@ Mailbox::Mailbox(std::uint64_t id,std::size_t capacity,std::size_t bytes):
 ActorRef Mailbox::ref() const {
   std::scoped_lock lock(mutex_);
   return ActorRef{id_,generation_,authority_};
+}
+ActorContext Mailbox::context() const {
+  std::scoped_lock lock(mutex_);
+  if (closed_ || !authority_ ||
+      !authority_->active.load(std::memory_order_acquire))
+    throw std::runtime_error("closed actor has no execution context");
+  return ActorContext{domain_,id_,generation_,authority_};
 }
 void Mailbox::send(ActorRef destination,std::span<const std::uint8_t> payload) {
   std::scoped_lock lock(mutex_);
@@ -60,6 +70,7 @@ std::optional<std::vector<std::uint8_t>> Mailbox::receive() {
 void Mailbox::close() {
   std::scoped_lock lock(mutex_);
   closed_=true;
+  authority_->active.store(false, std::memory_order_release);
   discard_queued(queue_);
   queued_bytes_=0;
 }
@@ -69,6 +80,7 @@ ActorRef Mailbox::restart() {
     throw std::overflow_error("generation exhausted");
   // Allocate first: allocation failure leaves the old incarnation untouched.
   auto fresh=std::make_shared<CapabilityToken>();
+  authority_->active.store(false, std::memory_order_release);
   ++generation_;
   authority_=std::move(fresh);
   closed_=false;
