@@ -40,12 +40,20 @@ int main() {
 
     try {
         ExecutionCallbackContextScope outer_scope(outer);
-        assert(current_execution_callback_context() == &outer);
+        const auto* outer_observed = current_execution_callback_context();
+        assert(outer_observed != nullptr);
+        assert(outer_observed->execution == outer.execution);
+        assert(outer_observed->boundary == outer.boundary);
         {
             ExecutionCallbackContextScope inner_scope(inner);
-            assert(current_execution_callback_context() == &inner);
+            const auto* inner_observed = current_execution_callback_context();
+            assert(inner_observed != nullptr);
+            assert(inner_observed->execution == inner.execution);
+            assert(inner_observed->boundary == inner.boundary);
         }
-        assert(current_execution_callback_context() == &outer);
+        outer_observed = current_execution_callback_context();
+        assert(outer_observed != nullptr);
+        assert(outer_observed->execution == outer.execution);
         throw std::runtime_error("boom");
     } catch (const std::runtime_error&) {
     }
@@ -74,6 +82,33 @@ int main() {
     foreign.join();
     assert(foreign_saw_empty.load(std::memory_order_relaxed));
     assert(explicit_scope_ok.load(std::memory_order_relaxed));
+
+    {
+        ExecutionCallbackContextScope temporary_scope(
+            ExecutionCallbackContext{
+                .runtime_domain = 17,
+                .execution = 77,
+                .dispatch = 12,
+                .generation = 4,
+                .parent_execution = 41,
+                .continuation = 9,
+                .boundary = CallbackBoundary::io,
+            });
+        const auto* observed = current_execution_callback_context();
+        assert(observed != nullptr);
+        assert(observed->execution == 77);
+        assert(observed->boundary == CallbackBoundary::io);
+    }
+    assert(current_execution_callback_context() == nullptr);
+
+    bool invalid_scope_rejected = false;
+    try {
+        ExecutionCallbackContextScope invalid_scope(ExecutionCallbackContext{});
+    } catch (const std::invalid_argument&) {
+        invalid_scope_rejected = true;
+    }
+    assert(invalid_scope_rejected);
+    assert(current_execution_callback_context() == nullptr);
 
     ExecutionCallbackContext invalid{};
     ExecutionContextValue zero = active;
