@@ -9,6 +9,7 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -40,6 +41,22 @@ void reject_diagnostic(const std::function<void()>& fn,std::string_view diagnost
 oresforge::Program source(const std::string& expr) {
   return oresforge::parse_source("define pub fnc main() : int { return "+expr+"; }");
 }
+std::string portable_numeric_fixture(const char* name) {
+  const std::string path=std::string(ORESFORGE_SOURCE_DIR)+
+    "/tests/fixtures/numeric-v1/"+name;
+  std::ifstream input(path,std::ios::binary);
+  if (!input) throw std::runtime_error("cannot open portable numeric fixture: "+path);
+  input.seekg(0,std::ios::end);
+  const auto size=input.tellg();
+  if (size<0 || size>4096)
+    throw std::runtime_error("portable numeric fixture size outside bound");
+  input.seekg(0,std::ios::beg);
+  std::string text(static_cast<std::size_t>(size),'\0');
+  input.read(text.data(),static_cast<std::streamsize>(text.size()));
+  if (!input && !text.empty())
+    throw std::runtime_error("cannot read portable numeric fixture");
+  return text;
+}
 }
 int main() {
   try {
@@ -62,6 +79,16 @@ int main() {
       reject_diagnostic([&] { (void)interpret(source(expression)); },
                         overflow_diagnostics[i]);
     }
+    const auto portable_ok=portable_numeric_fixture("math-i64-ok.ores");
+    ensure(interpret(parse_source(portable_ok))==84,
+           "portable byte-identical Math guest result");
+    const auto portable_abs_min=portable_numeric_fixture("math-i64-abs-min.ores");
+    reject_diagnostic([&] { (void)interpret(parse_source(portable_abs_min)); },
+                      "i64 abs overflow");
+    const auto portable_neg_min=portable_numeric_fixture("math-i64-neg-min.ores");
+    reject_diagnostic([&] { (void)interpret(parse_source(portable_neg_min)); },
+                      "i64 sub overflow");
+
     // Native Math scalar intrinsics use checked OresIR, never host std::abs.
     ensure(interpret(source("Math.abs(-42)"))==42,"Math.abs negative");
     ensure(interpret(source("Math.abs(0)"))==0,"Math.abs zero");
