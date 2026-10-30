@@ -1,5 +1,6 @@
 #include "runtime/shared_i64_table.hpp"
 #include "runtime/singleton_cell.hpp"
+#include "runtime/singleton_registry.hpp"
 #include <atomic>
 #include <barrier>
 #include <iostream>
@@ -28,6 +29,15 @@ template<class E, class F> void throws(F operation) {
   try { operation(); }
   catch (const E&) { return; }
   throw std::runtime_error("expected exception");
+}
+template<class F> void registry_error(
+    SingletonRegistryErrorCode code, F operation) {
+  try { operation(); }
+  catch (const SingletonRegistryError& e) {
+    check(e.code == code, "wrong singleton registry error");
+    return;
+  }
+  throw std::runtime_error("singleton registry operation unexpectedly succeeded");
 }
 void table_authority() {
   Mailbox owner_box{1};
@@ -257,6 +267,108 @@ void table_concurrency() {
   check(unexpected == 0, "retirement exposed partial state");
 }
 
+void singleton_domain_registry() {
+  using Value = std::array<int, 2>;
+  Mailbox first_box{201, 1024, 4 * oresforge::runtime::kMaxMessageBytes, 7};
+  Mailbox second_box{202, 1024, 4 * oresforge::runtime::kMaxMessageBytes, 7};
+  Mailbox foreign_box{203, 1024, 4 * oresforge::runtime::kMaxMessageBytes, 8};
+  const auto first_actor = first_box.context();
+  const auto second_actor = second_box.context();
+  const auto foreign_actor = foreign_box.context();
+
+  SingletonRegistry<Value, 4> registry{7};
+  const SingletonDeclarationId settings{11, 1};
+  const SingletonDeclarationId imported_alias{11, 1};
+  const SingletonDeclarationId other{11, 2};
+  const SingletonDeclarationId failing{11, 3};
+  const SingletonDeclarationId fourth{11, 4};
+  const SingletonDeclarationId over_budget{11, 5};
+
+  std::atomic<int> initialized{0};
+  std::barrier start(8);
+  std::array<std::shared_ptr<const Value>, 8> values{};
+  std::vector<std::thread> workers;
+  for (int i = 0; i < 8; ++i) {
+    const auto actor = (i % 2 == 0) ? first_actor : second_actor;
+    workers.emplace_back([&, i, actor] {
+      start.arrive_and_wait();
+      values[i] = registry.get(actor, settings, [&] {
+        ++initialized;
+        return Value{21, 42};
+      });
+    });
+  }
+  for (auto& worker : workers) worker.join();
+  check(initialized == 1, "domain singleton initialized more than once");
+  for (const auto& value : values)
+    check(value == values[0] && (*value)[1] == 42,
+          "same-domain actors received different singleton identity");
+
+  // Import aliases are resolved by the compiler to the same declaration ID.
+  bool alias_initializer_ran = false;
+  auto alias = registry.get(second_actor, imported_alias, [&] {
+    alias_initializer_ran = true;
+    return Value{0, 0};
+  });
+  check(alias == values[0] && !alias_initializer_ran,
+        "import alias did not resolve to the original singleton cell");
+
+  registry_error(SingletonRegistryErrorCode::Denied, [&] {
+    registry.get(foreign_actor, settings, [] { return Value{1, 1}; });
+  });
+  registry_error(SingletonRegistryErrorCode::InvalidDeclaration, [&] {
+    registry.get(first_actor, SingletonDeclarationId{}, [] {
+      return Value{1, 1};
+    });
+  });
+
+  const auto stale_second = second_actor;
+  (void)second_box.restart();
+  const auto restarted_second = second_box.context();
+  registry_error(SingletonRegistryErrorCode::Denied, [&] {
+    registry.get(stale_second, settings, [] { return Value{1, 1}; });
+  });
+  check(registry.get(restarted_second, settings, [] {
+          return Value{0, 0};
+        }) == values[0],
+        "restarted same-domain actor did not resolve existing singleton");
+
+  auto other_value = registry.get(first_actor, other, [] {
+    return Value{7, 8};
+  });
+  check(other_value != values[0] && (*other_value)[0] == 7,
+        "distinct declaration IDs aliased one singleton cell");
+
+  int failure_attempts = 0;
+  for (int i = 0; i < 2; ++i)
+    throws<std::logic_error>([&] {
+      registry.get(i == 0 ? first_actor : restarted_second, failing,
+                   [&]() -> Value {
+                     ++failure_attempts;
+                     throw std::logic_error("registry init failure");
+                   });
+    });
+  check(failure_attempts == 1,
+        "registry retried a failed singleton declaration");
+
+  (void)registry.get(first_actor, fourth, [] { return Value{4, 4}; });
+  registry_error(SingletonRegistryErrorCode::Capacity, [&] {
+    registry.get(first_actor, over_budget, [] { return Value{5, 5}; });
+  });
+
+  registry.close();
+  registry.close();
+  check((*values[0])[1] == 42,
+        "registry close invalidated an existing immutable reader lease");
+  registry_error(SingletonRegistryErrorCode::Closed, [&] {
+    registry.get(first_actor, settings, [] { return Value{0, 0}; });
+  });
+
+  throws<std::invalid_argument>([] {
+    SingletonRegistry<int, 1> invalid_domain{0};
+  });
+}
+
 void singleton_once_and_failure() {
   SingletonCell<std::array<int, 2>> cell;
   std::atomic<int> initialized{0}, failures{0};
@@ -356,9 +468,10 @@ int main() {
     actor_owned_resource_budget();
     table_atomic_failures();
     table_concurrency();
+    singleton_domain_registry();
     singleton_once_and_failure();
     singleton_dependencies_and_close();
-    std::cout << "PASS: runtime-minted actor identity, bounded automatic restart/close/destructor retirement, authority, capacity, overflow, 80000 atomic increments, insert/CAS winners, once publication, sticky failure, cycles and close\n";
+    std::cout << "PASS: runtime-minted actor identity, bounded automatic table retirement, domain singleton identity/aliasing, authority, capacity, overflow, 80000 atomic increments, insert/CAS winners, once publication, sticky failure, cycles and close\n";
     return 0;
   } catch (const std::exception& e) {
     std::cerr << e.what() << '\n';
