@@ -6,6 +6,39 @@
 #include <deque>
 #include <vector>
 namespace oresforge::runtime {
+bool CapabilityToken::attach_owned_resource(
+    const std::shared_ptr<ActorLifetimeResource>& resource) const noexcept {
+  if (!resource) return false;
+  try {
+    std::scoped_lock lock(resource_mutex_);
+    if (!active.load(std::memory_order_acquire)) return false;
+    resources_.emplace_back(resource);
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
+
+void CapabilityToken::invalidate() noexcept {
+  // Fence new operations before waiting for any in-flight table operation.
+  active.store(false, std::memory_order_release);
+  try {
+    std::scoped_lock lock(resource_mutex_);
+    for (auto& weak : resources_)
+      if (auto resource = weak.lock()) resource->actor_owner_stopped();
+    resources_.clear();
+  } catch (...) {
+    // Actor teardown itself must not throw. The authority remains fenced even
+    // if a host mutex/allocation primitive reports a fatal platform failure.
+  }
+}
+
+bool ActorContext::attach_owned_resource(
+    const std::shared_ptr<ActorLifetimeResource>& resource) const noexcept {
+  return domain_ != 0 && actor_ != 0 && incarnation_ != 0 && authority_ &&
+         authority_->attach_owned_resource(resource);
+}
+
 namespace {
 // Only pending mailbox-owned copies may be wiped. Already-delivered values
 // belong to the receiver. Volatile byte stores prevent dead-store elimination
@@ -21,7 +54,7 @@ void discard_queued(std::deque<std::vector<std::uint8_t>>& queue) noexcept {
 // Clean pending mailbox-owned data on destruction, not just explicit close.
 // As with any C++ object, destruction requires all users to have stopped.
 Mailbox::~Mailbox() noexcept {
-  if (authority_) authority_->active.store(false, std::memory_order_release);
+  if (authority_) authority_->invalidate();
   discard_queued(queue_);
 }
 Mailbox::Mailbox(std::uint64_t id,std::size_t capacity,std::size_t bytes,
@@ -70,7 +103,7 @@ std::optional<std::vector<std::uint8_t>> Mailbox::receive() {
 void Mailbox::close() {
   std::scoped_lock lock(mutex_);
   closed_=true;
-  authority_->active.store(false, std::memory_order_release);
+  authority_->invalidate();
   discard_queued(queue_);
   queued_bytes_=0;
 }
@@ -80,7 +113,7 @@ ActorRef Mailbox::restart() {
     throw std::overflow_error("generation exhausted");
   // Allocate first: allocation failure leaves the old incarnation untouched.
   auto fresh=std::make_shared<CapabilityToken>();
-  authority_->active.store(false, std::memory_order_release);
+  authority_->invalidate();
   ++generation_;
   authority_=std::move(fresh);
   closed_=false;
