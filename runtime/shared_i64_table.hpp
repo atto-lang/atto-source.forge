@@ -80,7 +80,8 @@ template<std::size_t Capacity> class SharedI64Table final {
                           access != TableAccess::Public)) fail(TableErrorCode::Denied);
     // Registration is race-safe with actor stop/restart. If the incarnation
     // was fenced between validation and attachment, construction fails closed.
-    if (!owner.attach_owned_resource(state_)) fail(TableErrorCode::Denied);
+    if (!owner.attach_owned_resource(state_))
+      fail(owner.valid() ? TableErrorCode::Capacity : TableErrorCode::Denied);
   }
   SharedI64Table(const SharedI64Table&) = delete;
   SharedI64Table& operator=(const SharedI64Table&) = delete;
@@ -89,7 +90,7 @@ template<std::size_t Capacity> class SharedI64Table final {
   // only opaque capabilities plus operations using scheduler-derived caller.
   Capability owner_capability(ActorContext caller) const {
     std::lock_guard lock(state_->mutex);
-    if (caller != state_->owner) fail(TableErrorCode::Denied);
+    if (!caller.valid() || caller != state_->owner) fail(TableErrorCode::Denied);
     if (state_->closed) fail(TableErrorCode::Closed);
     return Capability(state_, caller, true);
   }
