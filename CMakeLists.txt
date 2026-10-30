@@ -67,6 +67,18 @@ if(BUILD_TESTING)
   target_include_directories(oresforge_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
   target_link_libraries(oresforge_tests PRIVATE oresforge_core)
   add_test(NAME oresforge_unit COMMAND oresforge_tests)
+  add_executable(oresforge_state_region_provenance
+    verification/state_region_provenance.cpp)
+  target_include_directories(oresforge_state_region_provenance PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_state_region_provenance PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_state_region_provenance PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME oresforge_state_region_provenance_v1
+    COMMAND oresforge_state_region_provenance)
+  set_tests_properties(oresforge_state_region_provenance_v1 PROPERTIES TIMEOUT 15)
   # Host-only positive filesystem resolution substrate, not guest import linking.
   add_executable(oresforge_root_resolver_test verification/project_root_resolver_test.cpp)
   target_include_directories(oresforge_root_resolver_test PRIVATE .)
