@@ -62,6 +62,30 @@ int main() {
       reject_diagnostic([&] { (void)interpret(source(expression)); },
                         overflow_diagnostics[i]);
     }
+    // Native Math scalar intrinsics use checked OresIR, never host std::abs.
+    ensure(interpret(source("Math.abs(-42)"))==42,"Math.abs negative");
+    ensure(interpret(source("Math.abs(0)"))==0,"Math.abs zero");
+    ensure(interpret(source("Math.neg(42)"))==-42,"Math.neg positive");
+    ensure(interpret(source("Math.neg(-42)"))==42,"Math.neg negative");
+    reject_diagnostic([&] {
+      (void)interpret(source("Math.abs(-9223372036854775808)"));
+    }, "i64 abs overflow");
+    reject_diagnostic([&] {
+      (void)interpret(source("Math.neg(-9223372036854775808)"));
+    }, "i64 sub overflow");
+    const auto abs_ir=source("Math.abs(-42)");
+    ensure(dump_ir(abs_ir).find("abs.i64.checked")!=std::string::npos,
+           "Math.abs owns explicit checked IR opcode");
+    const auto dynamic_abs=parse_runtime_source(
+        "fnc main(x:int):int{return Math.abs(x);}");
+    const auto x86_abs=emit_runtime_asm(dynamic_abs,Arch::X86_64);
+    ensure(x86_abs.find("negq %rax")!=std::string::npos &&
+           x86_abs.find("jo .Loresforge_overflow")!=std::string::npos,
+           "x86 Math.abs checks signed minimum overflow");
+    const auto arm_abs=emit_runtime_asm(dynamic_abs,Arch::ARM64);
+    ensure(arm_abs.find("negs x11, x9")!=std::string::npos &&
+           arm_abs.find("b.vs .Loresforge_overflow")!=std::string::npos,
+           "AArch64 Math.abs checks signed minimum overflow");
     // The bootstrap intentionally has NO BigInt, Decimal or binary64 lowering.
     // Fail closed rather than treating those spellings as signed i64.
     reject([] { source("1.25"); });
