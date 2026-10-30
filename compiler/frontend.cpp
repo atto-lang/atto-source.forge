@@ -254,6 +254,8 @@ class Parser {
     return node(op,std::move(v));
   }
   void definition() {
+    if (tok_.text=="async" || tok_.text=="suspend" || tok_.text=="suspends")
+      error("async/Future callback source requires scheduler-aware continuation lowering");
     bool defined=false, public_=false;
     while (tok_.text=="define" || tok_.text=="pub") {
       if (take("define")) { if (defined) error("duplicate define"); defined=true; }
