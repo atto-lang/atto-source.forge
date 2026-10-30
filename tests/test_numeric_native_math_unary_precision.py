@@ -62,5 +62,34 @@ class ForgeNativeMathContractTest(unittest.TestCase):
                          self.backend["math_unary_precision_fixture_git_blob_sha"])
 
 
+
+class ForgeBigIntExactReferenceTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        path = ROOT / "contracts/v1/bigint-exact-v1.json"
+        raw = path.read_bytes()
+        assert git_blob_sha(raw) == "b49c7a7d9395f7298e5534c4a6e5b90d4a2a518c"
+        cls.contract = json.loads(raw)
+
+    def test_div_rem_reference_and_fail_closed_backend(self):
+        self.assertEqual("oreslang.bigint-exact.v1", self.contract["contract"])
+        for item in self.contract["division_cases"]:
+            a, b = int(item["left"]), int(item["right"])
+            if item.get("error"):
+                self.assertEqual(0, b)
+                continue
+            q = abs(a) // abs(b)
+            if (a < 0) != (b < 0):
+                q = -q
+            r = a - q * b
+            self.assertEqual(item["quot"], str(q), item["id"])
+            self.assertEqual(item["rem"], str(r), item["id"])
+            self.assertEqual(a, q * b + r, item["id"])
+
+        caps = self.backend["capabilities"]
+        for name in ("bigint_div_rem", "bigint_to_i64_checked",
+                     "bigint_to_f64_exact", "bigint_to_f64_nearest"):
+            self.assertEqual("unsupported_explicit", caps[name], name)
+
 if __name__ == "__main__":
     unittest.main()
