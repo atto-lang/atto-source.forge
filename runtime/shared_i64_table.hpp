@@ -6,17 +6,11 @@
 #include <mutex>
 #include <optional>
 #include <stdexcept>
+#include "runtime/actor.hpp"
 
 namespace oresforge::shared {
-// Populated by a trusted scheduler adapter, NEVER decoded from guest arguments.
-// These host types must not be exported by a guest FFI or serializer.
-struct ActorContext {
-  std::uint64_t domain;
-  std::uint64_t actor;
-  std::uint64_t incarnation;
-  bool operator==(const ActorContext&) const = default;
-  bool valid() const { return domain && actor && incarnation; }
-};
+// Minted only by the actor runtime, NEVER decoded from guest arguments.
+using ActorContext = oresforge::runtime::ActorContext;
 enum class TableAccess { Private, Protected, Public };
 enum class TableErrorCode { Denied, Closed, Capacity, Overflow, Missing };
 class TableError : public std::exception {
@@ -56,7 +50,7 @@ template<std::size_t Capacity> class SharedI64Table final {
   [[noreturn]] static void fail(TableErrorCode code) { throw TableError(code); }
   void validate(const State& s, const Capability& cap, ActorContext caller, bool write) const {
     if (!caller.valid() || cap.identity_.lock() != state_ || cap.grantee_ != caller ||
-        caller.domain != s.owner.domain || (write && !cap.write_)) fail(TableErrorCode::Denied);
+        caller.domain() != s.owner.domain() || (write && !cap.write_)) fail(TableErrorCode::Denied);
     if (s.closed) fail(TableErrorCode::Closed);
     if (s.access == TableAccess::Private && caller != s.owner) fail(TableErrorCode::Denied);
     if (write && s.access == TableAccess::Protected && caller != s.owner) fail(TableErrorCode::Denied);
@@ -95,7 +89,7 @@ template<std::size_t Capacity> class SharedI64Table final {
                       ActorContext grantee, bool write = false) const {
     std::lock_guard lock(state_->mutex);
     validate(*state_, owner_cap, caller, true);
-    if (caller != state_->owner || !grantee.valid() || grantee.domain != caller.domain)
+    if (caller != state_->owner || !grantee.valid() || grantee.domain() != caller.domain())
       fail(TableErrorCode::Denied);
     if (state_->access == TableAccess::Private && grantee != caller) fail(TableErrorCode::Denied);
     if (write && state_->access == TableAccess::Protected && grantee != caller)
