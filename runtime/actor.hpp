@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -13,6 +14,7 @@ namespace oresforge::runtime {
 inline constexpr std::size_t kMaxMessageBytes=1024*1024;
 inline constexpr std::size_t kMaxMailboxMessages=4096;
 inline constexpr std::size_t kMaxMailboxBytes=16*kMaxMessageBytes;
+inline constexpr std::size_t kMaxActorOwnedResources=256;
 // Actor-owned host resources register a weak lifecycle observer. The actor
 // authority never owns the resource, so actor/resource teardown cannot cycle.
 class ActorLifetimeResource {
@@ -28,7 +30,8 @@ struct CapabilityToken final {
   void invalidate() noexcept;
  private:
   mutable std::mutex resource_mutex_;
-  mutable std::vector<std::weak_ptr<ActorLifetimeResource>> resources_;
+  mutable std::array<std::weak_ptr<ActorLifetimeResource>,
+                     kMaxActorOwnedResources> resources_{};
 };
 class Mailbox;
 class ActorContext {
