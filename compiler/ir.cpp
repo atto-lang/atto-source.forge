@@ -15,6 +15,7 @@ const char* opcode(Op op) {
     case Op::Sub: return "sub.i64.checked";
     case Op::Mul: return "mul.i64.checked";
     case Op::Div: return "div.i64.checked";
+    case Op::Abs: return "abs.i64.checked";
     case Op::Return: return "ret";
   }
   throw std::runtime_error("unknown opcode");
@@ -39,6 +40,11 @@ std::int64_t checked(Op op, std::int64_t a, std::int64_t b) {
     default: throw std::runtime_error("not a binary opcode");
   }
 }
+std::int64_t checked_abs(std::int64_t value) {
+  if (value == std::numeric_limits<std::int64_t>::min())
+    throw std::runtime_error("i64 abs overflow");
+  return value < 0 ? -value : value;
+}
 }
 void verify(const Program& p) {
   if (p.parameter_count > 4) throw std::runtime_error("runtime entry parameter budget exceeded");
@@ -55,6 +61,9 @@ void verify(const Program& p) {
     } else if (ins.op == Op::Return) {
       if (i+1 != p.instructions.size() || !before(ins.a,i) || ins.b != -1)
         throw std::runtime_error("return must be valid and terminal");
+    } else if (ins.op == Op::Abs) {
+      if (!before(ins.a,i) || ins.b != -1)
+        throw std::runtime_error("abs must use one prior operand");
     } else {
       switch (ins.op) {
         case Op::Add: case Op::Sub: case Op::Mul: case Op::Div: break;
@@ -76,6 +85,8 @@ std::int64_t interpret(const Program& p,std::span<const std::int64_t> args) {
     if (ins.op == Op::Constant) values.push_back(ins.value);
     else if (ins.op == Op::Parameter)
       values.push_back(args[static_cast<std::size_t>(ins.value)]);
+    else if (ins.op == Op::Abs)
+      values.push_back(checked_abs(values.at(static_cast<std::size_t>(ins.a))));
     else values.push_back(checked(ins.op, values.at(static_cast<std::size_t>(ins.a)),
                                            values.at(static_cast<std::size_t>(ins.b))));
   }
@@ -93,6 +104,7 @@ std::string dump_ir(const Program& p) {
     else {
       out << '%' << i << " = " << opcode(ins.op);
       if (ins.op == Op::Constant || ins.op == Op::Parameter) out << ' ' << ins.value;
+      else if (ins.op == Op::Abs) out << " %" << ins.a;
       else out << " %" << ins.a << ", %" << ins.b;
     }
     out << '\n';
