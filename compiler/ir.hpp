@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 namespace oresforge {
-enum class Op { Constant, Parameter, Add, Sub, Mul, Div, Return };
+enum class Op { Constant, Parameter, Add, Sub, Mul, Div, Abs, Return };
 struct Instruction {
   Op op;
   std::int64_t value = 0;
