@@ -35,7 +35,11 @@ Cancellation and deadline-aware waits are not implemented.
   public tables still require an explicit write capability.
 - Mutex-linearized lookup, insert, insert-if-absent, CAS, erase and checked counter
   update. Capacity/overflow/missing-key errors leave contents unchanged.
-- Close and the trusted owner-death hook retire under the same mutex as operations.
+- Each table weakly registers as an actor-owned runtime resource. Mailbox close,
+  restart, and destruction automatically retire every table owned by that exact
+  incarnation under the same mutex as operations. The explicit trusted
+  `owner_stopped()` hook remains available for scheduler adapters, but ordinary
+  lifecycle correctness no longer depends on callers remembering to invoke it.
   Old handles cannot authorize a replacement table, including after destruction.
 
 A shared-pointer control-block identity is used for this host slice. It is not a
@@ -45,11 +49,15 @@ quiescence, so this slice has no externally borrowed slot memory to reclaim.
 
 ## Trust boundary and limits
 
-`ActorContext` and `owner_stopped()` are TRUSTED HOST INPUTS. There is no scheduler
-binding in this change. A guest must never construct a caller context, invoke the
-owner-capability factory or submit an owner-death notification. A guest adapter
-must derive caller identity from the admitted execution lease, validate guest
-capabilities and dispatch to the matching host table.
+`ActorContext`, owner-capability minting, resource registration, and the explicit
+`owner_stopped()` compatibility hook are TRUSTED HOST APIs. `ActorContext` is
+runtime-minted from a live mailbox incarnation and cannot be numerically
+constructed. Mailbox close/restart/destruction fences that incarnation and
+automatically retires its registered shared tables before the lifecycle operation
+returns. A guest must never manufacture caller identity, invoke owner-capability
+factories, register arbitrary host resources, or submit lifecycle notifications.
+A future guest adapter must derive caller identity from the admitted execution
+lease, validate guest capabilities and dispatch to the matching host table.
 
 Keeping C++ fields private does not create an FFI security boundary. Do not
 serialize/export these host structs or permit native memory manipulation.
@@ -58,8 +66,8 @@ Each table allocates its fixed slot storage once, then uses bounded linear scans
 (no hash collision variability). Successful operations create no dynamic slot
 allocation, call no guest code and expose no borrowed storage. Exception delivery
 and host locks/reference-counting still use host runtime machinery. Per-application
-table count, total byte budgets, compiler Error/Result mapping, owner-death wiring,
-heir transfer, capability revocation, and guest permission checks remain pending.
+table count, total byte budgets, compiler Error/Result mapping, heir transfer,
+fine-grained capability revocation, and guest permission checks remain pending.
 
 A `shared_ptr<const T>` does not prove deep immutability of reachable objects.
 Compiler checking must reject mutable/actor-private aliases and initializer
@@ -81,10 +89,11 @@ ASAN_OPTIONS=detect_leaks=0 bash scripts/test-singleton-shared-runtime.sh saniti
 The script records the compiler version and SHA-256 of each test executable,
 builds directly without Python, and applies 30-second execution timeouts.
 The release profile uses O2; sanitized uses O1 with ASan/UBSan.
-Leak detection is disabled only for the local restricted process environment;
-the hosted workflow uses the sanitizer defaults.
-CMake registers `oresforge_singleton_shared_runtime` and the existing admission test.
-The dedicated read-only workflow checks out the exact PR head and runs both profiles.
+Leak detection has not yet produced runner-executed hosted evidence. The current
+hosted workflow attempts release and sanitizer profiles, but recent Actions runs
+failed before runner assignment and executed zero steps; those runs are not test
+evidence. CMake registers `oresforge_singleton_shared_runtime` and the existing
+admission test.
 
 Runtime tests exercise:
 - Authorization, capability identity/incarnation, delegation and private/protected modes.
@@ -92,7 +101,8 @@ Runtime tests exercise:
 - CAS mismatch, missing key, overflow/underflow and INT64_MIN delta.
 - Eight concurrent writers and 80,000 atomic increments with exact final value.
 - Exactly one insert-if-absent winner and one CAS winner.
-- Owner retirement racing reads, stale replacement handles and expired capabilities.
+- Automatic owner retirement on restart, close and mailbox destruction, including
+  retirement racing reads, stale replacement handles and expired capabilities.
 - Concurrent singleton publication with identical reader identities and complete values.
 - Sticky failure, recursion, cross-thread initializer cycles and cross-type nesting.
 - Allowed published dependencies, close before/during/after initialization,
@@ -106,7 +116,8 @@ compiled guest singleton/table semantics or parity with Erlang.
 
 1. Add declaration identity and a domain-owned cell registry, with budgets and shutdown.
 2. Prove complete initialization, no receiver escape, deep immutable sharing and effects.
-3. Bind table dispatch and lifecycle to scheduler-derived identity; map typed errors.
+3. Bind guest table dispatch to scheduler-derived identity and map typed errors;
+   host owner lifecycle is already automatically wired to mailbox incarnations.
 4. Compile identical guest programs with positive and negative semantic oracles.
 5. Reuse the native substrate where appropriate for LLVM, and implement matching
    .NET, Java/Graal and Wasm transports with exact-source execution receipts.
