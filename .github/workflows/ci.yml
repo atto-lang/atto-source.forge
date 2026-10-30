@@ -35,6 +35,9 @@ jobs:
           git diff --quiet --exit-code
           echo "EXACT_SOURCE_COMMIT=$(git rev-parse HEAD)"
           echo "EXACT_SOURCE_TREE=$(git rev-parse HEAD^{tree})"
+          test "$(git hash-object tests/fixtures/numeric-v1/math-i64-ok.ores)" = "6d02ef593be9888364cc6f64c1c42224dcebbdb9"
+          test "$(git hash-object tests/fixtures/numeric-v1/math-i64-abs-min.ores)" = "f9064fc2ee79a2356dc062841330466c3d0df9c7"
+          test "$(git hash-object tests/fixtures/numeric-v1/math-i64-neg-min.ores)" = "c1d1bff1971351814d8161c36c5a5e18d5ae9e26"
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DCMAKE_CXX_COMPILER=${{ matrix.compiler }}
       - name: Compile
@@ -75,6 +78,9 @@ jobs:
           git diff --quiet --exit-code
           echo "EXACT_SOURCE_COMMIT=$(git rev-parse HEAD)"
           echo "EXACT_SOURCE_TREE=$(git rev-parse HEAD^{tree})"
+          test "$(git hash-object tests/fixtures/numeric-v1/math-i64-ok.ores)" = "6d02ef593be9888364cc6f64c1c42224dcebbdb9"
+          test "$(git hash-object tests/fixtures/numeric-v1/math-i64-abs-min.ores)" = "f9064fc2ee79a2356dc062841330466c3d0df9c7"
+          test "$(git hash-object tests/fixtures/numeric-v1/math-i64-neg-min.ores)" = "c1d1bff1971351814d8161c36c5a5e18d5ae9e26"
       - name: Configure ASan and UBSan
         run: >-
           cmake -S . -B build-sanitized -DCMAKE_BUILD_TYPE=Debug
@@ -106,6 +112,9 @@ jobs:
           git diff --quiet --exit-code
           echo "EXACT_SOURCE_COMMIT=$(git rev-parse HEAD)"
           echo "EXACT_SOURCE_TREE=$(git rev-parse HEAD^{tree})"
+          test "$(git hash-object tests/fixtures/numeric-v1/math-i64-ok.ores)" = "6d02ef593be9888364cc6f64c1c42224dcebbdb9"
+          test "$(git hash-object tests/fixtures/numeric-v1/math-i64-abs-min.ores)" = "f9064fc2ee79a2356dc062841330466c3d0df9c7"
+          test "$(git hash-object tests/fixtures/numeric-v1/math-i64-neg-min.ores)" = "c1d1bff1971351814d8161c36c5a5e18d5ae9e26"
       - name: Configure instrumented libFuzzer
         run: >-
           cmake -S . -B build-fuzz -DCMAKE_BUILD_TYPE=Debug
