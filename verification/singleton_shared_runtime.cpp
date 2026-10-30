@@ -63,52 +63,83 @@ void table_authority() {
   SharedI64Table<2> priv(owner, TableAccess::Private);
   const auto private_cap = priv.owner_capability(owner);
   error(TableErrorCode::Denied, [&] { priv.delegate(private_cap, owner, reader); });
-  error(TableErrorCode::Denied, [&] { SharedI64Table<2> invalid({0, 1, 1}); });
+  error(TableErrorCode::Denied, [&] { SharedI64Table<2> invalid(ActorContext{}); });
   error(TableErrorCode::Denied, [&] { SharedI64Table<2> invalid(owner, static_cast<TableAccess>(9)); });
-  table.owner_stopped(owner);
-  error(TableErrorCode::Closed, [&] { table.lookup(read, reader, 7); });
+  // Explicit close is idempotent while the owning actor incarnation is live.
+  table.close(own, owner);
+  error(TableErrorCode::Closed, [&] { table.lookup(read, restarted, 7); });
   error(TableErrorCode::Closed, [&] { table.insert(own, owner, 7, 20); });
-  error(TableErrorCode::Closed, [&] { table.delegate(own, owner, reader); });
+  error(TableErrorCode::Closed, [&] { table.delegate(own, owner, restarted); });
   table.close(own, owner);
   table.close(own, owner);
+
   // New table identity never revives an old authority, even for the same owner.
-  SharedI64Table<2> replacement(owner);
-  error(TableErrorCode::Denied, [&] { replacement.lookup(read, reader, 7); });
+  SharedI64Table<2> replacement(owner, TableAccess::Public);
+  const auto replacement_owner = replacement.owner_capability(owner);
+  const auto replacement_read = replacement.delegate(
+      replacement_owner, owner, restarted);
+  replacement.insert(replacement_owner, owner, 9, 90);
+  error(TableErrorCode::Denied, [&] { replacement.lookup(read, restarted, 9); });
   SharedI64Table<2>::Capability expired;
   {
     SharedI64Table<2> retired(owner);
     expired = retired.owner_capability(owner);
   }
-  error(TableErrorCode::Denied, [&] { replacement.lookup(expired, owner, 7); });
+  error(TableErrorCode::Denied, [&] { replacement.lookup(expired, owner, 9); });
+
+  // Owner lifecycle is now wired automatically; no manual owner_stopped call.
+  owner_box.close();
+  check(!owner.valid(), "owner close did not fence actor context");
+  error(TableErrorCode::Closed, [&] {
+    replacement.lookup(replacement_read, restarted, 9);
+  });
 }
 
 void actor_context_lifecycle() {
   Mailbox mailbox{50};
+  Mailbox reader_box{51};
   const auto first = mailbox.context();
+  const auto reader = reader_box.context();
   check(first.valid(), "fresh actor context invalid");
+
+  SharedI64Table<1> first_table(first, TableAccess::Public);
+  const auto first_owner = first_table.owner_capability(first);
+  const auto first_read = first_table.delegate(first_owner, first, reader);
+  first_table.insert(first_owner, first, 1, 41);
+
   (void)mailbox.restart();
   const auto second = mailbox.context();
   check(!first.valid() && second.valid() && first != second,
         "restart did not fence the old actor incarnation");
+  // Restart automatically retires resources owned by the old incarnation.
+  error(TableErrorCode::Closed, [&] { first_table.lookup(first_read, reader, 1); });
+  error(TableErrorCode::Denied, [&] { first_table.lookup(first_owner, second, 1); });
 
-  SharedI64Table<1> table(second, TableAccess::Public);
-  const auto cap = table.owner_capability(second);
-  table.insert(cap, second, 1, 42);
-  (void)mailbox.restart();
-  const auto third = mailbox.context();
-  check(!second.valid() && third.valid(),
-        "second incarnation remained live after restart");
-  error(TableErrorCode::Denied, [&] { table.lookup(cap, second, 1); });
-  error(TableErrorCode::Denied, [&] { table.lookup(cap, third, 1); });
-  // Lifecycle retirement is a trusted scheduler hook keyed to the exact old
-  // opaque context; it remains usable for teardown after the actor is fenced.
-  table.owner_stopped(second);
+  SharedI64Table<1> second_table(second, TableAccess::Public);
+  const auto second_owner = second_table.owner_capability(second);
+  const auto second_read = second_table.delegate(second_owner, second, reader);
+  second_table.insert(second_owner, second, 1, 42);
+  mailbox.close();
+  check(!second.valid(), "close did not fence actor context");
+  throws<std::runtime_error>([&] { (void)mailbox.context(); });
+  error(TableErrorCode::Closed, [&] { second_table.lookup(second_read, reader, 1); });
 
-  Mailbox closed{60};
-  const auto before_close = closed.context();
-  closed.close();
-  check(!before_close.valid(), "close did not fence actor context");
-  throws<std::runtime_error>([&] { (void)closed.context(); });
+  // Destruction is also a lifecycle boundary: an owned table may outlive its
+  // mailbox, but it must be retired before the mailbox destructor returns.
+  std::unique_ptr<SharedI64Table<1>> survivor;
+  SharedI64Table<1>::Capability survivor_read;
+  {
+    auto short_lived = std::make_unique<Mailbox>(60);
+    const auto short_owner = short_lived->context();
+    survivor = std::make_unique<SharedI64Table<1>>(
+        short_owner, TableAccess::Public);
+    const auto short_cap = survivor->owner_capability(short_owner);
+    survivor_read = survivor->delegate(short_cap, short_owner, reader);
+    survivor->insert(short_cap, short_owner, 5, 55);
+  }
+  error(TableErrorCode::Closed, [&] {
+    survivor->lookup(survivor_read, reader, 5);
+  });
 }
 
 void table_atomic_failures() {
@@ -187,7 +218,7 @@ void table_concurrency() {
     }
   });
   retire_start.arrive_and_wait();
-  table.owner_stopped(owner);
+  owner_box.close();
   reader_thread.join();
   check(unexpected == 0, "retirement exposed partial state");
 }
@@ -292,7 +323,7 @@ int main() {
     table_concurrency();
     singleton_once_and_failure();
     singleton_dependencies_and_close();
-    std::cout << "PASS: runtime-minted actor identity, restart/close fencing, authority, capacity, overflow, 80000 atomic increments, insert/CAS winners, retirement, once publication, sticky failure, cycles and close\n";
+    std::cout << "PASS: runtime-minted actor identity, automatic restart/close/destructor retirement, authority, capacity, overflow, 80000 atomic increments, insert/CAS winners, once publication, sticky failure, cycles and close\n";
     return 0;
   } catch (const std::exception& e) {
     std::cerr << e.what() << '\n';
