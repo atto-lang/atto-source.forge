@@ -2,6 +2,8 @@ name: Singleton and shared-table runtime slice
 on:
   pull_request:
     paths:
+      - runtime/actor.hpp
+      - runtime/actor.cpp
       - runtime/singleton_cell.hpp
       - runtime/shared_i64_table.hpp
       - verification/singleton_shared_runtime.cpp
@@ -20,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        profile: [release, sanitized]
+        profile: [release, sanitized, sanitized-leaks]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
