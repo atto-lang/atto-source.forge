@@ -114,6 +114,7 @@ void actor_context_lifecycle() {
         "restart did not fence the old actor incarnation");
   // Restart automatically retires resources owned by the old incarnation.
   error(TableErrorCode::Closed, [&] { first_table.lookup(first_read, reader, 1); });
+  error(TableErrorCode::Denied, [&] { (void)first_table.owner_capability(first); });
   error(TableErrorCode::Denied, [&] { first_table.lookup(first_owner, second, 1); });
 
   SharedI64Table<1> second_table(second, TableAccess::Public);
@@ -140,6 +141,38 @@ void actor_context_lifecycle() {
   }
   error(TableErrorCode::Closed, [&] {
     survivor->lookup(survivor_read, reader, 5);
+  });
+}
+
+void actor_owned_resource_budget() {
+  Mailbox owner_box{70};
+  Mailbox reader_box{71};
+  const auto owner = owner_box.context();
+  const auto reader = reader_box.context();
+
+  std::vector<std::unique_ptr<SharedI64Table<1>>> tables;
+  tables.reserve(oresforge::runtime::kMaxActorOwnedResources);
+  for (std::size_t i = 0; i < oresforge::runtime::kMaxActorOwnedResources; ++i)
+    tables.push_back(std::make_unique<SharedI64Table<1>>(
+        owner, TableAccess::Public));
+
+  auto first_owner = tables.front()->owner_capability(owner);
+  auto first_read = tables.front()->delegate(first_owner, owner, reader);
+  tables.front()->insert(first_owner, owner, 1, 70);
+
+  error(TableErrorCode::Capacity, [&] {
+    SharedI64Table<1> over_budget(owner);
+  });
+
+  // Destroying an owned resource frees its deterministic registration slot.
+  tables.pop_back();
+  tables.push_back(std::make_unique<SharedI64Table<1>>(
+      owner, TableAccess::Public));
+
+  // One restart must retire the full bounded set before returning.
+  (void)owner_box.restart();
+  error(TableErrorCode::Closed, [&] {
+    tables.front()->lookup(first_read, reader, 1);
   });
 }
 
@@ -320,11 +353,12 @@ int main() {
   try {
     table_authority();
     actor_context_lifecycle();
+    actor_owned_resource_budget();
     table_atomic_failures();
     table_concurrency();
     singleton_once_and_failure();
     singleton_dependencies_and_close();
-    std::cout << "PASS: runtime-minted actor identity, automatic restart/close/destructor retirement, authority, capacity, overflow, 80000 atomic increments, insert/CAS winners, once publication, sticky failure, cycles and close\n";
+    std::cout << "PASS: runtime-minted actor identity, bounded automatic restart/close/destructor retirement, authority, capacity, overflow, 80000 atomic increments, insert/CAS winners, once publication, sticky failure, cycles and close\n";
     return 0;
   } catch (const std::exception& e) {
     std::cerr << e.what() << '\n';
