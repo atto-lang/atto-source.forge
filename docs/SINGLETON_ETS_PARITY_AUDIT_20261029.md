@@ -1,7 +1,13 @@
 # Singleton and ETS sharing audit — 2026-10-29
 
 Status: proposed cross-backend semantics; singleton/ETS guest execution remains unverified.
-The PR includes Forge declaration admission and a C++ host runtime slice; guest singleton/table execution remains unsupported. See SINGLETON_SHARED_RUNTIME_SLICE.md for implemented behavior and remaining integration gates.
+Forge PR #146 now includes declaration admission plus a C++ host runtime slice with
+runtime-minted actor identity, bounded automatic actor-owned table retirement,
+and a bounded application-domain singleton declaration registry. Guest
+`define singleton`/table execution remains unsupported. Shared fail-closed
+semantics/evidence are tracked in oreslang-platform-conformance#242, with
+admission work in Java #2316, LLVM #1203, .NET #267 and Wasm #191. See
+SINGLETON_SHARED_RUNTIME_SLICE.md for implemented behavior and remaining gates.
 
 ## Audit finding
 
@@ -108,10 +114,17 @@ Unsupported status remains a parity gap.
 The standalone test covers 24 classified rejections (visibility/order and declarations before/after main), nine lexical controls and three real scalar/runtime/call interpreter executions returning 42.
 CMake registers it as `oresforge_singleton_admission`.
 
-Local validation: GCC 13.3, C++20, O1 with ASan/UBSan and O2 both pass. LeakSanitizer cannot inspect processes in this environment; O1 used ASAN_OPTIONS=detect_leaks=0. Leak detection is unverified.
-The baseline test fails with an unclassified diagnostic, demonstrating the classification regression.
-An existing Native aggregate missing-field warning requires -Wno-missing-field-initializers with -Werror; no unrelated warning fix is bundled.
-Full CMake/CTest, hosted CI, other backend compilers and guest singleton/table execution were not run.
+Historical initial-slice validation: GCC 13.3, C++20, O1 with ASan/UBSan and O2 passed before the later actor-lifecycle/domain-registry hardening. Leak detection was unverified in that environment.
+The current PR head additionally carries a `sanitized-leaks` profile that first
+requires an intentional LeakSanitizer probe to fail with the configured leak exit
+code, then runs the real tests with `detect_leaks=1`. Current hosted runs for
+the latest head fail before runner assignment and execute zero steps, so none of
+the newer lifecycle/registry/leak-profile changes are claimed as runner-executed
+evidence yet.
+The baseline admission test fails with an unclassified diagnostic, demonstrating
+the classification regression. An existing Native aggregate missing-field warning
+requires `-Wno-missing-field-initializers` with `-Werror`; no unrelated warning
+fix is bundled. Guest singleton/table execution remains unverified.
 
 Reproduce from repository root:
 ```sh
