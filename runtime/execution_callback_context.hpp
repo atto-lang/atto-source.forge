@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <stdexcept>
 #include <type_traits>
 
 namespace ores::runtime {
@@ -65,6 +66,15 @@ static_assert(std::is_standard_layout_v<ExecutionCallbackContext>);
     return true;
 }
 
+[[nodiscard]] constexpr bool valid_execution_callback_context(
+        const ExecutionCallbackContext& context) noexcept {
+    return context.runtime_domain != 0
+        && context.execution != 0
+        && context.dispatch != 0
+        && context.generation != 0
+        && valid_boundary(context.boundary);
+}
+
 /*
  * Provenance-only scope. It never installs an actor turn, allocation/arena
  * handle, scheduler ticket, or guest-entry capability.
@@ -74,9 +84,13 @@ inline thread_local const ExecutionCallbackContext* current_callback_context = n
 class ExecutionCallbackContextScope final {
 public:
     explicit ExecutionCallbackContextScope(
-            const ExecutionCallbackContext& context) noexcept
-        : previous_(current_callback_context) {
-        current_callback_context = &context;
+            const ExecutionCallbackContext& context)
+        : current_(context),
+          previous_(current_callback_context) {
+        if (!valid_execution_callback_context(current_)) {
+            throw std::invalid_argument("invalid callback execution provenance");
+        }
+        current_callback_context = &current_;
     }
 
     ~ExecutionCallbackContextScope() noexcept {
@@ -89,6 +103,7 @@ public:
     ExecutionCallbackContextScope& operator=(ExecutionCallbackContextScope&&) = delete;
 
 private:
+    ExecutionCallbackContext current_;
     const ExecutionCallbackContext* previous_;
 };
 
