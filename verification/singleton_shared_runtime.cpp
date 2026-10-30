@@ -9,6 +9,7 @@
 #include <vector>
 
 using namespace oresforge::shared;
+using oresforge::runtime::Mailbox;
 namespace {
 void check(bool value, const char* message) {
   if (!value) throw std::runtime_error(message);
@@ -23,9 +24,13 @@ template<class E, class F> void throws(F operation) {
   catch (const E&) { return; }
   throw std::runtime_error("expected exception");
 }
-constexpr ActorContext owner{1, 1, 1}, reader{1, 2, 1}, foreign{2, 2, 1}, restarted{1, 2, 2};
-
 void table_authority() {
+  Mailbox owner_box{1};
+  Mailbox reader_box{2};
+  Mailbox foreign_box{2, 1024, 4 * oresforge::runtime::kMaxMessageBytes, 2};
+  const auto owner = owner_box.context();
+  const auto reader = reader_box.context();
+  const auto foreign = foreign_box.context();
   SharedI64Table<2> table(owner);
   const auto own = table.owner_capability(owner);
   const auto read = table.delegate(own, owner, reader);
@@ -35,6 +40,10 @@ void table_authority() {
   check(table.lookup(read, reader, 7) == 10, "lookup aliases storage");
   check(!table.lookup(read, reader, 8), "missing key");
   error(TableErrorCode::Denied, [&] { table.insert(read, reader, 7, 11); });
+  (void)reader_box.restart();
+  const auto restarted = reader_box.context();
+  check(!reader.valid() && restarted.valid(), "actor restart did not invalidate old context");
+  error(TableErrorCode::Denied, [&] { table.lookup(read, reader, 7); });
   error(TableErrorCode::Denied, [&] { table.lookup(read, restarted, 7); });
   error(TableErrorCode::Denied, [&] { table.lookup(own, reader, 7); });
   error(TableErrorCode::Denied, [&] { table.lookup({}, reader, 7); });
@@ -69,6 +78,8 @@ void table_authority() {
 }
 
 void table_atomic_failures() {
+  Mailbox owner_box{1};
+  const auto owner = owner_box.context();
   SharedI64Table<2> table(owner);
   const auto cap = table.owner_capability(owner);
   check(table.insert_new(cap, owner, 1, 10), "new insert");
@@ -100,14 +111,20 @@ void table_atomic_failures() {
 
 void table_concurrency() {
   constexpr int threads = 8, rounds = 10000;
+  Mailbox owner_box{1};
+  const auto owner = owner_box.context();
   SharedI64Table<4> table(owner, TableAccess::Public);
   const auto own = table.owner_capability(owner);
   table.insert(own, owner, 0, 0);
   std::barrier start(threads);
   std::atomic<int> insert_winners{0}, cas_winners{0};
+  std::vector<std::unique_ptr<Mailbox>> actor_boxes;
+  actor_boxes.reserve(threads);
   std::vector<std::thread> workers;
   for (int i = 0; i < threads; ++i) {
-    const ActorContext actor{1, static_cast<std::uint64_t>(i + 2), 1};
+    actor_boxes.push_back(std::make_unique<Mailbox>(
+        static_cast<std::uint64_t>(i + 2)));
+    const auto actor = actor_boxes.back()->context();
     const auto cap = table.delegate(own, owner, actor, true);
     workers.emplace_back([&, actor, cap] {
       start.arrive_and_wait();
@@ -122,6 +139,8 @@ void table_concurrency() {
   // Retirement races with admitted operations under the same table lock.
   std::barrier retire_start(2);
   std::atomic<int> unexpected{0};
+  Mailbox reader_box{100};
+  const auto reader = reader_box.context();
   const auto read = table.delegate(own, owner, reader);
   std::thread reader_thread([&] {
     retire_start.arrive_and_wait();
