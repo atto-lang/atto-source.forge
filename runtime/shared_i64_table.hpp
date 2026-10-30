@@ -26,13 +26,18 @@ class TableError : public std::exception {
 template<std::size_t Capacity> class SharedI64Table final {
   static_assert(Capacity > 0);
   struct Slot { bool used = false; std::int64_t key = 0; std::int64_t value = 0; };
-  struct State {
+  struct State final : oresforge::runtime::ActorLifetimeResource {
     std::mutex mutex;
     const ActorContext owner;
     const TableAccess access;
     bool closed = false;
     std::array<Slot, Capacity> slots{};
     State(ActorContext o, TableAccess a) : owner(o), access(a) {}
+    void actor_owner_stopped() noexcept override {
+      std::scoped_lock lock(mutex);
+      closed = true;
+      for (auto& slot : slots) slot = {};
+    }
   };
  public:
   class Capability {
@@ -73,6 +78,9 @@ template<std::size_t Capacity> class SharedI64Table final {
       : state_(std::make_shared<State>(owner, access)) {
     if (!owner.valid() || (access != TableAccess::Private && access != TableAccess::Protected &&
                           access != TableAccess::Public)) fail(TableErrorCode::Denied);
+    // Registration is race-safe with actor stop/restart. If the incarnation
+    // was fenced between validation and attachment, construction fails closed.
+    if (!owner.attach_owned_resource(state_)) fail(TableErrorCode::Denied);
   }
   SharedI64Table(const SharedI64Table&) = delete;
   SharedI64Table& operator=(const SharedI64Table&) = delete;
