@@ -146,13 +146,18 @@ class Parser {
     expect("(");
     if (token_.text!=")") {
       do {
-        const std::string param=identifier();
+        std::string param;
+        if (take("int")) {
+          param=identifier();
+        } else {
+          param=identifier();
+          expect(":"); expect("int");
+        }
         if (param=="int"||param=="if"||param=="then"||param=="else"||
             param=="do"||param=="fi"||param=="module"||param=="as"||param=="end"||
             param=="return"||param=="fnc"||
             std::find(current_->parameters.begin(),current_->parameters.end(),param)
             !=current_->parameters.end())fail("invalid or duplicate parameter");
-        expect(":");expect("int");
         current_->parameters.push_back(param);
         if(current_->parameters.size()>4)fail("function parameter budget exceeded");
         if (!take(","))break;
