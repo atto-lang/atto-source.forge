@@ -154,6 +154,117 @@ void actor_context_lifecycle() {
   });
 }
 
+void table_owner_handoff() {
+  Mailbox original_box{80}, successor_box{81}, reader_box{82};
+  Mailbox foreign_box{83, 1024, 4 * oresforge::runtime::kMaxMessageBytes, 2};
+  const auto original = original_box.context();
+  const auto successor = successor_box.context();
+  const auto reader = reader_box.context();
+  const auto foreign = foreign_box.context();
+  SharedI64Table<2> table(original, TableAccess::Protected);
+  const auto original_cap = table.owner_capability(original);
+  const auto read = table.delegate(original_cap, original, reader);
+  table.insert(original_cap, original, 1, 41);
+  error(TableErrorCode::Denied, [&] {
+    table.give_away(read, reader, successor);
+  });
+  error(TableErrorCode::Denied, [&] {
+    table.give_away(original_cap, original, foreign);
+  });
+  Mailbox stopped_box{84};
+  const auto stopped = stopped_box.context();
+  stopped_box.close();
+  error(TableErrorCode::Denied, [&] {
+    table.give_away(original_cap, original, stopped);
+  });
+
+  table.give_away(original_cap, original, successor);
+  error(TableErrorCode::Denied, [&] {
+    table.owner_capability(original);
+  });
+  error(TableErrorCode::Denied, [&] {
+    table.insert(original_cap, original, 1, 100);
+  });
+  error(TableErrorCode::Denied, [&] {
+    table.give_away(original_cap, original, reader);
+  });
+  const auto successor_cap = table.owner_capability(successor);
+  table.insert(successor_cap, successor, 1, 42);
+  original_box.close(); // Old owner stop must not retire a transferred table.
+  check(table.lookup(read, reader, 1) == 42,
+        "old owner retirement destroyed the new owner's table");
+  const auto successor_reader = table.delegate(successor_cap, successor, reader);
+  check(table.lookup(successor_reader, reader, 1) == 42,
+        "new owner cannot delegate after handoff");
+  (void)successor_box.restart();
+  error(TableErrorCode::Closed, [&] { table.lookup(read, reader, 1); });
+  error(TableErrorCode::Closed, [&] { table.lookup(successor_reader, reader, 1); });
+
+  // Registration failure is transactional; the original owner retains all
+  // rights, and failed candidates must never be able to retire this table.
+  Mailbox prior_box{90}, full_box{91};
+  const auto prior = prior_box.context(), full = full_box.context();
+  SharedI64Table<1> limited(prior, TableAccess::Protected);
+  const auto limited_cap = limited.owner_capability(prior);
+  limited.insert(limited_cap, prior, 9, 90);
+  std::vector<std::unique_ptr<SharedI64Table<1>>> registrations;
+  registrations.reserve(oresforge::runtime::kMaxActorOwnedResources);
+  for (std::size_t i = 0; i < oresforge::runtime::kMaxActorOwnedResources; ++i)
+    registrations.push_back(std::make_unique<SharedI64Table<1>>(full));
+  error(TableErrorCode::Capacity, [&] {
+    limited.give_away(limited_cap, prior, full);
+  });
+  check(limited.lookup(limited_cap, prior, 9) == 90,
+        "failed handoff changed ownership or table state");
+  full_box.close();
+  check(limited.lookup(limited_cap, prior, 9) == 90,
+        "failed recipient stop retired unrelated table");
+  prior_box.close();
+  error(TableErrorCode::Denied, [&] { limited.owner_capability(prior); });
+}
+
+void table_handoff_race() {
+  // Force transfer to race with original-actor teardown. The handoff either
+  // linearizes first and survives or the table is retired by the old owner.
+  for (int attempt = 0; attempt < 128; ++attempt) {
+    Mailbox original_box{static_cast<std::uint64_t>(1000 + attempt * 2)};
+    Mailbox successor_box{static_cast<std::uint64_t>(1001 + attempt * 2)};
+    const auto original = original_box.context();
+    const auto successor = successor_box.context();
+    SharedI64Table<1> table(original);
+    const auto original_cap = table.owner_capability(original);
+    table.insert(original_cap, original, 1, 1);
+    std::barrier start(2);
+    std::atomic<bool> transferred{false};
+    std::atomic<bool> bad_failure{false};
+    std::thread worker([&] {
+      start.arrive_and_wait();
+      try {
+        table.give_away(original_cap, original, successor);
+        transferred = true;
+      } catch (const TableError& e) {
+        if (e.code != TableErrorCode::Closed && e.code != TableErrorCode::Denied)
+          bad_failure = true;
+      } catch (...) {
+        bad_failure = true;
+      }
+    });
+    start.arrive_and_wait();
+    original_box.close();
+    worker.join();
+    check(!bad_failure, "unexpected handoff race failure");
+    if (transferred) {
+      const auto new_cap = table.owner_capability(successor);
+      check(table.lookup(new_cap, successor, 1) == 1,
+            "original death retired a successfully transferred table");
+      successor_box.close();
+      error(TableErrorCode::Denied, [&] { table.owner_capability(successor); });
+    } else {
+      error(TableErrorCode::Denied, [&] { table.owner_capability(original); });
+    }
+  }
+}
+
 void actor_owned_resource_budget() {
   Mailbox owner_box{70};
   Mailbox reader_box{71};
@@ -465,13 +576,15 @@ int main() {
   try {
     table_authority();
     actor_context_lifecycle();
+    table_owner_handoff();
+    table_handoff_race();
     actor_owned_resource_budget();
     table_atomic_failures();
     table_concurrency();
     singleton_domain_registry();
     singleton_once_and_failure();
     singleton_dependencies_and_close();
-    std::cout << "PASS: runtime-minted actor identity, bounded automatic table retirement, domain singleton identity/aliasing, authority, capacity, overflow, 80000 atomic increments, insert/CAS winners, once publication, sticky failure, cycles and close\n";
+    std::cout << "PASS: runtime-minted actor identity, checked owner handoff and 128 teardown races, bounded automatic table retirement, domain singleton identity/aliasing, authority, capacity, overflow, 80000 atomic increments, insert/CAS winners, once publication, sticky failure, cycles and close\n";
     return 0;
   } catch (const std::exception& e) {
     std::cerr << e.what() << '\n';
