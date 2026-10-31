@@ -38,12 +38,12 @@ POSITIVE = (
 TRAPS = (
     ("overflow-add", "fnc plus(n:int):int{return n+1;}"
      " fnc main(n:int):int{return plus(n);}",
-     (9223372036854775807,), "i64 add overflow"),
+     (9223372036854775807,), "ArithmeticOverflowError: code=65537 effect=panic"),
     ("overflow-mul", "fnc mul(n:int):int{return n*3;}"
      " fnc main(n:int):int{return mul(n);}",
-     (9223372036854775807,), "i64 mul overflow"),
+     (9223372036854775807,), "ArithmeticOverflowError: code=65537 effect=panic"),
     ("overflow-sub", "fnc main(n:int):int{return n-1;}",
-     (-9223372036854775808,), "i64 sub overflow"),
+     (-9223372036854775808,), "ArithmeticOverflowError: code=65537 effect=panic"),
     ("unbounded-recursion", "fnc always(n:int):int{return always(n);}"
      " fnc main(n:int):int{return always(n);}",
      (1,), "call depth exceeded"),
