@@ -65,6 +65,12 @@ class ActorContext {
   std::uint64_t domain() const noexcept { return domain_; }
   std::uint64_t actor() const noexcept { return actor_; }
   std::uint64_t incarnation() const noexcept { return incarnation_; }
+  // Admission state is independent of same-thread outstanding leases:
+  // delegated readers must stop once the table owner's stop is requested.
+  bool accepting() const noexcept {
+    return authority_ && authority_->active.load(std::memory_order_acquire) &&
+           authority_->accepting.load(std::memory_order_acquire);
+  }
   bool valid() const noexcept {
     return domain_ != 0 && actor_ != 0 && incarnation_ != 0 && authority_ &&
            authority_->active.load(std::memory_order_acquire) &&
