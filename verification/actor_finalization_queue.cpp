@@ -27,6 +27,56 @@ struct Observer final : ActorLifetimeResource {
   }
 };
 
+struct ReentrantObserver final : ActorLifetimeResource {
+  ActorFinalizationQueue<2>& queue;
+  std::shared_ptr<Mailbox> actor;
+  std::atomic<int> callbacks{0};
+  std::atomic<bool> deduplicated{false};
+  ReentrantObserver(ActorFinalizationQueue<2>& q, std::shared_ptr<Mailbox> a)
+      : queue(q), actor(std::move(a)) {}
+  void actor_owner_stopped() noexcept override {
+    callbacks.fetch_add(1, std::memory_order_release);
+    try {
+      deduplicated.store(
+          queue.try_request_close(actor) ==
+              ActorFinalizationQueue<2>::Admission::AlreadyQueued,
+          std::memory_order_release);
+    } catch (...) {}
+  }
+};
+
+void retirement_callback_reentry_does_not_deadlock_queue() {
+  ActorFinalizationQueue<2> queue;
+  auto actor = std::make_shared<Mailbox>(207);
+  auto observer = std::make_shared<ReentrantObserver>(queue, actor);
+  check(actor->context().attach_owned_resource(observer),
+        "unable to attach queue reentry observer");
+  check(queue.try_request_close(actor) == ActorFinalizationQueue<2>::Admission::Queued,
+        "could not enqueue reentrant stop");
+  check(queue.drain_ready() == 1, "supervisor did not drain callback task");
+  check(observer->callbacks.load(std::memory_order_acquire) == 1 &&
+        observer->deduplicated.load(std::memory_order_acquire),
+        "retirement callback could not deduplicate a processing ticket");
+  check(queue.pending() == 0 && queue.completed() == 1,
+        "retirement reentry generated a duplicate finalization");
+}
+
+void queue_owns_actor_until_completion() {
+  ActorFinalizationQueue<1> queue;
+  auto actor = std::make_shared<Mailbox>(208);
+  auto observer = std::make_shared<Observer>();
+  check(actor->context().attach_owned_resource(observer),
+        "unable to attach retained actor observer");
+  std::weak_ptr<Mailbox> weak = actor;
+  check(queue.try_request_close(actor) == ActorFinalizationQueue<1>::Admission::Queued,
+        "strong lifetime ticket not accepted");
+  actor.reset();
+  check(!weak.expired(), "pending supervisor ticket dropped actor lifetime");
+  check(queue.drain_ready() == 1, "retained actor was not finalized");
+  check(observer->retired.load(std::memory_order_acquire) == 1 &&
+        weak.expired(), "supervisor completion did not retire and release actor");
+}
+
 void duplicate_requests_and_supervisor_completion() {
   ActorFinalizationQueue<2> queue;
   auto actor = std::make_shared<Mailbox>(201);
@@ -147,6 +197,8 @@ void rejection_and_generation_reuse() {
 int main() {
   try {
     duplicate_requests_and_supervisor_completion();
+    retirement_callback_reentry_does_not_deadlock_queue();
+    queue_owns_actor_until_completion();
     bounded_admission_cannot_lose_stop();
     stale_ticket_does_not_stop_restarted_actor();
     leased_shutdown_is_not_observer_callback();
