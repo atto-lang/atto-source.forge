@@ -12,13 +12,6 @@ fn run(program: &Path, args: &[&Path]) -> Result<Output, String> {
         .map_err(|e| format!("failed to run {}: {e}", program.display()))
 }
 
-fn run_text(program: &Path, args: &[&str]) -> Result<Output, String> {
-    Command::new(program)
-        .args(args)
-        .output()
-        .map_err(|e| format!("failed to run {}: {e}", program.display()))
-}
-
 fn require(value: bool, message: impl Into<String>) -> Result<(), String> {
     if value { Ok(()) } else { Err(message.into()) }
 }
@@ -57,7 +50,8 @@ fn emit_and_link(
         "#include <inttypes.h>\n#include <stdint.h>\n#include <stdio.h>\n\
          extern int64_t oresforge_entry(void);\n\
          int main(void){const int64_t v=oresforge_entry();\
-         if(printf(\"%\" PRId64 \"\\n\",v)<0)return 3;return fflush(stdout)==0?0:4;}\n",
+         if(printf(\"%\" PRId64 \"\\n\",v)<0){return 3;}\
+         return fflush(stdout)==0?0:4;}\n",
     ).map_err(|e| e.to_string())?;
     let executable = root.join(format!("{label}-native"));
     let linked = Command::new(cc)
