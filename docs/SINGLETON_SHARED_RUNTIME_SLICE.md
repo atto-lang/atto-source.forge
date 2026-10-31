@@ -147,6 +147,51 @@ The admission test still requires 24 classified singleton rejections, nine lexic
 controls and three interpreter executions. Passing these host tests does not prove
 compiled guest singleton/table semantics or parity with Erlang.
 
+## Stage-0 compiler/runtime bridge
+
+`compiler/singleton_stage0.{hpp,cpp}` now provides an explicit internal bridge
+for the already-established empty declaration shell:
+
+```ores
+define singleton Settings as end
+fnc main() -> int { return 42; }
+```
+
+This bridge is intentionally **not** the general Forge frontend and is not a
+parity promotion. The normal scalar/runtime/callable frontends still reject
+`define singleton` with `ORES-SINGLETON-UNSUPPORTED`.
+
+The stage-0 compiler:
+
+- accepts exactly one explicit `define [pub] singleton Name as end` declaration
+  before the existing scalar program;
+- receives resolved module identity as trusted compiler input, not guest data,
+  and derives an opaque bootstrap `SingletonDeclarationId`;
+- removes only that empty declaration shell and compiles the remaining scalar
+  source with the real Forge scalar frontend;
+- uses the scalar program's `main()` result only as a temporary stage-0
+  initializer value, avoiding invention of final singleton field/member syntax;
+- classifies a receiver-name reference in the unsupported singleton body as
+  `ORES-SINGLETON-PREPUBLICATION-ESCAPE` before the generic stage-0 body
+  rejection; and
+- rejects every other non-empty singleton body with
+  `ORES-SINGLETON-STAGE0-BODY-UNSUPPORTED`.
+
+`verification/singleton_guest_stage0.cpp` binds the compiled declaration ID to
+the bounded application-domain registry and drives concurrent first access from
+two same-domain actor contexts. It requires exactly one execution of the
+compiled scalar initializer, complete value 42 publication and one shared
+reader identity across eight contenders. It also proves the normal frontend
+remains fail-closed and comments do not count as receiver escape.
+
+The bootstrap ID mapping currently uses deterministic FNV-1a components. It is
+not a security capability or final cross-artifact/wire identity and must be
+replaced by the full compiler's collision-safe resolved declaration identity
+before any parity promotion. The stage-0 bridge also does not establish final
+singleton member syntax, deep immutability, cancellation, scheduler dispatch,
+worker/isolate behavior, shared-table guest API semantics or hard real-time
+properties.
+
 ## Next compiler integration gate
 
 1. Bind compiler-resolved module/declaration identity to the existing bounded
