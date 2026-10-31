@@ -61,7 +61,9 @@ int main(int argc,char** argv) {
       std::cout.flush();
       return 0;
     }
-    if (argc>=3 && std::string(argv[1])=="run-runtime") {
+    if (argc>=3 && (std::string(argv[1])=="run-runtime" ||
+                        std::string(argv[1])=="run-runtime-effect")) {
+      const bool effect_mode=std::string(argv[1])=="run-runtime-effect";
       auto program=oresforge::parse_runtime_source(read_file(argv[2]));
       std::vector<std::int64_t> args;
       for (int i=3;i<argc;++i) {
@@ -72,7 +74,13 @@ int main(int argc,char** argv) {
           throw std::runtime_error("invalid runtime i64 argument");
         args.push_back(value);
       }
-      std::cout<<oresforge::interpret(program,args)<<'\n';
+      if (effect_mode) {
+        const auto result=oresforge::interpret_effect(program,args);
+        std::cout<<static_cast<unsigned>(result.effect.kind)<<' '
+                 <<result.effect.code<<' '<<result.value<<'\n';
+      } else {
+        std::cout<<oresforge::interpret(program,args)<<'\n';
+      }
       std::cout.flush();
       return 0;
     }
@@ -82,10 +90,14 @@ int main(int argc,char** argv) {
       std::cout.flush();
       return 0;
     }
-    if (argc==4 && std::string(argv[1])=="emit-runtime-asm") {
+    if (argc==4 && (std::string(argv[1])=="emit-runtime-asm" ||
+                        std::string(argv[1])=="emit-runtime-effect-asm")) {
+      const bool effect_mode=std::string(argv[1])=="emit-runtime-effect-asm";
       auto target=oresforge::parse_arch(argv[2]);
       auto program=oresforge::parse_runtime_source(read_file(argv[3]));
-      std::cout<<oresforge::emit_runtime_asm(program,target);
+      std::cout<<(effect_mode
+        ? oresforge::emit_runtime_effect_asm(program,target)
+        : oresforge::emit_runtime_asm(program,target));
       std::cout.flush();
       return 0;
     }
@@ -96,7 +108,7 @@ int main(int argc,char** argv) {
       std::cout.flush();
       return 0;
     }
-    std::cerr<<"usage: oresforge run|ir <file.ores> | emit-asm <arch> <file.ores> | run-runtime <file.ores> [i64-args...] | ir-runtime <file.ores> | emit-runtime-asm <arch> <file.ores> | run-calls <file.ores> [i64-args...] | emit-call-asm x86_64 <file.ores>\n";
+    std::cerr<<"usage: oresforge run|ir <file.ores> | emit-asm <arch> <file.ores> | run-runtime|run-runtime-effect <file.ores> [i64-args...] | ir-runtime <file.ores> | emit-runtime-asm|emit-runtime-effect-asm <arch> <file.ores> | run-calls <file.ores> [i64-args...] | emit-call-asm x86_64 <file.ores>\n";
     return 2;
   } catch (const std::exception& e) {
     std::cerr<<"oresforge: "<<e.what()<<'\n';
