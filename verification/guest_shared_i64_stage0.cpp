@@ -1,4 +1,6 @@
 #include "compiler/frontend.hpp"
+#include "compiler/singleton_stage0.hpp"
+#include "runtime/singleton_registry.hpp"
 #include "runtime/actor.hpp"
 #include "runtime/guest_shared_i64_stage0.hpp"
 #include <array>
@@ -80,7 +82,6 @@ void compile_gate_and_ir_verification() {
   forged.shared_table_stage0 = false;
   rejected("invalid or unadmitted shared-table IR", [&] { verify(forged); });
   forged = compiled;
-  forged.instructions[1].b = -1;
   // Program may contain params before guest op; find and corrupt actual op.
   for (auto& instruction : forged.instructions) {
     if (instruction.op == Op::TableUpdateCounter) {
@@ -135,6 +136,42 @@ void compiled_table_ops_and_permissions() {
   error(TableErrorCode::Denied, [&] { (void)run(lookup, readonly, 7); });
 }
 
+void compiled_singleton_to_actor_table_boundary() {
+  constexpr std::uint64_t domain = 19;
+  const auto plan = compile_singleton_stage0(
+      "define singleton Settings as end "
+      "fnc main() -> int { return 40 + 2; }",
+      "app/settings.ores");
+  Mailbox owner_box{701, 1024, 4 * oresforge::runtime::kMaxMessageBytes, domain};
+  Mailbox actor_box{702, 1024, 4 * oresforge::runtime::kMaxMessageBytes, domain};
+  SingletonRegistry<std::int64_t, 2> registry{domain};
+  const auto value = registry.get(owner_box.context(), plan.declaration_id, [&] {
+    return interpret(plan.initializer_program);
+  });
+  auto alias = registry.get(actor_box.context(), plan.declaration_id, [] {
+    return std::int64_t{-100};
+  });
+  check(value == alias && *value == 42, "compiled singleton identity not shared");
+  SharedI64Table<2> table(owner_box.context(), TableAccess::Public);
+  const auto own = table.owner_capability(owner_box.context());
+  table.insert(own, owner_box.context(), 1, *value);
+  const auto actor_cap = table.delegate(own, owner_box.context(),
+                                        actor_box.context(), true);
+  MailboxBoundI64GuestDispatch<2> actor_dispatch(actor_box,table,actor_cap);
+  const auto increase = parse_shared_i64_stage0_source(
+      "fnc main(key: int, delta: int) -> int { "
+      "return shared_i64_update_counter(key, delta); }");
+  check(run(increase, actor_dispatch, 1, 8) == 50,
+        "compiled singleton initial value not visible to guest table update");
+  registry.close();
+  check(*value == 42 && table.lookup(own,owner_box.context(),1) == 50,
+        "singleton reader lease or shared table corrupted on registry shutdown");
+  owner_box.close();
+  error(TableErrorCode::Closed, [&] {
+    (void)run(increase,actor_dispatch,1,1);
+  });
+}
+
 void concurrent_compiled_guest_operations() {
   constexpr int workers = 8, rounds = 10000;
   Mailbox owner_box{11};
@@ -178,6 +215,7 @@ int main() {
   try {
     compile_gate_and_ir_verification();
     compiled_table_ops_and_permissions();
+    compiled_singleton_to_actor_table_boundary();
     concurrent_compiled_guest_operations();
     std::cout << "PASS: compiled stage0 i64 table operations, runtime-derived "
                  "actor context, stale-handle rejection, overflow, 80000 "
