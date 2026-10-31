@@ -237,19 +237,36 @@ std::optional<std::vector<std::uint8_t>> Mailbox::receive() {
   queue_.pop_front();
   return value;
 }
-void Mailbox::request_close() {
+std::uint64_t Mailbox::request_close() {
+  std::scoped_lock lock(mutex_);
+  closed_ = true;
+  if (restarting_) stop_during_restart_ = true;
+  // Fence the actor while holding mailbox admission, not after unlocking:
+  // old contexts must not acquire authority between request and fence.
+  authority_->request_stop();
+  discard_queued(queue_);
+  queued_bytes_ = 0;
+  return generation_;
+}
+
+bool Mailbox::finalize_stop(std::uint64_t incarnation) {
   std::shared_ptr<CapabilityToken> old;
   {
     std::scoped_lock lock(mutex_);
+    if (incarnation == 0 || generation_ != incarnation) return false;
+    if (authority_->has_current_thread_lease() ||
+        authority_->is_retiring_on_current_thread())
+      throw std::runtime_error("supervisor finalization cannot self-join");
     closed_ = true;
     if (restarting_) stop_during_restart_ = true;
     old = authority_;
+    old->request_stop();
     discard_queued(queue_);
     queued_bytes_ = 0;
   }
-  // Do not call owner lifecycle callbacks while holding the mailbox lock:
-  // the last leased actor may itself need to request shutdown.
-  old->request_stop();
+  // Quiescence and callbacks happen outside the mailbox lock.
+  old->invalidate();
+  return true;
 }
 void Mailbox::close() {
   std::shared_ptr<CapabilityToken> old;
