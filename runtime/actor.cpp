@@ -4,42 +4,146 @@
 #include <utility>
 #include <memory>
 #include <deque>
+#include <algorithm>
 #include <vector>
 namespace oresforge::runtime {
+namespace {
+// A lease must be released on its admitting thread. Nested leases (including
+// different actors) are tracked individually; a move within the same thread
+// transfers the live lease without adding another entry.
+thread_local std::vector<const CapabilityToken*> active_execution_leases;
+}
+
 bool CapabilityToken::attach_owned_resource(
     const std::shared_ptr<ActorLifetimeResource>& resource) const noexcept {
   if (!resource) return false;
   try {
-    std::scoped_lock lock(resource_mutex_);
-    if (!active.load(std::memory_order_acquire)) return false;
+    std::scoped_lock execution_guard(execution_mutex_);
+    // No resource may be newly attached after shutdown was requested,
+    // even while older leased operations are still draining.
+    if (stopping_ || !active.load(std::memory_order_acquire)) return false;
+    std::scoped_lock resource_guard(resource_mutex_);
     for (auto& slot : resources_) {
       if (slot.expired()) {
         slot = resource;
         return true;
       }
     }
-    return false;
-  } catch (...) {
-    return false;
-  }
+  } catch (...) { return false; }
+  return false;
 }
 
-void CapabilityToken::invalidate() noexcept {
+bool CapabilityToken::acquire_lease() const noexcept {
   try {
-    // A unique execution lock waits for admitted guest table calls to finish.
-    // Once acquired, no new execution lease can be admitted on this token.
-    std::unique_lock execution_guard(execution_mutex_);
-    active.store(false, std::memory_order_release);
+    std::scoped_lock guard(execution_mutex_);
+    if (stopping_ || !active.load(std::memory_order_acquire)) return false;
+    ++executing_;
+    return true;
+  } catch (...) { return false; }
+}
+
+void CapabilityToken::retire_resources() const noexcept {
+  try {
     std::scoped_lock resources_guard(resource_mutex_);
     for (auto& weak : resources_) {
       if (auto resource = weak.lock()) resource->actor_owner_stopped();
       weak.reset();
     }
   } catch (...) {
-    // Platform mutex failure is fatal for lifecycle guarantees. Keep the
-    // authority fenced even if retirement callbacks could not complete.
-    active.store(false, std::memory_order_release);
+    // Runtime synchronization primitive failure cannot re-enable authority.
   }
+}
+
+void CapabilityToken::release_lease() const noexcept {
+  bool retire = false;
+  try {
+    {
+      std::scoped_lock guard(execution_mutex_);
+      if (executing_ == 0) std::terminate(); // Internal lease imbalance.
+      --executing_;
+      if (stopping_ && executing_ == 0 && !cleanup_started_) {
+        cleanup_started_ = true;
+        active.store(false, std::memory_order_release);
+        retire = true;
+      }
+    }
+    if (retire) {
+      retire_resources();
+      {
+        std::scoped_lock guard(execution_mutex_);
+        cleanup_complete_ = true;
+      }
+      execution_cv_.notify_all();
+    }
+  } catch (...) {
+    active.store(false, std::memory_order_release);
+    execution_cv_.notify_all();
+  }
+}
+
+void CapabilityToken::request_stop() noexcept {
+  bool retire = false;
+  try {
+    {
+      std::scoped_lock guard(execution_mutex_);
+      stopping_ = true;
+      if (executing_ == 0 && !cleanup_started_) {
+        cleanup_started_ = true;
+        active.store(false, std::memory_order_release);
+        retire = true;
+      }
+    }
+    if (retire) {
+      retire_resources();
+      {
+        std::scoped_lock guard(execution_mutex_);
+        cleanup_complete_ = true;
+      }
+      execution_cv_.notify_all();
+    }
+  } catch (...) {
+    active.store(false, std::memory_order_release);
+    execution_cv_.notify_all();
+  }
+}
+
+void CapabilityToken::wait_for_stop() const noexcept {
+  try {
+    std::unique_lock lock(execution_mutex_);
+    execution_cv_.wait(lock, [&] { return cleanup_complete_; });
+  } catch (...) { std::terminate(); }
+}
+
+void CapabilityToken::invalidate() noexcept {
+  if (has_current_thread_lease()) std::terminate(); // No self-join.
+  request_stop();
+  wait_for_stop();
+}
+
+bool CapabilityToken::has_current_thread_lease() const noexcept {
+  return std::find(active_execution_leases.begin(), active_execution_leases.end(),
+                   this) != active_execution_leases.end();
+}
+
+ActorExecutionLease::ActorExecutionLease(
+    ActorContext context, std::shared_ptr<const CapabilityToken> authority)
+    : context_(std::move(context)), authority_(std::move(authority)) {
+  if (!authority_ || !authority_->acquire_lease())
+    throw std::runtime_error("closed actor has no execution lease");
+  try {
+    active_execution_leases.push_back(authority_.get());
+  } catch (...) {
+    authority_->release_lease();
+    throw;
+  }
+}
+ActorExecutionLease::~ActorExecutionLease() noexcept {
+  if (!authority_) return; // Moved-from object owns no lease.
+  const auto found = std::find(active_execution_leases.rbegin(),
+                               active_execution_leases.rend(), authority_.get());
+  if (found == active_execution_leases.rend()) std::terminate();
+  active_execution_leases.erase(std::next(found).base());
+  authority_->release_lease();
 }
 
 bool ActorContext::attach_owned_resource(
@@ -122,8 +226,19 @@ std::optional<std::vector<std::uint8_t>> Mailbox::receive() {
   queue_.pop_front();
   return value;
 }
+void Mailbox::request_close() {
+  std::scoped_lock lock(mutex_);
+  closed_ = true;
+  authority_->request_stop(); // Safe from an admitted actor callback.
+  discard_queued(queue_);
+  queued_bytes_ = 0;
+}
 void Mailbox::close() {
   std::scoped_lock lock(mutex_);
+  // Synchronous close from inside the same actor's lease is a self-join.
+  // Require request_close() and let the final lease release do retirement.
+  if (authority_->has_current_thread_lease())
+    throw std::runtime_error("actor self-close requires request_close");
   closed_=true;
   authority_->invalidate();
   discard_queued(queue_);
@@ -131,6 +246,9 @@ void Mailbox::close() {
 }
 ActorRef Mailbox::restart() {
   std::scoped_lock lock(mutex_);
+  // Incarnation replacement is supervisor-only and must not self-join.
+  if (authority_->has_current_thread_lease())
+    throw std::runtime_error("actor restart requires quiescence");
   if (generation_==std::numeric_limits<std::uint64_t>::max())
     throw std::overflow_error("generation exhausted");
   // Allocate first: allocation failure leaves the old incarnation untouched.
