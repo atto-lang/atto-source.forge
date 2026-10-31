@@ -115,7 +115,8 @@ fn real_main() -> Result<(), String> {
         .output().map_err(|e| e.to_string())?;
     require(
         checked.status.code() == Some(1) && checked.stdout.is_empty() &&
-        String::from_utf8_lossy(&checked.stderr).contains("i64 sub overflow"),
+        String::from_utf8_lossy(&checked.stderr)
+            .contains("ArithmeticOverflowError: code=65537 effect=panic"),
         format!("linked interpreter MIN overflow used wrong failure: {}",
             String::from_utf8_lossy(&checked.stderr)),
     )?;
@@ -127,6 +128,6 @@ fn real_main() -> Result<(), String> {
         format!("linked native Math MIN overflow did not SIGILL: {:?}", trapped.status),
     )?;
 
-    println!("PASS Forge exact stdlib Math: linked interpreter/native result 42 and checked MIN trap");
+    println!("PASS Forge exact stdlib Math: linked interpreter/native result 42, guest overflow identity 65537, and unhandled panic trap");
     Ok(())
 }
