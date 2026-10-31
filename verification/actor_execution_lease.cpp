@@ -81,6 +81,38 @@ void retirement_callback_reentry_is_fail_closed() {
         "repeated close delivered duplicate retirement callback");
 }
 
+void unleased_stop_request_has_no_callbacks() {
+  Mailbox box{110};
+  const auto original = box.context();
+  auto observer = std::make_shared<Observer>();
+  check(original.attach_owned_resource(observer), "cannot register deferred observer");
+  box.request_close();
+  box.request_close();
+  check(observer->calls.load(std::memory_order_acquire) == 0,
+        "request_close ran resource callback with no leases");
+  check(!original.valid(), "stop request did not invalidate unleased actor");
+  box.close();
+  check(observer->calls.load(std::memory_order_acquire) == 1,
+        "external completion did not deliver the deferred callback");
+}
+
+void lease_context_rejects_foreign_thread() {
+  Mailbox box{111};
+  const auto lease = box.execution_lease();
+  std::atomic<bool> denied{false};
+  std::thread foreign([&] {
+    try { (void)lease.context(); }
+    catch (const std::runtime_error&) {
+      denied.store(true, std::memory_order_release);
+    }
+  });
+  foreign.join();
+  check(denied.load(std::memory_order_acquire),
+        "foreign thread accessed another thread's execution lease");
+  check(lease.context().actor() == 111,
+        "original admitting thread lost its execution lease");
+}
+
 void moved_from_lease_is_not_authority() {
   Mailbox box{100};
   auto admitted = box.execution_lease();
@@ -147,14 +179,17 @@ void actor_self_shutdown_is_nonblocking() {
     check(!current.attach_owned_resource(late),
           "resource attachment succeeded after stop request");
   }
-  check(observer->calls.load(std::memory_order_acquire) == 1,
-        "final lease did not retire actor resources exactly once");
+  check(observer->calls.load(std::memory_order_acquire) == 0,
+        "final lease executed user callbacks instead of deferring retirement");
   check(!current.valid(), "self-stopped actor authority remained valid");
   bool closed = false;
   try { (void)table.lookup(reader_cap, reader_context, 1); }
   catch (const TableError& e) { closed = e.code == TableErrorCode::Closed; }
   check(closed, "owner death did not retire delegated table access");
-  owner.close(); // Idempotent synchronous finish after deferred cleanup.
+  owner.close(); // Supervisor completes deferred resource retirement.
+  check(observer->calls.load(std::memory_order_acquire) == 1,
+        "supervisor did not retire resources after final lease release");
+  owner.close();
   check(observer->calls.load(std::memory_order_acquire) == 1,
         "repeated external close delivered duplicate retirement");
 }
@@ -177,8 +212,11 @@ void multiple_leases_quiesce_in_last_release() {
     check(observer->calls.load(std::memory_order_acquire) == 0,
           "stop retired while one active lease remained");
   }
+  check(observer->calls.load(std::memory_order_acquire) == 0,
+        "last nested lease unexpectedly ran user callbacks");
+  owner.close();
   check(observer->calls.load(std::memory_order_acquire) == 1,
-        "last of nested leases did not finish teardown");
+        "supervisor did not complete nested-lease teardown");
 }
 
 void lease_budget_is_bounded() {
@@ -341,6 +379,8 @@ void supervisor_restart_aborted_by_leased_actor_shutdown() {
   supervisor.join();
   check(outcome.load(std::memory_order_acquire) == 2,
         "shutdown request failed to abort in-progress actor restart");
+  check(observer->calls.load(std::memory_order_acquire) == 1,
+        "aborted restart did not complete cleanup");
   check(!old.valid() && observer->calls.load(std::memory_order_acquire) == 1,
         "aborted restart failed to retire old resources once");
   bool denied = false;
@@ -385,6 +425,8 @@ void concurrent_lease_admission_and_shutdown() {
 
 int main() {
   try {
+    unleased_stop_request_has_no_callbacks();
+    lease_context_rejects_foreign_thread();
     moved_from_lease_is_not_authority();
     actor_self_shutdown_is_nonblocking();
     multiple_leases_quiesce_in_last_release();
