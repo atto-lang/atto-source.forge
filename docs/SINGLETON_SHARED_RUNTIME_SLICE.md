@@ -57,7 +57,8 @@ Cancellation and deadline-aware waits are not implemented.
 - Explicit `give_away(owner_cap, caller, next_owner)` transfers ownership to
   another **live, same-domain actor incarnation**. No guest-supplied actor
   identity or automatic heir is accepted. The new owner obtains its own owner
-  capability; old owner authority is denied for protected/private tables.
+  capability; old owner grants carry an ownership generation and are **permanently
+  stale** after transfer, even if the table is later transferred back.
   Existing independently delegated read capabilities remain valid. Public-mode
   explicit write grants retain public write semantics.
 - Transfer first attaches a fresh actor-death observer *outside* the table lock
@@ -147,7 +148,8 @@ Runtime tests exercise:
   retirement racing reads, stale replacement handles and expired capabilities.
 - Explicit same-domain ownership transfer, old-owner cleanup fencing, new-owner
   retirement, denied foreign/stopped candidates, capacity rollback, and 128
-  old-owner teardown vs handoff races. These are authored regression cases,
+  old-owner teardown vs handoff races, and ABA-style handoff-back stale grant
+  checks. These are authored regression cases,
   not current-head execution results.
 - Filling the 256-resource lifecycle registry, deterministic capacity failure,
   expired-slot reuse, and full-set retirement on restart.
