@@ -31,6 +31,9 @@ struct Module {
   int entry = -1;
 };
 Module parse(std::string_view source);
+// Parse one canonical library module without inventing an entrypoint. This is
+// syntax/type/call admission only; multi-file linking remains a separate gate.
+Module parse_library(std::string_view source);
 void verify(const Module& program);
 std::int64_t interpret(const Module& program, std::span<const std::int64_t> args);
 std::string emit_asm(const Module& program, Arch arch);
