@@ -178,6 +178,13 @@ void actor_self_shutdown_is_nonblocking() {
           "self-close rejection modified the active table");
 
     owner.request_close(); // The actor may request its own shutdown.
+    bool delegate_closed = false;
+    try { (void)table.lookup(reader_cap, reader_context, 1); }
+    catch (const TableError& e) {
+      delegate_closed = e.code == TableErrorCode::Closed;
+    }
+    check(delegate_closed,
+          "delegated reader accessed a stopping owner on a multi-lease thread");
     std::atomic<bool> unleased_denied{false};
     std::thread unleased([&] {
       if (current.valid()) return;
