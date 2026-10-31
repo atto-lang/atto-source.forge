@@ -108,12 +108,18 @@ not substitute a scalar mutation or an unprotected callback.
 * Forge: the default scalar bootstrap still explicitly rejects class/actor
   methods, including the receiver-erasure collision corpus. A **separate,
   opt-in stage-1** `run-class` / `emit-class-asm x86_64` profile parses
-  exactly one stack-owned scalar-class field, one mutable additive method,
-  one shared reader, and a restricted main that invokes them. The compiler
-  emits checked, statically inlined native x86-64 method operations without
-  heap/GC allocation. This does NOT provide generic class lowering, actor
-  state, inheritance, virtual methods, escaping borrows or general dispatch.
-  CTest/native execution is not yet verified on an admitted runner.
+  exactly one i64 scalar field **per instance**, up to 16 named source
+  methods (checked scalar add/subtract writers and read-only accessors),
+  up to 8 independent instances, and up to 32 ordered construct/call/return
+  operations in a restricted main. The compiler keeps a method identity
+  table keyed by name and caller-visible arity; inline and split mutable
+  receivers are erased from caller arity. The method operations are checked
+  and statically inlined into stack-owned x86-64 storage without guest
+  heap allocation or GC. This does NOT provide generic method-body IR,
+  dynamic dispatch, inheritance, actor state, escaping borrow support, or
+  full borrow/lifetime analysis. Source-to-native local component execution
+  (including ASan/UBSan) passed for one and two instances; full repository
+  CMake/CLI integration and source-org CTest are still unverified.
 * Wasm: uses a pinned LLVM compiler and has a bounded scalar-class wasm32
   guest test matrix. Passing compiled guest evidence remains required; actor
   methods and lexical captures are still outside the verified subset.
