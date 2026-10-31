@@ -43,6 +43,18 @@ struct Observer final : ActorLifetimeResource {
   }
 };
 
+void moved_from_lease_is_not_authority() {
+  Mailbox box{100};
+  auto admitted = box.execution_lease();
+  auto successor = std::move(admitted);
+  bool rejected = false;
+  try { (void)admitted.context(); }
+  catch (const std::runtime_error&) { rejected = true; }
+  check(rejected, "moved-from execution lease exposed unpinned context");
+  check(successor.context().actor() == 100,
+        "moved execution lease lost its admitted incarnation");
+}
+
 void close_waits_for_lease() {
   Mailbox owner{101};
   const auto first = owner.context();
@@ -153,6 +165,7 @@ void concurrent_lease_admission_and_shutdown() {
 
 int main() {
   try {
+    moved_from_lease_is_not_authority();
     close_waits_for_lease();
     restart_waits_for_lease();
     concurrent_lease_admission_and_shutdown();
