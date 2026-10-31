@@ -133,6 +133,12 @@ int main() {
            "AArch64 effect ABI returns Throw/ArithmeticOverflowError without host trap");
     // The bootstrap intentionally has NO BigInt, Decimal or binary64 lowering.
     // Fail closed rather than treating those spellings as signed i64.
+    // No operator overloading: %, ^, and ^^ are removed source operators.
+    // Forge already lexes each as an invalid character; lock the diagnostic
+    // before an alternate arithmetic frontend accidentally reintroduces them.
+    for (const char* forbidden : {"7%3", "2^3", "2^^3"}) {
+      reject_diagnostic([&] { (void)source(forbidden); }, "invalid character");
+    }
     reject([] { source("1.25"); });
     reject([] { source("2.0i"); });
     reject([] { parse_source("fnc main():bigint{return 1;}"); });
