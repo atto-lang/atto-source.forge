@@ -217,6 +217,85 @@ void restart_waits_for_lease() {
   });
 }
 
+void external_close_and_self_request_do_not_deadlock() {
+  Mailbox box{106};
+  const auto old = box.context();
+  auto observer = std::make_shared<Observer>();
+  check(old.attach_owned_resource(observer), "cannot attach external-close observer");
+  std::latch starting{1};
+  std::atomic<bool> done{false};
+  std::thread closer;
+  {
+    auto lease = box.execution_lease();
+    closer = std::thread([&] {
+      starting.count_down();
+      box.close();
+      done.store(true, std::memory_order_release);
+    });
+    starting.wait();
+    // Either ordering is allowed; both paths must complete without waiting
+    // on a mailbox mutex held by a concurrent synchronous closer.
+    box.request_close();
+    check(lease.context().valid(), "external close invalidated a pinned lease");
+    check(!done.load(std::memory_order_acquire),
+          "external close returned before final lease release");
+  }
+  closer.join();
+  check(done.load(std::memory_order_acquire), "external close did not finish");
+  check(!old.valid() && observer->calls.load(std::memory_order_acquire) == 1,
+        "racing close delivered incomplete or duplicate lifecycle cleanup");
+}
+
+void supervisor_restart_aborted_by_leased_actor_shutdown() {
+  Mailbox box{107};
+  const auto old = box.context();
+  auto observer = std::make_shared<Observer>();
+  check(old.attach_owned_resource(observer), "cannot attach restart observer");
+  std::latch starting{1};
+  std::atomic<int> outcome{0};
+  std::thread supervisor;
+  {
+    auto lease = box.execution_lease();
+    supervisor = std::thread([&] {
+      starting.count_down();
+      try {
+        (void)box.restart();
+        outcome.store(1, std::memory_order_release);
+      } catch (const std::runtime_error&) {
+        outcome.store(2, std::memory_order_release);
+      }
+    });
+    starting.wait();
+    // Wait for the supervisor's restart transition to reject admission.
+    // No time-based sleeps or unchecked assumptions about thread ordering.
+    bool restart_started = false;
+    for (unsigned i=0; i<1000000; ++i) {
+      try { (void)box.context(); }
+      catch (const std::runtime_error&) { restart_started = true; break; }
+      std::this_thread::yield();
+    }
+    if (!restart_started) {
+      // Release the lease before joining; a run with no observable restart
+      // admission boundary is an explicit failure, not a hang.
+      box.request_close();
+    } else {
+      box.request_close();
+      check(lease.context().valid(), "restart closed leased actor prematurely");
+    }
+    check(outcome.load(std::memory_order_acquire) == 0,
+          "supervisor restart completed before final lease release");
+  }
+  supervisor.join();
+  check(outcome.load(std::memory_order_acquire) == 2,
+        "shutdown request failed to abort in-progress actor restart");
+  check(!old.valid() && observer->calls.load(std::memory_order_acquire) == 1,
+        "aborted restart failed to retire old resources once");
+  bool denied = false;
+  try { (void)box.context(); }
+  catch (const std::runtime_error&) { denied = true; }
+  check(denied, "aborted restart resurrected a closed actor");
+}
+
 void concurrent_lease_admission_and_shutdown() {
   // Repeated interleavings use latches, not sleep-based assumptions.
   for (std::uint64_t round = 0; round < 128; ++round) {
@@ -256,6 +335,8 @@ int main() {
     moved_from_lease_is_not_authority();
     actor_self_shutdown_is_nonblocking();
     multiple_leases_quiesce_in_last_release();
+    external_close_and_self_request_do_not_deadlock();
+    supervisor_restart_aborted_by_leased_actor_shutdown();
     close_waits_for_lease();
     restart_waits_for_lease();
     concurrent_lease_admission_and_shutdown();
