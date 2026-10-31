@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <limits>
 #include <map>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -27,7 +28,24 @@ struct Token { std::string_view text; std::size_t offset=0; };
 
 class Parser {
  public:
-  explicit Parser(std::string_view text,bool library=false) : text_(text), library_(library) { next(); }
+  explicit Parser(std::string_view text,bool library=false)
+      : text_(text), library_(library) { next(); }
+  Parser(std::string_view text,Module imported,std::string expected_import)
+      : text_(text), linked_(true), expected_import_(std::move(expected_import)) {
+    if(imported.module_name.empty())throw std::runtime_error("linked library lacks module identity");
+    imported_binding_=imported.module_name;
+    for(const auto& name:imported.exports)
+      imported_public_.insert(imported_binding_+"."+name);
+    for(auto& fn:imported.functions) {
+      fn.name=imported_binding_+"."+fn.name;
+      for(auto& node:fn.nodes)
+        if(node.kind==Kind::Call)node.name=imported_binding_+"."+node.name;
+      if(names_.contains(fn.name))throw std::runtime_error("duplicate linked function");
+      names_[fn.name]=static_cast<int>(module_.functions.size());
+      module_.functions.push_back(std::move(fn));
+    }
+    next();
+  }
   Module parse() {
     if (library_) {
       bool defining=false, public_=false;
@@ -37,7 +55,7 @@ class Parser {
       }
       if (!defining) fail("library module requires define");
       expect("module");
-      (void)identifier();
+      module_.module_name=identifier();
       expect("as");
       while (token_.text!="end") {
         if (token_.text.empty()) fail("unterminated module");
@@ -45,6 +63,19 @@ class Parser {
       }
       expect("end");
       if (!token_.text.empty()) fail("unexpected trailing token");
+    } else if (linked_) {
+      expect("import"); expect("module");
+      const std::string binding=identifier();
+      if(binding!=imported_binding_)fail("import binding does not match library module");
+      expect("from");
+      const std::string specifier=string_literal();
+      if(specifier!=expected_import_)fail("import specifier does not match supplied library");
+      expect(";");
+      while (!token_.text.empty()) definition();
+      for (std::size_t i=0; i<module_.functions.size(); ++i) {
+        if (module_.functions[i].name=="main") module_.entry=static_cast<int>(i);
+      }
+      if (module_.entry<0) fail("missing main function");
     } else {
       while (!token_.text.empty()) definition();
       for (std::size_t i=0; i<module_.functions.size(); ++i) {
@@ -69,6 +100,10 @@ class Parser {
  private:
   std::string_view text_;
   bool library_ = false;
+  bool linked_ = false;
+  std::string expected_import_;
+  std::string imported_binding_;
+  std::set<std::string> imported_public_;
   std::size_t at_=0;
   Token token_;
   Module module_;
@@ -93,7 +128,19 @@ class Parser {
     const std::size_t begin=at_;
     if (at_==text_.size()) {token_={{},begin}; return;}
     const char c=text_[at_++];
-    if (letter(c)) {
+    if (c=='"') {
+      bool closed=false;
+      while(at_<text_.size()) {
+        const char q=text_[at_++];
+        if(q=='\\')throw std::runtime_error(
+            "callable import string escapes unsupported at byte "+std::to_string(begin));
+        if(q=='"') {closed=true;break;}
+        if(q=='\n'||q=='\r')throw std::runtime_error(
+            "unterminated callable import string at byte "+std::to_string(begin));
+      }
+      if(!closed)throw std::runtime_error(
+          "unterminated callable import string at byte "+std::to_string(begin));
+    } else if (letter(c)) {
       while (at_<text_.size() && (letter(text_[at_])||digit(text_[at_]))) ++at_;
     } else if (digit(c)) {
       while (at_<text_.size() && digit(text_[at_])) ++at_;
@@ -102,7 +149,7 @@ class Parser {
       ++at_;
     } else if (c=='-' && at_<text_.size() && text_[at_]=='>') {
       ++at_;
-    } else if (std::string_view("()+-*{};:,<>=").find(c)==std::string_view::npos) {
+    } else if (std::string_view("()+-*{};:,<>=.").find(c)==std::string_view::npos) {
       at_=begin;
       fail("invalid character");
     }
@@ -116,6 +163,13 @@ class Parser {
   std::string identifier() {
     if (token_.text.empty() || !letter(token_.text[0])) fail("expected identifier");
     const std::string result(token_.text);
+    next();
+    return result;
+  }
+  std::string string_literal() {
+    if(token_.text.size()<2 || token_.text.front()!='"' || token_.text.back()!='"')
+      fail("expected quoted import specifier");
+    const std::string result(token_.text.substr(1,token_.text.size()-2));
     next();
     return result;
   }
@@ -143,6 +197,7 @@ class Parser {
     names_[name]=index;
     module_.functions.push_back({name,{},{}});
     current_=&module_.functions.back();
+    if(public_)module_.exports.push_back(name);
     expect("(");
     if (token_.text!=")") {
       do {
@@ -260,8 +315,16 @@ class Parser {
       next();return add(Kind::Constant,value);
     }
     if (!token_.text.empty() && letter(token_.text.front())) {
-      const std::string name=identifier();
+      std::string name=identifier();
+      bool qualified=false;
+      if(take(".")) {
+        qualified=true;
+        name+="."+identifier();
+        if(!linked_)fail("qualified callable requires linked module");
+        if(!imported_public_.contains(name))fail("imported function is private or missing");
+      }
       if (!take("(")) {
+        if(qualified)fail("qualified imported value must be called");
         auto& params=current_->parameters;
         auto found=std::find(params.begin(),params.end(),name);
         if(found==params.end())fail("unknown parameter");
@@ -434,6 +497,22 @@ Module parse_library(std::string_view source) {
   if (source.size()>kMaxSource)throw std::runtime_error("callable source budget exceeded");
   oresforge::source::validate_utf8(source);
   return Parser(source,true).parse();
+}
+Module parse_linked(std::string_view entry_source,
+                    std::string_view library_source,
+                    std::string_view expected_import_specifier) {
+  if(entry_source.size()>kMaxSource || library_source.size()>kMaxSource)
+    throw std::runtime_error("callable source budget exceeded");
+  if(expected_import_specifier.empty() || expected_import_specifier.size()>512 ||
+      expected_import_specifier.front()=='/' ||
+      expected_import_specifier.find("\\")!=std::string_view::npos ||
+      expected_import_specifier.find("//")!=std::string_view::npos)
+    throw std::runtime_error("invalid callable linked import specifier");
+  oresforge::source::validate_utf8(entry_source);
+  oresforge::source::validate_utf8(library_source);
+  auto library=Parser(library_source,true).parse();
+  return Parser(entry_source,std::move(library),
+                std::string(expected_import_specifier)).parse();
 }
 void verify(const Module& m) {
   if(m.entry<0 || static_cast<std::size_t>(m.entry)>=m.functions.size())
