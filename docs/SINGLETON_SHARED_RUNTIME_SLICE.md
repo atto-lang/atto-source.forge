@@ -393,6 +393,11 @@ that does not own the target actor's execution lease.
 - `run_one()` claims one ticket without holding the queue mutex while
   waiting or calling actor-owned retirement observers. Callback reentry
   may deduplicate a processing ticket without a queue-lock inversion.
+  A host-only typed `Completion` receipt includes actor ID, original
+  incarnation, stop cause and whether that incarnation was actually
+  finalized. Duplicate requests monotonically escalate causes from requested
+  through cancellation/unhandled throw/raise to panic; the recipient
+  supervisor must deliver a CONTROL notice separately.
   A host exception resets the ticket to pending rather than discarding
   it. The supervisor must re-drive pending tickets.
 - The fixed-capacity adapter does not allocate queue nodes on admission.
@@ -404,7 +409,8 @@ that does not own the target actor's execution lease.
 - `verification/actor_finalization_queue.cpp` tests bounded admission,
   duplicate requests, strong ticket lifetime, reentrant callbacks,
   active-lease quiescence, generation fencing, a restarted actor remaining
-  live, and exactly-once callback delivery. CMake/CTest and the direct
+  live, stop-cause escalation and typed receipts, and exactly-once callback
+  delivery. CMake/CTest and the direct
   release/ASan/UBSan/leak script compile this test. This is **authored
   coverage**, not yet an executed result.
 
