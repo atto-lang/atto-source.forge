@@ -8,6 +8,7 @@
 #include <optional>
 #include <memory>
 #include <span>
+#include <shared_mutex>
 #include <vector>
 #include <utility>
 namespace oresforge::runtime {
@@ -29,6 +30,12 @@ struct CapabilityToken final {
   bool attach_owned_resource(const std::shared_ptr<ActorLifetimeResource>& resource) const noexcept;
   void invalidate() noexcept;
  private:
+  // An execution lease pins this incarnation until its current operation ends.
+  // Invalidate takes the unique lock before fencing the authority and before
+  // notifying actor-owned resources; stage0 dispatch takes the shared lock.
+  mutable std::shared_mutex execution_mutex_;
+  friend class ActorExecutionLease;
+  friend class Mailbox;
   mutable std::mutex resource_mutex_;
   mutable std::array<std::weak_ptr<ActorLifetimeResource>,
                      kMaxActorOwnedResources> resources_{};
@@ -63,6 +70,26 @@ class ActorContext {
         authority_(std::move(authority)) {}
   friend class Mailbox;
 };
+// Trusted scheduler-issued admission guard. It cannot be created or
+// reconstructed from guest operands and is never a wire/FFI capability.
+// Keep leases short: do not hold them across await, select or guest callbacks.
+class ActorExecutionLease final {
+ public:
+  ActorExecutionLease() = delete;
+  ActorExecutionLease(const ActorExecutionLease&) = delete;
+  ActorExecutionLease& operator=(const ActorExecutionLease&) = delete;
+  ActorExecutionLease(ActorExecutionLease&&) noexcept = default;
+  ActorExecutionLease& operator=(ActorExecutionLease&&) = delete;
+  const ActorContext& context() const noexcept { return context_; }
+ private:
+  const ActorContext context_;
+  std::shared_ptr<const CapabilityToken> authority_;
+  std::shared_lock<std::shared_mutex> admission_;
+  ActorExecutionLease(ActorContext context, std::shared_ptr<const CapabilityToken> authority)
+      : context_(std::move(context)), authority_(std::move(authority)),
+        admission_(authority_->execution_mutex_) {}
+  friend class Mailbox;
+};
 struct ActorRef {
   std::uint64_t id;
   std::uint64_t generation;
@@ -84,6 +111,9 @@ class Mailbox {
   // Trusted scheduler/actor-runtime adapter. Guest code must never be allowed
   // to manufacture ActorContext values or pass them through FFI.
   ActorContext context() const;
+  // Trusted scheduler admission. An acquired lease pins actor validity until
+  // it is released; close/restart then fence the actor and retire its tables.
+  ActorExecutionLease execution_lease() const;
   void send(ActorRef,std::span<const std::uint8_t>);
   std::optional<std::vector<std::uint8_t>> receive();
   void close();
