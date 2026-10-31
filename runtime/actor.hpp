@@ -29,6 +29,8 @@ class ActorLifetimeResource {
 struct CapabilityToken final {
   // Internal stop completion can be triggered by a const lease authority.
   mutable std::atomic<bool> active{true};
+  // Admission stops immediately, while active leased callers may drain.
+  std::atomic<bool> accepting{true};
   bool attach_owned_resource(const std::shared_ptr<ActorLifetimeResource>& resource) const noexcept;
   // Safe from within an actor's own execution lease: fence new admissions
   // immediately, retire resources on last lease release, never wait here.
@@ -62,7 +64,9 @@ class ActorContext {
   std::uint64_t incarnation() const noexcept { return incarnation_; }
   bool valid() const noexcept {
     return domain_ != 0 && actor_ != 0 && incarnation_ != 0 && authority_ &&
-           authority_->active.load(std::memory_order_acquire);
+           authority_->active.load(std::memory_order_acquire) &&
+           (authority_->accepting.load(std::memory_order_acquire) ||
+            authority_->has_current_thread_lease());
   }
   bool operator==(const ActorContext& other) const noexcept {
     return domain_ == other.domain_ && actor_ == other.actor_ &&
