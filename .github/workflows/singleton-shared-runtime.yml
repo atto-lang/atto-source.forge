@@ -5,6 +5,7 @@ on:
     paths:
       - runtime/actor.hpp
       - runtime/actor.cpp
+      - runtime/actor_finalizer.hpp
       - runtime/singleton_cell.hpp
       - runtime/singleton_identity.hpp
       - runtime/shared_i64_table.hpp
@@ -14,6 +15,7 @@ on:
       - verification/singleton_guest_stage0.cpp
       - verification/guest_shared_i64_stage0.cpp
       - verification/actor_execution_lease.cpp
+      - verification/actor_finalization_queue.cpp
       - CMakeLists.txt
       - codegen/native.cpp
       - compiler/**
