@@ -47,29 +47,39 @@ class ActorFinalizationQueue final {
                               ActorStopCause cause = ActorStopCause::Requested) {
     if (!actor) return Admission::Invalid;
     std::scoped_lock lock(mutex_);
+    Ticket* free_slot = nullptr;
+    for (auto& ticket : tickets_)
+      if (!ticket.actor && !free_slot) free_slot = &ticket;
+    if (!free_slot) {
+      // No free slot: a same-incarnation ticket is already a retained stop.
+      // Never stop a new actor generation when there is nowhere to put it.
+      const auto generation = actor->ref().generation;
+      for (auto& ticket : tickets_) {
+        if (ticket.actor != actor || ticket.generation != generation) continue;
+        if (static_cast<unsigned>(cause) > static_cast<unsigned>(ticket.cause))
+          ticket.cause = cause;
+        return Admission::AlreadyQueued;
+      }
+      return Admission::Full;
+    }
+    // Capacity is reserved before any stop. Capture and fence the CURRENT
+    // incarnation atomically under the mailbox's own admission lock; a
+    // concurrent supervisor restart cannot turn an old ticket into a
+    // successful admission for a newly running generation.
     const auto reference = actor->ref();
-    const auto expected = reference.generation;
+    const auto generation = actor->request_close();
     for (auto& ticket : tickets_) {
-      if (ticket.actor != actor || ticket.generation != expected) continue;
-      // Panic/raise escalation must not be lost if a duplicate request races
-      // the supervisor's processing of a previously queued cancellation.
+      if (ticket.actor != actor || ticket.generation != generation) continue;
       if (static_cast<unsigned>(cause) > static_cast<unsigned>(ticket.cause))
         ticket.cause = cause;
       return Admission::AlreadyQueued;
     }
-    for (auto& ticket : tickets_) {
-      if (ticket.actor) continue;
-      // No guest execution can race between request_close and capturing the
-      // generation: Mailbox::request_close fences under its admission mutex.
-      // The queue lock prevents the consumer from seeing an incomplete ticket.
-      const auto generation = actor->request_close();
-      ticket.actor = actor;  // shared_ptr copy: no allocations or exceptions.
-      ticket.actor_id = reference.id;
-      ticket.generation = generation;
-      ticket.cause = cause;
-      ticket.processing = false;
-      return Admission::Queued;
-    }
+    free_slot->actor = actor;
+    free_slot->actor_id = reference.id;
+    free_slot->generation = generation;
+    free_slot->cause = cause;
+    free_slot->processing = false;
+    return Admission::Queued;
     // Capacity refusal MUST NOT close an actor without a retained ticket.
     return Admission::Full;
   }
