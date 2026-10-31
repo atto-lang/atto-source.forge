@@ -5,9 +5,11 @@ on:
       - runtime/actor.hpp
       - runtime/actor.cpp
       - runtime/singleton_cell.hpp
+      - runtime/singleton_identity.hpp
       - runtime/shared_i64_table.hpp
       - verification/singleton_shared_runtime.cpp
       - verification/singleton_admission.cpp
+      - verification/singleton_guest_stage0.cpp
       - compiler/**
       - codegen/native.hpp
       - scripts/test-singleton-shared-runtime.sh
@@ -32,7 +34,7 @@ jobs:
         run: |
           git rev-parse HEAD
           git rev-parse 'HEAD^{tree}'
-      - name: Test host substrate and unsupported guest admission
+      - name: Test host substrate, admission, and stage0 compiler/runtime bridge
         env:
           PROFILE: ${{ matrix.profile }}
         run: bash scripts/test-singleton-shared-runtime.sh "$PROFILE"
