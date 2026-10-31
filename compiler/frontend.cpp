@@ -410,16 +410,17 @@ class Parser {
       throw std::runtime_error("expected integer at byte "+std::to_string(e.offset));
     if (e.tag==Expr::Tag::Call) {
       const Op intrinsic = shared_table_intrinsic(e.name);
-      if (intrinsic != Op::Return) {
-        if (!shared_table_stage0_)
-          throw std::runtime_error("ORES-SHARED-TABLE-UNSUPPORTED: explicit stage0 profile required");
+      if (intrinsic != Op::Return && shared_table_stage0_) {
         const std::size_t arity = intrinsic == Op::TableLookup ? 1 : 2;
         if (e.children.size() != arity)
           throw std::runtime_error("shared-table intrinsic arity mismatch: "+e.name);
       } else {
         auto found=functions_.find(e.name);
-        if (found==functions_.end())
+        if (found==functions_.end()) {
+          if (intrinsic != Op::Return)
+            throw std::runtime_error("ORES-SHARED-TABLE-UNSUPPORTED: explicit stage0 profile required");
           throw std::runtime_error("unknown function: "+e.name);
+        }
         if (found->second.parameters.size()!=e.children.size())
           throw std::runtime_error("function arity mismatch: "+e.name);
         validate_calls(e.name,active,complete);
@@ -467,8 +468,7 @@ class Parser {
       }
       case Expr::Tag::Call: {
         const Op intrinsic = shared_table_intrinsic(e.name);
-        if (intrinsic != Op::Return) {
-          if (!shared_table_stage0_) throw std::runtime_error("shared-table stage0 not admitted");
+        if (intrinsic != Op::Return && shared_table_stage0_) {
           const std::size_t arity = intrinsic == Op::TableLookup ? 1 : 2;
           if (e.children.size() != arity)
             throw std::runtime_error("shared-table intrinsic arity mismatch");
