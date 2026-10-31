@@ -28,4 +28,31 @@ int main(void) { return oresforge_entry() == 42 ? 0 : 1; }
 C
 "$clang" -x assembler "$work/box.s" -x c "$work/main.c" -o "$work/native"
 "$work/native"
-echo "Forge bounded class native execution: PASS"
+
+# Two independent instances and four class methods, including split mutable
+# receiver syntax and subtraction. Verify the compiler's actual CLI output,
+# not a stand-in assembly program.
+cat > "$work/multi.ores" <<'ORES'
+define class Counter as
+  let int value=40;
+  add(mut self,int n):void{self.value=self.value+n;}
+  subtract(mut self)(int n):void{self.value=self.value-n;}
+  read(self):int{return self.value;}
+  get():int{return self.value;}
+end
+fnc main():int{
+  let mut Counter a=new Counter();
+  let mut Counter b=new Counter();
+  a.add(8);
+  b.subtract(10);
+  a.subtract(6);
+  b.add(12);
+  return a.get();
+}
+ORES
+result="$("$compiler" run-class "$work/multi.ores")"
+test "$result" = 42
+"$compiler" emit-class-asm x86_64 "$work/multi.ores" > "$work/multi.s"
+"$clang" -x assembler "$work/multi.s" -x c "$work/main.c" -o "$work/multi_native"
+"$work/multi_native"
+echo "Forge bounded class native execution (single + multiple instances): PASS"
