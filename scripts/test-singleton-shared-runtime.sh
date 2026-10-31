@@ -49,3 +49,9 @@ timeout 30 "$test_dir/runtime"
   compiler/call_native.cpp verification/singleton_admission.cpp -o "$test_dir/admission"
 sha256sum "$test_dir/admission"
 timeout 30 "$test_dir/admission"
+"${CXX:-c++}" -std=c++20 "${flags[@]}" -pthread -Wall -Wextra -Werror \
+  -Wno-missing-field-initializers -I. compiler/frontend.cpp compiler/ir.cpp \
+  compiler/singleton_stage0.cpp runtime/actor.cpp \
+  verification/singleton_guest_stage0.cpp -o "$test_dir/guest-stage0"
+sha256sum "$test_dir/guest-stage0"
+timeout 30 "$test_dir/guest-stage0"
