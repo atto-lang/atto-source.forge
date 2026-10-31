@@ -9,7 +9,7 @@
 #include <memory>
 #include <span>
 #include <stdexcept>
-#include <shared_mutex>
+#include <condition_variable>
 #include <vector>
 #include <utility>
 namespace oresforge::runtime {
@@ -29,12 +29,23 @@ class ActorLifetimeResource {
 struct CapabilityToken final {
   std::atomic<bool> active{true};
   bool attach_owned_resource(const std::shared_ptr<ActorLifetimeResource>& resource) const noexcept;
+  // Safe from within an actor's own execution lease: fence new admissions
+  // immediately, retire resources on last lease release, never wait here.
+  void request_stop() noexcept;
+  // Blocking external/supervisor stop: wait for callbacks after quiescence.
   void invalidate() noexcept;
+  bool has_current_thread_lease() const noexcept;
  private:
-  // An execution lease pins this incarnation until its current operation ends.
-  // Invalidate takes the unique lock before fencing the authority and before
-  // notifying actor-owned resources; stage0 dispatch takes the shared lock.
-  mutable std::shared_mutex execution_mutex_;
+  bool acquire_lease() const noexcept;
+  void release_lease() const noexcept;
+  void wait_for_stop() const noexcept;
+  void retire_resources() const noexcept;
+  mutable std::mutex execution_mutex_;
+  mutable std::condition_variable execution_cv_;
+  mutable std::size_t executing_ = 0;
+  mutable bool stopping_ = false;
+  mutable bool cleanup_started_ = false;
+  mutable bool cleanup_complete_ = false;
   friend class ActorExecutionLease;
   friend class Mailbox;
   mutable std::mutex resource_mutex_;
@@ -81,20 +92,17 @@ class ActorExecutionLease final {
   ActorExecutionLease& operator=(const ActorExecutionLease&) = delete;
   ActorExecutionLease(ActorExecutionLease&&) noexcept = default;
   ActorExecutionLease& operator=(ActorExecutionLease&&) = delete;
+  ~ActorExecutionLease() noexcept;
   const ActorContext& context() const {
-    // A moved-from lease must not expose a caller context without the pin.
-    // Only the live, lock-owning lease can authorize a stage0 guest call.
-    if (!admission_.owns_lock() || !context_.valid())
+    if (!authority_ || !context_.valid())
       throw std::runtime_error("actor execution lease is no longer active");
     return context_;
   }
  private:
   const ActorContext context_;
   std::shared_ptr<const CapabilityToken> authority_;
-  std::shared_lock<std::shared_mutex> admission_;
-  ActorExecutionLease(ActorContext context, std::shared_ptr<const CapabilityToken> authority)
-      : context_(std::move(context)), authority_(std::move(authority)),
-        admission_(authority_->execution_mutex_) {}
+  ActorExecutionLease(ActorContext context,
+                      std::shared_ptr<const CapabilityToken> authority);
   friend class Mailbox;
 };
 struct ActorRef {
@@ -123,7 +131,13 @@ class Mailbox {
   ActorExecutionLease execution_lease() const;
   void send(ActorRef,std::span<const std::uint8_t>);
   std::optional<std::vector<std::uint8_t>> receive();
+  // Nonblocking actor self-shutdown request: reject admissions now, retire
+  // table resources on final lease release. Never destroys the mailbox.
+  void request_close();
+  // Synchronous external/supervisor shutdown, forbidden while this thread
+  // holds an execution lease for the same actor.
   void close();
+  // Restart is supervisor-only after quiescence; inside a lease it fails fast.
   ActorRef restart();
   std::size_t queued() const;
  private:
