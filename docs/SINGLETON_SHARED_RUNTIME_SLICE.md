@@ -280,14 +280,15 @@ or constructed from numeric guest arguments. The trusted mailbox is the only
 factory. This is not yet a scheduler-issued lease in the production actor
 interpreter, and the adapter must never be exposed directly to guest FFI.
 
-`CapabilityToken::invalidate()` now waits for outstanding leases via an
-execution shared/exclusive lock. It only fences the old authority and invokes
-its actor-owned resource observers **after** the admitted operations have
-quiesced. `Mailbox::close()` and `Mailbox::restart()` hold their admission
-lock while invalidating the prior incarnation. The stage-0 dispatcher releases
-its lease after each operation; no lease crosses await, select or guest
-callbacks. These host locks do **not** establish hard-real-time progress or
-bounded cancellation latency.
+`CapabilityToken::request_stop()` fences new admissions without
+callbacks. `CapabilityToken::invalidate()` waits for outstanding leases
+using a mutex and condition variable, then invokes actor-owned observers
+on the supervisor completion path. `Mailbox::close()` and `restart()`
+release the mailbox mutex while waiting for quiescence, so a draining actor
+can request self-shutdown without a lock inversion. The stage-0 dispatcher
+releases its lease after each table operation; no lease crosses await,
+select or guest callbacks. These host locks do **not** establish
+hard-real-time progress or bounded cancellation latency.
 
 `verification/actor_execution_lease.cpp` contains construction/admission
 negative tests, close/restart ordering with an outstanding lease, and 128
