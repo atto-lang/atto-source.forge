@@ -123,7 +123,9 @@ template<std::size_t Capacity> class SharedI64Table final {
                       ActorContext grantee, bool write = false) const {
     std::lock_guard lock(state_->mutex);
     validate(*state_, owner_cap, caller, true);
-    if (caller != state_->owner || !grantee.valid() || grantee.domain() != caller.domain())
+    if (caller != state_->owner ||
+        owner_cap.owner_generation_ != state_->ownership_generation ||
+        !grantee.valid() || grantee.domain() != caller.domain())
       fail(TableErrorCode::Denied);
     if (state_->access == TableAccess::Private && grantee != caller) fail(TableErrorCode::Denied);
     if (write && state_->access == TableAccess::Protected && grantee != caller)
@@ -142,8 +144,10 @@ template<std::size_t Capacity> class SharedI64Table final {
     {
       std::lock_guard lock(state_->mutex);
       validate(*state_, owner_cap, caller, true);
-      if (caller != state_->owner || !next_owner.valid() ||
-          next_owner.domain() != caller.domain() || next_owner == caller)
+      if (caller != state_->owner ||
+          owner_cap.owner_generation_ != state_->ownership_generation ||
+          !next_owner.valid() || next_owner.domain() != caller.domain() ||
+          next_owner == caller)
         fail(TableErrorCode::Denied);
       previous = owner_observer_;
     }
@@ -154,7 +158,9 @@ template<std::size_t Capacity> class SharedI64Table final {
       std::lock_guard lock(state_->mutex);
       if (owner_observer_ != previous) fail(TableErrorCode::Denied);
       validate(*state_, owner_cap, caller, true);
-      if (caller != state_->owner || !next_owner.valid() || candidate->stopped)
+      if (caller != state_->owner ||
+          owner_cap.owner_generation_ != state_->ownership_generation ||
+          !next_owner.valid() || candidate->stopped)
         fail(TableErrorCode::Denied);
       if (state_->ownership_generation == std::numeric_limits<std::uint64_t>::max())
         fail(TableErrorCode::Overflow);
@@ -218,8 +224,7 @@ template<std::size_t Capacity> class SharedI64Table final {
     // Idempotent for the genuine owner, including after retirement.
     if (cap.identity_.lock() != state_ || cap.grantee_ != caller ||
         caller != state_->owner || !cap.write_ ||
-        (cap.owner_generation_ != 0 &&
-         cap.owner_generation_ != state_->ownership_generation))
+        cap.owner_generation_ != state_->ownership_generation)
       fail(TableErrorCode::Denied);
     retire(*state_);
   }
