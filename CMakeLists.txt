@@ -67,6 +67,15 @@ if(BUILD_TESTING)
   target_include_directories(oresforge_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
   target_link_libraries(oresforge_tests PRIVATE oresforge_core)
   add_test(NAME oresforge_unit COMMAND oresforge_tests)
+  # Parse the exact shared pure-Oreslang Math source through the callable
+  # frontend. This proves canonical module/control-flow syntax admission only;
+  # it is NOT a multi-file linker or executable stdlib parity claim.
+  add_test(NAME oresforge_stdlib_math_callable_library_admission
+    COMMAND "$<TARGET_FILE:oresforge>" check-call-library
+      "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/math.ores")
+  set_tests_properties(oresforge_stdlib_math_callable_library_admission
+    PROPERTIES TIMEOUT 20)
+
   # Host-only positive filesystem resolution substrate, not guest import linking.
   add_executable(oresforge_root_resolver_test verification/project_root_resolver_test.cpp)
   target_include_directories(oresforge_root_resolver_test PRIVATE .)
