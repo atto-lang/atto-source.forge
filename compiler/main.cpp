@@ -39,6 +39,12 @@ int main(int argc,char** argv) {
     }
     // A separate stage-0 callable profile: true SysV native calls and lazy
     // runtime branches. Legacy scalar and runtime-entry modes remain intact.
+    if (argc==3 && std::string(argv[1])=="check-call-library") {
+      (void)oresforge::calls::parse_library(read_file(argv[2]));
+      std::cout<<"Forge callable library source: OK\n";
+      std::cout.flush();
+      return 0;
+    }
     if (argc>=3 && std::string(argv[1])=="run-calls") {
       auto program=oresforge::calls::parse(read_file(argv[2]));
       std::vector<std::int64_t> args;
@@ -96,7 +102,7 @@ int main(int argc,char** argv) {
       std::cout.flush();
       return 0;
     }
-    std::cerr<<"usage: oresforge run|ir <file.ores> | emit-asm <arch> <file.ores> | run-runtime <file.ores> [i64-args...] | ir-runtime <file.ores> | emit-runtime-asm <arch> <file.ores> | run-calls <file.ores> [i64-args...] | emit-call-asm x86_64 <file.ores>\n";
+    std::cerr<<"usage: oresforge run|ir <file.ores> | emit-asm <arch> <file.ores> | run-runtime <file.ores> [i64-args...] | ir-runtime <file.ores> | emit-runtime-asm <arch> <file.ores> | check-call-library <file.ores> | run-calls <file.ores> [i64-args...] | emit-call-asm x86_64 <file.ores>\n";
     return 2;
   } catch (const std::exception& e) {
     std::cerr<<"oresforge: "<<e.what()<<'\n';
