@@ -31,6 +31,7 @@ template<std::size_t Capacity> class SharedI64Table final {
   struct State final {
     std::mutex mutex;
     ActorContext owner;
+    std::uint64_t ownership_generation = 1;
     const TableAccess access;
     bool closed = false;
     std::array<Slot, Capacity> slots{};
@@ -61,8 +62,12 @@ template<std::size_t Capacity> class SharedI64Table final {
     std::weak_ptr<State> identity_;
     ActorContext grantee_{};
     bool write_ = false;
-    Capability(const std::shared_ptr<State>& s, ActorContext g, bool w)
-        : identity_(s), grantee_(g), write_(w) {}
+    // Nonzero only for owner grants: transfers permanently fence old grants.
+    std::uint64_t owner_generation_ = 0;
+    Capability(const std::shared_ptr<State>& s, ActorContext g, bool w,
+               std::uint64_t owner_generation = 0)
+        : identity_(s), grantee_(g), write_(w),
+          owner_generation_(owner_generation) {}
    public:
     Capability() = default; // Empty handles carry no authority.
   };
@@ -73,6 +78,8 @@ template<std::size_t Capacity> class SharedI64Table final {
   void validate(const State& s, const Capability& cap, ActorContext caller, bool write) const {
     if (!caller.valid() || cap.identity_.lock() != state_ || cap.grantee_ != caller ||
         caller.domain() != s.owner.domain() || (write && !cap.write_)) fail(TableErrorCode::Denied);
+    if (cap.owner_generation_ != 0 &&
+        cap.owner_generation_ != s.ownership_generation) fail(TableErrorCode::Denied);
     if (s.closed) fail(TableErrorCode::Closed);
     if (s.access == TableAccess::Private && caller != s.owner) fail(TableErrorCode::Denied);
     if (write && s.access == TableAccess::Protected && caller != s.owner) fail(TableErrorCode::Denied);
@@ -110,7 +117,7 @@ template<std::size_t Capacity> class SharedI64Table final {
     std::lock_guard lock(state_->mutex);
     if (!caller.valid() || caller != state_->owner) fail(TableErrorCode::Denied);
     if (state_->closed) fail(TableErrorCode::Closed);
-    return Capability(state_, caller, true);
+    return Capability(state_, caller, true, state_->ownership_generation);
   }
   Capability delegate(const Capability& owner_cap, ActorContext caller,
                       ActorContext grantee, bool write = false) const {
@@ -149,6 +156,9 @@ template<std::size_t Capacity> class SharedI64Table final {
       validate(*state_, owner_cap, caller, true);
       if (caller != state_->owner || !next_owner.valid() || candidate->stopped)
         fail(TableErrorCode::Denied);
+      if (state_->ownership_generation == std::numeric_limits<std::uint64_t>::max())
+        fail(TableErrorCode::Overflow);
+      ++state_->ownership_generation;
       state_->owner = std::move(next_owner);
       state_->active_observer = candidate;
       owner_observer_ = std::move(candidate);
@@ -207,7 +217,10 @@ template<std::size_t Capacity> class SharedI64Table final {
     std::lock_guard lock(state_->mutex);
     // Idempotent for the genuine owner, including after retirement.
     if (cap.identity_.lock() != state_ || cap.grantee_ != caller ||
-        caller != state_->owner || !cap.write_) fail(TableErrorCode::Denied);
+        caller != state_->owner || !cap.write_ ||
+        (cap.owner_generation_ != 0 &&
+         cap.owner_generation_ != state_->ownership_generation))
+      fail(TableErrorCode::Denied);
     retire(*state_);
   }
   // Trusted scheduler hook; no guest may directly supply a death notification.
