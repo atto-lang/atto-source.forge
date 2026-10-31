@@ -27,7 +27,8 @@ class ActorLifetimeResource {
 
 // Opaque, local-only authority; never serialize or expose it through guest FFI.
 struct CapabilityToken final {
-  std::atomic<bool> active{true};
+  // Internal stop completion can be triggered by a const lease authority.
+  mutable std::atomic<bool> active{true};
   bool attach_owned_resource(const std::shared_ptr<ActorLifetimeResource>& resource) const noexcept;
   // Safe from within an actor's own execution lease: fence new admissions
   // immediately, retire resources on last lease release, never wait here.
