@@ -52,7 +52,8 @@ void CapabilityToken::retire_resources() const noexcept {
       weak.reset();
     }
   } catch (...) {
-    // Runtime synchronization primitive failure cannot re-enable authority.
+    // Failure to deliver retirement must never be reported as completion.
+    std::terminate();
   }
 }
 
@@ -78,8 +79,9 @@ void CapabilityToken::release_lease() const noexcept {
       execution_cv_.notify_all();
     }
   } catch (...) {
-    active.store(false, std::memory_order_release);
-    execution_cv_.notify_all();
+    // Failure to make progress while releasing a lease is fatal: a waiting
+    // supervisor must not be left blocked on a false completion predicate.
+    std::terminate();
   }
 }
 
@@ -105,9 +107,8 @@ void CapabilityToken::request_stop() noexcept {
       execution_cv_.notify_all();
     }
   } catch (...) {
-    accepting.store(false, std::memory_order_release);
-    active.store(false, std::memory_order_release);
-    execution_cv_.notify_all();
+    // Do not leave a partially stopped actor waiting forever on quiescence.
+    std::terminate();
   }
 }
 
