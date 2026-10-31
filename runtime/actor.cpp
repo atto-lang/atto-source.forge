@@ -14,6 +14,19 @@ namespace {
 // different actors) are tracked individually; a move within the same thread
 // transfers the live lease without adding another entry.
 thread_local std::vector<const CapabilityToken*> active_execution_leases;
+// Retirement callbacks run on the final releaser's thread. Guard synchronous
+// lifecycle reentry without allocation or a potentially blocking lock.
+struct RetirementFrame {
+  const CapabilityToken* token;
+  RetirementFrame* previous;
+};
+thread_local RetirementFrame* active_retirement = nullptr;
+struct RetirementGuard {
+  RetirementFrame frame;
+  explicit RetirementGuard(const CapabilityToken* token) noexcept
+      : frame{token,active_retirement} { active_retirement = &frame; }
+  ~RetirementGuard() noexcept { active_retirement = frame.previous; }
+};
 }
 
 bool CapabilityToken::attach_owned_resource(
@@ -46,6 +59,7 @@ bool CapabilityToken::acquire_lease() const noexcept {
 }
 
 void CapabilityToken::retire_resources() const noexcept {
+  RetirementGuard guard(this);
   try {
     std::scoped_lock resources_guard(resource_mutex_);
     for (auto& weak : resources_) {
@@ -121,7 +135,8 @@ void CapabilityToken::wait_for_stop() const noexcept {
 }
 
 void CapabilityToken::invalidate() noexcept {
-  if (has_current_thread_lease()) std::terminate(); // No self-join.
+  if (has_current_thread_lease() || is_retiring_on_current_thread())
+    std::terminate(); // No self-join or retirement callback join.
   request_stop();
   wait_for_stop();
 }
@@ -129,6 +144,11 @@ void CapabilityToken::invalidate() noexcept {
 bool CapabilityToken::has_current_thread_lease() const noexcept {
   return std::find(active_execution_leases.begin(), active_execution_leases.end(),
                    this) != active_execution_leases.end();
+}
+bool CapabilityToken::is_retiring_on_current_thread() const noexcept {
+  for (auto* frame = active_retirement; frame; frame = frame->previous)
+    if (frame->token == this) return true;
+  return false;
 }
 
 ActorExecutionLease::ActorExecutionLease(
@@ -251,7 +271,8 @@ void Mailbox::close() {
   {
     std::scoped_lock lock(mutex_);
     // Synchronous shutdown cannot join the current actor's own lease.
-    if (authority_->has_current_thread_lease())
+    if (authority_->has_current_thread_lease() ||
+        authority_->is_retiring_on_current_thread())
       throw std::runtime_error("actor self-close requires request_close");
     closed_ = true;
     if (restarting_) stop_during_restart_ = true;
@@ -270,7 +291,8 @@ ActorRef Mailbox::restart() {
   std::shared_ptr<CapabilityToken> old;
   {
     std::scoped_lock lock(mutex_);
-    if (authority_->has_current_thread_lease())
+    if (authority_->has_current_thread_lease() ||
+        authority_->is_retiring_on_current_thread())
       throw std::runtime_error("actor restart requires quiescence");
     if (restarting_)
       throw std::runtime_error("actor restart already in progress");
