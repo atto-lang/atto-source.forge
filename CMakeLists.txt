@@ -99,6 +99,34 @@ if(BUILD_TESTING)
   set_tests_properties(oresforge_stdlib_math_linked_min_overflow
     PROPERTIES TIMEOUT 20 WILL_FAIL TRUE)
 
+  add_test(NAME oresforge_stdlib_math_typed_overflow_catch
+    COMMAND "$<TARGET_FILE:oresforge>" run-call-module
+      "${CMAKE_CURRENT_SOURCE_DIR}/examples/math-error-slot-neg.ores"
+      "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/math.ores")
+  set_tests_properties(oresforge_stdlib_math_typed_overflow_catch
+    PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "^42")
+
+  add_test(NAME oresforge_stdlib_math_error_root_catch
+    COMMAND "$<TARGET_FILE:oresforge>" run-call-module
+      "${CMAKE_CURRENT_SOURCE_DIR}/examples/math-error-slot-root.ores"
+      "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/math.ores")
+  set_tests_properties(oresforge_stdlib_math_error_root_catch
+    PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "^42")
+
+  add_test(NAME oresforge_stdlib_math_catch_not_taken
+    COMMAND "$<TARGET_FILE:oresforge>" run-call-module
+      "${CMAKE_CURRENT_SOURCE_DIR}/examples/math-error-slot-catch-not-taken.ores"
+      "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/math.ores")
+  set_tests_properties(oresforge_stdlib_math_catch_not_taken
+    PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "^42")
+
+  add_test(NAME oresforge_stdlib_math_typed_native_asm
+    COMMAND "$<TARGET_FILE:oresforge>" emit-call-module-asm x86_64
+      "${CMAKE_CURRENT_SOURCE_DIR}/examples/math-error-slot-neg.ores"
+      "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/math.ores")
+  set_tests_properties(oresforge_stdlib_math_typed_native_asm
+    PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "movl \\$65537, 0\\(%r9\\)")
+
   add_test(NAME oresforge_stdlib_math_linked_native_asm
     COMMAND "$<TARGET_FILE:oresforge>" emit-call-module-asm x86_64
       "${CMAKE_CURRENT_SOURCE_DIR}/examples/math-main.ores"
