@@ -190,10 +190,24 @@ void table_owner_handoff() {
   });
   const auto successor_cap = table.owner_capability(successor);
   table.insert(successor_cap, successor, 1, 42);
+  // Transferring ownership back must NOT resurrect an old owner capability.
+  table.give_away(successor_cap, successor, original);
+  const auto new_original_cap = table.owner_capability(original);
+  error(TableErrorCode::Denied, [&] {
+    table.lookup(original_cap, original, 1);
+  });
+  error(TableErrorCode::Denied, [&] {
+    table.close(original_cap, original);
+  });
+  table.give_away(new_original_cap, original, successor);
+  error(TableErrorCode::Denied, [&] {
+    table.lookup(successor_cap, successor, 1);
+  });
+  const auto current_successor_cap = table.owner_capability(successor);
   original_box.close(); // Old owner stop must not retire a transferred table.
   check(table.lookup(read, reader, 1) == 42,
         "old owner retirement destroyed the new owner's table");
-  const auto successor_reader = table.delegate(successor_cap, successor, reader);
+  const auto successor_reader = table.delegate(current_successor_cap, successor, reader);
   check(table.lookup(successor_reader, reader, 1) == 42,
         "new owner cannot delegate after handoff");
   (void)successor_box.restart();
