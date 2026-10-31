@@ -190,7 +190,8 @@ class Parser {
       ++index_;
     } else if (std::string_view("()+-=.;:,{}").find(static_cast<char>(c))
                    == std::string_view::npos) {
-      fail("invalid nominal source character");
+      throw std::runtime_error("invalid nominal source character at byte " +
+                               std::to_string(begin));
     }
     token_ = {source_.substr(begin,index_-begin),begin};
   }
