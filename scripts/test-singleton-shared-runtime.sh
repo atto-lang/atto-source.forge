@@ -57,7 +57,7 @@ sha256sum "$test_dir/guest-stage0"
 timeout 30 "$test_dir/guest-stage0"
 "${CXX:-c++}" -std=c++20 "${flags[@]}" -pthread -Wall -Wextra -Werror \
   -Wno-missing-field-initializers -I. compiler/frontend.cpp compiler/ir.cpp \
-  compiler/singleton_stage0.cpp runtime/actor.cpp \
+  compiler/singleton_stage0.cpp codegen/native.cpp runtime/actor.cpp \
   verification/guest_shared_i64_stage0.cpp \
   -o "$test_dir/guest-table-stage0"
 sha256sum "$test_dir/guest-table-stage0"
