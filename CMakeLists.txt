@@ -97,6 +97,33 @@ if(BUILD_TESTING)
   set_tests_properties(oresforge_stdlib_math_linked_native_asm
     PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "jo .Lores_overflow")
 
+  find_program(ORESFORGE_RUSTC NAMES rustc)
+  find_program(ORESFORGE_NATIVE_CC NAMES cc clang gcc)
+  if(ORESFORGE_RUSTC AND ORESFORGE_NATIVE_CC
+      AND CMAKE_SYSTEM_NAME STREQUAL "Linux"
+      AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
+    set(ORESFORGE_MATH_RUST_HARNESS
+      "${CMAKE_CURRENT_BINARY_DIR}/oresforge-native-math-module")
+    add_custom_command(
+      OUTPUT "${ORESFORGE_MATH_RUST_HARNESS}"
+      COMMAND "${ORESFORGE_RUSTC}" --edition=2021 -Dwarnings -O
+        "${CMAKE_CURRENT_SOURCE_DIR}/verification/native_math_module.rs"
+        -o "${ORESFORGE_MATH_RUST_HARNESS}"
+      DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/verification/native_math_module.rs"
+      VERBATIM)
+    add_custom_target(oresforge_native_math_rust_harness ALL
+      DEPENDS "${ORESFORGE_MATH_RUST_HARNESS}")
+    add_test(NAME oresforge_stdlib_math_linked_native_execution_rust
+      COMMAND "${ORESFORGE_MATH_RUST_HARNESS}"
+        "$<TARGET_FILE:oresforge>"
+        "${CMAKE_CURRENT_SOURCE_DIR}/examples/math-main.ores"
+        "${CMAKE_CURRENT_SOURCE_DIR}/examples/math-overflow.ores"
+        "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/math.ores"
+        "${ORESFORGE_NATIVE_CC}")
+    set_tests_properties(oresforge_stdlib_math_linked_native_execution_rust
+      PROPERTIES TIMEOUT 90)
+  endif()
+
   # Host-only positive filesystem resolution substrate, not guest import linking.
   add_executable(oresforge_root_resolver_test verification/project_root_resolver_test.cpp)
   target_include_directories(oresforge_root_resolver_test PRIVATE .)
