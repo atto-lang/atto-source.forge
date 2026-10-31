@@ -7,6 +7,8 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <algorithm>
+#include <vector>
 
 namespace oresforge::nominal {
 namespace {
@@ -69,7 +71,7 @@ class Parser {
           parameter = identifier();
           expect(")");
         }
-        if (saw_writer) fail("unsupported second mutable method");
+        if (result_.methods.size() >= 16) fail("nominal method budget exceeded");
         if (parameter == "self" || parameter == result_.field)
           fail("invalid or shadowed mutable receiver parameter");
         expect(":");
@@ -77,23 +79,27 @@ class Parser {
         expect("{");
         expect("self");expect(".");expect(result_.field);
         expect("=");expect("self");expect(".");expect(result_.field);
-        expect("+");expect(parameter);expect(";");
+        const bool subtract = take("-");
+        if (!subtract) expect("+");
+        expect(parameter);expect(";");
         if (take("return")) expect(";");
         expect("}");
-        result_.writer = name;
+        declare_method(name, subtract ? Method::Kind::Subtract : Method::Kind::Add, 1);
+        if (!saw_writer) result_.writer = name;
         saw_writer = true;
       } else {
         // Unmarked zero-value methods have an implicit shared self receiver.
         if (token_.text == "self") next();
         expect(")");
-        if (saw_reader) fail("unsupported second read method");
+        if (result_.methods.size() >= 16) fail("nominal method budget exceeded");
         if (!take(":")) expect("->");
         expect("int");
         expect("{");
         expect("return");expect("self");expect(".");
         expect(result_.field);expect(";");
         expect("}");
-        result_.reader = name;
+        declare_method(name, Method::Kind::Read, 0);
+        if (!saw_reader) result_.reader = name;
         saw_reader = true;
       }
     }
@@ -101,34 +107,79 @@ class Parser {
     if (!saw_writer || !saw_reader)
       fail("bounded class requires one mutable writer and one reader");
 
-    // Return/binding/receiver spelling never creates distinct overload slots.
-    // Our two supported methods have different value arities (writer/1,
-    // reader/0); general duplicate checking stays in the nominal compiler.
     take("pub");
     take("define");
     take("pub");
-    expect("fnc");
-    expect("main");
+    expect("fnc");expect("main");
     expect("(");expect(")");
     if (!take(":")) expect("->");
-    expect("int");
-    expect("{");
-    expect("let");expect("mut");expect(result_.owner);
-    result_.binding = identifier();
-    if (result_.binding == "self") fail("invalid self binding");
-    expect("=");expect("new");expect(result_.owner);
-    expect("(");expect(")");expect(";");
-    expect(result_.binding);expect(".");expect(result_.writer);
-    expect("(");
-    result_.argument = integer();
-    expect(")");expect(";");
-    expect("return");expect(result_.binding);expect(".");
-    expect(result_.reader);expect("(");expect(")");expect(";");
+    expect("int");expect("{");
+    bool returned = false;
+    while (token_.text != "}") {
+      if (token_.text.empty()) fail("unterminated nominal main");
+      if (take("let")) {
+        expect("mut");expect(result_.owner);
+        const std::string instance = identifier();
+        if (instance == "self" ||
+            std::find(result_.instances.begin(), result_.instances.end(), instance)
+                != result_.instances.end()) fail("duplicate or invalid class binding");
+        if (result_.instances.size() >= 8) fail("nominal instance budget exceeded");
+        expect("=");expect("new");expect(result_.owner);
+        expect("(");expect(")");expect(";");
+        const std::size_t id = result_.instances.size();
+        result_.instances.push_back(instance);
+        add_step({Step::Kind::Construct,id,0,0});
+        if (result_.binding.empty()) result_.binding = instance;
+      } else if (take("return")) {
+        const auto instance = find_instance(identifier());
+        expect(".");
+        const auto method = find_method(identifier(),0);
+        if (result_.methods[method].kind != Method::Kind::Read)
+          fail("return requires shared receiver read method");
+        expect("(");expect(")");expect(";");
+        add_step({Step::Kind::ReturnRead,instance,method,0});
+        returned = true;
+        break;
+      } else {
+        const auto instance = find_instance(identifier());
+        expect(".");
+        const auto method = find_method(identifier(),1);
+        if (result_.methods[method].kind == Method::Kind::Read)
+          fail("mutation requires exclusive mutable receiver");
+        expect("(");const auto value = integer();
+        expect(")");expect(";");
+        add_step({Step::Kind::Mutate,instance,method,value});
+        if (result_.steps.size() == 2) result_.argument = value;
+      }
+    }
+    if (!returned) fail("nominal main must return a shared receiver read");
     expect("}");
     if (!token_.text.empty()) fail("unsupported trailing nominal source");
     return result_;
   }
  private:
+  void declare_method(const std::string& name, Method::Kind kind,
+                      std::size_t value_arity) {
+    for (const auto& prior : result_.methods)
+      if (prior.name == name && prior.value_arity == value_arity)
+        fail("duplicate native method name/arity");
+    result_.methods.push_back({name,kind,value_arity});
+  }
+  std::size_t find_instance(const std::string& name) const {
+    const auto found = std::find(result_.instances.begin(),result_.instances.end(),name);
+    if (found == result_.instances.end()) fail("unknown or uninitialized class receiver");
+    return static_cast<std::size_t>(found-result_.instances.begin());
+  }
+  std::size_t find_method(const std::string& name,std::size_t arity) const {
+    for(std::size_t i=0;i<result_.methods.size();++i)
+      if(result_.methods[i].name==name && result_.methods[i].value_arity==arity)
+        return i;
+    fail("unknown nominal method or caller-visible arity");
+  }
+  void add_step(Step step) {
+    if (result_.steps.size() >= 32) fail("nominal operation budget exceeded");
+    result_.steps.push_back(step);
+  }
   std::string_view source_;
   std::size_t index_ = 0;
   std::size_t seen_ = 0;
