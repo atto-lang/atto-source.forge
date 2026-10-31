@@ -20,30 +20,42 @@ const char* opcode(Op op) {
   }
   throw std::runtime_error("unknown opcode");
 }
-std::int64_t checked(Op op, std::int64_t a, std::int64_t b) {
+I64EffectResult checked(Op op, std::int64_t a, std::int64_t b) noexcept {
   std::int64_t result = 0;
+  constexpr EffectStatus overflow{
+    EffectKind::Throw,
+    static_cast<std::uint32_t>(NumericErrorCode::ArithmeticOverflowError)};
+  constexpr EffectStatus divide_by_zero{
+    EffectKind::Throw,
+    static_cast<std::uint32_t>(NumericErrorCode::DivisionByZeroError)};
   switch (op) {
     case Op::Add:
-      if (__builtin_add_overflow(a,b,&result)) throw std::runtime_error("i64 add overflow");
-      return result;
+      if (__builtin_add_overflow(a,b,&result))
+        return {0,overflow,"i64 add overflow"};
+      return {result,{}};
     case Op::Sub:
-      if (__builtin_sub_overflow(a,b,&result)) throw std::runtime_error("i64 sub overflow");
-      return result;
+      if (__builtin_sub_overflow(a,b,&result))
+        return {0,overflow,"i64 sub overflow"};
+      return {result,{}};
     case Op::Mul:
-      if (__builtin_mul_overflow(a,b,&result)) throw std::runtime_error("i64 mul overflow");
-      return result;
+      if (__builtin_mul_overflow(a,b,&result))
+        return {0,overflow,"i64 mul overflow"};
+      return {result,{}};
     case Op::Div:
-      if (b == 0) throw std::runtime_error("division by zero");
+      if (b == 0) return {0,divide_by_zero,"division by zero"};
       if (a == std::numeric_limits<std::int64_t>::min() && b == -1)
-        throw std::runtime_error("i64 division overflow");
-      return a / b;
-    default: throw std::runtime_error("not a binary opcode");
+        return {0,overflow,"i64 division overflow"};
+      return {a / b,{}};
+    default:
+      return {0,{EffectKind::Fatal,0xFFFFFFFDu},"not a binary opcode"};
   }
 }
-std::int64_t checked_abs(std::int64_t value) {
+I64EffectResult checked_abs(std::int64_t value) noexcept {
   if (value == std::numeric_limits<std::int64_t>::min())
-    throw std::runtime_error("i64 abs overflow");
-  return value < 0 ? -value : value;
+    return {0,{EffectKind::Throw,
+      static_cast<std::uint32_t>(NumericErrorCode::ArithmeticOverflowError)},
+      "i64 abs overflow"};
+  return {value < 0 ? -value : value,{}};
 }
 }
 void verify(const Program& p) {
@@ -75,22 +87,40 @@ void verify(const Program& p) {
   }
   if (p.instructions.back().op != Op::Return) throw std::runtime_error("missing return");
 }
-std::int64_t interpret(const Program& p,std::span<const std::int64_t> args) {
+I64EffectResult interpret_effect(
+    const Program& p,std::span<const std::int64_t> args) {
   verify(p);
-  if (args.size()!=p.parameter_count) throw std::runtime_error("runtime argument count mismatch");
+  if (args.size()!=p.parameter_count)
+    throw std::runtime_error("runtime argument count mismatch");
   std::vector<std::int64_t> values;
   values.reserve(p.instructions.size());
   for (const auto& ins : p.instructions) {
-    if (ins.op == Op::Return) return values.at(static_cast<std::size_t>(ins.a));
-    if (ins.op == Op::Constant) values.push_back(ins.value);
-    else if (ins.op == Op::Parameter)
+    if (ins.op == Op::Return)
+      return {values.at(static_cast<std::size_t>(ins.a)),{}};
+    if (ins.op == Op::Constant) {
+      values.push_back(ins.value);
+      continue;
+    }
+    if (ins.op == Op::Parameter) {
       values.push_back(args[static_cast<std::size_t>(ins.value)]);
-    else if (ins.op == Op::Abs)
-      values.push_back(checked_abs(values.at(static_cast<std::size_t>(ins.a))));
-    else values.push_back(checked(ins.op, values.at(static_cast<std::size_t>(ins.a)),
-                                           values.at(static_cast<std::size_t>(ins.b))));
+      continue;
+    }
+    I64EffectResult step = ins.op == Op::Abs
+      ? checked_abs(values.at(static_cast<std::size_t>(ins.a)))
+      : checked(ins.op,values.at(static_cast<std::size_t>(ins.a)),
+                       values.at(static_cast<std::size_t>(ins.b)));
+    if (!step.is_return()) return step;
+    values.push_back(step.value);
   }
-  throw std::runtime_error("missing return");
+  return {0,{EffectKind::Fatal,0xFFFFFFFCu},"missing return"};
+}
+I64EffectResult interpret_effect(const Program& p) {
+  return interpret_effect(p,std::span<const std::int64_t>{});
+}
+std::int64_t interpret(const Program& p,std::span<const std::int64_t> args) {
+  const auto result=interpret_effect(p,args);
+  if (result.is_return()) return result.value;
+  throw GuestEffectTransport(result.effect,result.diagnostic);
 }
 std::int64_t interpret(const Program& p) {
   return interpret(p,std::span<const std::int64_t>{});

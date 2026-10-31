@@ -78,7 +78,14 @@ int main() {
     }};
     for (const auto& [name,diagnostic] : portable_overflow) {
       const auto guest=portable_numeric_fixture(name);
-      reject_diagnostic([&] { (void)interpret(parse_source(guest)); }, diagnostic);
+      const auto program=parse_source(guest);
+      const auto effect=interpret_effect(program);
+      ensure(effect.effect.kind==EffectKind::Throw,
+             "portable overflow uses guest Throw effect");
+      ensure(effect.effect.code==
+               static_cast<std::uint32_t>(NumericErrorCode::ArithmeticOverflowError),
+             "portable overflow uses ArithmeticOverflowError code 65537");
+      reject_diagnostic([&] { (void)interpret(program); }, diagnostic);
     }
     const auto portable_ok=portable_numeric_fixture("math-i64-ok.ores");
     ensure(interpret(parse_source(portable_ok))==84,
@@ -114,6 +121,16 @@ int main() {
     ensure(arm_abs.find("negs x11, x9")!=std::string::npos &&
            arm_abs.find("b.vs .Loresforge_overflow")!=std::string::npos,
            "AArch64 Math.abs checks signed minimum overflow");
+    const auto x86_abs_effect=emit_runtime_effect_asm(dynamic_abs,Arch::X86_64);
+    ensure(x86_abs_effect.find("movl $1, %edx")!=std::string::npos &&
+           x86_abs_effect.find("movl $65537, %ecx")!=std::string::npos &&
+           x86_abs_effect.find("ud2")==std::string::npos,
+           "x86 effect ABI returns Throw/ArithmeticOverflowError without host trap");
+    const auto arm_abs_effect=emit_runtime_effect_asm(dynamic_abs,Arch::ARM64);
+    ensure(arm_abs_effect.find("mov x1, #1")!=std::string::npos &&
+           arm_abs_effect.find("movk x2, #1, lsl #16")!=std::string::npos &&
+           arm_abs_effect.find("brk #0")==std::string::npos,
+           "AArch64 effect ABI returns Throw/ArithmeticOverflowError without host trap");
     // The bootstrap intentionally has NO BigInt, Decimal or binary64 lowering.
     // Fail closed rather than treating those spellings as signed i64.
     reject([] { source("1.25"); });

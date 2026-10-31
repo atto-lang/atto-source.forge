@@ -32,7 +32,8 @@ std::string emit_asm(const Program& p,Arch arch) {
 // Linux System V x86-64 and AAPCS64 integer-argument ABI only.
 // Every SSA result owns an 8-byte stack slot. No calls, frame pointer,
 // heap allocation, register allocator, or generated helper-function ABI yet.
-std::string emit_runtime_asm(const Program& p,Arch arch) {
+namespace {
+std::string emit_runtime_asm_impl(const Program& p,Arch arch,bool effect_abi) {
   if (arch != Arch::X86_64 && arch != Arch::ARM64)
     throw std::runtime_error("unsupported architecture");
   verify(p);
@@ -60,8 +61,10 @@ std::string emit_runtime_asm(const Program& p,Arch arch) {
         out<<"  movq "<<params[static_cast<std::size_t>(ins.value)]
            <<", "<<slot(static_cast<int>(i))<<"\n";
       } else if (ins.op==Op::Return) {
-        out<<"  movq "<<slot(ins.a)<<", %rax\n"
-           <<"  addq $"<<bytes<<", %rsp\n  ret\n";
+        out<<"  movq "<<slot(ins.a)<<", %rax\n";
+        if (effect_abi)
+          out<<"  xorl %edx, %edx\n  xorl %ecx, %ecx\n";
+        out<<"  addq $"<<bytes<<", %rsp\n  ret\n";
       } else if (ins.op==Op::Abs) {
         const auto label=".Loresforge_abs_ok_"+std::to_string(i);
         out<<"  movq "<<slot(ins.a)<<", %rax\n"
@@ -84,7 +87,16 @@ std::string emit_runtime_asm(const Program& p,Arch arch) {
            <<"  movq %rax, "<<slot(static_cast<int>(i))<<"\n";
       }
     }
-    out<<".Loresforge_overflow:\n  ud2\n";
+    out<<".Loresforge_overflow:\n";
+    if (effect_abi) {
+      out<<"  xorq %rax, %rax\n"
+         <<"  movl $1, %edx\n"
+         <<"  movl $65537, %ecx\n"
+         <<"  addq $"<<bytes<<", %rsp\n"
+         <<"  ret\n";
+    } else {
+      out<<"  ud2\n";
+    }
   } else {
     // AArch64 load/store unsigned scaled offsets reach up to 32760 bytes.
     // Split SP adjustments into 16-byte multiples representable as immediates.
@@ -112,6 +124,8 @@ std::string emit_runtime_asm(const Program& p,Arch arch) {
         out<<"  str x"<<ins.value<<", "<<slot(static_cast<int>(i))<<"\n";
       } else if (ins.op==Op::Return) {
         out<<"  ldr x0, "<<slot(ins.a)<<"\n";
+        if (effect_abi)
+          out<<"  mov x1, #0\n  mov x2, #0\n";
         adjust(false);
         out<<"  ret\n";
       } else if (ins.op==Op::Abs) {
@@ -139,10 +153,28 @@ std::string emit_runtime_asm(const Program& p,Arch arch) {
         out<<"  str x11, "<<slot(static_cast<int>(i))<<"\n";
       }
     }
-    out<<".Loresforge_overflow:\n  brk #0\n";
+    out<<".Loresforge_overflow:\n";
+    if (effect_abi) {
+      out<<"  mov x0, #0\n"
+         <<"  mov x1, #1\n"
+         <<"  movz x2, #1\n"
+         <<"  movk x2, #1, lsl #16\n";
+      adjust(false);
+      out<<"  ret\n";
+    } else {
+      out<<"  brk #0\n";
+    }
   }
   out<<".size oresforge_entry, .-oresforge_entry\n";
   return out.str();
+}
+} // namespace
+
+std::string emit_runtime_asm(const Program& p,Arch arch) {
+  return emit_runtime_asm_impl(p,arch,false);
+}
+std::string emit_runtime_effect_asm(const Program& p,Arch arch) {
+  return emit_runtime_asm_impl(p,arch,true);
 }
 
 }
