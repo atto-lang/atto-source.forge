@@ -54,6 +54,18 @@ Cancellation and deadline-aware waits are not implemented.
   and restarted-actor handles fail authorization.
 - Only the owner delegates. Protected tables cannot delegate non-owner writes;
   public tables still require an explicit write capability.
+- Explicit `give_away(owner_cap, caller, next_owner)` transfers ownership to
+  another **live, same-domain actor incarnation**. No guest-supplied actor
+  identity or automatic heir is accepted. The new owner obtains its own owner
+  capability; old owner authority is denied for protected/private tables.
+  Existing independently delegated read capabilities remain valid. Public-mode
+  explicit write grants retain public write semantics.
+- Transfer first attaches a fresh actor-death observer *outside* the table lock
+  to avoid the actor-resource/table-lock inversion. It then validates and
+  atomically activates the new observer under the table lock. A dead recipient,
+  concurrent handoff, capacity failure or caller shutdown leaves the original
+  owner unchanged (unless its own shutdown retires the table). Obsolete or
+  failed-handoff observers cannot retire a new owner's table.
 - Mutex-linearized lookup, insert, insert-if-absent, CAS, erase and checked counter
   update. Capacity/overflow/missing-key errors leave contents unchanged.
 - Each table weakly registers as an actor-owned runtime resource in a fixed
@@ -92,7 +104,7 @@ scan and does not grow a container. Successful operations create no dynamic slot
 allocation, call no guest code and expose no borrowed storage. Exception delivery
 and host locks/reference-counting still use host runtime machinery. Per-application
 domain-wide table count/byte budgets beyond the per-actor 256-resource ceiling,
-compiler Error/Result mapping, heir transfer, fine-grained capability revocation,
+compiler Error/Result mapping, automatic heir handoff, fine-grained capability revocation,
 and guest permission checks remain pending.
 
 A `shared_ptr<const T>` does not prove deep immutability of reachable objects.
@@ -133,6 +145,10 @@ Runtime tests exercise:
 - Exactly one insert-if-absent winner and one CAS winner.
 - Automatic owner retirement on restart, close and mailbox destruction, including
   retirement racing reads, stale replacement handles and expired capabilities.
+- Explicit same-domain ownership transfer, old-owner cleanup fencing, new-owner
+  retirement, denied foreign/stopped candidates, capacity rollback, and 128
+  old-owner teardown vs handoff races. These are authored regression cases,
+  not current-head execution results.
 - Filling the 256-resource lifecycle registry, deterministic capacity failure,
   expired-slot reuse, and full-set retirement on restart.
 - Concurrent singleton publication with identical reader identities and complete values.
