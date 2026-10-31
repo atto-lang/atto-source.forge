@@ -71,6 +71,11 @@ FUNCTION_REJECTIONS = (
 )
 REJECTIONS = (
     ("division", "3/2", "division requires float result lowering"),
+    # Removed Oreslang source operators may not reappear through the
+    # standalone native bootstrap or its run/IR/assembly entry points.
+    ("removed-percent", "7%3", "invalid character"),
+    ("removed-caret", "2^3", "invalid character"),
+    ("removed-double-caret", "2^^3", "invalid character"),
     ("overflow_add", "9223372036854775807+1", "i64 add overflow"),
     ("overflow_sub", "-9223372036854775808-1", "i64 sub overflow"),
     ("overflow_mul", "3037000500*3037000500", "i64 mul overflow"),
