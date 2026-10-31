@@ -36,6 +36,8 @@ std::string emit_runtime_asm(const Program& p,Arch arch) {
   if (arch != Arch::X86_64 && arch != Arch::ARM64)
     throw std::runtime_error("unsupported architecture");
   verify(p);
+  if (p.shared_table_stage0)
+    throw std::runtime_error("shared-table stage0 IR requires trusted interpreter; native lowering unsupported");
   if (p.instructions.size()>4096)
     throw std::runtime_error("runtime native instruction budget exceeded");
   for (const auto& ins:p.instructions)
