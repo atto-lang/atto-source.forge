@@ -132,7 +132,7 @@ std::uint64_t stable_id(std::string_view domain, std::string_view value) {
 SingletonStage0Plan compile_singleton_stage0(
     std::string_view source,
     std::string_view module_identity) {
-  validate_source_utf8(source);
+  source::validate_utf8(source);
   if (source.size() > kMaxSourceBytes)
     throw std::runtime_error("singleton stage0 source exceeds byte budget");
   if (module_identity.empty() || module_identity.size() > kMaxModuleIdentityBytes)
