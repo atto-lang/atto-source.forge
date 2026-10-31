@@ -39,9 +39,18 @@ fn emit_and_link(
     require(
         assembly.contains("  call .Lores_fn_") &&
         assembly.contains("jo .Lores_overflow") &&
+        assembly.contains("movl $65537, 0(%r9)") &&
+        assembly.contains("movb $1, 4(%r9)") &&
+        assembly.contains("movb $3, 4(%r9)") &&
         assembly.len() < 5_000_000,
-        format!("{label}: linked assembly lost calls, checked overflow, or budget"),
+        format!("{label}: linked assembly lost calls, checked ErrorSlot identity/effects, or budget"),
     )?;
+    if label.starts_with("typed-") || label == "root-error" || label == "catch-not-taken" {
+        require(
+            assembly.contains(".Lores_error_catch_"),
+            format!("{label}: linked native catch lacks ErrorSlot catch control-flow"),
+        )?;
+    }
     let asm = root.join(format!("{label}.s"));
     fs::write(&asm, assembly).map_err(|e| e.to_string())?;
     let driver = root.join(format!("{label}.c"));
@@ -110,6 +119,46 @@ fn real_main() -> Result<(), String> {
         format!("linked native Math expected 42, got {:?}", native.status),
     )?;
 
+    let examples = normal.parent()
+        .ok_or_else(|| "normal Math fixture has no parent directory".to_string())?;
+    let typed_cases = [
+        ("typed-add", "math-error-slot-add.ores"),
+        ("typed-sub", "math-error-slot-sub.ores"),
+        ("typed-mul", "math-error-slot-mul.ores"),
+        ("typed-unary-neg", "math-error-slot-unary-neg.ores"),
+        ("typed-abs", "math-error-slot-abs.ores"),
+        ("typed-neg", "math-error-slot-neg.ores"),
+        ("root-error", "math-error-slot-root.ores"),
+        ("catch-not-taken", "math-error-slot-catch-not-taken.ores"),
+    ];
+    for (label, file) in typed_cases {
+        let entry = examples.join(file);
+        let interpreted = Command::new(&forge)
+            .arg("run-call-module").arg(&entry).arg(&library)
+            .output().map_err(|e| e.to_string())?;
+        require(
+            interpreted.status.success() && interpreted.stderr.is_empty()
+                && interpreted.stdout == b"42\n",
+            format!(
+                "{label}: linked interpreter expected 42, status={:?}, stdout={}, stderr={}",
+                interpreted.status.code(),
+                String::from_utf8_lossy(&interpreted.stdout),
+                String::from_utf8_lossy(&interpreted.stderr)
+            ),
+        )?;
+        let executable = emit_and_link(
+            &forge, &cc, &entry, &library, &root, label)?;
+        let observed = run(&executable, &[])?;
+        require(
+            observed.status.success() && observed.stderr.is_empty()
+                && observed.stdout == b"42\n",
+            format!(
+                "{label}: linked native ErrorSlot guest expected 42, got {:?}",
+                observed.status
+            ),
+        )?;
+    }
+
     let checked = Command::new(&forge)
         .arg("run-call-module").arg(&overflow).arg(&library)
         .output().map_err(|e| e.to_string())?;
@@ -128,6 +177,6 @@ fn real_main() -> Result<(), String> {
         format!("linked native Math MIN overflow did not SIGILL: {:?}", trapped.status),
     )?;
 
-    println!("PASS Forge exact stdlib Math: linked interpreter/native result 42, guest overflow identity 65537, and unhandled panic trap");
+    println!("PASS Forge exact stdlib Math: interpreter/native typed catches cover add/sub/mul/unary-neg/abs/neg, Error root, catch-not-taken, code 65537/effect throw, and unhandled panic trap");
     Ok(())
 }
