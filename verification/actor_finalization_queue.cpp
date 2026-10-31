@@ -152,7 +152,6 @@ void leased_shutdown_is_not_observer_callback() {
   const auto owner = actor->context();
   check(owner.attach_owned_resource(observer), "cannot attach running observer");
   std::latch ready{1};
-  std::latch release{1};
   std::atomic<bool> completed{false};
   std::thread supervisor;
   {
