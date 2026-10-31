@@ -1,4 +1,5 @@
 #include "compiler/frontend.hpp"
+#include "codegen/native.hpp"
 #include "compiler/singleton_stage0.hpp"
 #include "runtime/singleton_registry.hpp"
 #include "runtime/actor.hpp"
@@ -64,6 +65,12 @@ void compile_gate_and_ir_verification() {
   });
   rejected("matching trusted dispatcher", [&] {
     (void)interpret(compiled, std::array<std::int64_t,2>{1,2});
+  });
+  rejected("shared-table stage0 IR requires trusted interpreter", [&] {
+    (void)emit_runtime_asm(compiled, Arch::X86_64);
+  });
+  rejected("matching trusted dispatcher", [&] {
+    (void)emit_asm(compiled, Arch::X86_64);
   });
   rejected("shared-table intrinsic arity mismatch", [&] {
     (void)parse_shared_i64_stage0_source(
