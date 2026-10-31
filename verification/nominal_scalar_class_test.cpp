@@ -91,6 +91,70 @@ int main() {
       end
       fnc main():int{let mut Box b=new Box();b.add(3);return b.read();}
     )ores")) == 43, "native class method argument was constant-forged");
+    // Same class image, two independent stack-owned instances, with method
+    // identities resolved by name and caller-visible value arity.
+    const auto multi = parse(R"ores(
+      define class Counter as let int value=40;
+        add(mut self, int n):void{self.value=self.value+n;}
+        subtract(mut self)(int n):void{self.value=self.value-n;}
+        read(self):int{return self.value;}
+        get():int{return self.value;}
+      end
+      fnc main():int{
+        let mut Counter a=new Counter();
+        let mut Counter b=new Counter();
+        a.add(8);
+        b.subtract(10);
+        a.subtract(6);
+        b.add(12);
+        return a.get();
+      }
+    )ores");
+    require(multi.instances.size() == 2 && multi.methods.size() == 4 &&
+            multi.steps.size() == 7 && interpret(multi) == 42,
+            "receiver method IR shared body or independent instance slots drifted");
+    const auto multiNative = emit_x86_64_asm(multi);
+    require(multiNative.find("8(%rsp)") != std::string::npos &&
+            multiNative.find("subq %rdx, %rax") != std::string::npos,
+            "native code omitted independent instance or subtraction method");
+    auto tampered = multi;
+    tampered.steps[3].instance = 9;
+    try {
+      (void)interpret(tampered);
+      throw std::runtime_error("tampered method IR receiver was accepted");
+    } catch (const std::runtime_error& error) {
+      require(std::string_view(error.what()).find("invalid nominal instance slot") !=
+              std::string_view::npos, "tampered receiver failed for wrong reason");
+    }
+    rejects(R"ores(
+      define class Box as let int value=1;
+        x(mut self,int n):void{self.value=self.value+n;}
+        x(mut self)(int n):void{self.value=self.value-n;}
+        read(self):int{return self.value;}
+      end
+      fnc main():int{let mut Box b=new Box();return b.read();}
+    )ores", "duplicate native method name/arity");
+    rejects(R"ores(
+      define class Box as let int value=1;
+        add(mut self,int n):void{self.value=self.value+n;}
+        read():int{return self.value;}
+      end
+      fnc main():int{b.add(2);let mut Box b=new Box();return b.read();}
+    )ores", "unknown or uninitialized class receiver");
+    rejects(R"ores(
+      define class Box as let int value=1;
+        add(mut self,int n):void{self.value=self.value+n;}
+        read():int{return self.value;}
+      end
+      fnc main():int{let mut Box b=new Box();let mut Box b=new Box();return b.read();}
+    )ores", "duplicate or invalid class binding");
+    rejects(R"ores(
+      define class Box as let int value=1;
+        add(mut self,int n):void{self.value=self.value+n;}
+        read():int{return self.value;}
+      end
+      fnc main():int{let mut Box b=new Box();b.read(2);return b.read();}
+    )ores", "unknown nominal method or caller-visible arity");
     auto p = box;
     p.initializer = std::numeric_limits<std::int64_t>::max();
     p.argument = 1;
