@@ -283,10 +283,13 @@ void validate(const ScalarClass& p) {
       p.steps.back().kind != Step::Kind::ReturnRead)
     throw std::runtime_error("invalid nominal scalar IR");
   std::vector<bool> constructed(p.instances.size(),false);
-  for (const auto& method:p.methods)
-    if (!valid_identifier(method.name) ||
+  for (const auto& method:p.methods) {
+    const bool recognized = method.kind == Method::Kind::Add ||
+      method.kind == Method::Kind::Subtract || method.kind == Method::Kind::Read;
+    if (!recognized || !valid_identifier(method.name) ||
         method.value_arity != (method.kind == Method::Kind::Read ? 0u : 1u))
       throw std::runtime_error("invalid nominal method IR");
+  }
   for (std::size_t i=0;i<p.methods.size();++i)
     for (std::size_t j=0;j<i;++j)
       if(p.methods[i].name==p.methods[j].name &&
@@ -301,16 +304,20 @@ void validate(const ScalarClass& p) {
     const auto& step=p.steps[i];
     if(step.instance>=p.instances.size()) throw std::runtime_error("invalid nominal instance slot");
     if(step.kind==Step::Kind::Construct) {
+      if(step.method!=0 || step.argument!=0)
+        throw std::runtime_error("invalid nominal construction operands");
       if(constructed[step.instance]) throw std::runtime_error("duplicate nominal construction");
       constructed[step.instance]=true;
     } else {
+      if(step.kind!=Step::Kind::Mutate && step.kind!=Step::Kind::ReturnRead)
+        throw std::runtime_error("invalid nominal operation kind");
       if(!constructed[step.instance] || step.method>=p.methods.size())
         throw std::runtime_error("invalid nominal receiver or method reference");
       const auto kind=p.methods[step.method].kind;
       if(step.kind==Step::Kind::Mutate && kind==Method::Kind::Read)
         throw std::runtime_error("mutable operation targets read method");
       if(step.kind==Step::Kind::ReturnRead &&
-         (kind!=Method::Kind::Read || i!=p.steps.size()-1))
+         (kind!=Method::Kind::Read || step.argument!=0 || i!=p.steps.size()-1))
         throw std::runtime_error("invalid nominal return method");
     }
   }
