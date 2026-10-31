@@ -55,6 +55,82 @@ void moved_from_lease_is_not_authority() {
         "moved execution lease lost its admitted incarnation");
 }
 
+void actor_self_shutdown_is_nonblocking() {
+  Mailbox owner{103};
+  Mailbox reader{104};
+  const auto current = owner.context();
+  const auto reader_context = reader.context();
+  const auto observer = std::make_shared<Observer>();
+  check(current.attach_owned_resource(observer), "cannot attach self-close observer");
+  SharedI64Table<1> table(current, TableAccess::Public);
+  const auto owner_cap = table.owner_capability(current);
+  const auto reader_cap = table.delegate(owner_cap, current, reader_context);
+  table.insert(owner_cap, current, 1, 91);
+
+  {
+    auto lease = owner.execution_lease();
+    bool rejected_close = false;
+    try { owner.close(); }
+    catch (const std::runtime_error&) { rejected_close = true; }
+    check(rejected_close, "synchronous self-close must fail rather than self-join");
+    bool rejected_restart = false;
+    try { (void)owner.restart(); }
+    catch (const std::runtime_error&) { rejected_restart = true; }
+    check(rejected_restart, "synchronous self-restart must fail rather than self-join");
+    check(table.lookup(owner_cap, lease.context(), 1) == 91,
+          "self-close rejection modified the active table");
+
+    owner.request_close(); // The actor may request its own shutdown.
+    check(observer->calls.load(std::memory_order_acquire) == 0,
+          "actor retired its table while leased code was still running");
+    check(table.lookup(owner_cap, lease.context(), 1) == 91,
+          "request_close retired a table before the final lease release");
+    bool admission_rejected = false;
+    try { (void)owner.execution_lease(); }
+    catch (const std::runtime_error&) { admission_rejected = true; }
+    check(admission_rejected, "shutdown request admitted a new lease");
+    bool context_rejected = false;
+    try { (void)owner.context(); }
+    catch (const std::runtime_error&) { context_rejected = true; }
+    check(context_rejected, "shutdown request published a new actor context");
+    auto late = std::make_shared<Observer>();
+    check(!current.attach_owned_resource(late),
+          "resource attachment succeeded after stop request");
+  }
+  check(observer->calls.load(std::memory_order_acquire) == 1,
+        "final lease did not retire actor resources exactly once");
+  check(!current.valid(), "self-stopped actor authority remained valid");
+  bool closed = false;
+  try { (void)table.lookup(reader_cap, reader_context, 1); }
+  catch (const TableError& e) { closed = e.code == TableErrorCode::Closed; }
+  check(closed, "owner death did not retire delegated table access");
+  owner.close(); // Idempotent synchronous finish after deferred cleanup.
+  check(observer->calls.load(std::memory_order_acquire) == 1,
+        "repeated external close delivered duplicate retirement");
+}
+
+void multiple_leases_quiesce_in_last_release() {
+  Mailbox owner{105};
+  const auto current = owner.context();
+  auto observer = std::make_shared<Observer>();
+  check(current.attach_owned_resource(observer), "cannot attach multi-lease observer");
+  {
+    auto first = owner.execution_lease();
+    {
+      auto second = owner.execution_lease();
+      owner.request_close();
+      check(second.context().valid(), "nested lease revoked early");
+      check(observer->calls.load(std::memory_order_acquire) == 0,
+            "nested stop retired before quiescence");
+    }
+    check(first.context().valid(), "first lease not preserved after second release");
+    check(observer->calls.load(std::memory_order_acquire) == 0,
+          "stop retired while one active lease remained");
+  }
+  check(observer->calls.load(std::memory_order_acquire) == 1,
+        "last of nested leases did not finish teardown");
+}
+
 void close_waits_for_lease() {
   Mailbox owner{101};
   const auto first = owner.context();
@@ -166,10 +242,12 @@ void concurrent_lease_admission_and_shutdown() {
 int main() {
   try {
     moved_from_lease_is_not_authority();
+    actor_self_shutdown_is_nonblocking();
+    multiple_leases_quiesce_in_last_release();
     close_waits_for_lease();
     restart_waits_for_lease();
     concurrent_lease_admission_and_shutdown();
-    std::cout << "PASS: runtime-minted lease, close/restart quiescence, "
+    std::cout << "PASS: self-shutdown request, nested lease quiescence, "
                  "owner retirement and 128 admission/shutdown races\n";
     return 0;
   } catch (const std::exception& e) {
