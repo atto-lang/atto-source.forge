@@ -80,9 +80,11 @@ template<std::size_t Capacity> class SharedI64Table final {
         caller.domain() != s.owner.domain() || (write && !cap.write_)) fail(TableErrorCode::Denied);
     if (cap.owner_generation_ != 0 &&
         cap.owner_generation_ != s.ownership_generation) fail(TableErrorCode::Denied);
-    if (s.closed || !s.owner.valid()) fail(TableErrorCode::Closed);
-    // A stop-requested owner cannot leave a delegated reader/writer seeing
-    // an apparently live table while supervisor cleanup is still deferred.
+    if (s.closed || (caller != s.owner && !s.owner.accepting()))
+      fail(TableErrorCode::Closed);
+    // Only the owner's own already-admitted execution lease can complete an
+    // in-flight operation after shutdown was requested. Delegated readers
+    // cannot borrow authority from another actor lease on the same thread.
     if (s.access == TableAccess::Private && caller != s.owner) fail(TableErrorCode::Denied);
     if (write && s.access == TableAccess::Protected && caller != s.owner) fail(TableErrorCode::Denied);
   }
