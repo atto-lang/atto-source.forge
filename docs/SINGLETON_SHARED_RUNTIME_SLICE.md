@@ -371,3 +371,46 @@ sanitizer or guest-execution proof can be derived from it.
 Outstanding blockers are a real scheduler-owned finalization queue,
 stalled-actor policy and supervisor notices, production guest integration,
 ownership transfer/heirs, cross-worker isolation, and five-backend parity.
+
+## Supervisor finalization ticket substrate (2026-10-31)
+
+`runtime/actor_finalizer.hpp` adds a bounded, host-owned
+`ActorFinalizationQueue<Capacity>` for the Forge stage-0 runtime. This
+is **not yet** a production scheduler or automatically running worker.
+The supervisor must call `run_one()` or `drain_ready()` on a thread
+that does not own the target actor's execution lease.
+
+- `try_request_close(shared_ptr<Mailbox>)` reserves capacity before
+  requesting a stop. If full, it leaves the actor running and returns
+  `Full` rather than losing a shutdown request. Each accepted ticket
+  retains the mailbox strongly until completion; duplicate stop requests
+  for the same incarnation return `AlreadyQueued`.
+- `Mailbox::request_close()` now returns its generation after fencing
+  admission under the mailbox mutex. `finalize_stop(generation)` runs
+  callbacks only for the ticketed actor incarnation, with quiescence
+  outside the mailbox mutex. Old tickets cannot shut down a newly
+  restarted incarnation.
+- `run_one()` claims one ticket without holding the queue mutex while
+  waiting or calling actor-owned retirement observers. Callback reentry
+  may deduplicate a processing ticket without a queue-lock inversion.
+  A host exception resets the ticket to pending rather than discarding
+  it. The supervisor must re-drive pending tickets.
+- The fixed-capacity adapter does not allocate queue nodes on admission.
+  Destroying the queue with pending or in-flight tickets intentionally
+  fails closed rather than silently discarding cleanup work. A production
+  scheduler must own the queue for the actor lifetime and establish
+  shutdown/drain ordering; it must not destroy it from within a live
+  actor execution lease.
+- `verification/actor_finalization_queue.cpp` tests bounded admission,
+  duplicate requests, strong ticket lifetime, reentrant callbacks,
+  active-lease quiescence, generation fencing, a restarted actor remaining
+  live, and exactly-once callback delivery. CMake/CTest and the direct
+  release/ASan/UBSan/leak script compile this test. This is **authored
+  coverage**, not yet an executed result.
+
+Important incomplete work: a production scheduler-driven consumer
+(threadpool/control lane), watchdog policy for non-cooperative actors,
+actor panic/raise/throw supervisor CONTROL notices, restart cancellation
+handoff, queue persistence across scheduler failure, and exact-head
+runner-executed conformance. This host queue must not be represented as
+having solved those capabilities.
