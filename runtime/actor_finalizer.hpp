@@ -16,11 +16,22 @@ namespace oresforge::runtime {
 // A scheduler MUST drive run_one() on a thread that owns no lease on the
 // target actor; it MUST not drop or destroy this queue while tickets remain.
 // This bounded host adapter is NOT a hard real-time progress guarantee.
+enum class ActorStopCause : std::uint8_t {
+  Requested = 0, Cancelled = 1, UnhandledThrow = 2,
+  Raised = 3, Panicked = 4
+};
+
 template<std::size_t Capacity = 64>
 class ActorFinalizationQueue final {
   static_assert(Capacity > 0 && Capacity <= kMaxActorExecutionLeases);
  public:
   enum class Admission { Queued, AlreadyQueued, Full, Invalid };
+  struct Completion {
+    std::uint64_t actor_id = 0;
+    std::uint64_t incarnation = 0;
+    ActorStopCause cause = ActorStopCause::Requested;
+    bool finalized = false; // false means an obsolete incarnation ticket.
+  };
 
   ActorFinalizationQueue() = default;
   ActorFinalizationQueue(const ActorFinalizationQueue&) = delete;
@@ -32,13 +43,18 @@ class ActorFinalizationQueue final {
     if (pending() != 0) std::terminate();
   }
 
-  Admission try_request_close(const std::shared_ptr<Mailbox>& actor) {
+  Admission try_request_close(const std::shared_ptr<Mailbox>& actor,
+                              ActorStopCause cause = ActorStopCause::Requested) {
     if (!actor) return Admission::Invalid;
     std::scoped_lock lock(mutex_);
     const auto expected = actor->ref().generation;
-    for (const auto& ticket : tickets_) {
-      if (ticket.actor == actor && ticket.generation == expected)
-        return Admission::AlreadyQueued;
+    for (auto& ticket : tickets_) {
+      if (ticket.actor != actor || ticket.generation != expected) continue;
+      // Panic/raise escalation must not be lost if a duplicate request races
+      // the supervisor's processing of a previously queued cancellation.
+      if (static_cast<unsigned>(cause) > static_cast<unsigned>(ticket.cause))
+        ticket.cause = cause;
+      return Admission::AlreadyQueued;
     }
     for (auto& ticket : tickets_) {
       if (ticket.actor) continue;
@@ -48,6 +64,7 @@ class ActorFinalizationQueue final {
       const auto generation = actor->request_close();
       ticket.actor = actor;  // shared_ptr copy: no allocations or exceptions.
       ticket.generation = generation;
+      ticket.cause = cause;
       ticket.processing = false;
       return Admission::Queued;
     }
@@ -58,7 +75,7 @@ class ActorFinalizationQueue final {
   // Exactly one queued ticket is claimed. On host exception the ticket stays
   // pending for the supervisor to retry on another safe thread.
   // Returns false when no *ready* ticket exists (another worker may be busy).
-  bool run_one() {
+  bool run_one(Completion* completion = nullptr) {
     std::shared_ptr<Mailbox> actor;
     std::uint64_t generation = 0;
     std::size_t index = Capacity;
@@ -88,6 +105,12 @@ class ActorFinalizationQueue final {
           tickets_[index].generation != generation ||
           !tickets_[index].processing)
         std::terminate(); // Internal supervisor ticket corruption.
+      if (completion) {
+        completion->actor_id = actor->ref().id;
+        completion->incarnation = generation;
+        completion->cause = tickets_[index].cause;
+        completion->finalized = finalized;
+      }
       tickets_[index] = {};
       if (finalized) ++completed_;
       else ++stale_;
@@ -120,6 +143,7 @@ class ActorFinalizationQueue final {
   struct Ticket {
     std::shared_ptr<Mailbox> actor;
     std::uint64_t generation = 0;
+    ActorStopCause cause = ActorStopCause::Requested;
     bool processing = false;
   };
   mutable std::mutex mutex_;
