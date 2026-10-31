@@ -3,13 +3,19 @@
 #include <atomic>
 #include <cstdint>
 #include <iostream>
+#include <exception>
 #include <latch>
 #include <memory>
 #include <stdexcept>
 #include <thread>
 #include <type_traits>
 #include <vector>
-#if defined(__unix__) && !defined(__SANITIZE_ADDRESS__)
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define ORES_FORGE_ASAN_BUILD 1
+#endif
+#endif
+#if defined(__unix__) && !defined(__SANITIZE_ADDRESS__) && !defined(ORES_FORGE_ASAN_BUILD)
 #include <sys/wait.h>
 #include <unistd.h>
 #include <cstdlib>
@@ -119,7 +125,12 @@ void lease_context_rejects_foreign_thread() {
 }
 
 void foreign_thread_lease_destructor_is_fail_stop() {
-#if defined(__unix__) && !defined(__SANITIZE_ADDRESS__)
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define ORES_FORGE_ASAN_BUILD 1
+#endif
+#endif
+#if defined(__unix__) && !defined(__SANITIZE_ADDRESS__) && !defined(ORES_FORGE_ASAN_BUILD)
   const pid_t child = fork();
   check(child >= 0, "unable to fork thread-affinity death test");
   if (child == 0) {
