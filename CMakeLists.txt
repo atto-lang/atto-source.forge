@@ -70,6 +70,12 @@ if(BUILD_TESTING)
   add_test(NAME oresforge_singleton_shared_runtime COMMAND oresforge_singleton_shared_runtime)
   set_tests_properties(oresforge_singleton_shared_runtime PROPERTIES TIMEOUT 30)
 
+  # Scheduler-owned dispatch authority, no guest ActorContext input.
+  add_executable(oresforge_singleton_dispatch_bridge verification/singleton_dispatch_bridge.cpp)
+  target_link_libraries(oresforge_singleton_dispatch_bridge PRIVATE oresforge_core Threads::Threads)
+  add_test(NAME oresforge_singleton_dispatch_bridge COMMAND oresforge_singleton_dispatch_bridge)
+  set_tests_properties(oresforge_singleton_dispatch_bridge PROPERTIES TIMEOUT 30)
+
   add_executable(oresforge_singleton_admission verification/singleton_admission.cpp)
   target_link_libraries(oresforge_singleton_admission PRIVATE oresforge_core)
   add_test(NAME oresforge_singleton_admission COMMAND oresforge_singleton_admission)

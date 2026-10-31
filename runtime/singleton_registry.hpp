@@ -90,6 +90,15 @@ class SingletonRegistry final {
     return cell->get(std::forward<Initialize>(initialize));
   }
 
+  // Runtime-bound path used by the stage-0 compiler bridge. The declaration ID
+  // must come from compiler resolution, never guest input.
+  template<class Initialize>
+  std::shared_ptr<const T> get_active(
+      SingletonDeclarationId id, Initialize&& initialize) {
+    return get(oresforge::runtime::active_dispatch_actor(), id,
+               std::forward<Initialize>(initialize));
+  }
+
   void close() {
     std::array<SingletonCell<T>*, Capacity> cells{};
     std::size_t count = 0;

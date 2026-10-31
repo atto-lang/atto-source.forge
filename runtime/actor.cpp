@@ -6,6 +6,9 @@
 #include <deque>
 #include <vector>
 namespace oresforge::runtime {
+namespace {
+thread_local ActorContext bound_dispatch_actor;
+}
 bool CapabilityToken::attach_owned_resource(
     const std::shared_ptr<ActorLifetimeResource>& resource) const noexcept {
   if (!resource) return false;
@@ -45,6 +48,20 @@ bool ActorContext::attach_owned_resource(
          authority_->attach_owned_resource(resource);
 }
 
+ActorDispatchLease::ActorDispatchLease(ActorContext next) {
+  if (!next.valid()) throw std::runtime_error("cannot enter a stopped actor");
+  if (bound_dispatch_actor.valid() && bound_dispatch_actor != next)
+    throw std::logic_error("cross-actor nested dispatch denied");
+  previous_ = std::move(bound_dispatch_actor);
+  bound_dispatch_actor = std::move(next);
+}
+ActorDispatchLease::~ActorDispatchLease() noexcept {
+  bound_dispatch_actor = std::move(previous_);
+}
+ActorContext active_dispatch_actor() noexcept {
+  return bound_dispatch_actor.valid() ? bound_dispatch_actor : ActorContext{};
+}
+
 namespace {
 // Only pending mailbox-owned copies may be wiped. Already-delivered values
 // belong to the receiver. Volatile byte stores prevent dead-store elimination
@@ -82,6 +99,9 @@ ActorContext Mailbox::context() const {
       !authority_->active.load(std::memory_order_acquire))
     throw std::runtime_error("closed actor has no execution context");
   return ActorContext{domain_,id_,generation_,authority_};
+}
+ActorDispatchLease Mailbox::enter_dispatch() const {
+  return ActorDispatchLease{context()};
 }
 void Mailbox::send(ActorRef destination,std::span<const std::uint8_t> payload) {
   std::scoped_lock lock(mutex_);

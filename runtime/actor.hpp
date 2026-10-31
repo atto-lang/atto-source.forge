@@ -73,6 +73,24 @@ struct ActorRef {
       : id(id), generation(generation), authority_(std::move(authority)) {}
   friend class Mailbox;
 };
+// Trusted scheduler-only dispatch binding. An actor incarnation is carried in
+// thread-local host state while its handler executes; guest code cannot pass
+// an ActorContext to a shared-state operation. No FFI entry exposes this type.
+class ActorDispatchLease final {
+  friend class Mailbox;
+  ActorContext previous_{};
+  explicit ActorDispatchLease(ActorContext next);
+ public:
+  ~ActorDispatchLease() noexcept;
+  ActorDispatchLease(const ActorDispatchLease&) = delete;
+  ActorDispatchLease& operator=(const ActorDispatchLease&) = delete;
+  ActorDispatchLease(ActorDispatchLease&&) = delete;
+  ActorDispatchLease& operator=(ActorDispatchLease&&) = delete;
+};
+// Returns an invalid context when no live dispatch is bound, including after
+// actor close/restart. The capability-checked adapter then fails closed.
+ActorContext active_dispatch_actor() noexcept;
+
 class Mailbox {
  public:
   Mailbox(std::uint64_t id,std::size_t capacity=1024,
@@ -84,6 +102,9 @@ class Mailbox {
   // Trusted scheduler/actor-runtime adapter. Guest code must never be allowed
   // to manufacture ActorContext values or pass them through FFI.
   ActorContext context() const;
+  // Trusted runtime entry; use only while executing a scheduled handler.
+  // The lease is thread-affine and must not survive the handler.
+  [[nodiscard]] ActorDispatchLease enter_dispatch() const;
   void send(ActorRef,std::span<const std::uint8_t>);
   std::optional<std::vector<std::uint8_t>> receive();
   void close();

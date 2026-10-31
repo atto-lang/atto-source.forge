@@ -235,4 +235,39 @@ template<std::size_t Capacity> class SharedI64Table final {
     retire(*state_);
   }
 };
+
+// Trusted host adapter for future guest lowering. No guest-facing operation
+// takes an ActorContext: it is derived from the current scheduler dispatch.
+// The compiler/runtime must resolve and validate recipient refs separately;
+// no declaration of table guest syntax or FFI is made here.
+template<std::size_t Capacity> class DispatchI64Table final {
+  SharedI64Table<Capacity>& table_;
+ public:
+  using Capability = typename SharedI64Table<Capacity>::Capability;
+  explicit DispatchI64Table(SharedI64Table<Capacity>& table) : table_(table) {}
+  Capability owner_capability() const {
+    return table_.owner_capability(oresforge::runtime::active_dispatch_actor());
+  }
+  std::optional<std::int64_t> lookup(const Capability& cap, std::int64_t key) const {
+    return table_.lookup(cap, oresforge::runtime::active_dispatch_actor(), key);
+  }
+  void insert(const Capability& cap, std::int64_t key, std::int64_t value) {
+    table_.insert(cap, oresforge::runtime::active_dispatch_actor(), key, value);
+  }
+  bool insert_new(const Capability& cap, std::int64_t key, std::int64_t value) {
+    return table_.insert_new(cap, oresforge::runtime::active_dispatch_actor(), key, value);
+  }
+  bool compare_exchange(const Capability& cap, std::int64_t key,
+                        std::int64_t expected, std::int64_t desired) {
+    return table_.compare_exchange(
+        cap, oresforge::runtime::active_dispatch_actor(), key, expected, desired);
+  }
+  std::int64_t update_counter(const Capability& cap, std::int64_t key, std::int64_t delta) {
+    return table_.update_counter(
+        cap, oresforge::runtime::active_dispatch_actor(), key, delta);
+  }
+  bool erase(const Capability& cap, std::int64_t key) {
+    return table_.erase(cap, oresforge::runtime::active_dispatch_actor(), key);
+  }
+};
 }

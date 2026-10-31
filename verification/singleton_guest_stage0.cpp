@@ -102,10 +102,16 @@ void concurrent_first_access_uses_compiled_plan() {
       4 * oresforge::runtime::kMaxMessageBytes, domain};
   oresforge::runtime::Mailbox second_box{902, 1024,
       4 * oresforge::runtime::kMaxMessageBytes, domain};
-  const auto first_actor = first_box.context();
-  const auto second_actor = second_box.context();
 
   oresforge::shared::SingletonRegistry<std::int64_t, 4> registry{domain};
+  bool denied_without_dispatch = false;
+  try {
+    (void)registry.get_active(plan.declaration_id, [] { return std::int64_t{0}; });
+  } catch (const oresforge::shared::SingletonRegistryError& err) {
+    denied_without_dispatch =
+        err.code == oresforge::shared::SingletonRegistryErrorCode::Denied;
+  }
+  check(denied_without_dispatch, "stage0 registry admitted unbound caller");
   constexpr int workers = 8;
   std::barrier start(workers);
   std::atomic<int> initializer_runs{0};
@@ -114,11 +120,12 @@ void concurrent_first_access_uses_compiled_plan() {
   threads.reserve(workers);
 
   for (int i = 0; i < workers; ++i) {
-    const auto actor = (i % 2 == 0) ? first_actor : second_actor;
-    threads.emplace_back([&, i, actor] {
+    auto* box = (i % 2 == 0) ? &first_box : &second_box;
+    threads.emplace_back([&, i, box] {
+      auto dispatch = box->enter_dispatch();
       start.arrive_and_wait();
-      values[static_cast<std::size_t>(i)] = registry.get(
-          actor, plan.declaration_id, [&] {
+      values[static_cast<std::size_t>(i)] = registry.get_active(
+          plan.declaration_id, [&] {
             ++initializer_runs;
             return oresforge::interpret(plan.initializer_program);
           });
