@@ -47,7 +47,8 @@ class ActorFinalizationQueue final {
                               ActorStopCause cause = ActorStopCause::Requested) {
     if (!actor) return Admission::Invalid;
     std::scoped_lock lock(mutex_);
-    const auto expected = actor->ref().generation;
+    const auto reference = actor->ref();
+    const auto expected = reference.generation;
     for (auto& ticket : tickets_) {
       if (ticket.actor != actor || ticket.generation != expected) continue;
       // Panic/raise escalation must not be lost if a duplicate request races
@@ -63,6 +64,7 @@ class ActorFinalizationQueue final {
       // The queue lock prevents the consumer from seeing an incomplete ticket.
       const auto generation = actor->request_close();
       ticket.actor = actor;  // shared_ptr copy: no allocations or exceptions.
+      ticket.actor_id = reference.id;
       ticket.generation = generation;
       ticket.cause = cause;
       ticket.processing = false;
@@ -106,7 +108,7 @@ class ActorFinalizationQueue final {
           !tickets_[index].processing)
         std::terminate(); // Internal supervisor ticket corruption.
       if (completion) {
-        completion->actor_id = actor->ref().id;
+        completion->actor_id = tickets_[index].actor_id;
         completion->incarnation = generation;
         completion->cause = tickets_[index].cause;
         completion->finalized = finalized;
@@ -142,6 +144,7 @@ class ActorFinalizationQueue final {
  private:
   struct Ticket {
     std::shared_ptr<Mailbox> actor;
+    std::uint64_t actor_id = 0;
     std::uint64_t generation = 0;
     ActorStopCause cause = ActorStopCause::Requested;
     bool processing = false;
