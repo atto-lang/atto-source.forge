@@ -9,6 +9,7 @@
 #include <thread>
 
 using oresforge::runtime::ActorFinalizationQueue;
+using oresforge::runtime::ActorStopCause;
 using oresforge::runtime::ActorLifetimeResource;
 using oresforge::runtime::Mailbox;
 using oresforge::shared::SharedI64Table;
@@ -75,6 +76,35 @@ void queue_owns_actor_until_completion() {
   check(queue.drain_ready() == 1, "retained actor was not finalized");
   check(observer->retired.load(std::memory_order_acquire) == 1 &&
         weak.expired(), "supervisor completion did not retire and release actor");
+}
+
+void stop_cause_receipts_preserve_priority() {
+  ActorFinalizationQueue<2> queue;
+  auto actor = std::make_shared<Mailbox>(209);
+  check(queue.try_request_close(actor, ActorStopCause::Cancelled) ==
+            ActorFinalizationQueue<2>::Admission::Queued,
+        "cancelled actor stop not retained");
+  check(queue.try_request_close(actor, ActorStopCause::Panicked) ==
+            ActorFinalizationQueue<2>::Admission::AlreadyQueued,
+        "panic escalation admitted a duplicate ticket");
+  check(queue.try_request_close(actor, ActorStopCause::Requested) ==
+            ActorFinalizationQueue<2>::Admission::AlreadyQueued,
+        "lower-priority request admitted a duplicate");
+  ActorFinalizationQueue<2>::Completion receipt;
+  check(queue.run_one(&receipt), "typed completion receipt not emitted");
+  check(receipt.actor_id == 209 && receipt.incarnation == 1 &&
+        receipt.cause == ActorStopCause::Panicked && receipt.finalized,
+        "panic was not preserved as priority supervisor completion reason");
+
+  auto stale_actor = std::make_shared<Mailbox>(210);
+  check(queue.try_request_close(stale_actor, ActorStopCause::Raised) ==
+            ActorFinalizationQueue<2>::Admission::Queued,
+        "raised actor stop refused");
+  (void)stale_actor->restart();
+  check(queue.run_one(&receipt) &&
+        receipt.actor_id == 210 && receipt.incarnation == 1 &&
+        receipt.cause == ActorStopCause::Raised && !receipt.finalized,
+        "stale completion incorrectly claimed the restarted incarnation");
 }
 
 void duplicate_requests_and_supervisor_completion() {
@@ -196,6 +226,7 @@ void rejection_and_generation_reuse() {
 int main() {
   try {
     duplicate_requests_and_supervisor_completion();
+    stop_cause_receipts_preserve_priority();
     retirement_callback_reentry_does_not_deadlock_queue();
     queue_owns_actor_until_completion();
     bounded_admission_cannot_lose_stop();
