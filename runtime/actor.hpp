@@ -151,7 +151,12 @@ class Mailbox {
   // Stop admission without executing resource callbacks; bounded mailbox
   // erasure still happens here. Supervisor must call close() or restart()
   // after active leases drain to finalize owned-resource retirement.
-  void request_close();
+  // Returns the incarnation fenced by the stop request. Trusted host-only
+  // return value enables generation-pinned supervisor finalization tickets.
+  std::uint64_t request_close();
+  // Complete a queued stop only if its original generation is still current.
+  // Returns false for a stale ticket; does not close a restarted actor.
+  bool finalize_stop(std::uint64_t incarnation);
   // Synchronous external/supervisor shutdown, forbidden while this thread
   // holds an execution lease for the same actor.
   void close();
