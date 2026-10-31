@@ -1,4 +1,5 @@
 name: Singleton and shared-table runtime slice
+# Stage0 compiler/runtime bridge is not a parity promotion.
 on:
   pull_request:
     paths:
