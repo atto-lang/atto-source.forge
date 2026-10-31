@@ -9,6 +9,7 @@
 #include <memory>
 #include <span>
 #include <stdexcept>
+#include <thread>
 #include <condition_variable>
 #include <vector>
 #include <utility>
@@ -33,17 +34,17 @@ struct CapabilityToken final {
   // Admission stops immediately, while active leased callers may drain.
   std::atomic<bool> accepting{true};
   bool attach_owned_resource(const std::shared_ptr<ActorLifetimeResource>& resource) const noexcept;
-  // Safe from within an actor's own execution lease: fence new admissions
-  // immediately, retire resources on last lease release, never wait here.
+  // Admission-only transition: never runs user resource callbacks or waits
+  // for active leases. Supervisor must later call invalidate() to retire.
   void request_stop() noexcept;
-  // Blocking external/supervisor stop: wait for callbacks after quiescence.
+  // Blocking external/supervisor completion: wait for quiescence, then retire
+  // resources exactly once. Must not be called from a current lease/callback.
   void invalidate() noexcept;
   bool has_current_thread_lease() const noexcept;
   bool is_retiring_on_current_thread() const noexcept;
  private:
   bool acquire_lease() const noexcept;
   void release_lease() const noexcept;
-  void wait_for_stop() const noexcept;
   void retire_resources() const noexcept;
   mutable std::mutex execution_mutex_;
   mutable std::condition_variable execution_cv_;
@@ -102,13 +103,15 @@ class ActorExecutionLease final {
   ActorExecutionLease& operator=(ActorExecutionLease&&) = delete;
   ~ActorExecutionLease() noexcept;
   const ActorContext& context() const {
-    if (!authority_ || !context_.valid())
-      throw std::runtime_error("actor execution lease is no longer active");
+    if (!authority_ || owner_thread_ != std::this_thread::get_id() ||
+        !context_.valid())
+      throw std::runtime_error("actor execution lease is inactive or on wrong thread");
     return context_;
   }
  private:
   const ActorContext context_;
   std::shared_ptr<const CapabilityToken> authority_;
+  std::thread::id owner_thread_;
   ActorExecutionLease(ActorContext context,
                       std::shared_ptr<const CapabilityToken> authority);
   friend class Mailbox;
@@ -139,9 +142,9 @@ class Mailbox {
   ActorExecutionLease execution_lease() const;
   void send(ActorRef,std::span<const std::uint8_t>);
   std::optional<std::vector<std::uint8_t>> receive();
-  // Nonblocking actor self-shutdown: reject new admissions, allow existing
-  // lease scopes to finish, retire owned tables when the final lease releases.
-  // Existing leased code may run until it voluntarily reaches quiescence.
+  // Stop admission without executing resource callbacks; bounded mailbox
+  // erasure still happens here. Supervisor must call close() or restart()
+  // after active leases drain to finalize owned-resource retirement.
   void request_close();
   // Synchronous external/supervisor shutdown, forbidden while this thread
   // holds an execution lease for the same actor.
