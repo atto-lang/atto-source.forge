@@ -11,12 +11,26 @@ namespace oresforge::shared {
 // The compiled program supplies only key/value/delta i64 operands.
 // Caller identity is always derived afresh from a live mailbox incarnation;
 // no guest i64, handle, or forged ActorContext is accepted as caller.
-// NOT YET a production guest ABI, execution lease, or scheduler hook.
+// Stage0 only; every call requires the matching scheduler dispatch lease.
+// NOT YET a production guest ABI or a complete scheduler/fiber hook.
 template<std::size_t Capacity>
 class MailboxBoundI64GuestDispatch final : public oresforge::GuestI64TableDispatch {
   const oresforge::runtime::Mailbox& mailbox_;
   SharedI64Table<Capacity>& table_;
   const typename SharedI64Table<Capacity>::Capability capability_;
+
+  oresforge::runtime::ActorContext current_actor() const {
+    // A retained Mailbox reference is not an execution lease: operations must
+    // originate from the corresponding scheduler-bound actor handler.
+    const auto bound = oresforge::runtime::active_dispatch_actor();
+    if (!bound.valid()) throw TableError(TableErrorCode::Denied);
+    try {
+      if (bound != mailbox_.context()) throw TableError(TableErrorCode::Denied);
+    } catch (const std::runtime_error&) {
+      throw TableError(TableErrorCode::Denied);
+    }
+    return bound;
+  }
 
  public:
   MailboxBoundI64GuestDispatch(
@@ -25,19 +39,19 @@ class MailboxBoundI64GuestDispatch final : public oresforge::GuestI64TableDispat
       typename SharedI64Table<Capacity>::Capability capability)
       : mailbox_(mailbox), table_(table), capability_(std::move(capability)) {}
   std::int64_t lookup(std::int64_t key) override {
-    const auto value = table_.lookup(capability_, mailbox_.context(), key);
+    const auto value = table_.lookup(capability_, current_actor(), key);
     if (!value) throw TableError(TableErrorCode::Missing);
     return *value;
   }
   std::int64_t insert(std::int64_t key, std::int64_t value) override {
-    table_.insert(capability_, mailbox_.context(), key, value);
+    table_.insert(capability_, current_actor(), key, value);
     return value;
   }
   std::int64_t insert_new(std::int64_t key, std::int64_t value) override {
-    return table_.insert_new(capability_, mailbox_.context(), key, value) ? 1 : 0;
+    return table_.insert_new(capability_, current_actor(), key, value) ? 1 : 0;
   }
   std::int64_t update_counter(std::int64_t key, std::int64_t delta) override {
-    return table_.update_counter(capability_, mailbox_.context(), key, delta);
+    return table_.update_counter(capability_, current_actor(), key, delta);
   }
 };
 

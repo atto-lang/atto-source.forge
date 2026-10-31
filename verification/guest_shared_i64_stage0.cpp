@@ -47,6 +47,13 @@ std::int64_t run(const Program& p, Dispatch& dispatch,
       std::span<const std::int64_t>(args).first(p.parameter_count), dispatch);
 }
 
+template<class Dispatch>
+std::int64_t run_as(Mailbox& mailbox, const Program& p, Dispatch& dispatch,
+                    std::int64_t a, std::int64_t b = 0) {
+  auto lease = mailbox.enter_dispatch();
+  return run(p, dispatch, a, b);
+}
+
 void compile_gate_and_ir_verification() {
   constexpr auto program =
       "fnc main(key: int, delta: int) -> int { "
@@ -114,25 +121,30 @@ void compiled_table_ops_and_permissions() {
       "fnc main(key: int, delta: int) -> int { "
       "return shared_i64_update_counter(key, delta); }");
 
-  check(run(insert, owned, 7, 40) == 40, "compiled guest insert failed");
-  check(run(lookup, readonly, 7) == 40, "compiled guest reader cannot read");
-  check(run(insert_new, owned, 7, 100) == 0,
+  error(TableErrorCode::Denied, [&] { (void)run(lookup, readonly, 7); });
+  {
+    auto wrong_dispatch = owner_box.enter_dispatch();
+    error(TableErrorCode::Denied, [&] { (void)run(lookup, readonly, 7); });
+  }
+  check(run_as(owner_box, insert, owned, 7, 40) == 40, "compiled guest insert failed");
+  check(run_as(reader_box, lookup, readonly, 7) == 40, "compiled guest reader cannot read");
+  check(run_as(owner_box, insert_new, owned, 7, 100) == 0,
         "compiled insert-new replaced an existing key");
-  check(run(increment, owned, 7, 2) == 42, "guest atomic counter failed");
-  check(run(lookup, readonly, 7) == 42, "guest did not observe atomic update");
-  check(run(insert_new, owned, 8, 80) == 1, "compiled insert-new failed to insert");
-  error(TableErrorCode::Missing, [&] { (void)run(lookup, readonly, 123); });
-  error(TableErrorCode::Denied, [&] { (void)run(increment, readonly, 7, 1); });
-  error(TableErrorCode::Denied, [&] { (void)run(lookup, mismatched, 7); });
+  check(run_as(owner_box, increment, owned, 7, 2) == 42, "guest atomic counter failed");
+  check(run_as(reader_box, lookup, readonly, 7) == 42, "guest did not observe atomic update");
+  check(run_as(owner_box, insert_new, owned, 8, 80) == 1, "compiled insert-new failed to insert");
+  error(TableErrorCode::Missing, [&] { (void)run_as(reader_box, lookup, readonly, 123); });
+  error(TableErrorCode::Denied, [&] { (void)run_as(reader_box, increment, readonly, 7, 1); });
+  error(TableErrorCode::Denied, [&] { (void)run_as(other_box, lookup, mismatched, 7); });
   table.insert(own, owner, 9, std::numeric_limits<std::int64_t>::max());
-  error(TableErrorCode::Overflow, [&] { (void)run(increment, owned, 9, 1); });
-  check(run(lookup, readonly, 9) == std::numeric_limits<std::int64_t>::max(),
+  error(TableErrorCode::Overflow, [&] { (void)run_as(owner_box, increment, owned, 9, 1); });
+  check(run_as(reader_box, lookup, readonly, 9) == std::numeric_limits<std::int64_t>::max(),
         "failed compiled overflow changed the cell");
 
   (void)reader_box.restart();
-  error(TableErrorCode::Denied, [&] { (void)run(lookup, readonly, 7); });
+  error(TableErrorCode::Denied, [&] { (void)run_as(reader_box, lookup, readonly, 7); });
   owner_box.close();
-  error(TableErrorCode::Denied, [&] { (void)run(lookup, readonly, 7); });
+  error(TableErrorCode::Denied, [&] { (void)run_as(reader_box, lookup, readonly, 7); });
 }
 
 void concurrent_compiled_guest_operations() {
@@ -159,6 +171,7 @@ void concurrent_compiled_guest_operations() {
     auto* mailbox = boxes.back().get();
     threads.emplace_back([&,mailbox,cap] {
       MailboxBoundI64GuestDispatch<2> dispatch(*mailbox,table,cap);
+      auto lease = mailbox->enter_dispatch();
       start.arrive_and_wait();
       try {
         for (int j=0; j<rounds; ++j)
