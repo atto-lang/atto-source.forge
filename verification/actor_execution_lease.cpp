@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <thread>
 #include <type_traits>
+#include <vector>
 
 using oresforge::runtime::ActorContext;
 using oresforge::runtime::ActorExecutionLease;
@@ -141,6 +142,21 @@ void multiple_leases_quiesce_in_last_release() {
   }
   check(observer->calls.load(std::memory_order_acquire) == 1,
         "last of nested leases did not finish teardown");
+}
+
+void lease_budget_is_bounded() {
+  Mailbox box{108};
+  std::vector<ActorExecutionLease> leases;
+  leases.reserve(oresforge::runtime::kMaxActorExecutionLeases);
+  for (std::size_t i=0; i<oresforge::runtime::kMaxActorExecutionLeases; ++i)
+    leases.push_back(box.execution_lease());
+  bool rejected = false;
+  try { (void)box.execution_lease(); }
+  catch (const std::runtime_error&) { rejected = true; }
+  check(rejected, "exhausted actor execution lease budget was not enforced");
+  leases.clear();
+  const auto resumed = box.execution_lease();
+  check(resumed.context().valid(), "lease budget not released on quiescence");
 }
 
 void close_waits_for_lease() {
@@ -335,6 +351,7 @@ int main() {
     moved_from_lease_is_not_authority();
     actor_self_shutdown_is_nonblocking();
     multiple_leases_quiesce_in_last_release();
+    lease_budget_is_bounded();
     external_close_and_self_request_do_not_deadlock();
     supervisor_restart_aborted_by_leased_actor_shutdown();
     close_waits_for_lease();
