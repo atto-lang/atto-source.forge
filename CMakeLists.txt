@@ -76,6 +76,27 @@ if(BUILD_TESTING)
   set_tests_properties(oresforge_stdlib_math_callable_library_admission
     PROPERTIES TIMEOUT 20)
 
+  add_test(NAME oresforge_stdlib_math_linked_interpreter
+    COMMAND "$<TARGET_FILE:oresforge>" run-call-module
+      "${CMAKE_CURRENT_SOURCE_DIR}/examples/math-main.ores"
+      "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/math.ores")
+  set_tests_properties(oresforge_stdlib_math_linked_interpreter
+    PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "^42")
+
+  add_test(NAME oresforge_stdlib_math_linked_min_overflow
+    COMMAND "$<TARGET_FILE:oresforge>" run-call-module
+      "${CMAKE_CURRENT_SOURCE_DIR}/examples/math-overflow.ores"
+      "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/math.ores")
+  set_tests_properties(oresforge_stdlib_math_linked_min_overflow
+    PROPERTIES TIMEOUT 20 WILL_FAIL TRUE)
+
+  add_test(NAME oresforge_stdlib_math_linked_native_asm
+    COMMAND "$<TARGET_FILE:oresforge>" emit-call-module-asm x86_64
+      "${CMAKE_CURRENT_SOURCE_DIR}/examples/math-main.ores"
+      "${CMAKE_CURRENT_SOURCE_DIR}/stdlib/math.ores")
+  set_tests_properties(oresforge_stdlib_math_linked_native_asm
+    PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "jo .Lores_overflow")
+
   # Host-only positive filesystem resolution substrate, not guest import linking.
   add_executable(oresforge_root_resolver_test verification/project_root_resolver_test.cpp)
   target_include_directories(oresforge_root_resolver_test PRIVATE .)
