@@ -8,9 +8,13 @@ on:
       - runtime/singleton_cell.hpp
       - runtime/singleton_identity.hpp
       - runtime/shared_i64_table.hpp
+      - runtime/guest_shared_i64_stage0.hpp
       - verification/singleton_shared_runtime.cpp
       - verification/singleton_admission.cpp
       - verification/singleton_guest_stage0.cpp
+      - verification/guest_shared_i64_stage0.cpp
+      - CMakeLists.txt
+      - codegen/native.cpp
       - compiler/**
       - codegen/native.hpp
       - scripts/test-singleton-shared-runtime.sh
