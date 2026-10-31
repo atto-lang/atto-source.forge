@@ -165,6 +165,28 @@ void table_owner_handoff() {
   const auto original_cap = table.owner_capability(original);
   const auto read = table.delegate(original_cap, original, reader);
   table.insert(original_cap, original, 1, 41);
+  // A public-table write grant is not an owner/administration grant, even
+  // when the grantee happens to be the owner actor.
+  SharedI64Table<1> public_table(original, TableAccess::Public);
+  const auto public_owner = public_table.owner_capability(original);
+  const auto self_write = public_table.delegate(public_owner, original, original, true);
+  public_table.insert(self_write, original, 7, 77); // Data access is allowed.
+  error(TableErrorCode::Denied, [&] {
+    public_table.give_away(self_write, original, successor);
+  });
+  error(TableErrorCode::Denied, [&] {
+    (void)public_table.delegate(self_write, original, reader);
+  });
+  error(TableErrorCode::Denied, [&] {
+    public_table.close(self_write, original);
+  });
+  const auto successor_write = public_table.delegate(public_owner, original, successor, true);
+  public_table.insert(successor_write, successor, 7, 78);
+  error(TableErrorCode::Denied, [&] {
+    public_table.close(successor_write, successor);
+  });
+  check(public_table.lookup(public_owner, original, 7) == 78,
+        "delegated public write grant lost normal data permission");
   error(TableErrorCode::Denied, [&] {
     table.give_away(read, reader, successor);
   });
