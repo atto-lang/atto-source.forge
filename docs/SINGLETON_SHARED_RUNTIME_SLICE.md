@@ -223,3 +223,49 @@ properties.
 
 Keep unsupported admission in place until these gates pass.
 
+
+## Internal stage-0 compiled guest table effects (2026-10-31)
+
+This draft now includes a **distinct opt-in compiler/interpreter profile**:
+`parse_shared_i64_stage0_source()`. It accepts ordinary typed scalar
+`fnc main(...)` expressions with four reserved internal test intrinsics:
+`shared_i64_lookup(key)`, `shared_i64_insert(key, value)`,
+`shared_i64_insert_new(key, value)`, and
+`shared_i64_update_counter(key, delta)`. It is not the canonical final
+Oreslang shared-table API. In this restricted scalar profile, lookup throws
+`TableErrorCode::Missing` rather than exposing the final Option/Result type;
+insert returns its i64 value, insert_new returns 0/1, and update_counter
+returns the checked updated value.
+
+The frontend lowers those intrinsics into dedicated verified IR opcodes. A
+`Program.shared_table_stage0` marker prevents unadmitted table opcodes from
+passing IR verification. The ordinary `parse_source` and
+`parse_runtime_source` profiles reject intrinsic calls, and the ordinary
+IR interpreter and native assembler reject this program profile rather than
+silently executing side effects. Shadowing stage-0 intrinsic names is rejected.
+
+`MailboxBoundI64GuestDispatch<Capacity>` binds a compiled program to a
+trusted host mailbox and an opaque delegated table capability. Each operation
+obtains the current live mailbox incarnation; **guest numeric data never
+supplies the caller identity**. Host operations continue to enforce private,
+protected and public rights, generation fencing, bounded capacity, atomicity,
+overflow and lifecycle retirement. This is still a host test harness rather
+than the final scheduler-issued execution lease or general guest FFI/ABI.
+
+`verification/guest_shared_i64_stage0.cpp` exercises direct compiled
+insert/lookup/insert-new/counter operations, read-only and mismatched grants,
+missing-key and overflow failures, actor restart and owner shutdown, forged
+IR and unauthenticated source rejection, and 80,000 concurrent compiled guest
+counter updates. One additional test compiles an empty `define singleton`
+shell and a pure scalar initializer, shares its compiler-owned declaration
+identity across same-domain actors, then uses that value to seed a shared
+table updated by a *separate* compiled guest table program. The singleton
+initializer itself cannot perform table effects.
+
+The new test is registered in CTest and in
+`scripts/test-singleton-shared-runtime.sh` for release, ASan/UBSan and
+explicit leak probe profiles. **Authored tests are not test passes**.
+No exact-head execution claim may advance without nonzero job steps and
+provenance receipts. Ordinary `define singleton` source, deep immutability,
+final Oreslang table syntax, scheduler execution leases, native table lowering,
+cross-worker memory/broker mediation and all five-backend parity remain gated.
