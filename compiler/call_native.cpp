@@ -390,17 +390,32 @@ class Parser {
   }
 };
 
-std::int64_t checked(Kind k,std::int64_t a,std::int64_t b) {
+void clear_error(OresNativeErrorSlotV1& error) {
+  error.code=ORES_ERROR_NONE_V1;
+  error.effect=ORES_EFFECT_NONE_V1;
+  error.flags=0;
+  error.reserved=0;
+  error.payload=0;
+}
+void arithmetic_overflow(OresNativeErrorSlotV1& error) {
+  error.code=ORES_ERROR_ARITHMETIC_OVERFLOW_V1;
+  error.effect=ORES_EFFECT_THROW_V1;
+  error.flags=0;
+  error.reserved=0;
+  error.payload=0;
+}
+std::int64_t checked(Kind k,std::int64_t a,std::int64_t b,
+                     OresNativeErrorSlotV1& error) {
   std::int64_t out=0;
   switch(k) {
     case Kind::Add:
-      if(__builtin_add_overflow(a,b,&out))throw std::runtime_error("i64 add overflow");
+      if(__builtin_add_overflow(a,b,&out)){arithmetic_overflow(error);return 0;}
       return out;
     case Kind::Sub:
-      if(__builtin_sub_overflow(a,b,&out))throw std::runtime_error("i64 sub overflow");
+      if(__builtin_sub_overflow(a,b,&out)){arithmetic_overflow(error);return 0;}
       return out;
     case Kind::Mul:
-      if(__builtin_mul_overflow(a,b,&out))throw std::runtime_error("i64 mul overflow");
+      if(__builtin_mul_overflow(a,b,&out)){arithmetic_overflow(error);return 0;}
       return out;
     case Kind::Less: return a<b;
     case Kind::LessEqual: return a<=b;
@@ -413,6 +428,7 @@ std::int64_t checked(Kind k,std::int64_t a,std::int64_t b) {
 }
 struct Evaluator {
   const Module& m;
+  OresNativeErrorSlotV1 error{};
   std::size_t remaining=kMaxEvalSteps;
   std::int64_t evaluate(std::size_t id,std::span<const std::int64_t> args,std::size_t depth) {
     if (depth>=kMaxStackDepth)throw std::runtime_error("call depth exceeded");
@@ -422,22 +438,46 @@ struct Evaluator {
   }
   std::int64_t visit(const Function& fn,int id,std::span<const std::int64_t> args,
                      std::size_t depth) {
+    if(error.code!=ORES_ERROR_NONE_V1)return 0;
     if (remaining--==0)throw std::runtime_error("callable execution budget exceeded");
     const auto& n=fn.nodes.at(static_cast<std::size_t>(id));
     if(n.kind==Kind::Constant)return n.value;
     if(n.kind==Kind::Parameter)return args[static_cast<std::size_t>(n.value)];
     if(n.kind==Kind::If) {
       const auto pred=visit(fn,n.children[0],args,depth);
+      if(error.code!=ORES_ERROR_NONE_V1)return 0;
       return visit(fn,n.children[pred ? 1u:2u],args,depth);
+    }
+    if(n.kind==Kind::Catch) {
+      const auto protected_value=visit(fn,n.children.at(0),args,depth);
+      if(error.code==ORES_ERROR_NONE_V1)return protected_value;
+      if(error.effect!=ORES_EFFECT_THROW_V1)return 0;
+      const auto code=error.code;
+      clear_error(error);
+      if(n.name.empty())
+        return visit(fn,n.children.at(1),args,depth);
+      bool match=false;
+      if(n.name=="ArithmeticOverflowError")
+        match=code==ORES_ERROR_ARITHMETIC_OVERFLOW_V1;
+      else if(n.name=="Error")
+        match=code!=ORES_ERROR_NONE_V1;
+      else
+        throw std::runtime_error("unsupported callable guest Error type");
+      return visit(fn,n.children.at(match ? 1u:2u),args,depth);
     }
     if(n.kind==Kind::Call) {
       std::vector<std::int64_t> vals;
-      for (int arg:n.children) vals.push_back(visit(fn,arg,args,depth));
+      for (int arg:n.children) {
+        vals.push_back(visit(fn,arg,args,depth));
+        if(error.code!=ORES_ERROR_NONE_V1)return 0;
+      }
       return evaluate(static_cast<std::size_t>(n.callee),vals,depth+1);
     }
     const auto a=visit(fn,n.children.at(0),args,depth);
+    if(error.code!=ORES_ERROR_NONE_V1)return 0;
     const auto b=visit(fn,n.children.at(1),args,depth);
-    return checked(n.kind,a,b);
+    if(error.code!=ORES_ERROR_NONE_V1)return 0;
+    return checked(n.kind,a,b,error);
   }
 };
 
@@ -586,11 +626,14 @@ void verify(const Module& m) {
         case Kind::Constant: case Kind::Parameter: case Kind::Add:
         case Kind::Sub: case Kind::Mul: case Kind::Less: case Kind::LessEqual:
         case Kind::Greater: case Kind::GreaterEqual: case Kind::Equal:
-        case Kind::NotEqual: case Kind::If: case Kind::Call: break;
+        case Kind::NotEqual: case Kind::If: case Kind::Catch: case Kind::Call: break;
         default: throw std::runtime_error("unknown callable opcode");
       }
-      if(n.kind!=Kind::Call && !n.name.empty())
+      if(n.kind!=Kind::Call && n.kind!=Kind::Catch && !n.name.empty())
         throw std::runtime_error("unexpected callable symbol payload");
+      if(n.kind==Kind::Catch && !n.name.empty() &&
+          n.name!="ArithmeticOverflowError" && n.name!="Error")
+        throw std::runtime_error("unsupported callable guest Error type");
       for(int arg:n.children) {
         if(arg<0 || static_cast<std::size_t>(arg)>=i)
           throw std::runtime_error("callable use before definition");
@@ -600,6 +643,7 @@ void verify(const Module& m) {
       std::size_t size=2;
       if(n.kind==Kind::Constant||n.kind==Kind::Parameter)size=0;
       else if(n.kind==Kind::If)size=3;
+      else if(n.kind==Kind::Catch)size=n.name.empty()?2u:3u;
       else if(n.kind==Kind::Call)size=n.children.size();
       if(n.children.size()!=size)throw std::runtime_error("callable operand arity mismatch");
       if(n.kind==Kind::Parameter && (n.value<0 ||
@@ -626,7 +670,17 @@ void verify(const Module& m) {
 std::int64_t interpret(const Module& m,std::span<const std::int64_t> args) {
   verify(m);
   Evaluator eval{m};
-  return eval.evaluate(static_cast<std::size_t>(m.entry),args,0);
+  const auto value=eval.evaluate(static_cast<std::size_t>(m.entry),args,0);
+  if(eval.error.code!=ORES_ERROR_NONE_V1) {
+    // This is the outer guest-invocation boundary: no recover scope exists in
+    // callable v1, so an unhandled throw/raise reaches panic before the host
+    // diagnostic. The C++ exception is transport for the CLI only.
+    eval.error.effect=ORES_EFFECT_PANIC_V1;
+    if(eval.error.code==ORES_ERROR_ARITHMETIC_OVERFLOW_V1)
+      throw std::runtime_error("ArithmeticOverflowError: code=65537 effect=panic");
+    throw std::runtime_error("unhandled Oreslang guest Error");
+  }
+  return value;
 }
 std::string emit_asm(const Module& m,Arch arch) {
   if(arch!=Arch::X86_64)
