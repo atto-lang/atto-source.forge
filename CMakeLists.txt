@@ -11,6 +11,15 @@ add_executable(oresforge compiler/main.cpp)
 target_link_libraries(oresforge PRIVATE oresforge_core)
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(oresforge-native-error-slot-v1-test
+        contracts/v1/native-error-slot-v1-test.cpp)
+    target_compile_features(oresforge-native-error-slot-v1-test PRIVATE cxx_std_17)
+    target_compile_options(oresforge-native-error-slot-v1-test PRIVATE
+        $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall -Wextra -Wpedantic -Werror>)
+    add_test(NAME oresforge_native_error_slot_v1_layout_contract
+        COMMAND oresforge-native-error-slot-v1-test)
+    set_tests_properties(oresforge_native_error_slot_v1_layout_contract PROPERTIES TIMEOUT 15)
+
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   set(ORE_NUMERIC_I64_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated_numeric_i64_cases.hpp")
   add_custom_command(
