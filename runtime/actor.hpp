@@ -17,6 +17,7 @@ inline constexpr std::size_t kMaxMessageBytes=1024*1024;
 inline constexpr std::size_t kMaxMailboxMessages=4096;
 inline constexpr std::size_t kMaxMailboxBytes=16*kMaxMessageBytes;
 inline constexpr std::size_t kMaxActorOwnedResources=256;
+inline constexpr std::size_t kMaxActorExecutionLeases=4096;
 // Actor-owned host resources register a weak lifecycle observer. The actor
 // authority never owns the resource, so actor/resource teardown cannot cycle.
 class ActorLifetimeResource {
