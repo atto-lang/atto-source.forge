@@ -25,17 +25,20 @@ bool CapabilityToken::attach_owned_resource(
 }
 
 void CapabilityToken::invalidate() noexcept {
-  // Fence new operations before waiting for any in-flight table operation.
-  active.store(false, std::memory_order_release);
   try {
-    std::scoped_lock lock(resource_mutex_);
+    // A unique execution lock waits for admitted guest table calls to finish.
+    // Once acquired, no new execution lease can be admitted on this token.
+    std::unique_lock execution_guard(execution_mutex_);
+    active.store(false, std::memory_order_release);
+    std::scoped_lock resources_guard(resource_mutex_);
     for (auto& weak : resources_) {
       if (auto resource = weak.lock()) resource->actor_owner_stopped();
       weak.reset();
     }
   } catch (...) {
-    // Actor teardown itself must not throw. The authority remains fenced even
-    // if a host mutex/allocation primitive reports a fatal platform failure.
+    // Platform mutex failure is fatal for lifecycle guarantees. Keep the
+    // authority fenced even if retirement callbacks could not complete.
+    active.store(false, std::memory_order_release);
   }
 }
 
@@ -82,6 +85,19 @@ ActorContext Mailbox::context() const {
       !authority_->active.load(std::memory_order_acquire))
     throw std::runtime_error("closed actor has no execution context");
   return ActorContext{domain_,id_,generation_,authority_};
+}
+ActorExecutionLease Mailbox::execution_lease() const {
+  // The mailbox mutex orders acquisition against close/restart, which also
+  // hold this mutex while fencing the old actor authority.
+  std::scoped_lock lock(mutex_);
+  if (closed_ || !authority_ ||
+      !authority_->active.load(std::memory_order_acquire))
+    throw std::runtime_error("closed actor has no execution lease");
+  ActorExecutionLease lease(ActorContext{domain_,id_,generation_,authority_},
+                            authority_);
+  if (!lease.context().valid())
+    throw std::runtime_error("stale actor execution lease");
+  return lease;
 }
 void Mailbox::send(ActorRef destination,std::span<const std::uint8_t> payload) {
   std::scoped_lock lock(mutex_);
