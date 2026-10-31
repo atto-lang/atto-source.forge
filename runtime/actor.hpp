@@ -88,9 +88,10 @@ class ActorContext {
         authority_(std::move(authority)) {}
   friend class Mailbox;
 };
-// Trusted scheduler-issued admission guard. It cannot be created or
-// reconstructed from guest operands and is never a wire/FFI capability.
-// Keep leases short: do not hold them across await, select or guest callbacks.
+// Trusted mailbox-issued stage-0 admission guard (not yet the production
+// scheduler execution lease). Guest source cannot construct it or pass it
+// through wire/FFI. Thread-affine; never move a lease to another OS thread.
+// Never hold leases across await/select or callbacks that require a join.
 class ActorExecutionLease final {
  public:
   ActorExecutionLease() = delete;
@@ -137,8 +138,9 @@ class Mailbox {
   ActorExecutionLease execution_lease() const;
   void send(ActorRef,std::span<const std::uint8_t>);
   std::optional<std::vector<std::uint8_t>> receive();
-  // Nonblocking actor self-shutdown request: reject admissions now, retire
-  // table resources on final lease release. Never destroys the mailbox.
+  // Nonblocking actor self-shutdown: reject new admissions, allow existing
+  // lease scopes to finish, retire owned tables when the final lease releases.
+  // Existing leased code may run until it voluntarily reaches quiescence.
   void request_close();
   // Synchronous external/supervisor shutdown, forbidden while this thread
   // holds an execution lease for the same actor.
