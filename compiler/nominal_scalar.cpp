@@ -12,9 +12,6 @@ namespace oresforge::nominal {
 namespace {
 constexpr std::size_t kMaxSourceBytes = 1024u * 1024u;
 constexpr std::size_t kMaxTokens = 4096;
-bool letter(unsigned char c) {
-  return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'Z') || c == '_';
-}
 bool digit(unsigned char c) { return c >= '0' && c <= '9'; }
 bool valid_identifier(std::string_view word) {
   if (word.empty() || word.size() > 128) return false;
