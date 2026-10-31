@@ -81,6 +81,18 @@ void actor_self_shutdown_is_nonblocking() {
           "self-close rejection modified the active table");
 
     owner.request_close(); // The actor may request its own shutdown.
+    std::atomic<bool> unleased_denied{false};
+    std::thread unleased([&] {
+      if (current.valid()) return;
+      try { (void)table.lookup(owner_cap, current, 1); }
+      catch (const TableError& e) {
+        if (e.code == TableErrorCode::Denied)
+          unleased_denied.store(true, std::memory_order_release);
+      }
+    });
+    unleased.join();
+    check(unleased_denied.load(std::memory_order_acquire),
+          "stopping actor authorized an unleased foreign-thread caller");
     check(observer->calls.load(std::memory_order_acquire) == 0,
           "actor retired its table while leased code was still running");
     check(table.lookup(owner_cap, lease.context(), 1) == 91,
