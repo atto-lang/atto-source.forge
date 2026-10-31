@@ -8,6 +8,7 @@
 #include <optional>
 #include <memory>
 #include <span>
+#include <stdexcept>
 #include <shared_mutex>
 #include <vector>
 #include <utility>
@@ -80,7 +81,13 @@ class ActorExecutionLease final {
   ActorExecutionLease& operator=(const ActorExecutionLease&) = delete;
   ActorExecutionLease(ActorExecutionLease&&) noexcept = default;
   ActorExecutionLease& operator=(ActorExecutionLease&&) = delete;
-  const ActorContext& context() const noexcept { return context_; }
+  const ActorContext& context() const {
+    // A moved-from lease must not expose a caller context without the pin.
+    // Only the live, lock-owning lease can authorize a stage0 guest call.
+    if (!admission_.owns_lock() || !context_.valid())
+      throw std::runtime_error("actor execution lease is no longer active");
+    return context_;
+  }
  private:
   const ActorContext context_;
   std::shared_ptr<const CapabilityToken> authority_;
