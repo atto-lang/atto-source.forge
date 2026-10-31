@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 project(OresForge VERSION 0.1.0 LANGUAGES CXX)
 option(ORESFORGE_FUZZ "Build Clang libFuzzer target" OFF)
-add_library(oresforge_core STATIC compiler/frontend.cpp compiler/ir.cpp compiler/call_native.cpp codegen/native.cpp runtime/actor.cpp jit/tiered.cpp)
+add_library(oresforge_core STATIC compiler/frontend.cpp compiler/ir.cpp compiler/call_native.cpp compiler/singleton_stage0.cpp codegen/native.cpp runtime/actor.cpp jit/tiered.cpp)
 target_include_directories(oresforge_core PUBLIC .)
 target_compile_features(oresforge_core PUBLIC cxx_std_20)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -74,6 +74,14 @@ if(BUILD_TESTING)
   target_link_libraries(oresforge_singleton_admission PRIVATE oresforge_core)
   add_test(NAME oresforge_singleton_admission COMMAND oresforge_singleton_admission)
   set_tests_properties(oresforge_singleton_admission PROPERTIES TIMEOUT 15)
+
+  # Compiler-backed stage-0 boundary: real singleton declaration source is
+  # resolved to compiler-owned identity and drives the bounded host registry.
+  # The normal frontend remains fail-closed; this is not full guest parity.
+  add_executable(oresforge_singleton_guest_stage0 verification/singleton_guest_stage0.cpp)
+  target_link_libraries(oresforge_singleton_guest_stage0 PRIVATE oresforge_core Threads::Threads)
+  add_test(NAME oresforge_singleton_guest_stage0 COMMAND oresforge_singleton_guest_stage0)
+  set_tests_properties(oresforge_singleton_guest_stage0 PROPERTIES TIMEOUT 30)
 
   add_executable(oresforge_tests verification/tests.cpp)
   add_dependencies(oresforge_tests oresforge_numeric_i64_cases oresforge_numeric_overflow_cases)
