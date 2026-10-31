@@ -231,38 +231,68 @@ std::optional<std::vector<std::uint8_t>> Mailbox::receive() {
   return value;
 }
 void Mailbox::request_close() {
-  std::scoped_lock lock(mutex_);
-  closed_ = true;
-  authority_->request_stop(); // Safe from an admitted actor callback.
-  discard_queued(queue_);
-  queued_bytes_ = 0;
+  std::shared_ptr<CapabilityToken> old;
+  {
+    std::scoped_lock lock(mutex_);
+    closed_ = true;
+    if (restarting_) stop_during_restart_ = true;
+    old = authority_;
+    discard_queued(queue_);
+    queued_bytes_ = 0;
+  }
+  // Do not call owner lifecycle callbacks while holding the mailbox lock:
+  // the last leased actor may itself need to request shutdown.
+  old->request_stop();
 }
 void Mailbox::close() {
-  std::scoped_lock lock(mutex_);
-  // Synchronous close from inside the same actor's lease is a self-join.
-  // Require request_close() and let the final lease release do retirement.
-  if (authority_->has_current_thread_lease())
-    throw std::runtime_error("actor self-close requires request_close");
-  closed_=true;
-  authority_->invalidate();
-  discard_queued(queue_);
-  queued_bytes_=0;
+  std::shared_ptr<CapabilityToken> old;
+  {
+    std::scoped_lock lock(mutex_);
+    // Synchronous shutdown cannot join the current actor's own lease.
+    if (authority_->has_current_thread_lease())
+      throw std::runtime_error("actor self-close requires request_close");
+    closed_ = true;
+    if (restarting_) stop_during_restart_ = true;
+    old = authority_;
+    discard_queued(queue_);
+    queued_bytes_ = 0;
+  }
+  // Other threads can still request_close() while this thread waits for
+  // lease retirement. No mailbox mutex is held across this wait.
+  old->invalidate();
 }
 ActorRef Mailbox::restart() {
+  // Supervisor-only synchronous incarnation replacement. The transition
+  // rejects new admissions before any potentially blocking wait.
+  auto fresh = std::make_shared<CapabilityToken>();
+  std::shared_ptr<CapabilityToken> old;
+  {
+    std::scoped_lock lock(mutex_);
+    if (authority_->has_current_thread_lease())
+      throw std::runtime_error("actor restart requires quiescence");
+    if (restarting_)
+      throw std::runtime_error("actor restart already in progress");
+    if (generation_ == std::numeric_limits<std::uint64_t>::max())
+      throw std::overflow_error("generation exhausted");
+    restarting_ = true;
+    stop_during_restart_ = false;
+    closed_ = true;
+    old = authority_;
+  }
+  // Let leased operations reach the mailbox while the supervisor waits.
+  old->invalidate();
   std::scoped_lock lock(mutex_);
-  // Incarnation replacement is supervisor-only and must not self-join.
-  if (authority_->has_current_thread_lease())
-    throw std::runtime_error("actor restart requires quiescence");
-  if (generation_==std::numeric_limits<std::uint64_t>::max())
-    throw std::overflow_error("generation exhausted");
-  // Allocate first: allocation failure leaves the old incarnation untouched.
-  auto fresh=std::make_shared<CapabilityToken>();
-  authority_->invalidate();
+  if (stop_during_restart_) {
+    restarting_ = false;
+    stop_during_restart_ = false;
+    throw std::runtime_error("actor restart cancelled by shutdown request");
+  }
   ++generation_;
-  authority_=std::move(fresh);
-  closed_=false;
+  authority_ = std::move(fresh);
+  closed_ = false;
+  restarting_ = false;
   discard_queued(queue_);
-  queued_bytes_=0;
+  queued_bytes_ = 0;
   return ActorRef{id_,generation_,authority_};
 }
 std::size_t Mailbox::queued() const {
