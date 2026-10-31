@@ -274,7 +274,7 @@ int main() {
     ensure(calls::interpret(mutually_recursive,std::array<std::int64_t,1>{8})==1,
            "mutual recursion parity");
     reject_diagnostic([&] { calls::interpret(fact,std::array<std::int64_t,1>{21}); },
-                      "i64 mul overflow");
+                      "ArithmeticOverflowError: code=65537 effect=panic");
     reject_diagnostic([&] { calls::emit_asm(fact,Arch::ARM64); },
                       "currently supports x86_64 only");
     reject_diagnostic([] { calls::parse("fnc main():int{return other();}"); },
@@ -320,6 +320,58 @@ int main() {
       linked_math_library,"./math");
     ensure(calls::interpret(linked_math,{})==42,
            "one-level callable module links public Math functions");
+
+    for (const auto& expression : {
+        std::string("9223372036854775807+1"),
+        std::string("(-9223372036854775807-1)-1"),
+        std::string("3037000500*3037000500"),
+        std::string("-(-9223372036854775807-1)"),
+        std::string("Math.abs((-9223372036854775807-1))"),
+        std::string("Math.neg((-9223372036854775807-1))")
+    }) {
+      auto caught=calls::parse_linked(
+        "import module Math from \"./math\";"
+        "pub fnc main():int{try{return "+expression+
+        ";}catch(err){if err is type ArithmeticOverflowError{"
+        "return 42;}else{return 1;}fi}finally{}}",
+        linked_math_library,"./math");
+      ensure(calls::interpret(caught,{})==42,
+             "all checked i64 surfaces use ArithmeticOverflowError");
+      const auto caught_asm=calls::emit_asm(caught,Arch::X86_64);
+      ensure(caught_asm.find("movl $65537, 0(%r9)")!=std::string::npos &&
+             caught_asm.find(".Lores_error_catch_")!=std::string::npos,
+             "native typed catch retains shared ErrorSlot identity");
+    }
+    auto root_error=calls::parse_linked(
+      "import module Math from \"./math\";"
+      "pub fnc main():int{try{return Math.neg((-9223372036854775807-1));}"
+      "catch(err){if err is type Error{return 42;}else{return 1;}fi}finally{}}",
+      linked_math_library,"./math");
+    ensure(calls::interpret(root_error,{})==42,
+           "ArithmeticOverflowError satisfies builtin Error root");
+    auto catch_not_taken=calls::parse_linked(
+      "import module Math from \"./math\";"
+      "pub fnc main():int{try{return Math.neg(-42);}"
+      "catch(err){return 7;}finally{}}",
+      linked_math_library,"./math");
+    ensure(calls::interpret(catch_not_taken,{})==42,
+           "nonoverflowing protected call bypasses ErrorSlot catch");
+    reject_diagnostic([&] {
+      calls::parse_linked(
+        "import module Math from \"./math\";"
+        "pub fnc main():int{try{return Math.neg((-9223372036854775807-1));}"
+        "catch(err){if err is type ArithmeticException{return 42;}"
+        "else{return 1;}fi}finally{}}",
+        linked_math_library,"./math");
+    },"callable ErrorSlot type test supports only ArithmeticOverflowError or Error");
+    reject_diagnostic([&] {
+      calls::parse_linked(
+        "import module Math from \"./math\";"
+        "pub fnc main():int{try{return Math.neg((-9223372036854775807-1));}"
+        "catch(err){return err;}finally{}}",
+        linked_math_library,"./math");
+    },"unknown parameter");
+
     const auto linked_math_asm=calls::emit_asm(linked_math,Arch::X86_64);
     ensure(linked_math_asm.find("  call .Lores_fn_")!=std::string::npos &&
            linked_math_asm.find("jo .Lores_overflow")!=std::string::npos,
