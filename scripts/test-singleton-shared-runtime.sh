@@ -62,3 +62,8 @@ timeout 30 "$test_dir/guest-stage0"
   -o "$test_dir/guest-table-stage0"
 sha256sum "$test_dir/guest-table-stage0"
 timeout 30 "$test_dir/guest-table-stage0"
+"${CXX:-c++}" -std=c++20 "${flags[@]}" -pthread -Wall -Wextra -Werror -I. \
+  verification/actor_execution_lease.cpp runtime/actor.cpp \
+  -o "$test_dir/actor-execution-lease"
+sha256sum "$test_dir/actor-execution-lease"
+timeout 30 "$test_dir/actor-execution-lease"
