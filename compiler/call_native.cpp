@@ -495,7 +495,22 @@ struct Native {
   std::string parameter_slot(int id) const {
     return "-"+std::to_string(8u*(static_cast<std::size_t>(id)+1u))+"(%rbp)";
   }
-  void emit_node(const Function& fn,int index) {
+  std::string propagate_target(const std::string& target) const {
+    return target.empty()?".Lores_error_return":target;
+  }
+  void emit_clear_error() {
+    out<<"  movq $0, 0(%r9)\n"
+       <<"  movq $0, 8(%r9)\n";
+  }
+  void emit_overflow_state() {
+    out<<"  movl $"<<ORES_ERROR_ARITHMETIC_OVERFLOW_V1<<", 0(%r9)\n"
+       <<"  movb $"<<static_cast<unsigned>(ORES_EFFECT_THROW_V1)<<", 4(%r9)\n"
+       <<"  movb $0, 5(%r9)\n"
+       <<"  movw $0, 6(%r9)\n"
+       <<"  movq $0, 8(%r9)\n";
+  }
+  void emit_node(const Function& fn,int index,
+                 const std::string& error_target={}) {
     const auto& n=fn.nodes.at(static_cast<std::size_t>(index));
     if(n.kind==Kind::Constant) {
       out<<"  movabsq $"<<n.value<<", %rax\n";
@@ -503,23 +518,64 @@ struct Native {
       out<<"  movq "<<parameter_slot(static_cast<int>(n.value))<<", %rax\n";
     } else if(n.kind==Kind::If) {
       const auto tag=label++;
-      emit_node(fn,n.children[0]);
+      emit_node(fn,n.children[0],error_target);
       out<<"  cmpq $0, %rax\n  je .Lores_else_"<<tag<<"\n";
-      emit_node(fn,n.children[1]);
+      emit_node(fn,n.children[1],error_target);
       out<<"  jmp .Lores_end_"<<tag<<"\n"
          <<".Lores_else_"<<tag<<":\n";
-      emit_node(fn,n.children[2]);
+      emit_node(fn,n.children[2],error_target);
       out<<".Lores_end_"<<tag<<":\n";
+    } else if(n.kind==Kind::Catch) {
+      const auto tag=label++;
+      const std::string caught=".Lores_error_catch_"+std::to_string(tag);
+      const std::string merge=".Lores_error_catch_merge_"+std::to_string(tag);
+      const std::string outer=propagate_target(error_target);
+      emit_node(fn,n.children.at(0),caught);
+      out<<"  jmp "<<merge<<"\n"
+         <<caught<<":\n"
+         <<"  cmpl $0, 0(%r9)\n"
+         <<"  je "<<outer<<"\n"
+         <<"  cmpb $"<<static_cast<unsigned>(ORES_EFFECT_THROW_V1)
+         <<", 4(%r9)\n"
+         <<"  jne "<<outer<<"\n";
+      if(n.name.empty()) {
+        emit_clear_error();
+        emit_node(fn,n.children.at(1),error_target);
+        out<<"  jmp "<<merge<<"\n";
+      } else if(n.name=="ArithmeticOverflowError") {
+        const std::string mismatch=
+            ".Lores_error_type_mismatch_"+std::to_string(tag);
+        out<<"  cmpl $"<<ORES_ERROR_ARITHMETIC_OVERFLOW_V1
+           <<", 0(%r9)\n"
+           <<"  jne "<<mismatch<<"\n";
+        emit_clear_error();
+        emit_node(fn,n.children.at(1),error_target);
+        out<<"  jmp "<<merge<<"\n"
+           <<mismatch<<":\n";
+        emit_clear_error();
+        emit_node(fn,n.children.at(2),error_target);
+        out<<"  jmp "<<merge<<"\n";
+      } else if(n.name=="Error") {
+        // Catch admission already proved a nonzero registered guest code.
+        emit_clear_error();
+        emit_node(fn,n.children.at(1),error_target);
+        out<<"  jmp "<<merge<<"\n";
+      } else {
+        throw std::runtime_error("unsupported callable guest Error type");
+      }
+      out<<merge<<":\n";
     } else if(n.kind==Kind::Call) {
-      for (int child:n.children)emit_node(fn,child);
+      for (int child:n.children)emit_node(fn,child,error_target);
       for (std::size_t i=0;i<n.children.size();++i)
         out<<"  movq "<<value_slot(n.children[i])<<", "<<argument_reg(i)<<"\n";
       out<<"  movq -40(%rbp), %r8\n"
          <<"  addq $1, %r8\n"
-         <<"  call .Lores_fn_"<<n.callee<<"\n";
+         <<"  call .Lores_fn_"<<n.callee<<"\n"
+         <<"  cmpl $0, 0(%r9)\n"
+         <<"  jne "<<propagate_target(error_target)<<"\n";
     } else {
-      emit_node(fn,n.children[0]);
-      emit_node(fn,n.children[1]);
+      emit_node(fn,n.children[0],error_target);
+      emit_node(fn,n.children[1],error_target);
       out<<"  movq "<<value_slot(n.children[0])<<", %rax\n";
       switch(n.kind) {
         case Kind::Add: out<<"  addq ";break;
@@ -529,7 +585,17 @@ struct Native {
       }
       out<<value_slot(n.children[1])<<", %rax\n";
       if(n.kind==Kind::Add||n.kind==Kind::Sub||n.kind==Kind::Mul) {
-        out<<"  jo .Lores_overflow\n";
+        if(error_target.empty()) {
+          out<<"  jo .Lores_overflow\n";
+        } else {
+          const auto tag=label++;
+          out<<"  jo .Lores_overflow_to_"<<tag<<"\n"
+             <<"  jmp .Lores_overflow_ok_"<<tag<<"\n"
+             <<".Lores_overflow_to_"<<tag<<":\n";
+          emit_overflow_state();
+          out<<"  jmp "<<error_target<<"\n"
+             <<".Lores_overflow_ok_"<<tag<<":\n";
+        }
       } else {
         const char* cc="e";
         switch(n.kind) {
@@ -548,8 +614,19 @@ struct Native {
   }
   std::string build() {
     out<<".text\n.globl oresforge_entry\n.type oresforge_entry, @function\n"
-       <<"oresforge_entry:\n  xorl %r8d, %r8d\n"
-       <<"  jmp .Lores_fn_"<<program.entry<<"\n";
+       <<"oresforge_entry:\n"
+       // SysV enters with rsp = 8 mod 16. Reserve the 16-byte ErrorSlot plus
+       // 8 bytes padding so rsp is 16-byte aligned before the guest call.
+       <<"  subq $24, %rsp\n"
+       <<"  movq %rsp, %r9\n"
+       <<"  movq $0, 0(%r9)\n"
+       <<"  movq $0, 8(%r9)\n"
+       <<"  xorl %r8d, %r8d\n"
+       <<"  call .Lores_fn_"<<program.entry<<"\n"
+       <<"  cmpl $0, 0(%r9)\n"
+       <<"  jne .Lores_unhandled_error\n"
+       <<"  addq $24, %rsp\n"
+       <<"  ret\n";
     for (std::size_t i=0;i<program.functions.size();++i) {
       const auto& fn=program.functions[i];
       const std::size_t slots=5u+fn.nodes.size();
@@ -565,14 +642,23 @@ struct Native {
       emit_node(fn,fn.result);
       out<<"  leave\n  ret\n";
     }
-    out<<".Lores_depth:\n  ud2\n"
-       <<".Lores_overflow:\n  ud2\n"
+    out<<".Lores_error_return:\n"
+       <<"  xorl %eax, %eax\n"
+       <<"  leave\n"
+       <<"  ret\n"
+       <<".Lores_overflow:\n";
+    emit_overflow_state();
+    out<<"  jmp .Lores_error_return\n"
+       <<".Lores_unhandled_error:\n"
+       <<"  movb $"<<static_cast<unsigned>(ORES_EFFECT_PANIC_V1)
+       <<", 4(%r9)\n"
+       <<"  ud2\n"
+       <<".Lores_depth:\n  ud2\n"
        <<".size oresforge_entry, .-oresforge_entry\n"
        <<".section .note.GNU-stack,\"\",@progbits\n";
     return out.str();
   }
-};
-}
+};}
 Module parse(std::string_view source) {
   if (source.size()>kMaxSource)throw std::runtime_error("callable source budget exceeded");
   oresforge::source::validate_utf8(source);
