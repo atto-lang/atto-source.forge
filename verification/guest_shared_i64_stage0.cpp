@@ -63,6 +63,16 @@ void compile_gate_and_ir_verification() {
   rejected("ORES-SHARED-TABLE-UNSUPPORTED", [&] {
     (void)parse_runtime_source(program);
   });
+  const auto user_defined = parse_source(
+      "fnc shared_i64_lookup(value: int) -> int { return value + 1; } "
+      "fnc main() -> int { return shared_i64_lookup(41); }");
+  check(interpret(user_defined) == 42,
+        "internal stage0 operation reserved an ordinary user function name");
+  rejected("shared-table internal intrinsic names cannot be redeclared", [&] {
+    (void)parse_shared_i64_stage0_source(
+        "fnc shared_i64_lookup(value: int) -> int { return value + 1; } "
+        "fnc main() -> int { return shared_i64_lookup(41); }");
+  });
   rejected("matching trusted dispatcher", [&] {
     (void)interpret(compiled, std::array<std::int64_t,2>{1,2});
   });
