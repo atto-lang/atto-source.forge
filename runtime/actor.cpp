@@ -38,7 +38,8 @@ bool CapabilityToken::attach_owned_resource(
 bool CapabilityToken::acquire_lease() const noexcept {
   try {
     std::scoped_lock guard(execution_mutex_);
-    if (stopping_ || !active.load(std::memory_order_acquire)) return false;
+    if (stopping_ || !active.load(std::memory_order_acquire) ||
+        executing_ >= kMaxActorExecutionLeases) return false;
     ++executing_;
     return true;
   } catch (...) { return false; }
