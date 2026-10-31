@@ -309,6 +309,41 @@ int main() {
     },"call depth exceeded");
 
 
+    const std::string linked_math_library=
+      "define pub module Math as "
+      "pub fnc abs(int value):int{"
+      "if value<0;do return -value;else return value;fi}"
+      "pub fnc neg(int value):int{return -value;} end";
+    auto linked_math=calls::parse_linked(
+      "import module Math from \"./math\";"
+      "pub fnc main():int{return Math.abs(Math.neg(-42));}",
+      linked_math_library,"./math");
+    ensure(calls::interpret(linked_math,{})==42,
+           "one-level callable module links public Math functions");
+    const auto linked_math_asm=calls::emit_asm(linked_math,Arch::X86_64);
+    ensure(linked_math_asm.find("  call .Lores_fn_")!=std::string::npos &&
+           linked_math_asm.find("jo .Lores_overflow")!=std::string::npos,
+           "linked callable module preserves native calls and checked arithmetic");
+    reject_diagnostic([&] {
+      calls::parse_linked(
+        "import module Math from \"./other\";"
+        "pub fnc main():int{return Math.neg(1);}",
+        linked_math_library,"./math");
+    },"import specifier does not match supplied library");
+    reject_diagnostic([&] {
+      calls::parse_linked(
+        "import module Wrong from \"./math\";"
+        "pub fnc main():int{return Wrong.neg(1);}",
+        linked_math_library,"./math");
+    },"import binding does not match library module");
+    reject_diagnostic([&] {
+      calls::parse_linked(
+        "import module Lib from \"./lib\";"
+        "pub fnc main():int{return Lib.hidden();}",
+        "define module Lib as fnc hidden():int{return 42;} end","./lib");
+    },"imported function is private or missing");
+
+
     // Separate runtime-entry profile lowers parameter IR rather than folding
     // the entire program to a constant. Helpers are STILL statically inlined.
     auto runtime=parse_runtime_source(
