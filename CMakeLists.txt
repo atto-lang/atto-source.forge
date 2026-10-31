@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 project(OresForge VERSION 0.1.0 LANGUAGES CXX)
 option(ORESFORGE_FUZZ "Build Clang libFuzzer target" OFF)
-add_library(oresforge_core STATIC compiler/frontend.cpp compiler/ir.cpp compiler/call_native.cpp codegen/native.cpp runtime/actor.cpp jit/tiered.cpp)
+add_library(oresforge_core STATIC compiler/frontend.cpp compiler/ir.cpp compiler/call_native.cpp compiler/nominal_scalar.cpp codegen/native.cpp runtime/actor.cpp jit/tiered.cpp)
 target_include_directories(oresforge_core PUBLIC .)
 target_compile_features(oresforge_core PUBLIC cxx_std_20)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -61,6 +61,14 @@ if(BUILD_TESTING)
   endif()
   add_test(NAME native_pinned_tcp_host_boundary COMMAND oresforge_pinned_tcp_tests)
   set_tests_properties(native_pinned_tcp_host_boundary PROPERTIES TIMEOUT 15)
+
+  # Bounded stack-owned scalar-class profile. These are real compiled C++
+  # frontend/IR contract tests, not a full class/actor dispatch claim.
+  add_executable(oresforge_nominal_class_tests verification/nominal_scalar_class_test.cpp)
+  target_link_libraries(oresforge_nominal_class_tests PRIVATE oresforge_core)
+  add_test(NAME oresforge_nominal_scalar_class_contract
+           COMMAND oresforge_nominal_class_tests)
+  set_tests_properties(oresforge_nominal_scalar_class_contract PROPERTIES TIMEOUT 15)
 
   add_executable(oresforge_tests verification/tests.cpp)
   add_dependencies(oresforge_tests oresforge_numeric_i64_cases oresforge_numeric_overflow_cases)
