@@ -89,6 +89,7 @@ void CapabilityToken::request_stop() noexcept {
     {
       std::scoped_lock guard(execution_mutex_);
       stopping_ = true;
+      accepting.store(false, std::memory_order_release);
       if (executing_ == 0 && !cleanup_started_) {
         cleanup_started_ = true;
         active.store(false, std::memory_order_release);
@@ -104,6 +105,7 @@ void CapabilityToken::request_stop() noexcept {
       execution_cv_.notify_all();
     }
   } catch (...) {
+    accepting.store(false, std::memory_order_release);
     active.store(false, std::memory_order_release);
     execution_cv_.notify_all();
   }
