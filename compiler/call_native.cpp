@@ -27,13 +27,31 @@ struct Token { std::string_view text; std::size_t offset=0; };
 
 class Parser {
  public:
-  explicit Parser(std::string_view text) : text_(text) { next(); }
+  explicit Parser(std::string_view text,bool library=false) : text_(text), library_(library) { next(); }
   Module parse() {
-    while (!token_.text.empty()) definition();
-    for (std::size_t i=0; i<module_.functions.size(); ++i) {
-      if (module_.functions[i].name=="main") module_.entry=static_cast<int>(i);
+    if (library_) {
+      bool defining=false, public_=false;
+      while (token_.text=="define" || token_.text=="pub") {
+        if (take("define")) { if (defining) fail("duplicate define"); defining=true; }
+        else if (take("pub")) { if (public_) fail("duplicate pub"); public_=true; }
+      }
+      if (!defining) fail("library module requires define");
+      expect("module");
+      (void)identifier();
+      expect("as");
+      while (token_.text!="end") {
+        if (token_.text.empty()) fail("unterminated module");
+        definition();
+      }
+      expect("end");
+      if (!token_.text.empty()) fail("unexpected trailing token");
+    } else {
+      while (!token_.text.empty()) definition();
+      for (std::size_t i=0; i<module_.functions.size(); ++i) {
+        if (module_.functions[i].name=="main") module_.entry=static_cast<int>(i);
+      }
+      if (module_.entry<0) fail("missing main function");
     }
-    if (module_.entry<0) fail("missing main function");
     // Resolve every function, including unused ones. No partially linked IR.
     for (auto& fn:module_.functions) {
       for (auto& node:fn.nodes) {
@@ -45,11 +63,12 @@ class Parser {
           fail("function arity mismatch");
       }
     }
-    verify(module_);
+    if (!library_) verify(module_);
     return std::move(module_);
   }
  private:
   std::string_view text_;
+  bool library_ = false;
   std::size_t at_=0;
   Token token_;
   Module module_;
@@ -115,7 +134,8 @@ class Parser {
     }
     expect("fnc");
     const std::string name=identifier();
-    if (name=="int"||name=="return"||name=="if"||name=="else"||name=="then")
+    if (name=="int"||name=="return"||name=="if"||name=="else"||name=="then"||
+        name=="do"||name=="fi"||name=="module"||name=="as"||name=="end")
       fail("reserved function name");
     if (names_.contains(name))fail("duplicate function");
     if (module_.functions.size()>=kMaxFunctions)fail("function count budget exceeded");
@@ -128,6 +148,7 @@ class Parser {
       do {
         const std::string param=identifier();
         if (param=="int"||param=="if"||param=="then"||param=="else"||
+            param=="do"||param=="fi"||param=="module"||param=="as"||param=="end"||
             param=="return"||param=="fnc"||
             std::find(current_->parameters.begin(),current_->parameters.end(),param)
             !=current_->parameters.end())fail("invalid or duplicate parameter");
@@ -139,9 +160,22 @@ class Parser {
     }
     expect(")");
     if(!take(":"))expect("->");
-    expect("int");expect("{");expect("return");
-    current_->result=expr(0);
-    expect(";");expect("}");
+    expect("int");expect("{");
+    if (take("return")) {
+      current_->result=expr(0);
+      expect(";");
+    } else if (take("if")) {
+      const int condition=comparison(1);
+      expect(";"); expect("do"); expect("return");
+      const int yes=expr(1);
+      expect(";"); expect("else"); expect("return");
+      const int no=expr(1);
+      expect(";"); expect("fi");
+      current_->result=add(Kind::If,0,{}, {condition,yes,no});
+    } else {
+      fail("expected return or canonical if/do/fi body");
+    }
+    expect("}");
   }
   void depth(std::size_t n) {if(n>kMaxDepth)fail("callable expression nesting too deep");}
   int expr(std::size_t d) {
@@ -390,6 +424,11 @@ Module parse(std::string_view source) {
   if (source.size()>kMaxSource)throw std::runtime_error("callable source budget exceeded");
   oresforge::source::validate_utf8(source);
   return Parser(source).parse();
+}
+Module parse_library(std::string_view source) {
+  if (source.size()>kMaxSource)throw std::runtime_error("callable source budget exceeded");
+  oresforge::source::validate_utf8(source);
+  return Parser(source,true).parse();
 }
 void verify(const Module& m) {
   if(m.entry<0 || static_cast<std::size_t>(m.entry)>=m.functions.size())
