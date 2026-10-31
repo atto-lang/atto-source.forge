@@ -269,3 +269,46 @@ No exact-head execution claim may advance without nonzero job steps and
 provenance receipts. Ordinary `define singleton` source, deep immutability,
 final Oreslang table syntax, scheduler execution leases, native table lowering,
 cross-worker memory/broker mediation and all five-backend parity remain gated.
+
+## Actor execution leases and exact-blob verification (2026-10-31)
+
+The internal guest dispatch now obtains an `ActorExecutionLease` from the
+trusted `Mailbox` for **each** shared-table operation. The lease pins the
+specific live actor incarnation while checking its existing capability and
+executing the table operation. A lease cannot be default-constructed, copied
+or constructed from numeric guest arguments. The trusted mailbox is the only
+factory. This is not yet a scheduler-issued lease in the production actor
+interpreter, and the adapter must never be exposed directly to guest FFI.
+
+`CapabilityToken::invalidate()` now waits for outstanding leases via an
+execution shared/exclusive lock. It only fences the old authority and invokes
+its actor-owned resource observers **after** the admitted operations have
+quiesced. `Mailbox::close()` and `Mailbox::restart()` hold their admission
+lock while invalidating the prior incarnation. The stage-0 dispatcher releases
+its lease after each operation; no lease crosses await, select or guest
+callbacks. These host locks do **not** establish hard-real-time progress or
+bounded cancellation latency.
+
+`verification/actor_execution_lease.cpp` contains construction/admission
+negative tests, close/restart ordering with an outstanding lease, and 128
+latch-coordinated admission/shutdown races. CTest and the direct
+release/sanitized/sanitized-leaks script include the executable. This is
+authored coverage, **not** a runtime test result.
+
+An alternate private test carrier was prepared from source SHA
+`a879eba78f3c0ba9f4829945d47944b25fa09353` and root tree
+`5fc72a829484502cb5974531a65ee571abb1c6d6`.
+Its `forge-singleton-proof` directory contains 24 source blobs checked
+against their original Git blob SHAs; this is a **verified source slice**,
+not an identical full-repository tree. Carrier commit
+`659727ecfd0ff535ab276a7357f64a4a669dc83f` has a
+manifest and a token-free, local-checkout test workflow:
+https://github.com/voxletra/voxletra-e2e/actions/runs/41230900580 .
+Release, sanitized and sanitized-leaks jobs all ended with
+`runner_id=0` and `steps=null`; no compiler or test executed.
+Do not interpret this as passing sanitizer evidence.
+
+Future promotion requires a nonzero-step runner for the *current source
+head*, blob parity on all compiled inputs, compilation under GCC and Clang,
+CTest, release/ASan/UBSan/leak result receipts, and the production scheduler's
+own execution admission semantics. No backend is currently promoted.
