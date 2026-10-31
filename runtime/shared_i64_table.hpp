@@ -6,6 +6,7 @@
 #include <mutex>
 #include <optional>
 #include <stdexcept>
+#include <utility>
 #include "runtime/actor.hpp"
 
 namespace oresforge::shared {
@@ -26,17 +27,32 @@ class TableError : public std::exception {
 template<std::size_t Capacity> class SharedI64Table final {
   static_assert(Capacity > 0);
   struct Slot { bool used = false; std::int64_t key = 0; std::int64_t value = 0; };
-  struct State final : oresforge::runtime::ActorLifetimeResource {
+  struct OwnerObserver;
+  struct State final {
     std::mutex mutex;
-    const ActorContext owner;
+    ActorContext owner;
     const TableAccess access;
     bool closed = false;
     std::array<Slot, Capacity> slots{};
-    State(ActorContext o, TableAccess a) : owner(o), access(a) {}
-    void actor_owner_stopped() noexcept override {
-      std::scoped_lock lock(mutex);
+    std::weak_ptr<OwnerObserver> active_observer;
+    State(ActorContext o, TableAccess a) : owner(std::move(o)), access(a) {}
+    void retire() noexcept {
       closed = true;
       for (auto& slot : slots) slot = {};
+    }
+  };
+  // Each handoff registers a new lifetime observer. Obsolete observers are
+  // inert even if their actor dies after the table changes ownership.
+  struct OwnerObserver final : oresforge::runtime::ActorLifetimeResource {
+    std::weak_ptr<State> state;
+    bool stopped = false;  // Accessed only while holding State::mutex.
+    explicit OwnerObserver(const std::shared_ptr<State>& s) : state(s) {}
+    void actor_owner_stopped() noexcept override {
+      if (auto s = state.lock()) {
+        std::scoped_lock lock(s->mutex);
+        stopped = true;
+        if (s->active_observer.lock().get() == this) s->retire();
+      }
     }
   };
  public:
@@ -52,6 +68,7 @@ template<std::size_t Capacity> class SharedI64Table final {
   };
  private:
   const std::shared_ptr<State> state_;
+  std::shared_ptr<OwnerObserver> owner_observer_; // Updated only under State::mutex.
   [[noreturn]] static void fail(TableErrorCode code) { throw TableError(code); }
   void validate(const State& s, const Capability& cap, ActorContext caller, bool write) const {
     if (!caller.valid() || cap.identity_.lock() != state_ || cap.grantee_ != caller ||
@@ -69,18 +86,19 @@ template<std::size_t Capacity> class SharedI64Table final {
     fail(TableErrorCode::Capacity);
   }
   static void retire(State& s) {
-    s.closed = true;
-    for (auto& slot : s.slots) slot = {};
+    s.retire();
     // Logical clearing only; no claim of optimizer-resistant secure zeroizing.
   }
  public:
   explicit SharedI64Table(ActorContext owner, TableAccess access = TableAccess::Protected)
-      : state_(std::make_shared<State>(owner, access)) {
+      : state_(std::make_shared<State>(owner, access)),
+        owner_observer_(std::make_shared<OwnerObserver>(state_)) {
     if (!owner.valid() || (access != TableAccess::Private && access != TableAccess::Protected &&
                           access != TableAccess::Public)) fail(TableErrorCode::Denied);
     // Registration is race-safe with actor stop/restart. If the incarnation
     // was fenced between validation and attachment, construction fails closed.
-    if (!owner.attach_owned_resource(state_))
+    state_->active_observer = owner_observer_;
+    if (!owner.attach_owned_resource(owner_observer_))
       fail(owner.valid() ? TableErrorCode::Capacity : TableErrorCode::Denied);
   }
   SharedI64Table(const SharedI64Table&) = delete;
@@ -104,6 +122,37 @@ template<std::size_t Capacity> class SharedI64Table final {
     if (write && state_->access == TableAccess::Protected && grantee != caller)
       fail(TableErrorCode::Denied);
     return Capability(state_, grantee, write);
+  }
+  // ETS-like owner handoff without granting cross-domain ownership. The
+  // candidate's observer is registered OUTSIDE the table lock: actor teardown
+  // holds the actor-resource lock while calling its observer (lock inversion).
+  // The observer records a death even before activation; handoff fails closed
+  // if the candidate stopped in that gap. Only the currently active observer
+  // can retire a table, so aborted and previous handoffs cannot retire it.
+  void give_away(const Capability& owner_cap, ActorContext caller,
+                 ActorContext next_owner) {
+    std::shared_ptr<OwnerObserver> previous;
+    {
+      std::lock_guard lock(state_->mutex);
+      validate(*state_, owner_cap, caller, true);
+      if (caller != state_->owner || !next_owner.valid() ||
+          next_owner.domain() != caller.domain() || next_owner == caller)
+        fail(TableErrorCode::Denied);
+      previous = owner_observer_;
+    }
+    auto candidate = std::make_shared<OwnerObserver>(state_);
+    if (!next_owner.attach_owned_resource(candidate))
+      fail(next_owner.valid() ? TableErrorCode::Capacity : TableErrorCode::Denied);
+    {
+      std::lock_guard lock(state_->mutex);
+      if (owner_observer_ != previous) fail(TableErrorCode::Denied);
+      validate(*state_, owner_cap, caller, true);
+      if (caller != state_->owner || !next_owner.valid() || candidate->stopped)
+        fail(TableErrorCode::Denied);
+      state_->owner = std::move(next_owner);
+      state_->active_observer = candidate;
+      owner_observer_ = std::move(candidate);
+    }
   }
   std::optional<std::int64_t> lookup(const Capability& cap, ActorContext caller, std::int64_t key) const {
     std::lock_guard lock(state_->mutex);
