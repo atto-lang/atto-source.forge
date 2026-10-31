@@ -69,6 +69,19 @@ if(BUILD_TESTING)
   add_test(NAME oresforge_nominal_scalar_class_contract
            COMMAND oresforge_nominal_class_tests)
   set_tests_properties(oresforge_nominal_scalar_class_contract PROPERTIES TIMEOUT 15)
+  # Real native class-method fixture: source -> Forge compiler ->
+  # emitted SysV x86_64 assembly -> Clang link -> executed binary.
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+     CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
+    find_program(ORESFORGE_CLANG_EXECUTABLE NAMES clang)
+    if(ORESFORGE_CLANG_EXECUTABLE)
+      add_test(NAME oresforge_nominal_scalar_class_native_x86_64
+        COMMAND /bin/sh "${CMAKE_CURRENT_SOURCE_DIR}/verification/nominal_scalar_native_executable.sh"
+                "$<TARGET_FILE:oresforge>" "${ORESFORGE_CLANG_EXECUTABLE}")
+      set_tests_properties(oresforge_nominal_scalar_class_native_x86_64
+        PROPERTIES TIMEOUT 30)
+    endif()
+  endif()
 
   add_executable(oresforge_tests verification/tests.cpp)
   add_dependencies(oresforge_tests oresforge_numeric_i64_cases oresforge_numeric_overflow_cases)
