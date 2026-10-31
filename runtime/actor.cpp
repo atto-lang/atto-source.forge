@@ -5,6 +5,8 @@
 #include <memory>
 #include <deque>
 #include <algorithm>
+#include <exception>
+#include <iterator>
 #include <vector>
 namespace oresforge::runtime {
 namespace {
