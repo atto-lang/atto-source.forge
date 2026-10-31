@@ -73,72 +73,55 @@ void CapabilityToken::retire_resources() const noexcept {
 }
 
 void CapabilityToken::release_lease() const noexcept {
-  bool retire = false;
   try {
     {
       std::scoped_lock guard(execution_mutex_);
-      if (executing_ == 0) std::terminate(); // Internal lease imbalance.
+      if (executing_ == 0) std::terminate();
       --executing_;
-      if (stopping_ && executing_ == 0 && !cleanup_started_) {
-        cleanup_started_ = true;
+      if (stopping_ && executing_ == 0)
         active.store(false, std::memory_order_release);
-        retire = true;
-      }
     }
-    if (retire) {
-      retire_resources();
-      {
-        std::scoped_lock guard(execution_mutex_);
-        cleanup_complete_ = true;
-      }
-      execution_cv_.notify_all();
-    }
-  } catch (...) {
-    // Failure to make progress while releasing a lease is fatal: a waiting
-    // supervisor must not be left blocked on a false completion predicate.
-    std::terminate();
-  }
+    // Only the supervisor's invalidate() may invoke resource callbacks.
+    execution_cv_.notify_all();
+  } catch (...) { std::terminate(); }
 }
 
 void CapabilityToken::request_stop() noexcept {
-  bool retire = false;
   try {
-    {
-      std::scoped_lock guard(execution_mutex_);
-      stopping_ = true;
-      accepting.store(false, std::memory_order_release);
-      if (executing_ == 0 && !cleanup_started_) {
-        cleanup_started_ = true;
-        active.store(false, std::memory_order_release);
-        retire = true;
-      }
-    }
-    if (retire) {
-      retire_resources();
-      {
-        std::scoped_lock guard(execution_mutex_);
-        cleanup_complete_ = true;
-      }
-      execution_cv_.notify_all();
-    }
-  } catch (...) {
-    // Do not leave a partially stopped actor waiting forever on quiescence.
-    std::terminate();
-  }
-}
-
-void CapabilityToken::wait_for_stop() const noexcept {
-  try {
-    std::unique_lock lock(execution_mutex_);
-    execution_cv_.wait(lock, [&] { return cleanup_complete_; });
+    std::scoped_lock guard(execution_mutex_);
+    stopping_ = true;
+    accepting.store(false, std::memory_order_release);
+    if (executing_ == 0) active.store(false, std::memory_order_release);
+    // No callback, join, allocation or resource mutex is touched here.
   } catch (...) { std::terminate(); }
 }
 
 void CapabilityToken::invalidate() noexcept {
   if (has_current_thread_lease() || is_retiring_on_current_thread())
-    std::terminate(); // No self-join or retirement callback join.
+    std::terminate(); // Self-join and retirement callback reentry forbidden.
   request_stop();
-  wait_for_stop();
+  bool retire = false;
+  try {
+    std::unique_lock lock(execution_mutex_);
+    execution_cv_.wait(lock, [&] { return executing_ == 0; });
+    if (!cleanup_started_) {
+      cleanup_started_ = true;
+      active.store(false, std::memory_order_release);
+      retire = true;
+    } else {
+      execution_cv_.wait(lock, [&] { return cleanup_complete_; });
+    }
+  } catch (...) { std::terminate(); }
+  if (retire) {
+    retire_resources();
+    try {
+      {
+        std::scoped_lock lock(execution_mutex_);
+        cleanup_complete_ = true;
+      }
+      execution_cv_.notify_all();
+    } catch (...) { std::terminate(); }
+  }
 }
 
 bool CapabilityToken::has_current_thread_lease() const noexcept {
@@ -153,7 +136,8 @@ bool CapabilityToken::is_retiring_on_current_thread() const noexcept {
 
 ActorExecutionLease::ActorExecutionLease(
     ActorContext context, std::shared_ptr<const CapabilityToken> authority)
-    : context_(std::move(context)), authority_(std::move(authority)) {
+    : context_(std::move(context)), authority_(std::move(authority)),
+      owner_thread_(std::this_thread::get_id()) {
   if (!authority_ || !authority_->acquire_lease())
     throw std::runtime_error("closed actor has no execution lease");
   try {
@@ -165,6 +149,7 @@ ActorExecutionLease::ActorExecutionLease(
 }
 ActorExecutionLease::~ActorExecutionLease() noexcept {
   if (!authority_) return; // Moved-from object owns no lease.
+  if (owner_thread_ != std::this_thread::get_id()) std::terminate();
   const auto found = std::find(active_execution_leases.rbegin(),
                                active_execution_leases.rend(), authority_.get());
   if (found == active_execution_leases.rend()) std::terminate();
