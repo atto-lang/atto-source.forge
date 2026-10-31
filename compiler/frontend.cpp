@@ -43,6 +43,13 @@ struct Expr {
   std::size_t depth = 1;
 };
 using ExprPtr = std::unique_ptr<Expr>;
+Op shared_table_intrinsic(std::string_view name) {
+  if (name == "shared_i64_lookup") return Op::TableLookup;
+  if (name == "shared_i64_insert") return Op::TableInsert;
+  if (name == "shared_i64_insert_new") return Op::TableInsertNew;
+  if (name == "shared_i64_update_counter") return Op::TableUpdateCounter;
+  return Op::Return; // No legitimate intrinsic maps to Return.
+}
 struct Function {
   std::vector<std::string> parameters;
   ExprPtr body;
@@ -50,7 +57,10 @@ struct Function {
 
 class Parser {
  public:
-  explicit Parser(std::string_view text,bool runtime_entry=false): source_(text),runtime_entry_(runtime_entry) { next(); }
+  explicit Parser(std::string_view text,bool runtime_entry=false,
+                  bool shared_table_stage0=false)
+      : source_(text),runtime_entry_(runtime_entry),
+        shared_table_stage0_(shared_table_stage0) { next(); }
   Program parse() {
     while (tok_.kind != Kind::End) definition();
     if (!functions_.contains("main")) error("missing main function");
@@ -79,12 +89,14 @@ class Parser {
     }
     const int result=lower(*main.body,bindings,active,0);
     add(Op::Return,0,result);
+    program_.shared_table_stage0 = shared_table_stage0_;
     verify(program_);
     return std::move(program_);
   }
  private:
   std::string_view source_;
   bool runtime_entry_ = false;
+  bool shared_table_stage0_ = false;
   std::size_t at_=0;
   Token tok_{Kind::End,{},0};
   Program program_;
@@ -395,12 +407,21 @@ class Parser {
         owner.parameters.end())
       throw std::runtime_error("expected integer at byte "+std::to_string(e.offset));
     if (e.tag==Expr::Tag::Call) {
-      auto found=functions_.find(e.name);
-      if (found==functions_.end())
-        throw std::runtime_error("unknown function: "+e.name);
-      if (found->second.parameters.size()!=e.children.size())
-        throw std::runtime_error("function arity mismatch: "+e.name);
-      validate_calls(e.name,active,complete);
+      const Op intrinsic = shared_table_intrinsic(e.name);
+      if (intrinsic != Op::Return) {
+        if (!shared_table_stage0_)
+          throw std::runtime_error("ORES-SHARED-TABLE-UNSUPPORTED: explicit stage0 profile required");
+        const std::size_t arity = intrinsic == Op::TableLookup ? 1 : 2;
+        if (e.children.size() != arity)
+          throw std::runtime_error("shared-table intrinsic arity mismatch: "+e.name);
+      } else {
+        auto found=functions_.find(e.name);
+        if (found==functions_.end())
+          throw std::runtime_error("unknown function: "+e.name);
+        if (found->second.parameters.size()!=e.children.size())
+          throw std::runtime_error("function arity mismatch: "+e.name);
+        validate_calls(e.name,active,complete);
+      }
     }
     for (const auto& child:e.children)
       walk_calls(*child,owner,active,complete);
@@ -443,6 +464,16 @@ class Parser {
         return add(op,0,a,b);
       }
       case Expr::Tag::Call: {
+        const Op intrinsic = shared_table_intrinsic(e.name);
+        if (intrinsic != Op::Return) {
+          if (!shared_table_stage0_) throw std::runtime_error("shared-table stage0 not admitted");
+          const std::size_t arity = intrinsic == Op::TableLookup ? 1 : 2;
+          if (e.children.size() != arity)
+            throw std::runtime_error("shared-table intrinsic arity mismatch");
+          const int first=lower(*e.children[0],env,active,call_depth);
+          const int second=arity==2 ? lower(*e.children[1],env,active,call_depth) : -1;
+          return add(intrinsic,0,first,second);
+        }
         auto found=functions_.find(e.name);
         if (found==functions_.end()) throw std::runtime_error("unknown function: "+e.name);
         const auto& fn=found->second;
@@ -475,6 +506,12 @@ Program parse_runtime_source(std::string_view source) {
     throw std::runtime_error("source exceeds 1 MiB bootstrap limit");
   oresforge::source::validate_utf8(source);
   return Parser(source,true).parse();
+}
+Program parse_shared_i64_stage0_source(std::string_view source) {
+  if (source.size() > 1024 * 1024)
+    throw std::runtime_error("source exceeds 1 MiB bootstrap limit");
+  oresforge::source::validate_utf8(source);
+  return Parser(source,true,true).parse();
 }
 }
 
