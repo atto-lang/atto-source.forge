@@ -280,6 +280,8 @@ class Parser {
     const std::string name=identifier();
     if (name=="int" || name=="fnc" || name=="return")
       error("reserved function name");
+    if (shared_table_stage0_ && shared_table_intrinsic(name) != Op::Return)
+      error("shared-table internal intrinsic names cannot be redeclared");
     expect("(");
     Function fn;
     if (tok_.text!=")") {
