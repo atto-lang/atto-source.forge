@@ -66,18 +66,19 @@ int main() {
     for (const auto& [expression, expected] : kPortableNumericalCases) {
       ensure(interpret(source(expression))==expected,"numeric parity i64 source");
     }
-    // The four byte-pinned shared negative cases exercise the *actual*
-    // Forge source parser, verified i64 IR and interpreter. An exception
-    // from either admission or execution is allowed; wrapping is not.
-    constexpr std::array<std::string_view,4> overflow_diagnostics{
-      "i64 add overflow", "i64 sub overflow",
-      "i64 mul overflow", "i64 sub overflow"
-    };
-    for (std::size_t i=0; i<kOverflowNumericalCases.size(); ++i) {
-      const std::string expression{kOverflowNumericalCases[i]};
-      // No unrelated source-parse/IR error may count as a numeric pass.
-      reject_diagnostic([&] { (void)interpret(source(expression)); },
-                        overflow_diagnostics[i]);
+    // Execute the exact shared source bytes for ordinary checked-i64
+    // overflow. Generated expression tables remain supplementary; they cannot
+    // satisfy portable-corpus evidence because rewritten source is not the
+    // same Git blob.
+    constexpr std::array<std::pair<const char*,std::string_view>,4> portable_overflow{{
+      {"i64-add-overflow.ores","i64 add overflow"},
+      {"i64-sub-overflow.ores","i64 sub overflow"},
+      {"i64-mul-overflow.ores","i64 mul overflow"},
+      {"i64-neg-overflow.ores","i64 sub overflow"}
+    }};
+    for (const auto& [name,diagnostic] : portable_overflow) {
+      const auto guest=portable_numeric_fixture(name);
+      reject_diagnostic([&] { (void)interpret(parse_source(guest)); }, diagnostic);
     }
     const auto portable_ok=portable_numeric_fixture("math-i64-ok.ores");
     ensure(interpret(parse_source(portable_ok))==84,
