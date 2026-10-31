@@ -25,19 +25,23 @@ class MailboxBoundI64GuestDispatch final : public oresforge::GuestI64TableDispat
       typename SharedI64Table<Capacity>::Capability capability)
       : mailbox_(mailbox), table_(table), capability_(std::move(capability)) {}
   std::int64_t lookup(std::int64_t key) override {
-    const auto value = table_.lookup(capability_, mailbox_.context(), key);
+    const auto lease = mailbox_.execution_lease();
+    const auto value = table_.lookup(capability_, lease.context(), key);
     if (!value) throw TableError(TableErrorCode::Missing);
     return *value;
   }
   std::int64_t insert(std::int64_t key, std::int64_t value) override {
-    table_.insert(capability_, mailbox_.context(), key, value);
+    const auto lease = mailbox_.execution_lease();
+    table_.insert(capability_, lease.context(), key, value);
     return value;
   }
   std::int64_t insert_new(std::int64_t key, std::int64_t value) override {
-    return table_.insert_new(capability_, mailbox_.context(), key, value) ? 1 : 0;
+    const auto lease = mailbox_.execution_lease();
+    return table_.insert_new(capability_, lease.context(), key, value) ? 1 : 0;
   }
   std::int64_t update_counter(std::int64_t key, std::int64_t delta) override {
-    return table_.update_counter(capability_, mailbox_.context(), key, delta);
+    const auto lease = mailbox_.execution_lease();
+    return table_.update_counter(capability_, lease.context(), key, delta);
   }
 };
 
