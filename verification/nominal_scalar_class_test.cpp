@@ -126,6 +126,24 @@ int main() {
       require(std::string_view(error.what()).find("invalid nominal instance slot") !=
               std::string_view::npos, "tampered receiver failed for wrong reason");
     }
+    // Never trust an externally constructed or fuzzed nominal IR value.
+    // Both the interpreter and native codegen independently validate it.
+    for (int variant=0; variant<4; ++variant) {
+      auto malformed=multi;
+      if (variant==0) malformed.methods[0].kind=static_cast<oresforge::nominal::Method::Kind>(255);
+      if (variant==1) malformed.steps[2].kind=static_cast<oresforge::nominal::Step::Kind>(255);
+      if (variant==2) malformed.steps[0].argument=9;
+      if (variant==3) malformed.steps.back().argument=1;
+      bool interpreterRejected=false, codegenRejected=false;
+      try { (void)interpret(malformed); } catch (const std::runtime_error&) {
+        interpreterRejected=true;
+      }
+      try { (void)emit_x86_64_asm(malformed); } catch (const std::runtime_error&) {
+        codegenRejected=true;
+      }
+      require(interpreterRejected && codegenRejected,
+              "malformed nominal IR was accepted by interpreter or codegen");
+    }
     rejects(R"ores(
       define class Box as let int value=1;
         x(mut self,int n):void{self.value=self.value+n;}
