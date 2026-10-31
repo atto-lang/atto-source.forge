@@ -154,6 +154,10 @@ class Mailbox {
   std::shared_ptr<CapabilityToken> authority_;
   std::size_t queued_bytes_=0;
   bool closed_=false;
+  // A restart waits outside the mailbox mutex. Stop requests arriving during
+  // that window abort the restart instead of re-enabling a stopped actor.
+  bool restarting_=false;
+  bool stop_during_restart_=false;
   std::deque<std::vector<std::uint8_t>> queue_;
 };
 }
