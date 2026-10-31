@@ -3,8 +3,10 @@
 Status: proposed cross-backend semantics; singleton/ETS guest execution remains unverified.
 Forge PR #146 now includes declaration admission plus a C++ host runtime slice with
 runtime-minted actor identity, bounded automatic actor-owned table retirement,
-and a bounded application-domain singleton declaration registry. Guest
-`define singleton`/table execution remains unsupported. Shared fail-closed
+and a bounded application-domain singleton declaration registry. General guest
+`define singleton`/table execution remains unsupported; the PR now also contains
+an explicit stage-0 compiler/runtime bridge for the empty singleton declaration
+shell, without enabling that surface in the normal frontend. Shared fail-closed
 semantics/evidence are tracked in oreslang-platform-conformance#242, with
 admission work in Java #2316, LLVM #1203, .NET #267 and Wasm #191. See
 SINGLETON_SHARED_RUNTIME_SLICE.md for implemented behavior and remaining gates.
@@ -132,3 +134,32 @@ g++ -std=c++20 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -Wall
 ASAN_OPTIONS=detect_leaks=0 /tmp/ores-singleton-admission
 ```
 
+
+
+## 2026-10-31 stage-0 compiler boundary update
+
+Current Forge PR #146 head `ad04751751a15d39556c6c20f432ff5d9ce1c883`
+(tree `a6e0f3d8b696e7d1f2b23124a871f4772ca3479b`) adds a deliberately
+narrow source-local bridge:
+
+- `compiler/singleton_stage0.cpp` accepts only
+  `define [pub] singleton Name as end` before an otherwise existing scalar
+  source program.
+- Resolved module identity is trusted compiler input; the guest does not supply
+  the resulting `SingletonDeclarationId`.
+- The remaining source is compiled by the real scalar frontend, and the
+  stage-0 harness uses its `main()` result as a temporary initializer value.
+- A receiver-name reference inside the otherwise unsupported singleton body is
+  classified as `ORES-SINGLETON-PREPUBLICATION-ESCAPE`; every other non-empty
+  body remains rejected rather than freezing speculative member syntax.
+- The harness drives eight concurrent first accesses from two same-domain actor
+  contexts through the bounded registry and requires one initializer execution,
+  complete value publication and one reader identity.
+- The normal scalar/runtime/callable frontends still reject singleton
+  declarations with `ORES-SINGLETON-UNSUPPORTED`.
+
+This is not a parity promotion. Exact-head Actions run `41158620340` created
+release, sanitized and sanitized-leaks jobs, but all three have zero executed
+steps. The stage-0 cases therefore remain source-local/unexecuted evidence only.
+The bootstrap FNV-1a ID mapping is also explicitly temporary and must be replaced
+by collision-safe compiler artifact identity before promotion.
