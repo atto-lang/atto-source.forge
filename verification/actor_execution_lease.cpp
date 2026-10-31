@@ -9,6 +9,11 @@
 #include <thread>
 #include <type_traits>
 #include <vector>
+#if defined(__unix__) && !defined(__SANITIZE_ADDRESS__)
+#include <sys/wait.h>
+#include <unistd.h>
+#include <cstdlib>
+#endif
 
 using oresforge::runtime::ActorContext;
 using oresforge::runtime::ActorExecutionLease;
@@ -111,6 +116,28 @@ void lease_context_rejects_foreign_thread() {
         "foreign thread accessed another thread's execution lease");
   check(lease.context().actor() == 111,
         "original admitting thread lost its execution lease");
+}
+
+void foreign_thread_lease_destructor_is_fail_stop() {
+#if defined(__unix__) && !defined(__SANITIZE_ADDRESS__)
+  const pid_t child = fork();
+  check(child >= 0, "unable to fork thread-affinity death test");
+  if (child == 0) {
+    std::set_terminate([] { std::_Exit(77); });
+    Mailbox box{112};
+    auto lease = box.execution_lease();
+    std::thread foreign([moved = std::move(lease)]() mutable {
+      // The foreign thread must not be able to release the admission pin.
+    });
+    foreign.join();
+    std::_Exit(0);
+  }
+  int status = 0;
+  check(waitpid(child, &status, 0) == child,
+        "thread-affinity child was not reaped");
+  check(WIFEXITED(status) && WEXITSTATUS(status) == 77,
+        "foreign thread release did not fail-stop");
+#endif
 }
 
 void moved_from_lease_is_not_authority() {
@@ -427,6 +454,7 @@ int main() {
   try {
     unleased_stop_request_has_no_callbacks();
     lease_context_rejects_foreign_thread();
+    foreign_thread_lease_destructor_is_fail_stop();
     moved_from_lease_is_not_authority();
     actor_self_shutdown_is_nonblocking();
     multiple_leases_quiesce_in_last_release();
