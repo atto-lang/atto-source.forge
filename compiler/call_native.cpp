@@ -1,5 +1,6 @@
 #include "compiler/source_utf8.hpp"
 #include "compiler/call_native.hpp"
+#include "contracts/v1/native-error-slot-v1.h"
 #include <algorithm>
 #include <charconv>
 #include <cstdint>
@@ -189,7 +190,8 @@ class Parser {
     expect("fnc");
     const std::string name=identifier();
     if (name=="int"||name=="return"||name=="if"||name=="else"||name=="then"||
-        name=="do"||name=="fi"||name=="module"||name=="as"||name=="end")
+        name=="do"||name=="fi"||name=="module"||name=="as"||name=="end"||
+        name=="try"||name=="catch"||name=="finally"||name=="is"||name=="type")
       fail("reserved function name");
     if (names_.contains(name))fail("duplicate function");
     if (module_.functions.size()>=kMaxFunctions)fail("function count budget exceeded");
@@ -210,6 +212,7 @@ class Parser {
         }
         if (param=="int"||param=="if"||param=="then"||param=="else"||
             param=="do"||param=="fi"||param=="module"||param=="as"||param=="end"||
+            param=="try"||param=="catch"||param=="finally"||param=="is"||param=="type"||
             param=="return"||param=="fnc"||
             std::find(current_->parameters.begin(),current_->parameters.end(),param)
             !=current_->parameters.end())fail("invalid or duplicate parameter");
@@ -232,8 +235,50 @@ class Parser {
       const int no=expr(1);
       expect(";"); expect("fi");
       current_->result=add(Kind::If,0,{}, {condition,yes,no});
+    } else if (take("try")) {
+      expect("{"); expect("return");
+      const int protected_result=expr(1);
+      expect(";"); expect("}");
+      expect("catch"); expect("(");
+      const std::string binding=identifier();
+      if(std::find(current_->parameters.begin(),current_->parameters.end(),binding)
+          !=current_->parameters.end())
+        fail("callable ErrorSlot catch binding shadows parameter");
+      expect(")"); expect("{");
+      if(take("if")) {
+        if(identifier()!=binding)
+          fail("callable ErrorSlot type test must use catch binding");
+        expect("is"); expect("type");
+        const std::string type=identifier();
+        if(type!="ArithmeticOverflowError" && type!="Error")
+          fail("callable ErrorSlot type test supports only ArithmeticOverflowError or Error");
+        expect("{"); expect("return");
+        const int matched=expr(1);
+        if(current_->nodes.at(static_cast<std::size_t>(matched)).kind!=Kind::Constant)
+          fail("callable ErrorSlot type-match result must be integer literal");
+        expect(";"); expect("}");
+        expect("else"); expect("{"); expect("return");
+        const int fallback=expr(1);
+        if(current_->nodes.at(static_cast<std::size_t>(fallback)).kind!=Kind::Constant)
+          fail("callable ErrorSlot type-mismatch result must be integer literal");
+        expect(";"); expect("}"); expect("fi");
+        current_->result=add(Kind::Catch,0,type,
+          {protected_result,matched,fallback});
+      } else {
+        expect("return");
+        const int handler=expr(1);
+        if(current_->nodes.at(static_cast<std::size_t>(handler)).kind!=Kind::Constant)
+          fail("callable ErrorSlot catch result must be integer literal");
+        expect(";");
+        current_->result=add(Kind::Catch,0,{}, {protected_result,handler});
+      }
+      expect("}");
+      expect("finally"); expect("{");
+      if(token_.text!="}")
+        fail("callable ErrorSlot catch v1 requires empty finally");
+      expect("}");
     } else {
-      fail("expected return or canonical if/do/fi body");
+      fail("expected return, canonical if/do/fi, or ErrorSlot try/catch body");
     }
     expect("}");
   }
