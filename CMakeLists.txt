@@ -82,6 +82,11 @@ if(BUILD_TESTING)
   target_link_libraries(oresforge_singleton_guest_stage0 PRIVATE oresforge_core Threads::Threads)
   add_test(NAME oresforge_singleton_guest_stage0 COMMAND oresforge_singleton_guest_stage0)
   set_tests_properties(oresforge_singleton_guest_stage0 PROPERTIES TIMEOUT 30)
+  # Explicit source-to-IR-to-host-effect stage0, not production guest parity.
+  add_executable(oresforge_guest_shared_i64_stage0 verification/guest_shared_i64_stage0.cpp)
+  target_link_libraries(oresforge_guest_shared_i64_stage0 PRIVATE oresforge_core Threads::Threads)
+  add_test(NAME oresforge_guest_shared_i64_stage0 COMMAND oresforge_guest_shared_i64_stage0)
+  set_tests_properties(oresforge_guest_shared_i64_stage0 PROPERTIES TIMEOUT 30)
 
   add_executable(oresforge_tests verification/tests.cpp)
   add_dependencies(oresforge_tests oresforge_numeric_i64_cases oresforge_numeric_overflow_cases)
