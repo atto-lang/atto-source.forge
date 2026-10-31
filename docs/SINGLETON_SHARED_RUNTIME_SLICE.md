@@ -312,3 +312,61 @@ Future promotion requires a nonzero-step runner for the *current source
 head*, blob parity on all compiled inputs, compilation under GCC and Clang,
 CTest, release/ASan/UBSan/leak result receipts, and the production scheduler's
 own execution admission semantics. No backend is currently promoted.
+
+## Two-phase actor shutdown and reentrancy audit (2026-10-31)
+
+The stage-0 Forge mailbox now distinguishes **requesting** actor shutdown
+from **waiting for completion**. `Mailbox::request_close()` marks the
+mailbox closed and rejects new actor admissions without waiting for its
+currently running lease. On the last lease release,
+`CapabilityToken` invalidates authority and retires actor-owned tables.
+`Mailbox::close()` still waits for external callers; synchronous
+`close()` or `restart()` from the actor's own lease throws a classified
+runtime error instead of self-joining. A supervisor must perform a
+synchronous restart after quiescence; the actor's request method does not
+create a new incarnation.
+
+Lifecycle joins no longer hold the mailbox mutex. An external restart
+marks an in-progress transition, releases the mailbox lock to wait for
+old-actor quiescence, then publishes a fresh generation only if no
+`request_close()` or `close()` arrived meanwhile. Shutdown during the
+transition cancels the restart without exposing a fresh incarnation.
+
+Every admitted lease is tracked under a bounded 4,096-slot per-actor
+admission budget. Following the stop request, a previously obtained
+`ActorContext` is valid only on a thread holding an admitted lease for
+that same authority. External unleased contexts are denied even while the
+last operation drains. The internal lease is **thread-affine**, not a
+network handle, and the production guest scheduler still needs its own
+non-forgeable execution context and cooperative cancellation integration.
+
+Retirement callbacks must not synchronously call `close()` or
+`restart()` on the same actor. These paths now fail fast inside a
+retirement callback, while `request_close()` remains idempotent and
+nonblocking. Failure in host retirement synchronization causes a
+fail-stop condition rather than a false success receipt; no hard-real-time
+progress or general callback safety is established.
+
+Added unexecuted tests in `verification/actor_execution_lease.cpp` cover
+self-close and self-restart rejection, deferred final-lease retirement,
+cross-thread stale context denial, nested leases, budget exhaustion,
+external close versus self-close requests, racing supervisor restart
+cancellation, reentrant retirement callbacks and 128 admission/close
+races. CTest and the release/ASan/UBSan/leak test script already include
+this executable.
+
+**Verification limitation:** A source-free private runner canary on
+`honeypot-r-us-test/hnpt-admin-api-server.rs` was attempted at
+https://github.com/honeypot-r-us-test/hnpt-admin-api-server.rs/actions/runs/41233454560.
+It failed before runner assignment (`runner_id=0`, `steps=null`).
+The formerly successful run on this private carrier was from October 30;
+its historical runner assignment is not proof of available capacity now.
+No private Forge source was copied to this carrier following the failed
+canary. The older SHA-verified Voxletra source slice is **not** current
+head, and its own execution attempt also failed before assigning a runner.
+No current-head release, CTest, sanitizer or guest-conformance pass is claimed.
+
+Remaining gaps: a production scheduler-issued execution lease; normal
+`define singleton` frontend admission; final typed table APIs, owner
+heir/transfer notices and cancellation policy; actual worker/isolate
+sharing; five-backend conformance receipts.
