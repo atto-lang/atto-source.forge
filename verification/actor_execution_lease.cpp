@@ -44,6 +44,43 @@ struct Observer final : ActorLifetimeResource {
   }
 };
 
+struct ReentrantObserver final : ActorLifetimeResource {
+  Mailbox& box;
+  std::atomic<unsigned> callbacks{0};
+  std::atomic<bool> sync_close_rejected{false};
+  std::atomic<bool> sync_restart_rejected{false};
+  explicit ReentrantObserver(Mailbox& m) : box(m) {}
+  void actor_owner_stopped() noexcept override {
+    callbacks.fetch_add(1, std::memory_order_release);
+    try { box.close(); }
+    catch (const std::runtime_error&) {
+      sync_close_rejected.store(true, std::memory_order_release);
+    }
+    try { (void)box.restart(); }
+    catch (const std::runtime_error&) {
+      sync_restart_rejected.store(true, std::memory_order_release);
+    }
+    box.request_close(); // Nonblocking stop is reentrant and idempotent.
+  }
+};
+
+void retirement_callback_reentry_is_fail_closed() {
+  Mailbox box{109};
+  const auto first = box.context();
+  const auto observer = std::make_shared<ReentrantObserver>(box);
+  check(first.attach_owned_resource(observer), "cannot attach reentrant observer");
+  box.close();
+  check(observer->callbacks.load(std::memory_order_acquire) == 1,
+        "reentrant retirement callback executed more than once");
+  check(observer->sync_close_rejected.load(std::memory_order_acquire) &&
+        observer->sync_restart_rejected.load(std::memory_order_acquire),
+        "blocking lifecycle was allowed from retirement callback");
+  check(!first.valid(), "callback unexpectedly resurrected actor authority");
+  box.close();
+  check(observer->callbacks.load(std::memory_order_acquire) == 1,
+        "repeated close delivered duplicate retirement callback");
+}
+
 void moved_from_lease_is_not_authority() {
   Mailbox box{100};
   auto admitted = box.execution_lease();
@@ -352,6 +389,7 @@ int main() {
     actor_self_shutdown_is_nonblocking();
     multiple_leases_quiesce_in_last_release();
     lease_budget_is_bounded();
+    retirement_callback_reentry_is_fail_closed();
     external_close_and_self_request_do_not_deadlock();
     supervisor_restart_aborted_by_leased_actor_shutdown();
     close_waits_for_lease();
