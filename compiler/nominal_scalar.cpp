@@ -277,9 +277,43 @@ class Parser {
 };
 void validate(const ScalarClass& p) {
   if (!valid_identifier(p.owner) || !valid_identifier(p.field) ||
-      !valid_identifier(p.binding) || !valid_identifier(p.writer) ||
-      !valid_identifier(p.reader))
-    throw std::runtime_error("invalid nominal scalar class metadata");
+      p.methods.empty() || p.methods.size()>16 ||
+      p.instances.empty() || p.instances.size()>8 ||
+      p.steps.empty() || p.steps.size()>32 ||
+      p.steps.back().kind != Step::Kind::ReturnRead)
+    throw std::runtime_error("invalid nominal scalar IR");
+  std::vector<bool> constructed(p.instances.size(),false);
+  for (const auto& method:p.methods)
+    if (!valid_identifier(method.name) ||
+        method.value_arity != (method.kind == Method::Kind::Read ? 0u : 1u))
+      throw std::runtime_error("invalid nominal method IR");
+  for (std::size_t i=0;i<p.methods.size();++i)
+    for (std::size_t j=0;j<i;++j)
+      if(p.methods[i].name==p.methods[j].name &&
+         p.methods[i].value_arity==p.methods[j].value_arity)
+        throw std::runtime_error("duplicate nominal method IR slot");
+  for (const auto& name:p.instances)
+    if(!valid_identifier(name)) throw std::runtime_error("invalid nominal binding");
+  for (std::size_t i=0;i<p.instances.size();++i)
+    for (std::size_t j=0;j<i;++j)
+      if(p.instances[i]==p.instances[j]) throw std::runtime_error("duplicate nominal binding");
+  for (std::size_t i=0;i<p.steps.size();++i) {
+    const auto& step=p.steps[i];
+    if(step.instance>=p.instances.size()) throw std::runtime_error("invalid nominal instance slot");
+    if(step.kind==Step::Kind::Construct) {
+      if(constructed[step.instance]) throw std::runtime_error("duplicate nominal construction");
+      constructed[step.instance]=true;
+    } else {
+      if(!constructed[step.instance] || step.method>=p.methods.size())
+        throw std::runtime_error("invalid nominal receiver or method reference");
+      const auto kind=p.methods[step.method].kind;
+      if(step.kind==Step::Kind::Mutate && kind==Method::Kind::Read)
+        throw std::runtime_error("mutable operation targets read method");
+      if(step.kind==Step::Kind::ReturnRead &&
+         (kind!=Method::Kind::Read || i!=p.steps.size()-1))
+        throw std::runtime_error("invalid nominal return method");
+    }
+  }
 }
 } // namespace
 
@@ -287,32 +321,51 @@ ScalarClass parse(std::string_view source) {return Parser(source).parse();}
 
 std::int64_t interpret(const ScalarClass& p) {
   validate(p);
-  std::int64_t updated = 0;
-  if (__builtin_add_overflow(p.initializer,p.argument,&updated))
-    throw std::runtime_error("i64 add overflow");
-  return updated;
+  std::vector<std::int64_t> values(p.instances.size());
+  for(const auto& step:p.steps) {
+    if(step.kind == Step::Kind::Construct) {
+      values[step.instance] = p.initializer;
+    } else if(step.kind == Step::Kind::ReturnRead) {
+      return values[step.instance];
+    } else {
+      std::int64_t result=0;
+      const auto kind=p.methods[step.method].kind;
+      const bool overflow=kind==Method::Kind::Add
+        ? __builtin_add_overflow(values[step.instance],step.argument,&result)
+        : __builtin_sub_overflow(values[step.instance],step.argument,&result);
+      if(overflow) throw std::runtime_error(kind==Method::Kind::Add
+        ? "i64 add overflow" : "i64 sub overflow");
+      values[step.instance]=result;
+    }
+  }
+  throw std::runtime_error("nominal source missing return");
 }
 
 std::string emit_x86_64_asm(const ScalarClass& p) {
   validate(p);
-  // One fixed stack slot is the class's value field, no heap, GC or vtable.
-  // The verified writer executes before the verified shared reader. The
-  // native addition is checked at execution, not constant-folded away.
-  return ".text\n.globl oresforge_entry\n.type oresforge_entry, @function\n"
-         "oresforge_entry:\n"
-         "  subq $16, %rsp\n"
-         "  movabsq $" + std::to_string(p.initializer) + ", %rax\n"
-         "  movq %rax, (%rsp)\n"
-         "  movabsq $" + std::to_string(p.argument) + ", %rdx\n"
-         "  movq (%rsp), %rax\n"
-         "  addq %rdx, %rax\n"
-         "  jo .Loresforge_nominal_overflow\n"
-         "  movq %rax, (%rsp)\n"
-         "  movq (%rsp), %rax\n"
-         "  addq $16, %rsp\n"
-         "  ret\n"
-         ".Loresforge_nominal_overflow:\n"
-         "  ud2\n"
-         ".size oresforge_entry, .-oresforge_entry\n";
+  const auto bytes=((p.instances.size()*8u+15u)/16u)*16u;
+  std::string out=".text\n.globl oresforge_entry\n.type oresforge_entry, @function\n"
+                  "oresforge_entry:\n  subq $"+std::to_string(bytes)+", %rsp\n";
+  for (const auto& step:p.steps) {
+    const auto slot=step.instance==0 ? std::string("(%rsp)")
+      : std::to_string(step.instance*8u)+"(%rsp)";
+    if(step.kind==Step::Kind::Construct) {
+      out+="  movabsq $"+std::to_string(p.initializer)+", %rax\n"
+           "  movq %rax, "+slot+"\n";
+    } else if(step.kind==Step::Kind::Mutate) {
+      out+="  movabsq $"+std::to_string(step.argument)+", %rdx\n"
+           "  movq "+slot+", %rax\n";
+      out+= p.methods[step.method].kind==Method::Kind::Subtract
+        ? "  subq %rdx, %rax\n" : "  addq %rdx, %rax\n";
+      out+="  jo .Loresforge_nominal_overflow\n"
+           "  movq %rax, "+slot+"\n";
+    } else {
+      out+="  movq "+slot+", %rax\n"
+           "  addq $"+std::to_string(bytes)+", %rsp\n  ret\n";
+    }
+  }
+  out+=".Loresforge_nominal_overflow:\n  ud2\n"
+       ".size oresforge_entry, .-oresforge_entry\n";
+  return out;
 }
 } // namespace oresforge::nominal
