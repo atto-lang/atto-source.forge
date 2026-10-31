@@ -147,6 +147,17 @@ int main() {
       "fnc main():int{return lex[self] || -> 1;}",
       "define class Foo as fnc read(mut self, int x): int { return x; } end",
       "define class Foo as fnc read(self Foo)(int x): int { return x; } end",
+      // Receiver-arities are a normative future contract, but this stage-0
+      // compiler must not emit native code for either valid receiver methods
+      // or duplicate slots. These are capability rejection tests only, NOT
+      // evidence that Forge detects duplicate method signatures.
+      "define class Foo as x():void{return;} x(mut self)():void{return;}end",
+      "define class Foo as x(mut self)():void{return;} x():void{return;}end",
+      "define class Foo as x(int n):void{return;} x(mut self,int n):void{return;}end",
+      "define class Foo as x(mut self,int n):void{return;} x(int n):void{return;}end",
+      "define class Foo as x(self,int n):void{return;} x(mut self)(int n):void{return;}end",
+      "define class Foo as x(string a):void{return;} y(mut self,int n):void{return;}end",
+      "define class Foo as y(mut self)(int n):void{return;}end",
       "fnc main():int{return lex[x,x] || -> x;}",
       "fnc main():int{return lex[missing] || -> x;}",
       "fnc main():int{return lex[] || -> x;}",
