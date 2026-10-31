@@ -39,6 +39,7 @@ struct CapabilityToken final {
   // Blocking external/supervisor stop: wait for callbacks after quiescence.
   void invalidate() noexcept;
   bool has_current_thread_lease() const noexcept;
+  bool is_retiring_on_current_thread() const noexcept;
  private:
   bool acquire_lease() const noexcept;
   void release_lease() const noexcept;
