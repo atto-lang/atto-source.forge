@@ -30,7 +30,8 @@ class ActorFinalizationQueue final {
     std::uint64_t actor_id = 0;
     std::uint64_t incarnation = 0;
     ActorStopCause cause = ActorStopCause::Requested;
-    bool finalized = false; // false means an obsolete incarnation ticket.
+    bool finalized = false; // This runner performed resource retirement.
+    bool deduplicated = false; // Another supervisor already retired this generation.
   };
 
   ActorFinalizationQueue() = default;
@@ -111,8 +112,12 @@ class ActorFinalizationQueue final {
     }
     if (!actor) return false;
     bool finalized = false;
+    bool deduplicated = false;
     try {
       finalized = actor->finalize_stop(generation);
+      // A different queue or supervisor can finish retirement first.
+      // Distinguish that harmless duplicate from a stale incarnation.
+      if (!finalized) deduplicated = actor->stop_finalized(generation);
     } catch (...) {
       std::scoped_lock lock(mutex_);
       tickets_[index].processing = false;
@@ -129,9 +134,11 @@ class ActorFinalizationQueue final {
         completion->incarnation = generation;
         completion->cause = tickets_[index].cause;
         completion->finalized = finalized;
+        completion->deduplicated = deduplicated;
       }
       tickets_[index] = {};
       if (finalized) ++completed_;
+      else if (deduplicated) ++duplicates_;
       else ++stale_;
     }
     return true;
@@ -157,6 +164,10 @@ class ActorFinalizationQueue final {
     std::scoped_lock lock(mutex_);
     return stale_;
   }
+  std::uint64_t duplicates() const {
+    std::scoped_lock lock(mutex_);
+    return duplicates_;
+  }
 
  private:
   struct Ticket {
@@ -170,6 +181,7 @@ class ActorFinalizationQueue final {
   std::array<Ticket,Capacity> tickets_{};
   std::uint64_t completed_ = 0;
   std::uint64_t stale_ = 0;
+  std::uint64_t duplicates_ = 0;
 };
 
 } // namespace oresforge::runtime
