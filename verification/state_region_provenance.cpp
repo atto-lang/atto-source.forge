@@ -61,6 +61,29 @@ int main() {
   CHECK(!invalid.valid());
   CHECK(!invalid.authorizes_release(release));
 
+  auto forged_borrow_kind = borrow;
+  forged_borrow_kind.kind = static_cast<StateRegionAccess>(255);
+  CHECK(!forged_borrow_kind.valid());
+  CHECK(!forged_borrow_kind.authorizes_release(release));
+  CHECK(!forged_borrow_kind.release_record().valid());
+
+  auto forged_release_kind = release;
+  forged_release_kind.kind = static_cast<StateRegionAccess>(255);
+  CHECK(!forged_release_kind.valid());
+  CHECK(!borrow.authorizes_release(forged_release_kind));
+
+  auto forged_borrow_action = borrow;
+  forged_borrow_action.action = static_cast<StateRegionAction>(255);
+  CHECK(!forged_borrow_action.valid());
+  CHECK(!forged_borrow_action.release_record().valid());
+
+  auto empty_place = borrow;
+  empty_place.place = " \t ";
+  CHECK(!empty_place.valid());
+  CHECK(!empty_place.authorizes_release(release));
+  CHECK(!release.release_record().valid());
+  CHECK(!StateRegionLoanProvenance{}.authorizes_release(release));
+
   constexpr StateRegionLoanRequirement requirement{
       "inventory", true, true, 501, "inventory.stock",
       StateRegionAccess::write, StateRegionAction::borrow};
@@ -73,6 +96,19 @@ int main() {
   auto other_binding = requirement_release;
   other_binding.region_binding = "orders";
   CHECK(!requirement.authorizes_release(other_binding));
+
+  auto forged_requirement = requirement;
+  forged_requirement.kind = static_cast<StateRegionAccess>(255);
+  CHECK(!forged_requirement.valid());
+  CHECK(!forged_requirement.release_requirement().valid());
+  auto forged_requirement_action = requirement_release;
+  forged_requirement_action.action = static_cast<StateRegionAction>(255);
+  CHECK(!forged_requirement_action.valid());
+  CHECK(!requirement.authorizes_release(forged_requirement_action));
+  CHECK(!requirement_release.release_requirement().valid());
+  auto blank_region = requirement;
+  blank_region.region_binding = " \t ";
+  CHECK(!blank_region.valid());
 
   std::puts("PASS Forge state-region requirement/provenance v1");
   return 0;
