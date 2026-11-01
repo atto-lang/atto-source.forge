@@ -159,7 +159,7 @@ class Parser {
       // These require typed method dispatch and ownership-checked closure IR.
       if (tok_.text=="abstract")
         error("private abstract hooks require typed native vtables and superclass-only dispatch");
-      if (tok_.text=="class" || tok_.text=="actor")
+      if (tok_.text=="class" || tok_.text=="actor" || tok_.text=="isoactor")
         error("class/actor methods require typed native lowering");
       if (tok_.text=="lex" || tok_.text=="nlex")
         error("lexical captures require checked closure lowering");
@@ -259,6 +259,14 @@ class Parser {
       if (take("define")) { if (defined) error("duplicate define"); defined=true; }
       else if (take("pub")) { if (public_) error("duplicate pub"); public_=true; }
     }
+    // Prefixes of actor declarations must not fall through to an incidental
+    // "expected fnc" error. There is no actor superclass, protocol witness
+    // or isolated mailbox layout in the Forge/Cranelift scalar bootstrap.
+    if (tok_.text=="shared" || tok_.text=="untrusted" ||
+        tok_.text=="serial" || tok_.text=="http" ||
+        tok_.text=="tcp" || tok_.text=="websocket" ||
+        tok_.text=="unary" || tok_.text=="stream")
+      error("class/actor methods require typed native lowering");
     expect("fnc");
     const std::string name=identifier();
     if (name=="int" || name=="fnc" || name=="return")
