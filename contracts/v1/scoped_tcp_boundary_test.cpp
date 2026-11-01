@@ -5,6 +5,7 @@
 
 #if defined(__unix__) || defined(__APPLE__)
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #endif
@@ -66,6 +67,11 @@ int main() {
 
     Guard client{ScopedTcpBoundary::connect_selected_ipv4(grant, endpoint, endpoint, 2000)};
     if (client.fd < 0) throw std::runtime_error("allowed TCP connect failed");
+    // Host-only connect must never hand a blocking socket to a future
+    // async actor adapter; assert the actual kernel descriptor status.
+    const int finalFlags = ::fcntl(client.fd, F_GETFL, 0);
+    if (finalFlags < 0 || !(finalFlags & O_NONBLOCK))
+        throw std::runtime_error("TCP connect returned a blocking descriptor");
     Guard accepted{::accept(listener, nullptr, nullptr)};
     if (accepted.fd < 0) throw std::runtime_error("loopback accept failed");
     sockaddr_in peer{};
