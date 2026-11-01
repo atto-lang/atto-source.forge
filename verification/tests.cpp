@@ -97,6 +97,7 @@ int main() {
     // Both frontends deny ModelGraph before IR, with contextual syntax.
     for (const auto& declaration : {
         "define model PriceEstimate() as AddTax(10) end",
+        "define model x as Identity() end",
         "define pub model PriceEstimate() as AddTax(10) end",
         "pub define model PriceEstimate() as AddTax(10) end",
         "define /* comment */ model PriceEstimate() as AddTax(10) end"
