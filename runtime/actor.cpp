@@ -96,7 +96,7 @@ void CapabilityToken::request_stop() noexcept {
   } catch (...) { std::terminate(); }
 }
 
-void CapabilityToken::invalidate() noexcept {
+bool CapabilityToken::invalidate() noexcept {
   if (has_current_thread_lease() || is_retiring_on_current_thread())
     std::terminate(); // Self-join and retirement callback reentry forbidden.
   request_stop();
@@ -122,6 +122,7 @@ void CapabilityToken::invalidate() noexcept {
       execution_cv_.notify_all();
     } catch (...) { std::terminate(); }
   }
+  return retire;
 }
 
 bool CapabilityToken::retirement_complete() const noexcept {
@@ -272,8 +273,9 @@ bool Mailbox::finalize_stop(std::uint64_t incarnation) {
     queued_bytes_ = 0;
   }
   // Quiescence and callbacks happen outside the mailbox lock.
-  old->invalidate();
-  return true;
+  // Only the supervisor that actually executes owner retirement may issue
+  // the successful finalization receipt for this generation.
+  return old->invalidate();
 }
 bool Mailbox::stop_finalized(std::uint64_t incarnation) const noexcept {
   try {
