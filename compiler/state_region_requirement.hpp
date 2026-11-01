@@ -21,7 +21,11 @@ struct StateRegionLoanRequirement {
 
   [[nodiscard]] constexpr bool valid() const noexcept {
     return !region_binding.empty() && bind_current_logical_execution &&
-           require_generation_fence && loan_id && !place.empty();
+           require_generation_fence && loan_id &&
+           runtime::state_region_place_valid(region_binding) &&
+           runtime::state_region_place_valid(place) &&
+           runtime::state_region_access_valid(kind) &&
+           runtime::state_region_action_valid(action);
   }
 
   [[nodiscard]] constexpr bool authorizes_release(
@@ -40,6 +44,7 @@ struct StateRegionLoanRequirement {
 
   [[nodiscard]] constexpr StateRegionLoanRequirement release_requirement()
       const noexcept {
+    if (!valid() || action != runtime::StateRegionAction::borrow) return {};
     auto out = *this;
     out.action = runtime::StateRegionAction::release;
     return out;
