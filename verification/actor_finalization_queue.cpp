@@ -214,6 +214,54 @@ void completed_stop_cannot_create_duplicate_receipt() {
         "old incarnation observer was delivered twice");
 }
 
+void competing_independent_queues_issue_one_completion() {
+  // Independent supervisors must not each claim a successful retirement
+  // receipt for the same actor incarnation, even under simultaneous drain.
+  for (std::uint64_t round = 0; round < 32; ++round) {
+    auto actor = std::make_shared<Mailbox>(900 + round);
+    auto observer = std::make_shared<Observer>();
+    check(actor->context().attach_owned_resource(observer),
+          "multi-supervisor observer admission failed");
+    std::array<ActorFinalizationQueue<1>,4> queues;
+    std::array<ActorFinalizationQueue<1>::Completion,4> receipts{};
+    for (auto& queue : queues) {
+      check(queue.try_request_close(actor) ==
+                ActorFinalizationQueue<1>::Admission::Queued,
+            "independent supervisor failed to retain its stop ticket");
+    }
+    std::latch go{1};
+    std::array<std::thread,4> workers;
+    std::atomic<unsigned> processed{0};
+    for (std::size_t i = 0; i < queues.size(); ++i) {
+      workers[i] = std::thread([&,i] {
+        go.wait();
+        if (queues[i].run_one(&receipts[i]))
+          processed.fetch_add(1, std::memory_order_release);
+      });
+    }
+    go.count_down();
+    for (auto& worker : workers) worker.join();
+    unsigned successful = 0;
+    unsigned duplicates = 0;
+    for (std::size_t i=0; i<queues.size(); ++i) {
+      const auto& receipt = receipts[i];
+      check(receipt.actor_id == 900 + round && receipt.incarnation == 1,
+            "independent supervisor produced an incorrect incarnation receipt");
+      if (receipt.finalized) ++successful;
+      else ++duplicates;
+      check(queues[i].pending() == 0,
+            "multi-supervisor queue leaked an already claimed ticket");
+    }
+    check(processed.load(std::memory_order_acquire) == 4 &&
+          successful == 1 && duplicates == 3 &&
+          observer->retired.load(std::memory_order_acquire) == 1,
+          "independent supervisors double-reported successful finalization");
+    for (std::size_t i=0; i<queues.size(); ++i)
+      check(queues[i].completed() + queues[i].stale() == 1,
+            "independent supervisor lost its single ticket outcome");
+  }
+}
+
 void parallel_duplicate_stop_admission() {
   for (std::uint64_t round = 0; round < 32; ++round) {
     ActorFinalizationQueue<2> queue;
@@ -463,6 +511,7 @@ int main() {
     invalid_cause_does_not_stop_actor();
     undrained_queue_destructor_is_fail_stop();
     completed_stop_cannot_create_duplicate_receipt();
+    competing_independent_queues_issue_one_completion();
     parallel_duplicate_stop_admission();
     processing_ticket_is_reserved_and_escalatable();
     self_leased_finalizer_retries_without_losing_ticket();
