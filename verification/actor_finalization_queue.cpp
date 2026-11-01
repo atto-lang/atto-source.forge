@@ -511,13 +511,21 @@ void stale_generation_stop_has_no_side_effects() {
   auto observer = std::make_shared<Observer>();
   check(current.attach_owned_resource(observer),
         "could not attach replacement generation observer");
+  const std::uint8_t message[] = {0xA5, 0x3C};
+  actor.send(actor.ref(), std::span<const std::uint8_t>(message, 2));
+  check(actor.queued() == 1, "replacement mailbox payload was not admitted");
   check(old != replacement.generation &&
         !actor.request_close_if_generation(0) &&
         !actor.request_close_if_generation(old),
         "stale or zero generation unexpectedly admitted shutdown");
-  check(current.valid() && actor.execution_lease().context() == current &&
+  check(actor.queued() == 1 && current.valid() &&
+        actor.execution_lease().context() == current &&
         observer->retired.load(std::memory_order_acquire) == 0,
-        "stale generation request changed replacement's authority");
+        "stale generation request cleared replacement mailbox or capability");
+  const auto received = actor.receive();
+  check(received && received->size() == 2 &&
+        (*received)[0] == 0xA5 && (*received)[1] == 0x3C,
+        "stale generation request modified queued message contents");
   check(actor.request_close_if_generation(replacement.generation),
         "current generation could not request shutdown");
   check(!current.valid() && observer->retired.load(std::memory_order_acquire) == 0,
@@ -576,6 +584,70 @@ void concurrent_restart_stop_never_fences_replacement() {
       catch (const std::runtime_error&) { rejected = true; }
       check(rejected, "cancelled restart left stopped generation executable");
     }
+  }
+}
+
+void full_queue_preserves_restarted_actor_until_stale_ticket_drains() {
+  for (std::uint64_t round=0; round<32; ++round) {
+    ActorFinalizationQueue<1> queue;
+    auto actor = std::make_shared<Mailbox>(1600 + round);
+    check(queue.try_request_close(actor) ==
+              ActorFinalizationQueue<1>::Admission::Queued,
+          "cannot queue prior incarnation in full capacity test");
+    const auto new_ref = actor->restart();
+    const auto newer = actor->context();
+    check(new_ref.generation == 2 && newer.valid(),
+          "new incarnation did not start after old stop");
+    check(queue.try_request_close(actor) ==
+              ActorFinalizationQueue<1>::Admission::Full &&
+          newer.valid() && queue.pending() == 1,
+          "old ticket capacity shutdown a new generation");
+    ActorFinalizationQueue<1>::Completion old_receipt;
+    check(queue.run_one(&old_receipt) && old_receipt.incarnation == 1 &&
+          !old_receipt.finalized && !old_receipt.deduplicated &&
+          queue.stale() == 1 && newer.valid(),
+          "stale finalization ticket altered the replacement");
+    check(queue.try_request_close(actor) ==
+              ActorFinalizationQueue<1>::Admission::Queued,
+          "capacity was not recovered for replacement generation");
+    ActorFinalizationQueue<1>::Completion fresh_receipt;
+    check(queue.run_one(&fresh_receipt) && fresh_receipt.incarnation == 2 &&
+          fresh_receipt.finalized && !fresh_receipt.deduplicated &&
+          queue.completed() == 1 && queue.stale() == 1,
+          "new generation could not cleanly finalize after stale capacity drain");
+  }
+}
+
+void stop_cause_priority_is_monotonic() {
+  using Queue = ActorFinalizationQueue<1>;
+  constexpr ActorStopCause causes[] = {
+    ActorStopCause::Requested, ActorStopCause::Cancelled,
+    ActorStopCause::UnhandledThrow, ActorStopCause::Raised,
+    ActorStopCause::Panicked
+  };
+  for (unsigned start=0; start<5; ++start) {
+    Queue queue;
+    auto actor = std::make_shared<Mailbox>(1700 + start);
+    check(queue.try_request_close(actor, causes[start]) ==
+              Queue::Admission::Queued,
+          "failed to enqueue first canonical stop reason");
+    ActorStopCause expected = causes[start];
+    for (unsigned k=0; k<20; ++k) {
+      const auto cause = causes[(start + k*3) % 5];
+      if (static_cast<unsigned>(cause) > static_cast<unsigned>(expected))
+        expected = cause;
+      check(queue.try_request_close(actor, cause) ==
+                Queue::Admission::AlreadyQueued,
+            "canonical cause escalation changed ticket count");
+      check(queue.try_request_close(actor, static_cast<ActorStopCause>(255)) ==
+                Queue::Admission::Invalid && queue.pending() == 1,
+            "invalid cause changed pending priority or capacity");
+    }
+    Queue::Completion result;
+    check(queue.run_one(&result) && result.finalized &&
+          result.cause == expected && queue.completed() == 1 &&
+          queue.pending() == 0,
+          "supervisor completion stop cause did not retain priority maximum");
   }
 }
 
@@ -733,6 +805,8 @@ int main() {
     stale_generation_stop_has_no_side_effects();
     concurrent_restart_stop_never_fences_replacement();
     queue_restart_race_never_shuts_new_generation();
+    full_queue_preserves_restarted_actor_until_stale_ticket_drains();
+    stop_cause_priority_is_monotonic();
     stale_ticket_does_not_stop_restarted_actor();
     leased_shutdown_is_not_observer_callback();
     rejection_and_generation_reuse();
