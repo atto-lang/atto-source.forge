@@ -1,6 +1,8 @@
 #include "runtime/actor_finalizer.hpp"
 #include "runtime/shared_i64_table.hpp"
 #include <atomic>
+#include <array>
+#include <vector>
 #include <cstdint>
 #include <iostream>
 #include <latch>
@@ -105,6 +107,176 @@ void stop_cause_receipts_preserve_priority() {
         receipt.actor_id == 210 && receipt.incarnation == 1 &&
         receipt.cause == ActorStopCause::Raised && !receipt.finalized,
         "stale completion incorrectly claimed the restarted incarnation");
+}
+
+struct BlockingObserver final : ActorLifetimeResource {
+  std::latch& entered;
+  std::latch& released;
+  std::atomic<int> callbacks{0};
+  BlockingObserver(std::latch& e, std::latch& r)
+      : entered(e), released(r) {}
+  void actor_owner_stopped() noexcept override {
+    callbacks.fetch_add(1, std::memory_order_release);
+    entered.count_down();
+    released.wait();
+  }
+};
+
+void completed_stop_cannot_create_duplicate_receipt() {
+  ActorFinalizationQueue<1> queue;
+  auto actor = std::make_shared<Mailbox>(211);
+  auto observer = std::make_shared<Observer>();
+  check(actor->context().attach_owned_resource(observer),
+        "failed to attach completed-stop observer");
+  ActorFinalizationQueue<1>::Completion receipt;
+  check(queue.try_request_close(actor) == ActorFinalizationQueue<1>::Admission::Queued &&
+        queue.run_one(&receipt) && receipt.finalized &&
+        receipt.incarnation == 1 && queue.completed() == 1,
+        "first owner stop was not completed");
+  for (unsigned i = 0; i < 128; ++i) {
+    check(queue.try_request_close(actor, ActorStopCause::Panicked) ==
+              ActorFinalizationQueue<1>::Admission::AlreadyFinalized,
+          "completed incarnation admitted a duplicate finalization ticket");
+  }
+  check(queue.pending() == 0 && queue.completed() == 1 && !queue.run_one() &&
+        observer->retired.load(std::memory_order_acquire) == 1,
+        "completed stop created a second completion receipt or owner callback");
+  (void)actor->restart();
+  check(queue.try_request_close(actor) == ActorFinalizationQueue<1>::Admission::Queued,
+        "new incarnation incorrectly rejected as already finalized");
+  check(queue.run_one(&receipt) && receipt.incarnation == 2 &&
+        receipt.finalized && queue.completed() == 2,
+        "new incarnation was not independently finalized");
+  check(observer->retired.load(std::memory_order_acquire) == 1,
+        "old incarnation observer was delivered twice");
+}
+
+void parallel_duplicate_stop_admission() {
+  for (std::uint64_t round = 0; round < 32; ++round) {
+    ActorFinalizationQueue<2> queue;
+    auto actor = std::make_shared<Mailbox>(300 + round);
+    auto observer = std::make_shared<Observer>();
+    check(actor->context().attach_owned_resource(observer),
+          "failed to attach contention observer");
+    std::latch go{1};
+    std::atomic<unsigned> queued{0}, duplicates{0}, unexpected{0};
+    std::array<std::thread, 8> workers;
+    for (unsigned i=0; i<workers.size(); ++i) {
+      workers[i] = std::thread([&,i] {
+        go.wait();
+        const auto cause = i == 7 ? ActorStopCause::Panicked :
+                           ActorStopCause::Requested;
+        const auto outcome = queue.try_request_close(actor, cause);
+        if (outcome == ActorFinalizationQueue<2>::Admission::Queued)
+          queued.fetch_add(1, std::memory_order_relaxed);
+        else if (outcome == ActorFinalizationQueue<2>::Admission::AlreadyQueued)
+          duplicates.fetch_add(1, std::memory_order_relaxed);
+        else unexpected.fetch_add(1, std::memory_order_relaxed);
+      });
+    }
+    go.count_down();
+    for (auto& worker : workers) worker.join();
+    check(queued.load() == 1 && duplicates.load() == 7 &&
+          unexpected.load() == 0 && queue.pending() == 1,
+          "parallel duplicate stop did not preserve one retained ticket");
+    ActorFinalizationQueue<2>::Completion receipt;
+    check(queue.run_one(&receipt) && receipt.cause == ActorStopCause::Panicked &&
+          receipt.finalized && receipt.incarnation == 1 &&
+          queue.completed() == 1 && queue.pending() == 0 &&
+          observer->retired.load(std::memory_order_acquire) == 1,
+          "parallel stop lost panic priority or double-finalized actor");
+  }
+}
+
+void processing_ticket_is_reserved_and_escalatable() {
+  ActorFinalizationQueue<1> queue;
+  auto actor = std::make_shared<Mailbox>(500);
+  auto unrelated = std::make_shared<Mailbox>(501);
+  std::latch entered{1}, release{1};
+  auto observer = std::make_shared<BlockingObserver>(entered, release);
+  check(actor->context().attach_owned_resource(observer),
+        "cannot attach blocking supervisor observer");
+  check(queue.try_request_close(actor) == ActorFinalizationQueue<1>::Admission::Queued,
+        "failed to queue callback test");
+  ActorFinalizationQueue<1>::Completion receipt;
+  std::atomic<bool> worker_done{false};
+  std::thread supervisor([&] {
+    (void)queue.run_one(&receipt);
+    worker_done.store(true, std::memory_order_release);
+  });
+  entered.wait();
+  const auto escalation = queue.try_request_close(actor, ActorStopCause::Panicked);
+  const auto capacity = queue.try_request_close(unrelated);
+  const bool processing_exclusive = !queue.run_one();
+  const bool pending_retained = queue.pending() == 1;
+  const bool unrelated_still_active = unrelated->context().valid();
+  release.count_down();
+  supervisor.join();
+  check(escalation == ActorFinalizationQueue<1>::Admission::AlreadyQueued &&
+        capacity == ActorFinalizationQueue<1>::Admission::Full &&
+        processing_exclusive && pending_retained && unrelated_still_active,
+        "processing finalizer lost ticket, admitted duplicate or stopped outsider");
+  check(worker_done.load(std::memory_order_acquire) && receipt.finalized &&
+        receipt.cause == ActorStopCause::Panicked &&
+        observer->callbacks.load(std::memory_order_acquire) == 1 &&
+        queue.completed() == 1 && queue.pending() == 0,
+        "escalation after ticket claim was not reflected in final completion");
+}
+
+void self_leased_finalizer_retries_without_losing_ticket() {
+  ActorFinalizationQueue<1> queue;
+  auto actor = std::make_shared<Mailbox>(502);
+  auto observer = std::make_shared<Observer>();
+  check(actor->context().attach_owned_resource(observer),
+        "cannot register self-lease observer");
+  {
+    const auto lease = actor->execution_lease();
+    check(queue.try_request_close(actor) == ActorFinalizationQueue<1>::Admission::Queued,
+          "leased stop could not reserve a ticket");
+    bool denied = false;
+    try { (void)queue.run_one(); }
+    catch (const std::runtime_error&) { denied = true; }
+    check(denied && queue.pending() == 1 &&
+          observer->retired.load(std::memory_order_acquire) == 0 &&
+          lease.context().valid(),
+          "self-join finalization lost its ticket or retired before quiescence");
+  }
+  check(queue.drain_ready() == 1 && queue.pending() == 0 &&
+        observer->retired.load(std::memory_order_acquire) == 1,
+        "failed self-join was not retried by external supervisor");
+}
+
+void competing_supervisor_drainers_are_exclusive() {
+  for (std::uint64_t round=0; round<32; ++round) {
+    ActorFinalizationQueue<4> queue;
+    std::array<std::shared_ptr<Mailbox>,4> actors;
+    std::array<std::shared_ptr<Observer>,4> observers;
+    for (std::size_t i=0; i<actors.size(); ++i) {
+      actors[i] = std::make_shared<Mailbox>(600 + round*4 + i);
+      observers[i] = std::make_shared<Observer>();
+      check(actors[i]->context().attach_owned_resource(observers[i]),
+            "cannot register concurrent-supervisor observer");
+      check(queue.try_request_close(actors[i]) ==
+                ActorFinalizationQueue<4>::Admission::Queued,
+            "concurrent-supervisor ticket rejected");
+    }
+    std::latch go{1};
+    std::atomic<unsigned> drained{0};
+    std::array<std::thread,4> workers;
+    for (auto& worker : workers)
+      worker = std::thread([&] {
+        go.wait();
+        if (queue.run_one()) drained.fetch_add(1, std::memory_order_relaxed);
+      });
+    go.count_down();
+    for (auto& worker : workers) worker.join();
+    unsigned retired = 0;
+    for (const auto& observer : observers)
+      retired += static_cast<unsigned>(observer->retired.load());
+    check(drained.load() == 4 && retired == 4 && queue.completed() == 4 &&
+          queue.stale() == 0 && queue.pending() == 0,
+          "supervisor workers double-claimed or dropped a retained ticket");
+  }
 }
 
 void duplicate_requests_and_supervisor_completion() {
@@ -225,6 +397,11 @@ void rejection_and_generation_reuse() {
 
 int main() {
   try {
+    completed_stop_cannot_create_duplicate_receipt();
+    parallel_duplicate_stop_admission();
+    processing_ticket_is_reserved_and_escalatable();
+    self_leased_finalizer_retries_without_losing_ticket();
+    competing_supervisor_drainers_are_exclusive();
     duplicate_requests_and_supervisor_completion();
     stop_cause_receipts_preserve_priority();
     retirement_callback_reentry_does_not_deadlock_queue();
