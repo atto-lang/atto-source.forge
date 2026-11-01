@@ -247,8 +247,15 @@ void competing_independent_queues_issue_one_completion() {
       const auto& receipt = receipts[i];
       check(receipt.actor_id == 900 + round && receipt.incarnation == 1,
             "independent supervisor produced an incorrect incarnation receipt");
-      if (receipt.finalized) ++successful;
-      else ++duplicates;
+      if (receipt.finalized) {
+        ++successful;
+        check(!receipt.deduplicated,
+              "retirement winner was also marked as duplicate");
+      } else {
+        ++duplicates;
+        check(receipt.deduplicated,
+              "cross-supervisor loser was incorrectly classified as stale");
+      }
       check(queues[i].pending() == 0,
             "multi-supervisor queue leaked an already claimed ticket");
     }
@@ -256,9 +263,17 @@ void competing_independent_queues_issue_one_completion() {
           successful == 1 && duplicates == 3 &&
           observer->retired.load(std::memory_order_acquire) == 1,
           "independent supervisors double-reported successful finalization");
-    for (std::size_t i=0; i<queues.size(); ++i)
-      check(queues[i].completed() + queues[i].stale() == 1,
-            "independent supervisor lost its single ticket outcome");
+    unsigned unique_completions = 0;
+    unsigned duplicate_completions = 0;
+    for (const auto& queue : queues) {
+      check(queue.completed() + queue.duplicates() + queue.stale() == 1 &&
+            queue.stale() == 0,
+            "independent supervisor misclassified its ticket outcome");
+      unique_completions += static_cast<unsigned>(queue.completed());
+      duplicate_completions += static_cast<unsigned>(queue.duplicates());
+    }
+    check(unique_completions == 1 && duplicate_completions == 3,
+          "independent queues counted duplicate retirements as successful");
   }
 }
 
@@ -452,8 +467,9 @@ void stale_ticket_does_not_stop_restarted_actor() {
   check(replacement.generation == old.incarnation() + 1 && renewed.valid(),
         "supervisor restart did not create a new actor incarnation");
   check(queue.run_one(), "stale request was not consumed");
-  check(queue.stale() == 1 && queue.completed() == 0,
-        "stale ticket incorrectly counted as a completion");
+  check(queue.stale() == 1 && queue.completed() == 0 &&
+        queue.duplicates() == 0,
+        "obsolete generation ticket was incorrectly counted as a duplicate");
   check(renewed.valid() && actor->execution_lease().context() == renewed,
         "old finalization ticket shut down restarted actor");
 }
