@@ -158,6 +158,9 @@ class Mailbox {
   // Returns the incarnation fenced by the stop request. Trusted host-only
   // return value enables generation-pinned supervisor finalization tickets.
   std::uint64_t request_close();
+  // Generation-checked supervisor admission. A stale snapshot MUST NOT stop
+  // a replacement incarnation; return false without any lifecycle effects.
+  bool request_close_if_generation(std::uint64_t expected_generation);
   // Complete a queued stop only if its original generation is still current.
   // Returns false for a stale ticket; does not close a restarted actor.
   bool finalize_stop(std::uint64_t incarnation);
