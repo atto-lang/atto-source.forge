@@ -455,3 +455,39 @@ been copied to an alternative carrier without an admitted source-free
 canary. The queue also still has no autonomous production scheduler
 consumer, persistence, multi-node crash recovery, fairness guarantee,
 or hard-real-time bound.
+
+## Unique retirement outcome across independent supervisors (2026-10-31)
+
+Two independent `ActorFinalizationQueue` instances can retain stop
+tickets for the same actor incarnation. Previously, both
+`Mailbox::finalize_stop()` callers could report successful finalization
+after waiting on the same resource-retirement barrier, even though the
+callbacks ran once. `CapabilityToken::invalidate()` now returns true
+**only to the caller that actually performs retirement**. Existing
+callers may ignore its boolean result; the bounded queue uses it to
+avoid reporting duplicate successful completions.
+
+The completion receipt now distinguishes `finalized=true` (unique
+retirement winner), `deduplicated=true` (another supervisor completed
+this incarnation), and an obsolete-generation ticket (both false).
+The queue tracks `completed()`, `duplicates()` and `stale()`
+separately; an already finalized generation is still rejected at
+admission without a growing tombstone history.
+
+New source-level C++ tests include 32 iterations with **four
+independently queued supervisor workers racing to finalize one
+incarnation**, direct `Mailbox::close()` winning before a queued ticket
+runs, and a blocking lifecycle callback with concurrent direct-close
+and queued finalization. Each case requires one retirement callback
+and exactly one successful finalization outcome. These tests also
+exercise distinct duplicate/stale counters and pending-ticket cleanup.
+
+A source-structure consistency check confirmed the new declaration,
+definition, receipt fields, and test entrypoints match. This is
+**static evidence only**: private Forge checkout is unavailable in the
+local compiler container, and recent approved private GitHub Actions
+carriers have not admitted a source-free runner. GCC/Clang compilation,
+CTest, ASan/UBSan/LSan, TSAN and exact-head guest execution remain
+unverified. This host-only primitive does not prove a single
+supervisor priority order across separate queues or guarantee
+eventual progress after supervisor loss.
