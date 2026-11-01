@@ -214,6 +214,55 @@ void completed_stop_cannot_create_duplicate_receipt() {
         "old incarnation observer was delivered twice");
 }
 
+void external_supervisor_completion_is_a_deduplicated_ticket() {
+  ActorFinalizationQueue<1> queue;
+  auto actor = std::make_shared<Mailbox>(809);
+  auto observer = std::make_shared<Observer>();
+  check(actor->context().attach_owned_resource(observer),
+        "could not attach external-supervisor observer");
+  check(queue.try_request_close(actor) == ActorFinalizationQueue<1>::Admission::Queued,
+        "could not retain ticket before direct supervisor close");
+  actor->close(); // A different trusted supervisor wins retirement.
+  ActorFinalizationQueue<1>::Completion receipt;
+  check(queue.run_one(&receipt) && !receipt.finalized && receipt.deduplicated &&
+        receipt.actor_id == 809 && receipt.incarnation == 1 &&
+        queue.completed() == 0 && queue.duplicates() == 1 &&
+        queue.stale() == 0 && queue.pending() == 0 &&
+        observer->retired.load(std::memory_order_acquire) == 1,
+        "direct supervisor completion was misreported as a stale incarnation");
+  check(queue.try_request_close(actor) ==
+            ActorFinalizationQueue<1>::Admission::AlreadyFinalized,
+        "post-completion admission produced a second ticket");
+}
+
+void concurrent_direct_close_and_queue_drain_do_not_double_retire() {
+  ActorFinalizationQueue<1> queue;
+  auto actor = std::make_shared<Mailbox>(810);
+  std::latch callback_entered{1}, release_callback{1};
+  auto observer = std::make_shared<BlockingObserver>(
+      callback_entered, release_callback);
+  check(actor->context().attach_owned_resource(observer),
+        "could not attach competing supervisors observer");
+  check(queue.try_request_close(actor) == ActorFinalizationQueue<1>::Admission::Queued,
+        "could not queue competing-supervisors stop");
+  std::thread direct([&] { actor->close(); });
+  callback_entered.wait(); // Direct supervisor won cleanup and is in callback.
+  ActorFinalizationQueue<1>::Completion receipt;
+  std::atomic<bool> queue_processed{false};
+  std::thread worker([&] {
+    queue_processed.store(queue.run_one(&receipt), std::memory_order_release);
+  });
+  release_callback.count_down();
+  worker.join();
+  direct.join();
+  check(queue_processed.load(std::memory_order_acquire) &&
+        !receipt.finalized && receipt.deduplicated &&
+        observer->callbacks.load(std::memory_order_acquire) == 1 &&
+        queue.completed() == 0 && queue.duplicates() == 1 &&
+        queue.stale() == 0 && queue.pending() == 0,
+        "concurrent direct close/queue drain produced duplicate retirement");
+}
+
 void competing_independent_queues_issue_one_completion() {
   // Independent supervisors must not each claim a successful retirement
   // receipt for the same actor incarnation, even under simultaneous drain.
@@ -527,6 +576,8 @@ int main() {
     invalid_cause_does_not_stop_actor();
     undrained_queue_destructor_is_fail_stop();
     completed_stop_cannot_create_duplicate_receipt();
+    external_supervisor_completion_is_a_deduplicated_ticket();
+    concurrent_direct_close_and_queue_drain_do_not_double_retire();
     competing_independent_queues_issue_one_completion();
     parallel_duplicate_stop_admission();
     processing_ticket_is_reserved_and_escalatable();
