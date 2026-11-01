@@ -147,7 +147,27 @@ int main() {
       "define serial http actor A1 as end",
       "define actor A1 extends Base as end",
       "define actor A1 implements Contract as end",
-      "define actor A1 impl Traced as end"
+      "define actor A1 impl Traced as end",
+      // Canonical actor lifecycle v1: Forge cannot lower actor guest code yet.
+      R"ores(// Lifecycle baseline only. No sealed state, inheritance, or actor-group parity claim.
+define actor A1 as
+  receive(ActorMail<int> mail): void {
+    self.send(mail.value + 1);
+    self.end();
+    return;
+  }
+end
+
+pub async routine main(): void {
+  val worker = spawn A1();
+  await worker.get_ready();
+  worker.send(41);
+  val reply = (await worker.outputs.next()).value.unwrap();
+  stdio.stdout.write(reply.value);
+  await worker.get_done();
+  return;
+}
+)ores"
     }) {
       reject_diagnostic([&] { parse_source(source_actor); },
                         "class/actor methods require typed native lowering");
