@@ -256,6 +256,19 @@ std::uint64_t Mailbox::request_close() {
   queued_bytes_ = 0;
   return generation_;
 }
+bool Mailbox::request_close_if_generation(std::uint64_t expected_generation) {
+  std::scoped_lock lock(mutex_);
+  if (expected_generation == 0 || expected_generation != generation_)
+    return false;
+  closed_ = true;
+  if (restarting_) stop_during_restart_ = true;
+  // The compare-and-stop is one mailbox-mutex transaction. A supervisor
+  // holding an old ActorRef cannot fence a later incarnation after restart.
+  authority_->request_stop();
+  discard_queued(queue_);
+  queued_bytes_ = 0;
+  return true;
+}
 
 bool Mailbox::finalize_stop(std::uint64_t incarnation) {
   std::shared_ptr<CapabilityToken> old;
