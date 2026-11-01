@@ -420,3 +420,38 @@ actor panic/raise/throw supervisor CONTROL notices, restart cancellation
 handoff, queue persistence across scheduler failure, and exact-head
 runner-executed conformance. This host queue must not be represented as
 having solved those capabilities.
+
+## Supervisor ticket hardening and parallel regressions (2026-10-31)
+
+The bounded host `ActorFinalizationQueue<N>` now distinguishes four
+non-error admission outcomes: `Queued`, `AlreadyQueued`,
+`AlreadyFinalized`, and `Full`. A completed incarnation cannot be
+re-enqueued merely because its original ticket was removed. Its
+generation-scoped retirement state is read from the mailbox capability,
+rather than requiring unbounded historical ticket tombstones. A new
+incarnation remains independently eligible for admission.
+
+Malformed `ActorStopCause` enum values are rejected as `Invalid`
+**before** actor admission is fenced or queue capacity is consumed.
+Such invalid values cannot outrank `Panicked` in a supervisor completion
+notice. A full queue returns `Full` without stopping a newly presented
+actor; completed incarnations still return `AlreadyFinalized` when the
+queue is full.
+
+New regression cases in `verification/actor_finalization_queue.cpp`
+exercise 32 rounds of eight concurrent duplicate-request submitters,
+32 rounds of four concurrent supervisor drain workers, escalation to panic
+while the resource callback is blocked, queue-full behavior during an
+in-progress callback, a failed same-lease finalize followed by external
+retry, 128 repeated post-completion requests, re-admission of a restarted
+generation, invalid-cause rejection, and a POSIX subprocess fail-stop
+oracle for destroying a queue that still retains cleanup work.
+Subprocess death checks are excluded from GCC/Clang ASan builds.
+
+These source tests have **not** passed: the exact-head source CI still
+fails before any runner is assigned. The shell runner cannot access the
+private GitHub repository from this environment. No private code has
+been copied to an alternative carrier without an admitted source-free
+canary. The queue also still has no autonomous production scheduler
+consumer, persistence, multi-node crash recovery, fairness guarantee,
+or hard-real-time bound.
