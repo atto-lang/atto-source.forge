@@ -531,3 +531,49 @@ The latest source [compiler/runtime CI #41276693881](https://github.com/ores-tru
 and [singleton CI #41276693956](https://github.com/ores-truffle-oreslang/oreslang-source.forge/actions/runs/41276693956)
 failed before runner allocation (`runner_id=0`, no executed steps).
 No current-head compiler, sanitizer, CTest or guest execution has passed.
+
+## Owner observer retirement lock boundary and additional stress (2026-11-01)
+
+The actor-owned observer registry now deduplicates repeated admission of the
+same still-live resource pointer. Duplicate attachment is idempotent even
+when the fixed 256-observer registry is full; distinct registrations still
+fail closed on exhaustion. Weak resource slots are reclaimed after their
+observers expire; the actor registry never takes ownership of the resource
+through those slots.
+
+On supervisor retirement, the runtime snapshots a fixed
+`std::array<std::shared_ptr<ActorLifetimeResource>, 256>` under
+`resource_mutex_`, clears the weak slots, releases that mutex, and only
+**then** invokes `actor_owner_stopped()` on each retained observer. Thus
+callbacks never run while holding their owner's resource-registration lock.
+The snapshot holds resources alive through notification. No unbounded
+allocation is added to this retirement path, but 256 strong references and
+nested callback execution still carry host-stack/cancellation costs and do
+not confer hard-real-time guarantees.
+
+New host regressions cover:
+- Callback-initiated shutdown of a different actor through a capacity-two
+  supervisor queue, preserving ordered finalization and panic priority
+- The same callback with a capacity-one queue: `Full` must not fence the
+  child, and retry after the prior ticket completes must succeed
+- Same-resource registration 16 times, then all 256 distinct registry slots,
+  followed by exactly one notification per distinct accepted resource
+- Weak observer expiration, slot reuse, no accidental resource resurrection
+- 96 rounds of eight concurrent observer attachments versus shutdown,
+  checking accepted registrations get one callback and refused ones get none
+- 48 rounds of eight duplicate observer registrations, checking
+  idempotent acceptance and one retirement callback
+- A direct parent-retirement callback that closes a second actor,
+  checking both actors retire without duplicate delivery
+
+A source-structure inspection finds **18 actor-lease tests** and
+**25 finalizer-queue tests** referenced by their main functions; both
+binaries remain present in the direct release/sanitizer script and
+registered in CTest. This is **authored/source-level verification only**.
+At source revision
+`8db4814905a2f2a833700b23a75d5e95339b54bb`,
+[source runtime CI #41277826247](https://github.com/ores-truffle-oreslang/oreslang-source.forge/actions/runs/41277826247)
+and [compiler/runtime CI #41277826281](https://github.com/ores-truffle-oreslang/oreslang-source.forge/actions/runs/41277826281)
+both failed with `runner_id=0`, zero executed steps. No native release,
+GCC/Clang, ASan/UBSan, LeakSanitizer, TSAN or guest conformance pass
+may be inferred.
