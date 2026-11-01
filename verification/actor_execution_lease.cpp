@@ -211,6 +211,34 @@ void duplicate_observer_registration_races_are_idempotent() {
   }
 }
 
+void expired_owned_resource_slot_is_reusable() {
+  Mailbox box{2500};
+  const auto owner = box.context();
+  auto expired = std::make_shared<Observer>();
+  std::weak_ptr<Observer> expired_weak = expired;
+  check(owner.attach_owned_resource(expired),
+        "could not attach ephemeral owner resource");
+  expired.reset();
+  check(expired_weak.expired(),
+        "actor owner registry unexpectedly retained a strong resource reference");
+  std::vector<std::shared_ptr<Observer>> live;
+  live.reserve(oresforge::runtime::kMaxActorOwnedResources);
+  for (std::size_t i=0; i<oresforge::runtime::kMaxActorOwnedResources; ++i) {
+    auto observer = std::make_shared<Observer>();
+    check(owner.attach_owned_resource(observer),
+          "expired weak slot could not be reused at registry capacity");
+    live.push_back(std::move(observer));
+  }
+  check(!owner.attach_owned_resource(std::make_shared<Observer>()),
+        "full registry admitted one more distinct live observer");
+  box.close();
+  check(expired_weak.expired(),
+        "retirement resurrected a previously expired weak observer");
+  for (const auto& observer : live)
+    check(observer->calls.load(std::memory_order_acquire) == 1,
+          "reused observer slot was not retired exactly once");
+}
+
 void owned_observer_registration_is_idempotent_and_bounded() {
   Mailbox box{2110};
   const auto context = box.context();
@@ -609,6 +637,7 @@ int main() {
     foreign_thread_lease_destructor_is_fail_stop();
     owner_resource_registration_shutdown_races();
     duplicate_observer_registration_races_are_idempotent();
+    expired_owned_resource_slot_is_reusable();
     owned_observer_registration_is_idempotent_and_bounded();
     cross_actor_cleanup_cascade_is_once_only();
     moved_from_lease_is_not_authority();
