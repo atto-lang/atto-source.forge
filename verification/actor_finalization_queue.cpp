@@ -192,11 +192,23 @@ void completed_stop_cannot_create_duplicate_receipt() {
   check(queue.pending() == 0 && queue.completed() == 1 && !queue.run_one() &&
         observer->retired.load(std::memory_order_acquire) == 1,
         "completed stop created a second completion receipt or owner callback");
+  // A full queue must still recognize a previously completed incarnation,
+  // and not convert its harmless retry into capacity backpressure.
+  auto unrelated = std::make_shared<Mailbox>(214);
+  check(queue.try_request_close(unrelated) ==
+            ActorFinalizationQueue<1>::Admission::Queued,
+        "cannot fill finalization queue for completed-stop test");
+  check(queue.try_request_close(actor) ==
+            ActorFinalizationQueue<1>::Admission::AlreadyFinalized &&
+        queue.pending() == 1,
+        "full queue misclassified an already retired incarnation");
+  check(queue.drain_ready() == 1 && queue.completed() == 2,
+        "unrelated full-capacity ticket did not complete");
   (void)actor->restart();
   check(queue.try_request_close(actor) == ActorFinalizationQueue<1>::Admission::Queued,
         "new incarnation incorrectly rejected as already finalized");
   check(queue.run_one(&receipt) && receipt.incarnation == 2 &&
-        receipt.finalized && queue.completed() == 2,
+        receipt.finalized && queue.completed() == 3,
         "new incarnation was not independently finalized");
   check(observer->retired.load(std::memory_order_acquire) == 1,
         "old incarnation observer was delivered twice");
@@ -463,8 +475,9 @@ int main() {
     stale_ticket_does_not_stop_restarted_actor();
     leased_shutdown_is_not_observer_callback();
     rejection_and_generation_reuse();
-    std::cout << "PASS: bounded supervisor tickets, callback-free admission, "
-                 "exactly-once finalization, stop/restart generation fencing\n";
+    std::cout << "PASS: bounded finalization, 32x8 duplicate races, "
+                 "32x4 supervisor races, priority escalation, "
+                 "completed-generation dedup, fail-stop ticket retention\n";
   } catch (const std::exception& e) {
     std::cerr << e.what() << '\n';
     return 1;
