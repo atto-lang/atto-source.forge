@@ -2,6 +2,17 @@
 #include "runtime/shared_i64_table.hpp"
 #include <atomic>
 #include <array>
+#include <exception>
+#include <cstdlib>
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define ORES_FORGE_ASAN_BUILD 1
+#endif
+#endif
+#if defined(__unix__) && !defined(__SANITIZE_ADDRESS__) && !defined(ORES_FORGE_ASAN_BUILD)
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 #include <vector>
 #include <cstdint>
 #include <iostream>
@@ -121,6 +132,46 @@ struct BlockingObserver final : ActorLifetimeResource {
     released.wait();
   }
 };
+
+void invalid_cause_does_not_stop_actor() {
+  ActorFinalizationQueue<1> queue;
+  auto actor = std::make_shared<Mailbox>(212);
+  const auto prior = actor->context();
+  auto observer = std::make_shared<Observer>();
+  check(prior.attach_owned_resource(observer), "failed to attach invalid-cause observer");
+  check(queue.try_request_close(actor, static_cast<ActorStopCause>(255)) ==
+            ActorFinalizationQueue<1>::Admission::Invalid,
+        "unknown stop cause was accepted");
+  check(prior.valid() && actor->execution_lease().context().valid() &&
+        observer->retired.load(std::memory_order_acquire) == 0 &&
+        queue.pending() == 0,
+        "invalid stop reason changed actor authority or consumed ticket");
+}
+
+void undrained_queue_destructor_is_fail_stop() {
+#if defined(__unix__) && !defined(__SANITIZE_ADDRESS__) && !defined(ORES_FORGE_ASAN_BUILD)
+  const pid_t child = fork();
+  check(child >= 0, "cannot fork pending-ticket destructor death test");
+  if (child == 0) {
+    std::set_terminate([] { std::_Exit(74); });
+    {
+      ActorFinalizationQueue<1> queue;
+      auto actor = std::make_shared<Mailbox>(213);
+      if (queue.try_request_close(actor) !=
+          ActorFinalizationQueue<1>::Admission::Queued)
+        std::_Exit(75);
+      // Queue destruction with retained cleanup must fail-stop instead of
+      // silently losing the last strong actor ownership reference.
+    }
+    std::_Exit(0);
+  }
+  int status = 0;
+  check(waitpid(child, &status, 0) == child,
+        "pending-ticket destructor child was not reaped");
+  check(WIFEXITED(status) && WEXITSTATUS(status) == 74,
+        "undrained finalizer queue did not fail-stop");
+#endif
+}
 
 void completed_stop_cannot_create_duplicate_receipt() {
   ActorFinalizationQueue<1> queue;
@@ -397,6 +448,8 @@ void rejection_and_generation_reuse() {
 
 int main() {
   try {
+    invalid_cause_does_not_stop_actor();
+    undrained_queue_destructor_is_fail_stop();
     completed_stop_cannot_create_duplicate_receipt();
     parallel_duplicate_stop_admission();
     processing_ticket_is_reserved_and_escalatable();
