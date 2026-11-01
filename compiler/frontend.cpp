@@ -265,7 +265,9 @@ class Parser {
     if (tok_.text=="shared" || tok_.text=="untrusted" ||
         tok_.text=="serial" || tok_.text=="http" ||
         tok_.text=="tcp" || tok_.text=="websocket" ||
-        tok_.text=="unary" || tok_.text=="stream")
+        tok_.text=="unary" || tok_.text=="stream" ||
+        tok_.text=="abstract" || tok_.text=="transform" ||
+        tok_.text=="pipe")
       error("class/actor methods require typed native lowering");
     expect("fnc");
     const std::string name=identifier();
