@@ -362,6 +362,11 @@ class Parser {
       if (tok_.text=="match" || tok_.text=="switch")
         error("expected integer");
       const std::string name=identifier();
+      // The Forge scalar interpreter/JIT has no ETS table authority or pg
+      // ActorGroup/mailbox integration. Reject explicit namespace access
+      // instead of accepting it as an unbound scalar variable.
+      if ((name=="ets" || name=="pg") && tok_.text==".")
+        error("Forge ETS/pg guest APIs require authenticated isolate, table and mailbox lowering");
       if (!take("(")) return node(Expr::Tag::Parameter,{},0,name,offset);
       std::vector<ExprPtr> args;
       if (tok_.text!=")") {
