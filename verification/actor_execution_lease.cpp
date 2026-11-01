@@ -1,6 +1,7 @@
 #include "runtime/actor.hpp"
 #include "runtime/shared_i64_table.hpp"
 #include <atomic>
+#include <array>
 #include <cstdint>
 #include <iostream>
 #include <exception>
@@ -149,6 +150,65 @@ void foreign_thread_lease_destructor_is_fail_stop() {
   check(WIFEXITED(status) && WEXITSTATUS(status) == 77,
         "foreign thread release did not fail-stop");
 #endif
+}
+
+void owner_resource_registration_shutdown_races() {
+  for (std::uint64_t round=0; round<96; ++round) {
+    Mailbox box{2200 + round};
+    const auto context = box.context();
+    constexpr unsigned kThreads = 8;
+    std::array<std::shared_ptr<Observer>,kThreads> observers{};
+    std::array<std::atomic<bool>,kThreads> accepted{};
+    std::array<std::thread,kThreads> workers;
+    for (auto& observer : observers)
+      observer = std::make_shared<Observer>();
+    std::latch go{1};
+    for (unsigned i=0; i<kThreads; ++i) {
+      workers[i] = std::thread([&,i] {
+        go.wait();
+        accepted[i].store(context.attach_owned_resource(observers[i]),
+                          std::memory_order_release);
+      });
+    }
+    go.count_down();
+    const auto generation = box.request_close();
+    for (auto& worker : workers) worker.join();
+    check(box.finalize_stop(generation),
+          "supervisor failed to complete registration race shutdown");
+    check(!box.finalize_stop(generation),
+          "concurrent registration produced second retirement completion");
+    for (unsigned i=0; i<kThreads; ++i) {
+      const auto callbacks =
+          observers[i]->calls.load(std::memory_order_acquire);
+      check(callbacks ==
+                (accepted[i].load(std::memory_order_acquire) ? 1u : 0u),
+            "observer acceptance did not match exactly-once retirement");
+    }
+  }
+}
+
+void duplicate_observer_registration_races_are_idempotent() {
+  for (std::uint64_t round=0; round<48; ++round) {
+    Mailbox box{2400 + round};
+    const auto context = box.context();
+    auto observer = std::make_shared<Observer>();
+    std::latch go{1};
+    std::array<std::thread,8> threads;
+    std::atomic<unsigned> refused{0};
+    for (auto& worker : threads)
+      worker = std::thread([&] {
+        go.wait();
+        if (!context.attach_owned_resource(observer))
+          refused.fetch_add(1, std::memory_order_relaxed);
+      });
+    go.count_down();
+    for (auto& worker : threads) worker.join();
+    check(refused.load(std::memory_order_acquire) == 0,
+          "identical observer admission races refused an idempotent request");
+    box.close();
+    check(observer->calls.load(std::memory_order_acquire) == 1,
+          "identical observer admission races delivered multiple callbacks");
+  }
 }
 
 void owned_observer_registration_is_idempotent_and_bounded() {
@@ -547,6 +607,8 @@ int main() {
     unleased_stop_request_has_no_callbacks();
     lease_context_rejects_foreign_thread();
     foreign_thread_lease_destructor_is_fail_stop();
+    owner_resource_registration_shutdown_races();
+    duplicate_observer_registration_races_are_idempotent();
     owned_observer_registration_is_idempotent_and_bounded();
     cross_actor_cleanup_cascade_is_once_only();
     moved_from_lease_is_not_authority();
