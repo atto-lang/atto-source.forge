@@ -39,7 +39,9 @@ struct CapabilityToken final {
   void request_stop() noexcept;
   // Blocking external/supervisor completion: wait for quiescence, then retire
   // resources exactly once. Must not be called from a current lease/callback.
-  void invalidate() noexcept;
+  // The unique cleanup winner returns true. Concurrent supervisor callers
+  // wait until retirement completes but do not claim a second completion.
+  bool invalidate() noexcept;
   // True only after the supervisor has finished resource observer callbacks.
   bool retirement_complete() const noexcept;
   bool has_current_thread_lease() const noexcept;
