@@ -214,6 +214,91 @@ void completed_stop_cannot_create_duplicate_receipt() {
         "old incarnation observer was delivered twice");
 }
 
+struct ChainedStopObserver final : ActorLifetimeResource {
+  ActorFinalizationQueue<2>& queue;
+  std::shared_ptr<Mailbox> child;
+  std::atomic<int> callbacks{0};
+  std::atomic<int> outcome{-1};
+  ChainedStopObserver(ActorFinalizationQueue<2>& q,
+                      std::shared_ptr<Mailbox> next)
+      : queue(q), child(std::move(next)) {}
+  void actor_owner_stopped() noexcept override {
+    callbacks.fetch_add(1, std::memory_order_release);
+    try {
+      outcome.store(static_cast<int>(queue.try_request_close(
+          child, ActorStopCause::Panicked)), std::memory_order_release);
+    } catch (...) { outcome.store(-2, std::memory_order_release); }
+  }
+};
+
+void callback_can_enqueue_another_actor_without_self_join() {
+  ActorFinalizationQueue<2> queue;
+  auto parent = std::make_shared<Mailbox>(1810);
+  auto child = std::make_shared<Mailbox>(1811);
+  auto child_observer = std::make_shared<Observer>();
+  auto parent_observer = std::make_shared<ChainedStopObserver>(queue, child);
+  check(parent->context().attach_owned_resource(parent_observer) &&
+        child->context().attach_owned_resource(child_observer),
+        "failed to register supervisor callback chain");
+  check(queue.try_request_close(parent) ==
+            ActorFinalizationQueue<2>::Admission::Queued,
+        "parent was not admitted for callback chain");
+  ActorFinalizationQueue<2>::Completion first, second;
+  check(queue.run_one(&first) && first.finalized &&
+        first.actor_id == 1810 && first.incarnation == 1 &&
+        first.cause == ActorStopCause::Requested,
+        "parent was not the first completed callback-chain ticket");
+  check(parent_observer->callbacks.load(std::memory_order_acquire) == 1 &&
+        parent_observer->outcome.load(std::memory_order_acquire) ==
+          static_cast<int>(ActorFinalizationQueue<2>::Admission::Queued) &&
+        child_observer->retired.load(std::memory_order_acquire) == 0 &&
+        queue.pending() == 1,
+        "retirement callback lost new stop or prematurely retired the child");
+  check(queue.run_one(&second) && second.finalized &&
+        second.actor_id == 1811 && second.incarnation == 1 &&
+        second.cause == ActorStopCause::Panicked &&
+        child_observer->retired.load(std::memory_order_acquire) == 1 &&
+        queue.completed() == 2 && queue.pending() == 0,
+        "second callback-chain ticket did not retain panic priority");
+}
+
+struct OverflowChainedStopObserver final : ActorLifetimeResource {
+  ActorFinalizationQueue<1>& queue;
+  std::shared_ptr<Mailbox> child;
+  std::atomic<int> outcome{-1};
+  OverflowChainedStopObserver(ActorFinalizationQueue<1>& q,
+                              std::shared_ptr<Mailbox> next)
+      : queue(q), child(std::move(next)) {}
+  void actor_owner_stopped() noexcept override {
+    try {
+      outcome.store(static_cast<int>(queue.try_request_close(child)),
+                    std::memory_order_release);
+    } catch (...) { outcome.store(-2, std::memory_order_release); }
+  }
+};
+
+void callback_queue_exhaustion_preserves_unstopped_child() {
+  ActorFinalizationQueue<1> queue;
+  auto parent = std::make_shared<Mailbox>(1812);
+  auto child = std::make_shared<Mailbox>(1813);
+  const auto live_child = child->context();
+  auto observer = std::make_shared<OverflowChainedStopObserver>(queue, child);
+  check(parent->context().attach_owned_resource(observer),
+        "cannot attach bounded callback-chain observer");
+  check(queue.try_request_close(parent) ==
+            ActorFinalizationQueue<1>::Admission::Queued,
+        "parent callback-chain ticket rejected");
+  check(queue.run_one() && queue.pending() == 0 &&
+        observer->outcome.load(std::memory_order_acquire) ==
+          static_cast<int>(ActorFinalizationQueue<1>::Admission::Full) &&
+        live_child.valid() && child->execution_lease().context() == live_child,
+        "full queue fenced child without retaining cleanup ticket");
+  check(queue.try_request_close(child) ==
+            ActorFinalizationQueue<1>::Admission::Queued &&
+        queue.drain_ready() == 1 && queue.completed() == 2,
+        "supervisor did not recover callback-chain capacity");
+}
+
 void external_supervisor_completion_is_a_deduplicated_ticket() {
   ActorFinalizationQueue<1> queue;
   auto actor = std::make_shared<Mailbox>(809);
@@ -790,6 +875,8 @@ int main() {
     invalid_cause_does_not_stop_actor();
     undrained_queue_destructor_is_fail_stop();
     completed_stop_cannot_create_duplicate_receipt();
+    callback_can_enqueue_another_actor_without_self_join();
+    callback_queue_exhaustion_preserves_unstopped_child();
     external_supervisor_completion_is_a_deduplicated_ticket();
     concurrent_direct_close_and_queue_drain_do_not_double_retire();
     competing_independent_queues_issue_one_completion();
