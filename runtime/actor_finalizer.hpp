@@ -25,7 +25,7 @@ template<std::size_t Capacity = 64>
 class ActorFinalizationQueue final {
   static_assert(Capacity > 0 && Capacity <= kMaxActorExecutionLeases);
  public:
-  enum class Admission { Queued, AlreadyQueued, Full, Invalid };
+  enum class Admission { Queued, AlreadyQueued, AlreadyFinalized, Full, Invalid };
   struct Completion {
     std::uint64_t actor_id = 0;
     std::uint64_t incarnation = 0;
@@ -47,26 +47,27 @@ class ActorFinalizationQueue final {
                               ActorStopCause cause = ActorStopCause::Requested) {
     if (!actor) return Admission::Invalid;
     std::scoped_lock lock(mutex_);
+    // Check duplicates first, including a ticket actively being finalized.
+    // It retains the actor and preserves the highest-priority stop cause.
+    const auto before = actor->ref();
+    for (auto& ticket : tickets_) {
+      if (ticket.actor != actor || ticket.generation != before.generation) continue;
+      if (static_cast<unsigned>(cause) > static_cast<unsigned>(ticket.cause))
+        ticket.cause = cause;
+      return Admission::AlreadyQueued;
+    }
+    // A completed ticket has already been removed from this bounded queue.
+    // Ask the generation-owned mailbox rather than retaining unbounded
+    // tombstones: re-request cannot produce a duplicate completion receipt.
+    if (actor->stop_finalized(before.generation))
+      return Admission::AlreadyFinalized;
     Ticket* free_slot = nullptr;
     for (auto& ticket : tickets_)
       if (!ticket.actor && !free_slot) free_slot = &ticket;
-    if (!free_slot) {
-      // No free slot: a same-incarnation ticket is already a retained stop.
-      // Never stop a new actor generation when there is nowhere to put it.
-      const auto generation = actor->ref().generation;
-      for (auto& ticket : tickets_) {
-        if (ticket.actor != actor || ticket.generation != generation) continue;
-        if (static_cast<unsigned>(cause) > static_cast<unsigned>(ticket.cause))
-          ticket.cause = cause;
-        return Admission::AlreadyQueued;
-      }
-      return Admission::Full;
-    }
-    // Capacity is reserved before any stop. Capture and fence the CURRENT
-    // incarnation atomically under the mailbox's own admission lock; a
-    // concurrent supervisor restart cannot turn an old ticket into a
-    // successful admission for a newly running generation.
-    const auto reference = actor->ref();
+    if (!free_slot) return Admission::Full;
+
+    // A slot is reserved BEFORE the stop request. Capture/fence the current
+    // generation under the mailbox mutex, then re-check generation races.
     const auto generation = actor->request_close();
     for (auto& ticket : tickets_) {
       if (ticket.actor != actor || ticket.generation != generation) continue;
@@ -74,14 +75,15 @@ class ActorFinalizationQueue final {
         ticket.cause = cause;
       return Admission::AlreadyQueued;
     }
+    // Another trusted supervisor can finalize while our stop request runs.
+    if (actor->stop_finalized(generation))
+      return Admission::AlreadyFinalized;
     free_slot->actor = actor;
-    free_slot->actor_id = reference.id;
+    free_slot->actor_id = before.id;
     free_slot->generation = generation;
     free_slot->cause = cause;
     free_slot->processing = false;
     return Admission::Queued;
-    // Capacity refusal MUST NOT close an actor without a retained ticket.
-    return Admission::Full;
   }
 
   // Exactly one queued ticket is claimed. On host exception the ticket stays
