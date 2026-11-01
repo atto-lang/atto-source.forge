@@ -38,6 +38,12 @@ bool CapabilityToken::attach_owned_resource(
     // even while older leased operations are still draining.
     if (stopping_ || !active.load(std::memory_order_acquire)) return false;
     std::scoped_lock resource_guard(resource_mutex_);
+    // Re-attaching the same live observer is idempotent, including when
+    // the fixed registry is otherwise full. One resource gets one callback.
+    for (const auto& slot : resources_) {
+      if (auto current = slot.lock(); current && current.get() == resource.get())
+        return true;
+    }
     for (auto& slot : resources_) {
       if (slot.expired()) {
         slot = resource;
@@ -60,12 +66,22 @@ bool CapabilityToken::acquire_lease() const noexcept {
 
 void CapabilityToken::retire_resources() const noexcept {
   RetirementGuard guard(this);
+  // Snapshot a fixed-size list of strong observer references while locked,
+  // then drop the registry lock before executing untrusted host callbacks.
+  // No callback may run with resource_mutex_ held. An observer may request
+  // another actor's shutdown or re-enter a different supervisor queue.
+  std::array<std::shared_ptr<ActorLifetimeResource>,
+             kMaxActorOwnedResources> retired{};
   try {
-    std::scoped_lock resources_guard(resource_mutex_);
-    for (auto& weak : resources_) {
-      if (auto resource = weak.lock()) resource->actor_owner_stopped();
-      weak.reset();
+    {
+      std::scoped_lock resources_guard(resource_mutex_);
+      for (std::size_t i=0; i<resources_.size(); ++i) {
+        retired[i] = resources_[i].lock();
+        resources_[i].reset();
+      }
     }
+    for (auto& resource : retired)
+      if (resource) resource->actor_owner_stopped();
   } catch (...) {
     // Failure to deliver retirement must never be reported as completion.
     std::terminate();
