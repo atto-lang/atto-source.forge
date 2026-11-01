@@ -40,6 +40,8 @@ struct CapabilityToken final {
   // Blocking external/supervisor completion: wait for quiescence, then retire
   // resources exactly once. Must not be called from a current lease/callback.
   void invalidate() noexcept;
+  // True only after the supervisor has finished resource observer callbacks.
+  bool retirement_complete() const noexcept;
   bool has_current_thread_lease() const noexcept;
   bool is_retiring_on_current_thread() const noexcept;
  private:
@@ -157,6 +159,9 @@ class Mailbox {
   // Complete a queued stop only if its original generation is still current.
   // Returns false for a stale ticket; does not close a restarted actor.
   bool finalize_stop(std::uint64_t incarnation);
+  // Generation-scoped deduplication against tickets whose cleanup already
+  // finished. Host-only query, never exposed as guest actor authority.
+  bool stop_finalized(std::uint64_t incarnation) const noexcept;
   // Synchronous external/supervisor shutdown, forbidden while this thread
   // holds an execution lease for the same actor.
   void close();
