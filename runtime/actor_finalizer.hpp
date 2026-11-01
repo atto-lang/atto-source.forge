@@ -45,7 +45,12 @@ class ActorFinalizationQueue final {
 
   Admission try_request_close(const std::shared_ptr<Mailbox>& actor,
                               ActorStopCause cause = ActorStopCause::Requested) {
-    if (!actor) return Admission::Invalid;
+    // Only canonical stop causes can be reported to supervisors. Reject
+    // arbitrary casted enum values before reserving capacity or fencing
+    // the actor, otherwise they could outrank panic in priority receipts.
+    if (!actor || static_cast<unsigned>(cause) >
+                      static_cast<unsigned>(ActorStopCause::Panicked))
+      return Admission::Invalid;
     std::scoped_lock lock(mutex_);
     // Check duplicates first, including a ticket actively being finalized.
     // It retains the actor and preserves the highest-priority stop cause.
