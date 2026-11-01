@@ -25,7 +25,7 @@ template<std::size_t Capacity = 64>
 class ActorFinalizationQueue final {
   static_assert(Capacity > 0 && Capacity <= kMaxActorExecutionLeases);
  public:
-  enum class Admission { Queued, AlreadyQueued, AlreadyFinalized, Full, Invalid };
+  enum class Admission { Queued, AlreadyQueued, AlreadyFinalized, Full, Invalid, Raced };
   struct Completion {
     std::uint64_t actor_id = 0;
     std::uint64_t incarnation = 0;
@@ -72,9 +72,12 @@ class ActorFinalizationQueue final {
       if (!ticket.actor && !free_slot) free_slot = &ticket;
     if (!free_slot) return Admission::Full;
 
-    // A slot is reserved BEFORE the stop request. Capture/fence the current
-    // generation under the mailbox mutex, then re-check generation races.
-    const auto generation = actor->request_close();
+    // Capacity is reserved BEFORE stop. Fence only the generation captured
+    // above: restart can publish a replacement while we hold queue mutex
+    // but before we acquire the mailbox mutex. Never stop that replacement.
+    if (!actor->request_close_if_generation(before.generation))
+      return Admission::Raced;
+    const auto generation = before.generation;
     for (auto& ticket : tickets_) {
       if (ticket.actor != actor || ticket.generation != generation) continue;
       if (static_cast<unsigned>(cause) > static_cast<unsigned>(ticket.cause))
