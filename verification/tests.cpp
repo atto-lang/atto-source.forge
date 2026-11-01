@@ -132,6 +132,33 @@ int main() {
                    "private abstract receive(int x): int; end");
     }, "private abstract hooks require typed native vtables");
 
+    // Actor declarations in Forge/Cranelift are not yet guest-executable.
+    // Test the actual source lexer/parser, not a surrogate policy scanner.
+    for (const char* source_actor : {
+      "define actor A1 as end",
+      "define pub actor A1 as end",
+      "define shared actor A1 as end",
+      "define untrusted actor A1 as end",
+      "define isoactor A1 as end",
+      "define pub isoactor A1 as end",
+      "shared actor A1 { }",
+      "untrusted actor A1 { }",
+      "isoactor A1 { }",
+      "define serial http actor A1 as end",
+      "define actor A1 extends Base as end",
+      "define actor A1 implements Contract as end",
+      "define actor A1 impl Traced as end"
+    }) {
+      reject_diagnostic([&] { parse_source(source_actor); },
+                        "class/actor methods require typed native lowering");
+    }
+    ensure(interpret(parse_source(
+           "fnc main():int{return 42;} // define shared actor A1 as end"))==42,
+           "actor declaration inside line comment must be ignored");
+    ensure(interpret(parse_source(
+           "fnc main():int{/* define isoactor A1 as end */return 42;}"))==42,
+           "actor declaration inside block comment must be ignored");
+
     // The scalar bootstrap has no class vtable, receiver loan, or closure
     // representation. New language constructs must fail closed until their
     // actual native codegen and ownership checking are present.
