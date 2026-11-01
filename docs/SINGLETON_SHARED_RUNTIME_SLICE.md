@@ -491,3 +491,43 @@ CTest, ASan/UBSan/LSan, TSAN and exact-head guest execution remain
 unverified. This host-only primitive does not prove a single
 supervisor priority order across separate queues or guarantee
 eventual progress after supervisor loss.
+
+## Generation-pinned admission and restart-race tests (2026-11-01)
+
+A bounded queue previously read `Mailbox::ref().generation`, then called
+unconditional `request_close()`. A concurrent restart could replace the
+incarnation between those calls, allowing a stale supervisor snapshot
+to stop a newly started actor. This is a **source-level race fix**, not
+a native execution claim.
+
+`Mailbox::request_close_if_generation(expected_generation)` now checks
+the expected generation and fences admission under **one mailbox lock**.
+It returns false with no state, message, or resource side effects on
+generation zero or a mismatch. `ActorFinalizationQueue::try_request_close()`
+uses the captured generation and returns `Admission::Raced` if a restart
+won before the conditional stop. The queue never retains a ticket for
+the wrong generation. `Admission::Raced` is a retryable host policy
+decision, not `Full` and not a successful stop.
+
+New finalizer tests explicitly cover:
+- Zero/stale-generation refusal without erasing the new mailbox's
+  queued byte payload or changing its actor execution authority
+- Finalize-once completion on the admitted generation
+- **96** concurrent conditional-stop/restart races, checking published
+  replacement incarnations survive old-generation stop requests
+- **64** concurrent queue/restart races, distinguishing a stale snapshot
+  from a legitimate request made *after* the new generation is published
+- **32** full-queue stale-ticket/restart cases proving the new actor
+  stays live, old tickets are counted stale, and reclaimed capacity
+  can subsequently retire the new generation
+- Stop-cause priority monotonicity for all five canonical causes,
+  with invalid enum values rejected without changing ticket state
+
+A source-structure consistency check found **23** finalizer test functions
+called by the test main, with no unmatched calls, and confirmed the
+new declaration, definition, guarded queue call, CTest target and direct
+release/sanitizer script registration. This is only a code-level check.
+The latest source [compiler/runtime CI #41276693881](https://github.com/ores-truffle-oreslang/oreslang-source.forge/actions/runs/41276693881)
+and [singleton CI #41276693956](https://github.com/ores-truffle-oreslang/oreslang-source.forge/actions/runs/41276693956)
+failed before runner allocation (`runner_id=0`, no executed steps).
+No current-head compiler, sanitizer, CTest or guest execution has passed.
