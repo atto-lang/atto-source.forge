@@ -108,6 +108,13 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/verification/cli_source_budget.py"
       "$<TARGET_FILE:oresforge>")
   set_tests_properties(oresforge_cli_source_budget PROPERTIES TIMEOUT 20)
+  # Explicit bootstrap denial of ETS/pg before scalar interpreter/JIT/IR
+  # publication. These are compiler negative tests, not guest feature proof.
+  add_test(NAME oresforge_ets_pg_fail_closed_source
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/ets_pg_source_admission.py"
+      "$<TARGET_FILE:oresforge>")
+  set_tests_properties(oresforge_ets_pg_fail_closed_source PROPERTIES TIMEOUT 30)
   # Source to IR interpreter (not machine code or native AOT parity).
   add_test(NAME oresforge_source_i64_interpreter
     COMMAND "${Python3_EXECUTABLE}"
