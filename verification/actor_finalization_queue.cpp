@@ -609,20 +609,38 @@ void queue_restart_race_never_shuts_new_generation() {
     check(outcome == Admission::Queued || outcome == Admission::Raced ||
           outcome == Admission::AlreadyFinalized,
           "queue restart race returned unexpected admission outcome");
-    if (restart_succeeded.load()) {
-      check(actor->context().valid() && actor->ref().generation == 2,
-            "queued stale generation stopped replacement actor");
-    } else {
+    if (restart_succeeded.load())
+      check(actor->ref().generation == 2,
+            "restart reported success without advancing the generation");
+    else
       check(restart_cancelled.load() && outcome == Admission::Queued &&
             actor->ref().generation == 1,
             "queue canceled restart without retaining matching stop ticket");
+
+    ActorFinalizationQueue<1>::Completion receipt;
+    const bool processed = queue.run_one(&receipt);
+    if (outcome == Admission::Queued) {
+      check(processed, "an admitted stop lost its finalization ticket");
+      if (restart_succeeded.load() && receipt.incarnation == 1) {
+        // Old ticket is stale; no later generation may be affected.
+        check(!receipt.finalized && !receipt.deduplicated &&
+              actor->context().valid(),
+              "stale ticket revoked a successfully restarted actor");
+      } else if (restart_succeeded.load() && receipt.incarnation == 2) {
+        // The requester observed generation 2 AFTER restart. Stopping that
+        // generation is expected; it is not a stale-generation violation.
+        check(receipt.finalized && !receipt.deduplicated &&
+              actor->stop_finalized(2),
+              "current-generation stop did not retire the restarted actor");
+      } else {
+        check(!restart_succeeded.load() && receipt.incarnation == 1 &&
+              receipt.finalized, "cancelled restart lost old-generation cleanup");
+      }
+    } else {
+      check(!processed && restart_succeeded.load() &&
+            actor->context().valid(),
+            "raced or already finalized admission affected a new actor");
     }
-    // This may consume an obsolete old-generation ticket; it MUST NOT
-    // stop or invalidate the fresh incarnation.
-    (void)queue.drain_ready();
-    if (restart_succeeded.load())
-      check(actor->context().valid() && actor->ref().generation == 2,
-            "stale finalization receipt invalidated restarted actor");
     check(queue.pending() == 0, "queue race retained an undrained ticket");
   }
 }
