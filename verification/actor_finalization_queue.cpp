@@ -503,6 +503,130 @@ void bounded_admission_cannot_lose_stop() {
         "second actor not completed exactly once");
 }
 
+void stale_generation_stop_has_no_side_effects() {
+  Mailbox actor{1200};
+  const auto old = actor.ref().generation;
+  const auto replacement = actor.restart();
+  const auto current = actor.context();
+  auto observer = std::make_shared<Observer>();
+  check(current.attach_owned_resource(observer),
+        "could not attach replacement generation observer");
+  check(old != replacement.generation &&
+        !actor.request_close_if_generation(0) &&
+        !actor.request_close_if_generation(old),
+        "stale or zero generation unexpectedly admitted shutdown");
+  check(current.valid() && actor.execution_lease().context() == current &&
+        observer->retired.load(std::memory_order_acquire) == 0,
+        "stale generation request changed replacement's authority");
+  check(actor.request_close_if_generation(replacement.generation),
+        "current generation could not request shutdown");
+  check(!current.valid() && observer->retired.load(std::memory_order_acquire) == 0,
+        "admitted request ran cleanup callbacks or exposed the stopped actor");
+  check(actor.finalize_stop(replacement.generation) &&
+        !actor.finalize_stop(replacement.generation) &&
+        observer->retired.load(std::memory_order_acquire) == 1,
+        "same generation did not finalize exactly once");
+}
+
+void concurrent_restart_stop_never_fences_replacement() {
+  for (std::uint64_t round=0; round<96; ++round) {
+    auto actor = std::make_shared<Mailbox>(1300 + round);
+    const auto prior = actor->ref().generation;
+    std::latch start{1};
+    std::atomic<bool> restart_succeeded{false};
+    std::atomic<bool> restart_cancelled{false};
+    std::atomic<bool> request_accepted{false};
+    std::atomic<bool> unexpected{false};
+    std::thread restart([&] {
+      start.wait();
+      try {
+        (void)actor->restart();
+        restart_succeeded.store(true, std::memory_order_release);
+      } catch (const std::runtime_error&) {
+        restart_cancelled.store(true, std::memory_order_release);
+      } catch (...) {
+        unexpected.store(true, std::memory_order_release);
+      }
+    });
+    std::thread stop([&] {
+      start.wait();
+      request_accepted.store(actor->request_close_if_generation(prior),
+                             std::memory_order_release);
+    });
+    start.count_down();
+    restart.join();
+    stop.join();
+    check(!unexpected.load() &&
+          (restart_succeeded.load() != restart_cancelled.load()),
+          "concurrent restart did not reach one terminal result");
+    const auto after = actor->ref().generation;
+    if (restart_succeeded.load()) {
+      // Whether old stop won early or its snapshot became stale,
+      // a successfully published new generation must stay live.
+      check(after == prior + 1 && actor->context().valid(),
+            "stale stop request killed successfully restarted actor");
+      const auto fresh = actor->execution_lease();
+      check(fresh.context().incarnation() == after,
+            "restart did not admit new-generation execution");
+    } else {
+      check(request_accepted.load() && after == prior,
+            "restart was cancelled without a current-generation stop");
+      bool rejected = false;
+      try { (void)actor->context(); }
+      catch (const std::runtime_error&) { rejected = true; }
+      check(rejected, "cancelled restart left stopped generation executable");
+    }
+  }
+}
+
+void queue_restart_race_never_shuts_new_generation() {
+  for (std::uint64_t round=0; round<64; ++round) {
+    ActorFinalizationQueue<1> queue;
+    auto actor = std::make_shared<Mailbox>(1500 + round);
+    std::latch go{1};
+    std::atomic<bool> restart_succeeded{false};
+    std::atomic<bool> restart_cancelled{false};
+    std::atomic<int> admission{-1};
+    std::thread restarter([&] {
+      go.wait();
+      try {
+        (void)actor->restart();
+        restart_succeeded.store(true, std::memory_order_release);
+      } catch (const std::runtime_error&) {
+        restart_cancelled.store(true, std::memory_order_release);
+      }
+    });
+    std::thread requester([&] {
+      go.wait();
+      const auto result = queue.try_request_close(actor);
+      admission.store(static_cast<int>(result), std::memory_order_release);
+    });
+    go.count_down();
+    restarter.join();
+    requester.join();
+    using Admission = ActorFinalizationQueue<1>::Admission;
+    const auto outcome = static_cast<Admission>(admission.load());
+    check(outcome == Admission::Queued || outcome == Admission::Raced ||
+          outcome == Admission::AlreadyFinalized,
+          "queue restart race returned unexpected admission outcome");
+    if (restart_succeeded.load()) {
+      check(actor->context().valid() && actor->ref().generation == 2,
+            "queued stale generation stopped replacement actor");
+    } else {
+      check(restart_cancelled.load() && outcome == Admission::Queued &&
+            actor->ref().generation == 1,
+            "queue canceled restart without retaining matching stop ticket");
+    }
+    // This may consume an obsolete old-generation ticket; it MUST NOT
+    // stop or invalidate the fresh incarnation.
+    (void)queue.drain_ready();
+    if (restart_succeeded.load())
+      check(actor->context().valid() && actor->ref().generation == 2,
+            "stale finalization receipt invalidated restarted actor");
+    check(queue.pending() == 0, "queue race retained an undrained ticket");
+  }
+}
+
 void stale_ticket_does_not_stop_restarted_actor() {
   ActorFinalizationQueue<2> queue;
   auto actor = std::make_shared<Mailbox>(204);
@@ -588,6 +712,9 @@ int main() {
     retirement_callback_reentry_does_not_deadlock_queue();
     queue_owns_actor_until_completion();
     bounded_admission_cannot_lose_stop();
+    stale_generation_stop_has_no_side_effects();
+    concurrent_restart_stop_never_fences_replacement();
+    queue_restart_race_never_shuts_new_generation();
     stale_ticket_does_not_stop_restarted_actor();
     leased_shutdown_is_not_observer_callback();
     rejection_and_generation_reuse();
