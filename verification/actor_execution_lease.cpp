@@ -151,6 +151,80 @@ void foreign_thread_lease_destructor_is_fail_stop() {
 #endif
 }
 
+void owned_observer_registration_is_idempotent_and_bounded() {
+  Mailbox box{2110};
+  const auto context = box.context();
+  const auto first = std::make_shared<Observer>();
+  check(context.attach_owned_resource(first), "first observer was refused");
+  for (unsigned i=0; i<16; ++i)
+    check(context.attach_owned_resource(first),
+          "duplicate observer registration should be idempotent");
+  std::vector<std::shared_ptr<Observer>> observers;
+  observers.reserve(oresforge::runtime::kMaxActorOwnedResources - 1);
+  for (std::size_t i=1; i<oresforge::runtime::kMaxActorOwnedResources; ++i) {
+    auto resource = std::make_shared<Observer>();
+    check(context.attach_owned_resource(resource),
+          "bounded registry refused a distinct observer before capacity");
+    observers.push_back(std::move(resource));
+  }
+  check(context.attach_owned_resource(first),
+        "already registered observer rejected when registry is full");
+  const auto overflow = std::make_shared<Observer>();
+  check(!context.attach_owned_resource(overflow),
+        "distinct resource admitted after fixed registry was exhausted");
+  const auto incarnation = box.request_close();
+  check(incarnation == 1 && first->calls.load(std::memory_order_acquire) == 0,
+        "request_close executed callbacks before supervisor completion");
+  check(box.finalize_stop(incarnation),
+        "supervisor could not finalize full observer registry");
+  check(!box.finalize_stop(incarnation),
+        "repeated finalization claimed a second retirement winner");
+  check(first->calls.load(std::memory_order_acquire) == 1 &&
+        overflow->calls.load(std::memory_order_acquire) == 0,
+        "duplicate observer was notified multiple times or overflow notified");
+  for (const auto& resource : observers)
+    check(resource->calls.load(std::memory_order_acquire) == 1,
+          "registered observer did not receive exactly one callback");
+  check(!context.attach_owned_resource(overflow),
+        "retired incarnation accepted another owned observer");
+}
+
+struct CrossActorRetirementObserver final : ActorLifetimeResource {
+  Mailbox& other;
+  std::atomic<unsigned> notified{0};
+  explicit CrossActorRetirementObserver(Mailbox& target) : other(target) {}
+  void actor_owner_stopped() noexcept override {
+    // A retirement callback may synchronously stop another actor; the
+    // original actor's registry lock must not be retained across callbacks.
+    other.close();
+    notified.fetch_add(1, std::memory_order_release);
+  }
+};
+void cross_actor_cleanup_cascade_is_once_only() {
+  Mailbox parent{2111};
+  Mailbox child{2112};
+  auto child_observer = std::make_shared<Observer>();
+  auto parent_observer =
+      std::make_shared<CrossActorRetirementObserver>(child);
+  check(child.context().attach_owned_resource(child_observer) &&
+        parent.context().attach_owned_resource(parent_observer),
+        "could not register cross-actor retirement observers");
+  const auto parent_generation = parent.request_close();
+  check(child.context().valid() &&
+        parent_observer->notified.load(std::memory_order_acquire) == 0,
+        "stop request executed cross-actor retirement callback");
+  check(parent.finalize_stop(parent_generation),
+        "parent did not run retirement observer");
+  check(!parent.finalize_stop(parent_generation) &&
+        parent_observer->notified.load(std::memory_order_acquire) == 1 &&
+        child_observer->calls.load(std::memory_order_acquire) == 1,
+        "cross-actor callback double-ran or failed to close child");
+  bool child_closed = false;
+  try { (void)child.execution_lease(); }
+  catch (const std::runtime_error&) { child_closed = true; }
+  check(child_closed, "child remained executable after parent cascading stop");
+}
+
 void moved_from_lease_is_not_authority() {
   Mailbox box{100};
   auto admitted = box.execution_lease();
@@ -473,6 +547,8 @@ int main() {
     unleased_stop_request_has_no_callbacks();
     lease_context_rejects_foreign_thread();
     foreign_thread_lease_destructor_is_fail_stop();
+    owned_observer_registration_is_idempotent_and_bounded();
+    cross_actor_cleanup_cascade_is_once_only();
     moved_from_lease_is_not_authority();
     actor_self_shutdown_is_nonblocking();
     multiple_leases_quiesce_in_last_release();
