@@ -154,6 +154,14 @@ class Parser {
       // Scalar bootstrap lacks nominal enum declarations and compiler-owned
       // prebound virtual method slots. Never attempt arity-only fallback.
       if (tok_.text=="enum") error("nominal enum overloads require compiler-bound dispatch");
+      // Stage-0 has no critical body/effect/continuation lowering.
+      // Fail on the real lexer token, not substring matches in comments.
+      if (tok_.text=="critical")
+        error("E_CRITICAL_UNLOWERED: critical requires a scheduler-owned gate and nonsuspending body");
+      if (tok_.text=="suspends" || tok_.text=="suspend")
+        error("E_SUSPENDS_UNLOWERED: suspension-aware functions require task continuation lowering");
+      if (tok_.text=="async")
+        error("E_ASYNC_UNLOWERED: async generators require iterator frames; general functions migrate to suspends");
       // Fail closed on named language features before the scalar grammar
       // gives a misleading generic syntax error (or ever learns to skip them).
       // These require typed method dispatch and ownership-checked closure IR.

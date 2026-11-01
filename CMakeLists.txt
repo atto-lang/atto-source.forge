@@ -67,6 +67,13 @@ if(BUILD_TESTING)
   target_include_directories(oresforge_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
   target_link_libraries(oresforge_tests PRIVATE oresforge_core)
   add_test(NAME oresforge_unit COMMAND oresforge_tests)
+  # Compiler-parser negatives for the unlowered critical/suspends feature.
+  # Not a claim of guest critical execution or five-backend parity.
+  add_executable(oresforge_critical_suspension_admission verification/critical_suspends_admission.cpp)
+  target_link_libraries(oresforge_critical_suspension_admission PRIVATE oresforge_core)
+  add_test(NAME oresforge_critical_suspends_fails_closed
+    COMMAND oresforge_critical_suspension_admission)
+  set_tests_properties(oresforge_critical_suspends_fails_closed PROPERTIES TIMEOUT 15)
   # Host-only positive filesystem resolution substrate, not guest import linking.
   add_executable(oresforge_root_resolver_test verification/project_root_resolver_test.cpp)
   target_include_directories(oresforge_root_resolver_test PRIVATE .)
