@@ -7,6 +7,21 @@ namespace oresforge::runtime {
 enum class StateRegionAccess : std::uint8_t { read, write };
 enum class StateRegionAction : std::uint8_t { borrow, release };
 
+// Pure, constexpr validation shared by compiler requirements and runtime receipts.
+[[nodiscard]] constexpr bool state_region_place_valid(std::string_view place) noexcept {
+  for (const char c : place) {
+    if (c != ' ' && c != '\t' && c != '\n' && c != '\r' &&
+        c != '\v' && c != '\f') return true;
+  }
+  return false;
+}
+[[nodiscard]] constexpr bool state_region_access_valid(StateRegionAccess kind) noexcept {
+  return kind == StateRegionAccess::read || kind == StateRegionAccess::write;
+}
+[[nodiscard]] constexpr bool state_region_action_valid(StateRegionAction action) noexcept {
+  return action == StateRegionAction::borrow || action == StateRegionAction::release;
+}
+
 /*
  * Non-owning compiler/runtime provenance metadata. This does not grant
  * authority by itself and intentionally requires no heap allocation.
@@ -25,7 +40,9 @@ struct StateRegionLoanProvenance {
 
   [[nodiscard]] constexpr bool valid() const noexcept {
     return region_id && region_generation && runtime_domain && execution_id &&
-           execution_slot && execution_generation && loan_id && !place.empty();
+           execution_slot && execution_generation && loan_id &&
+           state_region_place_valid(place) && state_region_access_valid(kind) &&
+           state_region_action_valid(action);
   }
 
   [[nodiscard]] constexpr bool authorizes_release(
@@ -45,6 +62,7 @@ struct StateRegionLoanProvenance {
   }
 
   [[nodiscard]] constexpr StateRegionLoanProvenance release_record() const noexcept {
+    if (!valid() || action != StateRegionAction::borrow) return {};
     auto out = *this;
     out.action = StateRegionAction::release;
     return out;
