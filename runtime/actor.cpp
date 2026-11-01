@@ -124,6 +124,13 @@ void CapabilityToken::invalidate() noexcept {
   }
 }
 
+bool CapabilityToken::retirement_complete() const noexcept {
+  try {
+    std::scoped_lock lock(execution_mutex_);
+    return cleanup_complete_;
+  } catch (...) { std::terminate(); }
+}
+
 bool CapabilityToken::has_current_thread_lease() const noexcept {
   return std::find(active_execution_leases.begin(), active_execution_leases.end(),
                    this) != active_execution_leases.end();
@@ -268,6 +275,14 @@ bool Mailbox::finalize_stop(std::uint64_t incarnation) {
   old->invalidate();
   return true;
 }
+bool Mailbox::stop_finalized(std::uint64_t incarnation) const noexcept {
+  try {
+    std::scoped_lock lock(mutex_);
+    return incarnation != 0 && generation_ == incarnation &&
+           authority_ && authority_->retirement_complete();
+  } catch (...) { std::terminate(); }
+}
+
 void Mailbox::close() {
   std::shared_ptr<CapabilityToken> old;
   {
