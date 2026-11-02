@@ -131,6 +131,17 @@ int main() {
     reject_diagnostic([] {
       (void)parse_source("fnc main():int{const x=unknown(1);return 42;}");
     }, "unknown function");
+    // Fail-closed admission: the independent native-call frontend must
+    // not silently interpret immutable declarations as expressions until
+    // scoped callable AST/IR + native frame lowering are implemented.
+    for(const auto* invalid : {
+      "fnc main():int{int x=1;return x;}",
+      "fnc main():int{const int x=1;return x;}",
+      "fnc main():int{const x=1;return x;}",
+      "fnc main(n:int):int{int x=n+1;return x;}"
+    }) {
+      reject_diagnostic([&] { (void)calls::parse(invalid); }, "unexpected token");
+    }
     // The four byte-pinned shared negative cases exercise the *actual*
     // Forge source parser, verified i64 IR and interpreter. An exception
     // from either admission or execution is allowed; wrapping is not.
