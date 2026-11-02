@@ -260,18 +260,16 @@ class Parser {
       else if (take("pub")) { if (public_) error("duplicate pub"); public_=true; }
     }
     if (tok_.text=="state") {
-      const Token origin=tok_;
       next();
       if (tok_.text=="container")
         error("STATE_CONTAINER_BACKEND_UNSUPPORTED: protected heap region and critical guard lowering required");
-      error("unexpected declaration after state at byte "+std::to_string(origin.offset));
+      error("unexpected declaration after state");
     }
     if (tok_.text=="virtual") {
-      const Token origin=tok_;
       next();
       if (tok_.text=="actor")
         error("VIRTUAL_ACTOR_BACKEND_UNSUPPORTED: logical key and activation fencing required");
-      error("unexpected declaration after virtual at byte "+std::to_string(origin.offset));
+      error("unexpected declaration after virtual");
     }
     expect("fnc");
     const std::string name=identifier();
