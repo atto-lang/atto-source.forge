@@ -108,6 +108,14 @@ The separately opt-in `run-calls` parser is not extended by this change.
 
 The C++ unit suite exercises the actual parser and verified interpreter,
 including the 32-binding budget and eager failure of unused initializers.
+The separate `run-calls` / `emit-call-asm` x86-64 compiler also admits bounded
+immutable checked-i64 locals (typed and inferred `const`) across real helper
+calls, parameter-dependent expressions and lazy branches. Its owned postfix
+AST now verifies lexical scope independently before interpreting or emitting
+stack-slot loads. This is an opt-in native-call scalar subset, not full
+AttoLang class/actor or general typed-local parity. The source-org CI job
+admission remains unverified until executed compiler/CTest receipts exist.
+
 The separate native-call lexer now treats CR and CRLF as end-of-line for
 `//` comments so subsequent declarations cannot silently disappear.
 
