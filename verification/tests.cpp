@@ -44,6 +44,31 @@ oresforge::Program source(const std::string& expr) {
 int main() {
   try {
     using namespace oresforge;
+    // Two-word contextual declarations are not executable stage-0 scalar
+    // functions; every mode must reject with the correct semantic capability.
+    for (std::string_view source_text : {
+      "define state container Counter as end",
+      "define pub state container Counter as end",
+      "pub define state container Counter as end"
+    }) {
+      reject_diagnostic([&] { (void)parse_source(source_text); },
+                        "STATE_CONTAINER_BACKEND_UNSUPPORTED");
+      reject_diagnostic([&] { (void)parse_runtime_source(source_text); },
+                        "STATE_CONTAINER_BACKEND_UNSUPPORTED");
+    }
+    for (std::string_view source_text : {
+      "define virtual actor Cart as end",
+      "define pub virtual actor Cart as end",
+      "pub define virtual actor Cart as end"
+    }) {
+      reject_diagnostic([&] { (void)parse_source(source_text); },
+                        "VIRTUAL_ACTOR_BACKEND_UNSUPPORTED");
+      reject_diagnostic([&] { (void)parse_runtime_source(source_text); },
+                        "VIRTUAL_ACTOR_BACKEND_UNSUPPORTED");
+    }
+    ensure(interpret(parse_source(
+      "fnc main():int{return 42;} // define virtual actor Spoof"))==42,
+      "declaration head inside a comment is not executable source");
     // Cross-backend i64 positive controls run against the real Forge parser,
     // verified IR and checked interpreter. These are not Python-only data tests.
     for (const auto& [expression, expected] : kPortableNumericalCases) {
