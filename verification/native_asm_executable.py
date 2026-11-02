@@ -60,6 +60,9 @@ FUNCTION_REJECTIONS = (
     ("immutable-duplicate",
      "fnc main():int{int x=1;int x=2;return x;}",
      "invalid or duplicate immutable local"),
+    ("immutable-eager-overflow",
+     "fnc main():int{const unused=9223372036854775807+1;return 42;}",
+     "i64 add overflow"),
     ("direct-recursion",
      "fnc main():int{return recur(1);}"
      " fnc recur(x:int):int{return recur(x);}", "recursive calls not supported"),

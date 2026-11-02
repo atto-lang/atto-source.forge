@@ -108,6 +108,29 @@ int main() {
       (void)interpret(parse_source(
         "fnc main():int{int x=9223372036854775807;return x+1;}"));
     }, "i64 add overflow");
+    // The configured local budget must reject an extra binding before IR.
+    {
+      std::string maximum="fnc main():int{";
+      for (int i=0;i<32;++i)
+        maximum+="int v"+std::to_string(i)+"="+std::to_string(i)+";";
+      maximum+="return v31;}";
+      ensure(interpret(parse_source(maximum))==31,
+             "32 immutable locals are admitted");
+      reject_diagnostic([&] {
+        std::string excess="fnc main():int{";
+        for (int i=0;i<33;++i)
+          excess+="const v"+std::to_string(i)+"="+std::to_string(i)+";";
+        excess+="return 1;}";
+        (void)parse_source(excess);
+      }, "immutable local budget exceeded");
+    }
+    reject_diagnostic([] {
+      (void)interpret(parse_source(
+        "fnc main():int{const unused=9223372036854775807+1;return 42;}"));
+    }, "i64 add overflow");
+    reject_diagnostic([] {
+      (void)parse_source("fnc main():int{const x=unknown(1);return 42;}");
+    }, "unknown function");
     // The four byte-pinned shared negative cases exercise the *actual*
     // Forge source parser, verified i64 IR and interpreter. An exception
     // from either admission or execution is allowed; wrapping is not.
@@ -313,6 +336,19 @@ int main() {
     }, "source contains NUL byte");
     ensure(calls::parse(callable_comment+"caf\xc3\xa9").functions.size()==1,
            "valid UTF-8 callable comment");
+    // A CR-only line terminator must not conceal a following declaration.
+    // The callable parser previously skipped until LF and silently discarded
+    // the broken second declaration, publishing a misleading artifact.
+    for (const std::string ending : {"\r","\r\n","\n"}) {
+      reject_diagnostic([&] {
+        calls::parse("fnc main():int{return 42;} // discarded"+ending+
+                     "fnc bad():int{return unresolved;}");
+      }, "unknown parameter");
+      ensure(calls::interpret(calls::parse(
+        "fnc main():int{return 42;} // ignore"+ending+
+        "fnc spare():int{return 3;}"),{})==42,
+        "callable line comments cannot swallow another definition");
+    }
     // Opt-in callable program has its own fully verified representation.
     // Unlike the scalar profile, these helpers compile to real native calls.
     auto fact=calls::parse(

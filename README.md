@@ -106,7 +106,11 @@ No mutable `let`, aggregate/heap values, `bool`/`string` locals, blocks,
 loops, general lexical scopes, or implicit conversions are admitted.
 The separately opt-in `run-calls` parser is not extended by this change.
 
-The C++ unit suite exercises the actual parser and verified interpreter;
+The C++ unit suite exercises the actual parser and verified interpreter,
+including the 32-binding budget and eager failure of unused initializers.
+The separate native-call lexer now treats CR and CRLF as end-of-line for
+`//` comments so subsequent declarations cannot silently disappear;
+
 existing native-assembly and runtime-argument CTests now also cover
 compiled i64 programs with these bindings. That is a small stage-0
 source-level capability, **not** Java/Graal language parity.
