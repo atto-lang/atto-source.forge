@@ -55,6 +55,12 @@ INVALID = (
     ("duplicate-name", "fnc f():int{return 1;} fnc f():int{return 2;} fnc main():int{return 1;}", "duplicate function"),
     ("unknown-param", "fnc main():int{return oops;}", "unknown parameter"),
     ("unsupported-loop", "fnc main():int{return while 1 then 2;}", "unknown parameter"),
+    # Source declarations must fail in BOTH callable CLI modes until actual
+    # immutable-local AST, lexical verification, and stack lowering are wired.
+    ("callable-local-typed", "fnc main():int{int x=1;return x;}", "unexpected token"),
+    ("callable-local-explicit-const", "fnc main():int{const int x=1;return x;}", "unexpected token"),
+    ("callable-local-inferred-const", "fnc main():int{const x=1;return x;}", "unexpected token"),
+    ("callable-local-param", "fnc main(n:int):int{int x=n+1;return x;}", "unexpected token"),
 )
 DRIVER = r"""#include <errno.h>
 #include <inttypes.h>
