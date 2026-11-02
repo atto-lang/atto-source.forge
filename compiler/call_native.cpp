@@ -351,31 +351,42 @@ struct Native {
   std::string parameter_slot(int id) const {
     return "-"+std::to_string(8u*(static_cast<std::size_t>(id)+1u))+"(%rbp)";
   }
-  void emit_node(const Function& fn,int index) {
+  void emit_node(const Function& fn,int index,
+                 const std::map<std::string,int>& locals) {
     const auto& n=fn.nodes.at(static_cast<std::size_t>(index));
     if(n.kind==Kind::Constant) {
       out<<"  movabsq $"<<n.value<<", %rax\n";
     } else if(n.kind==Kind::Parameter) {
       out<<"  movq "<<parameter_slot(static_cast<int>(n.value))<<", %rax\n";
+    } else if(n.kind==Kind::Local) {
+      out<<"  movq "<<value_slot(locals.at(n.name))<<", %rax\n";
+    } else if(n.kind==Kind::Let) {
+      // The initializer retains its own frame slot; the binding is
+      // immutable, and no heap allocation or global state is required.
+      emit_node(fn,n.children[0],locals);
+      auto nested=locals;
+      if(!nested.emplace(n.name,n.children[0]).second)
+        throw std::runtime_error("duplicate immutable local");
+      emit_node(fn,n.children[1],nested);
     } else if(n.kind==Kind::If) {
       const auto tag=label++;
-      emit_node(fn,n.children[0]);
+      emit_node(fn,n.children[0],locals);
       out<<"  cmpq $0, %rax\n  je .Lores_else_"<<tag<<"\n";
-      emit_node(fn,n.children[1]);
+      emit_node(fn,n.children[1],locals);
       out<<"  jmp .Lores_end_"<<tag<<"\n"
          <<".Lores_else_"<<tag<<":\n";
-      emit_node(fn,n.children[2]);
+      emit_node(fn,n.children[2],locals);
       out<<".Lores_end_"<<tag<<":\n";
     } else if(n.kind==Kind::Call) {
-      for (int child:n.children)emit_node(fn,child);
+      for (int child:n.children)emit_node(fn,child,locals);
       for (std::size_t i=0;i<n.children.size();++i)
         out<<"  movq "<<value_slot(n.children[i])<<", "<<argument_reg(i)<<"\n";
       out<<"  movq -40(%rbp), %r8\n"
          <<"  addq $1, %r8\n"
          <<"  call .Lores_fn_"<<n.callee<<"\n";
     } else {
-      emit_node(fn,n.children[0]);
-      emit_node(fn,n.children[1]);
+      emit_node(fn,n.children[0],locals);
+      emit_node(fn,n.children[1],locals);
       out<<"  movq "<<value_slot(n.children[0])<<", %rax\n";
       switch(n.kind) {
         case Kind::Add: out<<"  addq ";break;
@@ -418,7 +429,7 @@ struct Native {
       for (std::size_t arg=0;arg<4;++arg)
         out<<"  movq "<<argument_reg(arg)<<", "<<parameter_slot(static_cast<int>(arg))<<"\n";
       out<<"  movq %r8, -40(%rbp)\n";
-      emit_node(fn,fn.result);
+      emit_node(fn,fn.result,{});
       out<<"  leave\n  ret\n";
     }
     out<<".Lores_depth:\n  ud2\n"
