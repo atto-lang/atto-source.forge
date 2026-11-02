@@ -100,6 +100,39 @@ class Parser {
   [[noreturn]] void error(const char* s) const {
     throw std::runtime_error(std::string(s)+" at byte "+std::to_string(tok_.offset));
   }
+  // Preserve canonical diagnostics for forbidden modifier pairs before
+  // generic bootstrap capability failure; trivia lookahead is non-mutating.
+  bool followed_by_word(std::string_view expected) const {
+    auto pos=at_;
+    while (pos<source_.size()) {
+      if (ascii_space(static_cast<unsigned char>(source_[pos]))) { ++pos; continue; }
+      if (pos+1<source_.size() && source_[pos]=='/' && source_[pos+1]=='/') {
+        pos+=2;
+        while (pos<source_.size() && source_[pos]!='\\n' && source_[pos]!='\\r') ++pos;
+        continue;
+      }
+      if (pos+1<source_.size() && source_[pos]=='/' && source_[pos+1]=='*') {
+        std::size_t depth=1;
+        pos+=2;
+        while (depth && pos<source_.size()) {
+          if (pos+1<source_.size() && source_[pos]=='/' && source_[pos+1]=='*') {
+            if (++depth>128) return false;
+            pos+=2;
+          } else if (pos+1<source_.size() && source_[pos]=='*' && source_[pos+1]=='/') {
+            --depth;
+            pos+=2;
+          } else ++pos;
+        }
+        if (depth) return false;
+        continue;
+      }
+      break;
+    }
+    if (source_.substr(pos,expected.size())!=expected) return false;
+    pos+=expected.size();
+    return pos==source_.size() ||
+           (!ascii_alnum(static_cast<unsigned char>(source_[pos])) && source_[pos]!='_');
+  }
   void next() {
     while (at_<source_.size()) {
       const auto c=static_cast<unsigned char>(source_[at_]);
@@ -156,12 +189,17 @@ class Parser {
       if (tok_.text=="enum") error("nominal enum overloads require compiler-bound dispatch");
       // Stage-0 has no critical body/effect/continuation lowering.
       // Fail on the real lexer token, not substring matches in comments.
+      if ((tok_.text=="critical" && followed_by_word("suspends")) ||
+          (tok_.text=="suspends" && followed_by_word("critical")))
+        error("E_CRITICAL_SUSPENDS_DECL: critical body may not suspend");
       if (tok_.text=="critical")
         error("E_CRITICAL_UNLOWERED: critical requires a scheduler-owned gate and nonsuspending body");
       if (tok_.text=="suspends" || tok_.text=="suspend")
         error("E_SUSPENDS_UNLOWERED: suspension-aware functions require task continuation lowering");
+      if (tok_.text=="async" && (followed_by_word("fnc") || followed_by_word("routine")))
+        error("E_ASYNC_FUNCTION_REMOVED: migrate immediate Future semantics explicitly");
       if (tok_.text=="async")
-        error("E_ASYNC_UNLOWERED: async generators require iterator frames; general functions migrate to suspends");
+        error("E_ASYNC_UNLOWERED: async generators require iterator frames");
       // Fail closed on named language features before the scalar grammar
       // gives a misleading generic syntax error (or ever learns to skip them).
       // These require typed method dispatch and ownership-checked closure IR.
