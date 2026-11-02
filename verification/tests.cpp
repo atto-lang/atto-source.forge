@@ -131,16 +131,69 @@ int main() {
     reject_diagnostic([] {
       (void)parse_source("fnc main():int{const x=unknown(1);return 42;}");
     }, "unknown function");
-    // Fail-closed admission: the independent native-call frontend must
-    // not silently interpret immutable declarations as expressions until
-    // scoped callable AST/IR + native frame lowering are implemented.
-    for(const auto* invalid : {
+    // Independent native-call parser, interpreter and native stack-slot ABI:
+    // all three source forms must be positive checked-i64 operations.
+    for(const auto* positive : {
       "fnc main():int{int x=1;return x;}",
       "fnc main():int{const int x=1;return x;}",
-      "fnc main():int{const x=1;return x;}",
-      "fnc main(n:int):int{int x=n+1;return x;}"
-    }) {
-      reject_diagnostic([&] { (void)calls::parse(invalid); }, "unexpected token");
+      "fnc main():int{const x=1;return x;}"
+    }) ensure(calls::interpret(calls::parse(positive),{})==1,
+              "native-call immutable local admission");
+    {
+      auto bound=calls::parse(
+        "fnc twice(n:int):int{const v=n+1;return v*2;}"
+        "fnc main(n:int):int{int result=twice(n);const answer=result+1;return answer;}");
+      for(const auto& [input,expected] :
+          std::vector<std::pair<std::int64_t,std::int64_t>>{
+            {0,3},{7,17},{20,43},{-2,-1}}) {
+        ensure(calls::interpret(bound,std::array<std::int64_t,1>{input})==expected,
+               "native-call helper-local value parity");
+      }
+      ensure(calls::emit_asm(bound,Arch::X86_64).find("  call .Lores_fn_")!=
+             std::string::npos,"native-call local linked through real call");
+      auto lazy=calls::parse(
+        "fnc main(n:int):int{const x=n+1;return if x>0 then x else -x;}");
+      ensure(calls::interpret(lazy,std::array<std::int64_t,1>{-3})==2,
+             "native-call locals inside lazy conditional");
+      ensure(calls::interpret(lazy,std::array<std::int64_t,1>{5})==6,
+             "native-call locals in positive branch");
+      auto invalid_scope=calls::parse("fnc main():int{int x=1;return x;}");
+      for(auto& node : invalid_scope.functions[0].nodes)
+        if(node.kind==calls::Kind::Local)node.name="missing";
+      reject_diagnostic([&]{calls::verify(invalid_scope);},
+                        "callable local out of scope");
+      auto invalid_binding=calls::parse("fnc main():int{int x=1;return x;}");
+      for(auto& node : invalid_binding.functions[0].nodes)
+        if(node.kind==calls::Kind::Let)node.name="return";
+      reject_diagnostic([&]{calls::verify(invalid_binding);},
+                        "invalid callable local name");
+    }
+    for(const auto* invalid : {
+      "fnc main():int{int x=x;return x;}",
+      "fnc main():int{const x=x;return x;}",
+      "fnc main():int{int x=y;int y=2;return x;}",
+      "fnc main():int{int x=1;int x=2;return x;}",
+      "fnc main(n:int):int{int n=1;return n;}",
+      "fnc main():int{int x=1;x=2;return x;}"
+    })reject([&] { (void)calls::parse(invalid); });
+    reject_diagnostic([] { calls::parse(
+      "fnc main():int{int x=1;x=2;return x;}"); },
+      "immutable local reassignment is forbidden");
+    reject_diagnostic([] { (void)calls::interpret(calls::parse(
+      "fnc main():int{const unused=9223372036854775807+1;return 42;}"),{}); },
+      "i64 add overflow");
+    {
+      std::string maximum="fnc main():int{";
+      for(int i=0;i<32;++i)
+        maximum+="int v"+std::to_string(i)+"="+std::to_string(i)+";";
+      maximum+="return v31;}";
+      ensure(calls::interpret(calls::parse(maximum),{})==31,
+             "native-call maximum 32 immutable locals");
+      std::string exceeded="fnc main():int{";
+      for(int i=0;i<33;++i)
+        exceeded+="int v"+std::to_string(i)+"="+std::to_string(i)+";";
+      exceeded+="return v32;}";
+      reject_diagnostic([&]{calls::parse(exceeded);},"immutable local budget exceeded");
     }
     // The four byte-pinned shared negative cases exercise the *actual*
     // Forge source parser, verified i64 IR and interpreter. An exception
