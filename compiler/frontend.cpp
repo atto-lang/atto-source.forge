@@ -34,7 +34,7 @@ struct Token { Kind kind; std::string_view text; std::size_t offset; };
 // semantically equivalent to invoking such a function, but NOT native ABI
 // calls, stack frames, mutable locals, recursion, or dynamic dispatch.
 struct Expr {
-  enum class Tag { Constant, Parameter, Negative, Add, Sub, Mul, Call };
+  enum class Tag { Constant, Parameter, Negative, Add, Sub, Mul, Call, Let };
   Tag tag;
   std::int64_t value = 0;
   std::string name;
@@ -216,7 +216,7 @@ class Parser {
     }
     if (source_.substr(at_,3)=="...")
       error("tuple-v2 explicit spread requires single-evaluation checked lowering");
-    if (std::string_view("()+-*/{};:,?").find(static_cast<char>(c)) ==
+    if (std::string_view("()+-*/{};:,?=").find(static_cast<char>(c)) ==
         std::string_view::npos) error("invalid character");
     ++at_;
     tok_={Kind::Punct,source_.substr(start,1),start};
@@ -283,9 +283,39 @@ class Parser {
     if (!take(":")) expect("->");
     if (tok_.text=="tuple" || tok_.text=="structural" || tok_.text=="(")
       error("tuple-v2 return requires typed ABI lowering");
-    expect("int"); expect("{"); expect("return");
+    expect("int"); expect("{");
+    // Bounded, scalar-only, immutable-by-default locals. An initializer
+    // observes earlier bindings, never itself or a future declaration.
+    // Lowering keeps them as SSA values: no mutable storage or heap/GC.
+    std::vector<std::pair<std::string,ExprPtr>> locals;
+    std::unordered_set<std::string> bound(fn.parameters.begin(),fn.parameters.end());
+    while (tok_.text=="int" || tok_.text=="const") {
+      take("const");
+      expect("int");
+      const std::string local=identifier();
+      if (local=="int" || local=="fnc" || local=="return" ||
+          !bound.insert(local).second)
+        error("invalid or duplicate immutable local");
+      expect("=");
+      auto initializer=expression(0);
+      expect(";");
+      locals.emplace_back(local,std::move(initializer));
+      if (locals.size()>32) error("immutable local budget exceeded");
+    }
+    if (tok_.kind==Kind::Word && bound.contains(std::string(tok_.text)) &&
+        tok_.text!="return")
+      error("immutable local reassignment is forbidden");
+    expect("return");
     fn.body=expression(0);
-    expect(";"); expect("}");
+    expect(";");
+    // Nest from the end so lexical evaluation flows left-to-right.
+    for (auto it=locals.rbegin();it!=locals.rend();++it) {
+      std::vector<ExprPtr> children;
+      children.push_back(std::move(it->second));
+      children.push_back(std::move(fn.body));
+      fn.body=node(Expr::Tag::Let,std::move(children),0,it->first);
+    }
+    expect("}");
     if (functions_.contains(name)) error("duplicate function");
     functions_.emplace(name,std::move(fn));
   }
@@ -384,10 +414,17 @@ class Parser {
   }
   void walk_calls(const Expr& e,const Function& owner,
                   std::vector<std::string>& active,
-                  std::unordered_set<std::string>& complete) const {
-    if (e.tag==Expr::Tag::Parameter &&
-        std::find(owner.parameters.begin(),owner.parameters.end(),e.name)==
-        owner.parameters.end())
+                  std::unordered_set<std::string>& complete,
+                  const std::unordered_set<std::string>& bound) const {
+    if (e.tag==Expr::Tag::Let) {
+      // The initializer must not see this binding, preventing self-reference.
+      walk_calls(*e.children.at(0),owner,active,complete,bound);
+      auto nested=bound;
+      nested.insert(e.name);
+      walk_calls(*e.children.at(1),owner,active,complete,nested);
+      return;
+    }
+    if (e.tag==Expr::Tag::Parameter && !bound.contains(e.name))
       throw std::runtime_error("expected integer at byte "+std::to_string(e.offset));
     if (e.tag==Expr::Tag::Call) {
       auto found=functions_.find(e.name);
@@ -398,7 +435,7 @@ class Parser {
       validate_calls(e.name,active,complete);
     }
     for (const auto& child:e.children)
-      walk_calls(*child,owner,active,complete);
+      walk_calls(*child,owner,active,complete,bound);
   }
   void validate_calls(const std::string& name,
                       std::vector<std::string>& active,
@@ -410,7 +447,8 @@ class Parser {
       throw std::runtime_error("function call depth exceeded");
     active.push_back(name);
     const auto& fn=functions_.at(name);
-    walk_calls(*fn.body,fn,active,complete);
+    walk_calls(*fn.body,fn,active,complete,
+               std::unordered_set<std::string>(fn.parameters.begin(),fn.parameters.end()));
     active.pop_back();
     complete.insert(name);
   }
@@ -420,6 +458,13 @@ class Parser {
       throw std::runtime_error("function call depth exceeded");
     switch (e.tag) {
       case Expr::Tag::Constant: return add(Op::Constant,e.value);
+      case Expr::Tag::Let: {
+        const int initializer=lower(*e.children.at(0),env,active,call_depth);
+        auto nested=env;
+        if (!nested.emplace(e.name,initializer).second)
+          throw std::runtime_error("duplicate immutable local");
+        return lower(*e.children.at(1),nested,active,call_depth);
+      }
       case Expr::Tag::Parameter: {
         auto found=env.find(e.name);
         if (found==env.end()) error("expected integer");

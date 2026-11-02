@@ -49,6 +49,59 @@ int main() {
     for (const auto& [expression, expected] : kPortableNumericalCases) {
       ensure(interpret(source(expression))==expected,"numeric parity i64 source");
     }
+    // Real compiler/IR/interpreter immutable-by-default i64 local slice.
+    // No aliasing or implicit conversion; each initializer is evaluated once.
+    for (const auto& [program,expected] : std::vector<std::pair<std::string,std::int64_t>>{
+      {"fnc main():int{int x=7;return x;}",7},
+      {"fnc main():int{const int x=7;return x;}",7},
+      {"fnc main():int{int x=7;const int y=x+2;return y*3;}",27},
+      {"fnc add(x:int):int{int z=x+1;return z;} fnc main():int{return add(41);}",42},
+      {"fnc add(x:int):int{return x+1;} fnc main():int{int z=add(6);return z*3;}",21},
+      {"fnc unused():int{const int x=2;return x;} fnc main():int{return 11;}",11},
+      {"fnc main():int{int x=-9223372036854775808;return x;}",
+       std::numeric_limits<std::int64_t>::min()}
+    }) {
+      ensure(interpret(parse_source(program))==expected,
+             "immutable type-first source interpreter");
+    }
+    {
+      const auto program=parse_runtime_source(
+        "fnc main(n:int):int{int x=n+2;const int y=x*3;return y;}");
+      const std::array<std::int64_t,1> args{7};
+      ensure(interpret(program,args)==27,"runtime-parameter immutable local");
+    }
+    for (const char* invalid : {
+      "fnc main():int{int x=x;return x;}",
+      "fnc main():int{int x=y;int y=2;return x;}",
+      "fnc main():int{int x=1;int x=2;return x;}",
+      "fnc main(x:int):int{int x=2;return x;}",
+      "fnc main():int{int x;return x;}",
+      "fnc main():int{int x=1; x=2;return x;}",
+      "fnc main():int{const int x=1; x=2;return x;}",
+      "fnc main():int{int x=1;return x=2;}",
+      "fnc main():int{int x=1.5;return x;}",
+      "fnc main():int{int x=true;return x;}",
+      "fnc main():int{int x=1;return missing;}",
+      "fnc unused():int{int x=missing;return x;} fnc main():int{return 1;}",
+      "fnc main():int{let x=1;return x;}",
+      "fnc main():int{bool x=true;return x;}",
+      "fnc main():int{int x=1;int y=2;return x+y; return 0;}"
+    }) {
+      reject([&] { (void)parse_source(invalid); });
+    }
+    reject_diagnostic([] {
+      parse_source("fnc main():int{int x=1;int x=2;return x;}");
+    }, "invalid or duplicate immutable local");
+    reject_diagnostic([] {
+      parse_source("fnc main():int{int x=x;return x;}");
+    }, "expected integer at byte");
+    reject_diagnostic([] {
+      parse_source("fnc main():int{int x=1; x=2;return x;}");
+    }, "immutable local reassignment is forbidden");
+    reject_diagnostic([] {
+      (void)interpret(parse_source(
+        "fnc main():int{int x=9223372036854775807;return x+1;}"));
+    }, "i64 add overflow");
     // The four byte-pinned shared negative cases exercise the *actual*
     // Forge source parser, verified i64 IR and interpreter. An exception
     // from either admission or execution is allowed; wrapping is not.

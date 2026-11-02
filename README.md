@@ -92,6 +92,24 @@ loops, closures, floating-point division, actors, native ARM64 call lowering,
 or compiler self-hosting. Only Linux x86-64 has executed native call and
 branch evidence. Do not treat this syntax subset as complete Oreslang syntax.
 
+## Immutable-by-default i64 bindings (stage-0 slice)
+
+The default scalar and opt-in runtime-argument frontends now accept
+initialized, type-first `int name = expression;` and explicit
+`const int name = expression;` before the single terminal `return`.
+Both lower to immutable SSA values; a later declaration cannot shadow a
+parameter or another local, and self/forward references are rejected.
+The initializer may call a pure helper or depend on an earlier binding.
+The bounds are 32 locals per function and the existing 128-level AST limit.
+No mutable `let`, aggregate/heap values, `bool`/`string` locals, blocks,
+loops, general lexical scopes, or implicit conversions are admitted.
+The separately opt-in `run-calls` parser is not extended by this change.
+
+The C++ unit suite exercises the actual parser and verified interpreter;
+existing native-assembly and runtime-argument CTests now also cover
+compiled i64 programs with these bindings. That is a small stage-0
+source-level capability, **not** Java/Graal language parity.
+
 ## Directories
 
 | Directory | Responsibility | State |
@@ -104,7 +122,7 @@ branch evidence. Do not treat this syntax subset as complete Oreslang syntax.
 
 ### Current supported grammar
 
-A single zero-argument \`fnc main() : int { return EXPR; }\`, with optional \`define\` and \`pub\` modifiers. Expressions include i64 decimal literals, parentheses, unary +/- and binary + - *. Source division is rejected because reference Oreslang `int / int` returns `float`; float lowering is not implemented. Internal checked-i64 IR division remains independently tested. Arithmetic is checked for overflow. The IR is single-block and every operand must refer to an earlier definition. There are still no runtime function-call instructions, stack frames, conditional branches, or loops. Tokenization is deterministically ASCII for the admitted grammar regardless of the host locale. Valid UTF-8 in comments is accepted, but non-ASCII identifiers or whitespace are rejected. The native CTest now executes assembled results for multi-function constant-folded sources and rejects invalid helper programs consistently across CLI modes. All emitted machine-code functions simply return the **compile-time computed constant** in \`oresforge_entry()\`; general instruction selection is not implemented.
+A zero-argument \`fnc main() : int { [up to 32 immutable int bindings] return EXPR; }\`, with optional \`define\` and \`pub\` modifiers. Expressions include i64 decimal literals, parentheses, unary +/- and binary + - *. Source division is rejected because reference Oreslang `int / int` returns `float`; float lowering is not implemented. Internal checked-i64 IR division remains independently tested. Arithmetic is checked for overflow. The IR is single-block and every operand must refer to an earlier definition. There are still no runtime function-call instructions, stack frames, conditional branches, or loops. Tokenization is deterministically ASCII for the admitted grammar regardless of the host locale. Valid UTF-8 in comments is accepted, but non-ASCII identifiers or whitespace are rejected. The native CTest now executes assembled results for multi-function constant-folded sources and rejects invalid helper programs consistently across CLI modes. All emitted machine-code functions simply return the **compile-time computed constant** in \`oresforge_entry()\`; general instruction selection is not implemented.
 
 Actors as Oreslang language constructs, ownership/borrows, concurrent scheduling, async/await, hot reload, true native JIT, native object generation, and OresVM integration **are not implemented**. Actor references now carry an **opaque, unforgeable-from-numeric-fields local
 incarnation authority**, rotating on restart. This only prevents one local

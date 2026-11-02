@@ -27,6 +27,11 @@ CASES = (
 # Entire source programs exercising the PR #95 pure-function inliner.
 # The returned value is still *constant-folded* before emission.
 FUNCTION_CASES = (
+    ("immutable-type-first-chain",
+     "fnc main():int{int x=7;const int y=x+2;return y*3;}", "27"),
+    ("immutable-helper-initializer",
+     "fnc add(x:int):int{return x+1;}"
+     " fnc main():int{int value=add(6);return value*3;}", "21"),
     ("forward-two-calls",
      "define pub fnc main():int{return square(3)+plus(4,5);}"
      " fnc square(x:int):int{return x*x;}"
@@ -43,6 +48,14 @@ FUNCTION_CASES = (
      " fnc main():int{return twice(10)+twice(3);}", "26"),
 )
 FUNCTION_REJECTIONS = (
+    ("immutable-self-reference",
+     "fnc main():int{int x=x;return x;}", "expected integer at byte"),
+    ("immutable-reassignment",
+     "fnc main():int{const int x=1;x=2;return x;}",
+     "immutable local reassignment is forbidden"),
+    ("immutable-duplicate",
+     "fnc main():int{int x=1;int x=2;return x;}",
+     "invalid or duplicate immutable local"),
     ("direct-recursion",
      "fnc main():int{return recur(1);}"
      " fnc recur(x:int):int{return recur(x);}", "recursive calls not supported"),

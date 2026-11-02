@@ -16,6 +16,9 @@ import sys
 import tempfile
 
 PROGRAMS = (
+    ("immutable-runtime-local",
+     "fnc main(n:int):int{int x=n+2;const int y=x*3;return y;}",
+     ((4,18),(0,6),(-2,0),(10,36))),
     ("two-args",
      "fnc helper(x:int,y:int):int{return x*3-y;} "
      "fnc main(a:int,b:int):int{return helper(a,b)+b*2;}",
