@@ -104,7 +104,7 @@ The initializer may call a pure helper or depend on an earlier binding.
 The bounds are 32 locals per function and the existing 128-level AST limit.
 No mutable `let`, aggregate/heap values, `bool`/`string` locals, blocks,
 loops, general lexical scopes, or implicit conversions are admitted.
-The separately opt-in `run-calls` parser is not extended by this change.
+The opt-in `run-calls` / `emit-call-asm` compiler is extended by this PR as a separate bounded, independently verified i64 implementation; it does not imply general typed-local parity.
 
 The C++ unit suite exercises the actual parser and verified interpreter,
 including the 32-binding budget and eager failure of unused initializers.
