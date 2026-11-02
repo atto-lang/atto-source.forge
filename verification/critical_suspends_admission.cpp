@@ -22,7 +22,7 @@ int main() {
     negative("critical suspends fnc main(): int { return 1; }", "E_CRITICAL_SUSPENDS_DECL");
     negative("suspends critical fnc main(): int { return 1; }", "E_CRITICAL_SUSPENDS_DECL");
     negative("pub critical /* nested /* level */ end */ suspends fnc main(): int { return 1; }", "E_CRITICAL_SUSPENDS_DECL");
-    negative("pub suspends // comment\\n critical fnc main(): int { return 1; }", "E_CRITICAL_SUSPENDS_DECL");
+    negative("pub suspends // comment\n critical fnc main(): int { return 1; }", "E_CRITICAL_SUSPENDS_DECL");
     negative("async fnc main(): int { return 1; }", "E_ASYNC_FUNCTION_REMOVED");
     negative("async routine main(): int { return 1; }", "E_ASYNC_FUNCTION_REMOVED");
     negative("async generator fnc main(): int { yield 1; }", "E_ASYNC_UNLOWERED");
