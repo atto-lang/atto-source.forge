@@ -201,15 +201,6 @@ int main() {
                         "duplicate or invalid function");
       reject_diagnostic([&]{(void)calls::emit_asm(keyword_helper,Arch::X86_64);},
                         "duplicate or invalid function");
-      auto keyword_parameter=calls::parse("fnc main(p:int):int{return p;}");
-      keyword_parameter.functions[0].parameters[0]="if";
-      reject_diagnostic([&]{calls::verify(keyword_parameter);},
-                        "invalid or duplicate callable parameter");
-      auto keyword_helper=calls::parse(
-        "fnc helper():int{return 1;}fnc main():int{return 2;}");
-      keyword_helper.functions[0].name="if";
-      reject_diagnostic([&]{calls::verify(keyword_helper);},
-                        "duplicate or invalid function");
       auto malformed_local=calls::parse("fnc main():int{int x=1;return x;}");
       for(auto& node:malformed_local.functions[0].nodes) {
         if(node.kind==calls::Kind::Let || node.kind==calls::Kind::Local)
