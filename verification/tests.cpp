@@ -193,6 +193,17 @@ int main() {
       }
       reject_diagnostic([&]{calls::verify(malformed_local);},
                         "invalid callable local payload");
+      auto numeric_payload=calls::parse(
+        "fnc main(p:int):int{const value=p+1;return value;}");
+      for(auto& node:numeric_payload.functions[0].nodes)
+        if(node.kind==calls::Kind::Add)node.value=98765;
+      reject_diagnostic([&]{calls::verify(numeric_payload);},
+                        "unexpected callable numeric payload");
+      reject_diagnostic([&]{(void)calls::emit_asm(numeric_payload,Arch::X86_64);},
+                        "unexpected callable numeric payload");
+      reject_diagnostic([&]{(void)calls::interpret(
+        numeric_payload,std::array<std::int64_t,1>{7});},
+                        "unexpected callable numeric payload");
       auto malformed_abi=calls::parse("fnc main(p:int):int{return p;}");
       malformed_abi.functions[0].parameters[0]="p with spaces";
       reject_diagnostic([&]{calls::verify(malformed_abi);},
