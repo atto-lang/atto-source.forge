@@ -101,6 +101,7 @@ class Parser {
     throw std::runtime_error(std::string(s)+" at byte "+std::to_string(tok_.offset));
   }
   void next() {
+    const auto previousToken = tok_.text;
     while (at_<source_.size()) {
       const auto c=static_cast<unsigned char>(source_[at_]);
       if (ascii_space(c)) { ++at_; continue; }
@@ -159,6 +160,8 @@ class Parser {
       // These require typed method dispatch and ownership-checked closure IR.
       if (tok_.text=="abstract")
         error("private abstract hooks require typed native vtables and superclass-only dispatch");
+      if (tok_.text=="actor" && previousToken=="virtual")
+        error("VIRTUAL_ACTOR_BACKEND_UNSUPPORTED: logical key and activation fencing required");
       if (tok_.text=="class" || tok_.text=="actor")
         error("class/actor methods require typed native lowering");
       if (tok_.text=="lex" || tok_.text=="nlex")
