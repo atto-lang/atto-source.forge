@@ -492,6 +492,11 @@ void verify(const Module& m) {
       if(n.kind!=Kind::Call && n.kind!=Kind::Local && n.kind!=Kind::Let &&
          !n.name.empty())
         throw std::runtime_error("unexpected callable symbol payload");
+      // Every opcode except constants and parameter indexes must carry
+      // its data solely in owned child edges, not an ignored i64 payload.
+      // Forged Module objects may bypass Parser and must be fail-closed.
+      if(n.kind!=Kind::Constant && n.kind!=Kind::Parameter && n.value!=0)
+        throw std::runtime_error("unexpected callable numeric payload");
       if((n.kind==Kind::Let || n.kind==Kind::Local) &&
          (!valid_identifier(n.name) || n.value!=0 || n.callee!=-1))
         throw std::runtime_error("invalid callable local payload");
