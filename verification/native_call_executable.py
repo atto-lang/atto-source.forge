@@ -34,6 +34,16 @@ POSITIVE = (
     ("signed-comparisons", "fnc main(a:int,b:int):int{return if a<b then 1 else if a>=b then 2 else 3;}",
      ((-9223372036854775808,9223372036854775807,1),(2,2,2),(10,2,2))),
     ("no-args", "fnc main():int{return 42;}", ((42,),)),
+    ("immutable-helper-bindings",
+     "fnc twice(n:int):int{const value=n+1;return value*2;}"
+     "fnc main(n:int):int{int result=twice(n);const answer=result+1;return answer;}",
+     ((0,3),(7,17),(20,43),(-2,-1))),
+    ("immutable-lazy-scope",
+     "fnc main(n:int):int{const value=n+1;return if value>0 then value else -value;}",
+     ((-3,2),(-1,0),(5,6))),
+    ("immutable-explicit-type",
+     "fnc main(n:int):int{const int v=n+2;return v*3;}",
+     ((-2,0),(0,6),(5,21))),
 )
 TRAPS = (
     ("overflow-add", "fnc plus(n:int):int{return n+1;}"
@@ -44,6 +54,9 @@ TRAPS = (
      (9223372036854775807,), "i64 mul overflow"),
     ("overflow-sub", "fnc main(n:int):int{return n-1;}",
      (-9223372036854775808,), "i64 sub overflow"),
+    ("immutable-unused-eager-overflow",
+     "fnc main(n:int):int{const unused=n+1;return 42;}",
+     (9223372036854775807,), "i64 add overflow"),
     ("unbounded-recursion", "fnc always(n:int):int{return always(n);}"
      " fnc main(n:int):int{return always(n);}",
      (1,), "call depth exceeded"),
@@ -55,12 +68,20 @@ INVALID = (
     ("duplicate-name", "fnc f():int{return 1;} fnc f():int{return 2;} fnc main():int{return 1;}", "duplicate function"),
     ("unknown-param", "fnc main():int{return oops;}", "unknown parameter"),
     ("unsupported-loop", "fnc main():int{return while 1 then 2;}", "unknown parameter"),
-    # Source declarations must fail in BOTH callable CLI modes until actual
-    # immutable-local AST, lexical verification, and stack lowering are wired.
-    ("callable-local-typed", "fnc main():int{int x=1;return x;}", "unexpected token"),
-    ("callable-local-explicit-const", "fnc main():int{const int x=1;return x;}", "unexpected token"),
-    ("callable-local-inferred-const", "fnc main():int{const x=1;return x;}", "unexpected token"),
-    ("callable-local-param", "fnc main(n:int):int{int x=n+1;return x;}", "unexpected token"),
+    ("immutable-self-reference",
+     "fnc main():int{int x=x;return x;}", "unknown parameter"),
+    ("immutable-duplicate",
+     "fnc main():int{int x=1;const x=2;return x;}",
+     "invalid or duplicate immutable local"),
+    ("immutable-reassignment",
+     "fnc main():int{int x=1;x=2;return x;}",
+     "immutable local reassignment is forbidden"),
+    ("immutable-forward-reference",
+     "fnc main():int{int x=y;int y=1;return x;}",
+     "unknown parameter"),
+    ("immutable-param-shadow",
+     "fnc main(n:int):int{int n=1;return n;}",
+     "invalid or duplicate immutable local"),
 )
 DRIVER = r"""#include <errno.h>
 #include <inttypes.h>
@@ -133,7 +154,7 @@ def main():
         for label,source,cases in POSITIVE:
             number=len(cases[0])-1
             file,exe,asm=build(compiler,cc,root,label,source,number)
-            if label in ("factorial","fibonacci","mutual","nested"):
+            if label in ("factorial","fibonacci","mutual","nested","immutable-helper-bindings"):
                 require(asm.count("  call .Lores_fn_")>=1,"missing real native call "+label)
             if label in ("factorial","lazy"):
                 require("  je .Lores_else_" in asm,"missing native lazy branch "+label)
