@@ -14,7 +14,20 @@ import subprocess
 import sys
 import tempfile
 
+# Exercise the full admitted local budget with real ABI-dependent values
+# and previous-local references. This catches a native frame-slot collision
+# or incorrectly scoped initializer that isolated single-local tests miss.
+BOUNDARY_32 = ("fnc main(n:int):int{" +
+               "int v0=n;" +
+               "".join("const v%d=v%d+1;" % (i, i-1) for i in range(1,32)) +
+               "return v31;}")
+BOUNDARY_33 = ("fnc main(n:int):int{" +
+               "".join("int v%d=n;" % i for i in range(33)) +
+               "return v32;}")
+
 POSITIVE = (
+    ("immutable-32-local-boundary", BOUNDARY_32,
+     ((0,31),(-31,0),(9223372036854775776,9223372036854775807))),
     ("factorial", "fnc fact(n:int):int{return if n<=1 then 1 else n*fact(n-1);}"
      " fnc main(n:int):int{return fact(n);}",
      ((0,1),(1,1),(5,120),(10,3628800),(20,2432902008176640000))),
@@ -57,6 +70,8 @@ TRAPS = (
     ("immutable-unused-eager-overflow",
      "fnc main(n:int):int{const unused=n+1;return 42;}",
      (9223372036854775807,), "i64 add overflow"),
+    ("immutable-chain-overflow", BOUNDARY_32,
+     (9223372036854775807,), "i64 add overflow"),
     ("unbounded-recursion", "fnc always(n:int):int{return always(n);}"
      " fnc main(n:int):int{return always(n);}",
      (1,), "call depth exceeded"),
@@ -82,6 +97,8 @@ INVALID = (
     ("immutable-param-shadow",
      "fnc main(n:int):int{int n=1;return n;}",
      "invalid or duplicate immutable local"),
+    ("immutable-33-local-budget", BOUNDARY_33,
+     "immutable local budget exceeded"),
 )
 DRIVER = r"""#include <errno.h>
 #include <inttypes.h>
