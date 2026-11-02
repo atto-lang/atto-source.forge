@@ -162,6 +162,34 @@ int main() {
         if(node.kind==calls::Kind::Local)node.name="missing";
       reject_diagnostic([&]{calls::verify(invalid_scope);},
                         "callable local out of scope");
+      // A forged Local named exactly like an ABI Parameter used to pass
+      // verification, then fail inside Native::emit_node's local slot map.
+      // Reject it before either interpreter execution or assembly emission.
+      auto parameter_alias=calls::parse(
+        "fnc main(p:int):int{const value=p+1;return value;}");
+      for(auto& node:parameter_alias.functions[0].nodes)
+        if(node.kind==calls::Kind::Local)node.name="p";
+      reject_diagnostic([&]{calls::verify(parameter_alias);},
+                        "callable local out of scope");
+      reject_diagnostic([&]{(void)calls::emit_asm(parameter_alias,Arch::X86_64);},
+                        "callable local out of scope");
+      reject_diagnostic([&]{(void)calls::interpret(
+        parameter_alias,std::array<std::int64_t,1>{7});},
+                        "callable local out of scope");
+      auto forged_shadow=calls::parse(
+        "fnc main(p:int):int{const value=p;return value;}");
+      for(auto& node:forged_shadow.functions[0].nodes)
+        if(node.kind==calls::Kind::Let)node.name="p";
+      reject_diagnostic([&]{calls::verify(forged_shadow);},
+                        "duplicate immutable local");
+      auto duplicate_abi=calls::parse("fnc main(p:int):int{return p;}");
+      duplicate_abi.functions[0].parameters.push_back("p");
+      reject_diagnostic([&]{calls::verify(duplicate_abi);},
+                        "invalid or duplicate callable parameter");
+      // The parser still admits a valid parameter/local flow unmodified.
+      ensure(calls::interpret(calls::parse(
+        "fnc main(p:int):int{const value=p+1;return value;}"),
+        std::array<std::int64_t,1>{7})==8,"unforged callable ABI binding");
       // Public Module input must fail before emission even when a caller
       // bypasses the textual parser or mutates a previously verified tree.
       auto self_init=calls::parse("fnc main():int{int x=1;return x;}");
