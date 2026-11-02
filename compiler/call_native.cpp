@@ -3,8 +3,10 @@
 #include <algorithm>
 #include <charconv>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <map>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -20,6 +22,7 @@ constexpr std::size_t kMaxNodesPerFunction = 256;
 constexpr std::size_t kMaxDepth = 128;
 constexpr std::size_t kMaxStackDepth = 128;
 constexpr std::size_t kMaxEvalSteps = 200000;
+constexpr std::size_t kMaxLocals = 32;
 bool letter(char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_'; }
 bool digit(char c) { return c >= '0' && c <= '9'; }
 bool space(char c) { return c == ' ' || c == '\r' || c == '\n' || c == '\t' || c == '\v' || c == '\f'; }
@@ -56,6 +59,7 @@ class Parser {
   std::map<std::string,int> names_;
   std::size_t node_count_=0;
   Function* current_=nullptr;
+  std::set<std::string> local_names_;
 
   [[noreturn]] void fail(const char* message) const {
     throw std::runtime_error(std::string(message)+" at byte "+std::to_string(token_.offset));
@@ -123,6 +127,7 @@ class Parser {
     names_[name]=index;
     module_.functions.push_back({name,{},{}});
     current_=&module_.functions.back();
+    local_names_.clear();
     expect("(");
     if (token_.text!=")") {
       do {
@@ -139,9 +144,37 @@ class Parser {
     }
     expect(")");
     if(!take(":"))expect("->");
-    expect("int");expect("{");expect("return");
+    expect("int");expect("{");
+    // The callable subset has only checked i64; unqualified and const
+    // declarations are immutable, and the initializer cannot see itself.
+    std::vector<std::pair<std::string,int>> bindings;
+    while(token_.text=="int" || token_.text=="const") {
+      const bool inferred=take("const");
+      if(!inferred || token_.text=="int")expect("int");
+      const std::string local=identifier();
+      if(local=="int"||local=="const"||local=="return"||local=="fnc"||
+         local=="if"||local=="then"||local=="else"||
+         local_names_.contains(local) ||
+         std::find(current_->parameters.begin(),current_->parameters.end(),local)
+            !=current_->parameters.end())
+        fail("invalid or duplicate immutable local");
+      expect("=");
+      const int initializer=expr(0);
+      expect(";");
+      local_names_.insert(local);
+      bindings.emplace_back(local,initializer);
+      if(bindings.size()>kMaxLocals)fail("immutable local budget exceeded");
+    }
+    if(local_names_.contains(std::string(token_.text)))
+      fail("immutable local reassignment is forbidden");
+    expect("return");
     current_->result=expr(0);
-    expect(";");expect("}");
+    expect(";");
+    // Postfix tree remains owned: local occurrences are new Local nodes,
+    // and the Let initializer + body have distinct reachable parents.
+    for(auto it=bindings.rbegin();it!=bindings.rend();++it)
+      current_->result=add(Kind::Let,0,it->first,{it->second,current_->result});
+    expect("}");
   }
   void depth(std::size_t n) {if(n>kMaxDepth)fail("callable expression nesting too deep");}
   int expr(std::size_t d) {
@@ -225,8 +258,10 @@ class Parser {
       if (!take("(")) {
         auto& params=current_->parameters;
         auto found=std::find(params.begin(),params.end(),name);
-        if(found==params.end())fail("unknown parameter");
-        return add(Kind::Parameter,static_cast<std::int64_t>(found-params.begin()));
+        if(found!=params.end())
+          return add(Kind::Parameter,static_cast<std::int64_t>(found-params.begin()));
+        if(local_names_.contains(name))return add(Kind::Local,0,name);
+        fail("unknown parameter");
       }
       std::vector<int> args;
       if (token_.text!=")") {
