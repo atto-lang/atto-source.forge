@@ -458,7 +458,12 @@ void verify(const Module& m) {
   std::size_t total=0;
   for (std::size_t fi=0;fi<m.functions.size();++fi) {
     const auto& fn=m.functions[fi];
-    if(!valid_identifier(fn.name) || !names.emplace(fn.name,fi).second)
+    // Public Module clients bypass Parser; uphold the source keyword ban
+    // even for helper functions that the entry never calls.
+    if(!valid_identifier(fn.name) ||
+       fn.name=="int" || fn.name=="const" || fn.name=="return" ||
+       fn.name=="if" || fn.name=="else" || fn.name=="then" ||
+       !names.emplace(fn.name,fi).second)
       throw std::runtime_error("duplicate or invalid function");
     if(fn.parameters.size()>4)throw std::runtime_error("function parameter budget exceeded");
     // Public Module values may be constructed or mutated without Parser.
@@ -466,7 +471,10 @@ void verify(const Module& m) {
     // Parameter, and duplicate parameter names must not collapse a scope.
     std::set<std::string> parameters;
     for(const auto& param:fn.parameters) {
-      if(!valid_identifier(param) || !parameters.insert(param).second)
+      if(!valid_identifier(param) ||
+         param=="int" || param=="const" || param=="if" ||
+         param=="then" || param=="else" || param=="return" ||
+         param=="fnc" || !parameters.insert(param).second)
         throw std::runtime_error("invalid or duplicate callable parameter");
     }
     if(fn.nodes.empty() || fn.nodes.size()>kMaxNodesPerFunction)
