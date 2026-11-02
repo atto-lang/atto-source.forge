@@ -412,16 +412,16 @@ class Parser {
     const int idx=static_cast<int>(program_.instructions.size());
     program_.instructions.push_back({op,value,a,b}); return idx;
   }
-  void walk_calls(const Expr& e,const Function& owner,
+  void walk_calls(const Expr& e,
                   std::vector<std::string>& active,
                   std::unordered_set<std::string>& complete,
                   const std::unordered_set<std::string>& bound) const {
     if (e.tag==Expr::Tag::Let) {
       // The initializer must not see this binding, preventing self-reference.
-      walk_calls(*e.children.at(0),owner,active,complete,bound);
+      walk_calls(*e.children.at(0),active,complete,bound);
       auto nested=bound;
       nested.insert(e.name);
-      walk_calls(*e.children.at(1),owner,active,complete,nested);
+      walk_calls(*e.children.at(1),active,complete,nested);
       return;
     }
     if (e.tag==Expr::Tag::Parameter && !bound.contains(e.name))
@@ -435,7 +435,7 @@ class Parser {
       validate_calls(e.name,active,complete);
     }
     for (const auto& child:e.children)
-      walk_calls(*child,owner,active,complete,bound);
+      walk_calls(*child,active,complete,bound);
   }
   void validate_calls(const std::string& name,
                       std::vector<std::string>& active,
@@ -447,7 +447,7 @@ class Parser {
       throw std::runtime_error("function call depth exceeded");
     active.push_back(name);
     const auto& fn=functions_.at(name);
-    walk_calls(*fn.body,fn,active,complete,
+    walk_calls(*fn.body,active,complete,
                std::unordered_set<std::string>(fn.parameters.begin(),fn.parameters.end()));
     active.pop_back();
     complete.insert(name);
