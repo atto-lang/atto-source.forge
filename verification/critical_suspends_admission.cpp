@@ -19,7 +19,12 @@ int main() {
     negative("fnc main(): int { critical gate { return 1; } }", "E_CRITICAL_UNLOWERED");
     negative("fnc main(): int { suspends critical { return 1; } }", "E_SUSPENDS_UNLOWERED");
     negative("suspends fnc main(): int { return 1; }", "E_SUSPENDS_UNLOWERED");
-    negative("async fnc main(): int { return 1; }", "E_ASYNC_UNLOWERED");
+    negative("critical suspends fnc main(): int { return 1; }", "E_CRITICAL_SUSPENDS_DECL");
+    negative("suspends critical fnc main(): int { return 1; }", "E_CRITICAL_SUSPENDS_DECL");
+    negative("pub critical /* nested /* level */ end */ suspends fnc main(): int { return 1; }", "E_CRITICAL_SUSPENDS_DECL");
+    negative("pub suspends // comment\\n critical fnc main(): int { return 1; }", "E_CRITICAL_SUSPENDS_DECL");
+    negative("async fnc main(): int { return 1; }", "E_ASYNC_FUNCTION_REMOVED");
+    negative("async routine main(): int { return 1; }", "E_ASYNC_FUNCTION_REMOVED");
     negative("async generator fnc main(): int { yield 1; }", "E_ASYNC_UNLOWERED");
     // Plain scalar compilation continues to work: no global word substitution.
     (void)oresforge::parse_source("fnc main(): int { return 7; }");
