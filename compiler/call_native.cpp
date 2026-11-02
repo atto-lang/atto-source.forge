@@ -472,11 +472,20 @@ void verify(const Module& m) {
         case Kind::Constant: case Kind::Parameter: case Kind::Add:
         case Kind::Sub: case Kind::Mul: case Kind::Less: case Kind::LessEqual:
         case Kind::Greater: case Kind::GreaterEqual: case Kind::Equal:
-        case Kind::NotEqual: case Kind::If: case Kind::Call: break;
+        case Kind::NotEqual: case Kind::If: case Kind::Call:
+        case Kind::Local: case Kind::Let: break;
         default: throw std::runtime_error("unknown callable opcode");
       }
-      if(n.kind!=Kind::Call && !n.name.empty())
+      if(n.kind!=Kind::Call && n.kind!=Kind::Local && n.kind!=Kind::Let &&
+         !n.name.empty())
         throw std::runtime_error("unexpected callable symbol payload");
+      if((n.kind==Kind::Let || n.kind==Kind::Local) &&
+         (n.name.empty() || n.value!=0 || n.callee!=-1))
+        throw std::runtime_error("invalid callable local payload");
+      if(n.kind==Kind::Let &&
+         (n.name=="int"||n.name=="const"||n.name=="return"||n.name=="fnc"||
+          n.name=="if"||n.name=="then"||n.name=="else"))
+        throw std::runtime_error("invalid callable local name");
       for(int arg:n.children) {
         if(arg<0 || static_cast<std::size_t>(arg)>=i)
           throw std::runtime_error("callable use before definition");
@@ -484,7 +493,7 @@ void verify(const Module& m) {
           throw std::runtime_error("callable AST shared node");
       }
       std::size_t size=2;
-      if(n.kind==Kind::Constant||n.kind==Kind::Parameter)size=0;
+      if(n.kind==Kind::Constant||n.kind==Kind::Parameter||n.kind==Kind::Local)size=0;
       else if(n.kind==Kind::If)size=3;
       else if(n.kind==Kind::Call)size=n.children.size();
       if(n.children.size()!=size)throw std::runtime_error("callable operand arity mismatch");
@@ -500,6 +509,31 @@ void verify(const Module& m) {
           throw std::runtime_error("callable target/name mismatch");
       } else if(n.callee!=-1)throw std::runtime_error("unexpected callable target");
     }
+    // Independently validate lexical scope on the owned expression tree.
+    // Verification must reject a tampered local before emitting any native
+    // load; the parser's declaration checks are insufficient for public IR.
+    std::function<void(int,const std::set<std::string>&,std::size_t)> lexical =
+      [&](int id,const std::set<std::string>& scope,std::size_t count) {
+        const auto& n=fn.nodes[static_cast<std::size_t>(id)];
+        if(n.kind==Kind::Local) {
+          if(!scope.contains(n.name))
+            throw std::runtime_error("callable local out of scope");
+          return;
+        }
+        if(n.kind==Kind::Let) {
+          if(scope.contains(n.name))
+            throw std::runtime_error("duplicate immutable local");
+          if(count>=kMaxLocals)
+            throw std::runtime_error("immutable local budget exceeded");
+          lexical(n.children[0],scope,count);
+          auto nested=scope;
+          nested.insert(n.name);
+          lexical(n.children[1],nested,count+1);
+          return;
+        }
+        for(int child:n.children)lexical(child,scope,count);
+      };
+    lexical(fn.result,std::set<std::string>(fn.parameters.begin(),fn.parameters.end()),0);
     for(std::size_t i=0;i<fn.nodes.size();++i) {
       const unsigned expected=(i==static_cast<std::size_t>(fn.result))?0u:1u;
       if(incoming[i]!=expected)
