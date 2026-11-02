@@ -348,6 +348,7 @@ const char* argument_reg(std::size_t i) {
 }
 struct Native {
   const Module& program;
+  explicit Native(const Module& p) : program(p) {}
   std::ostringstream out;
   std::size_t label=0;
   std::string value_slot(int id) const {
