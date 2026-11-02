@@ -456,6 +456,14 @@ void verify(const Module& m) {
     if(fn.name.empty() || !names.emplace(fn.name,fi).second)
       throw std::runtime_error("duplicate or invalid function");
     if(fn.parameters.size()>4)throw std::runtime_error("function parameter budget exceeded");
+    // Public Module values may be constructed or mutated without Parser.
+    // Unlike the native emitter's stack slots, a Local must never alias a
+    // Parameter, and duplicate parameter names must not collapse a scope.
+    std::set<std::string> parameters;
+    for(const auto& param:fn.parameters) {
+      if(param.empty() || !parameters.insert(param).second)
+        throw std::runtime_error("invalid or duplicate callable parameter");
+    }
     if(fn.nodes.empty() || fn.nodes.size()>kMaxNodesPerFunction)
       throw std::runtime_error("invalid callable function body");
     total+=fn.nodes.size();
@@ -516,12 +524,14 @@ void verify(const Module& m) {
       [&](int id,const std::set<std::string>& scope,std::size_t count) {
         const auto& n=fn.nodes[static_cast<std::size_t>(id)];
         if(n.kind==Kind::Local) {
-          if(!scope.contains(n.name))
+          // The native emitter resolves locals to initializer frame slots,
+          // not ABI parameter slots. Never accept a spoofed parameter name.
+          if(parameters.contains(n.name) || !scope.contains(n.name))
             throw std::runtime_error("callable local out of scope");
           return;
         }
         if(n.kind==Kind::Let) {
-          if(scope.contains(n.name))
+          if(parameters.contains(n.name) || scope.contains(n.name))
             throw std::runtime_error("duplicate immutable local");
           if(count>=kMaxLocals)
             throw std::runtime_error("immutable local budget exceeded");
@@ -533,7 +543,7 @@ void verify(const Module& m) {
         }
         for(int child:n.children)lexical(child,scope,count);
       };
-    lexical(fn.result,std::set<std::string>(fn.parameters.begin(),fn.parameters.end()),0);
+    lexical(fn.result,{},0);
     for(std::size_t i=0;i<fn.nodes.size();++i) {
       const unsigned expected=(i==static_cast<std::size_t>(fn.result))?0u:1u;
       if(incoming[i]!=expected)
