@@ -11,7 +11,7 @@ diagnostics as feature parity.
 
 | # | Priority gap relative to Java/Graal direction | Forge main baseline / existing work | Smallest next executable milestone |
 |---|---|---|---|
-| 1 | Immutable-by-default typed locals | Before this patch, only parameter references and a return expression; this PR adds bounded `int`, `const int`, and inferred-i64 `const name` SSA locals in scalar/runtime entry, not general typed locals. Java #2449 targets int/bool/string guest semantics. | Execute C++ parser + interpreter, native constant-entry and runtime-argument cases at exact head; then add `bool`/`string` only with real typed values. |
+| 1 | Immutable-by-default typed locals | Before this patch, only parameter references and a return expression; this PR adds bounded `int`, `const int`, and inferred-i64 `const name` SSA locals in scalar/runtime entry, not general typed locals. Java #2449 targets int/bool/string guest semantics. | Execute all four paths (scalar parser/interpreter, scalar-argument native code, native-call interpreter, x86-64 native helper calls) at the exact PR head; only then add `bool`/`string` with real typed values. |
 | 2 | Nominal classes, methods, receivers and dispatch | Scalar frontend rejects class; draft Forge #157 implements opt-in multi-instance scalar IR only. | Port single-class scalar method source fixture with real x86-64 native method calls; reject duplicate identity and stale receiver. |
 | 3 | Source actors with private heaps and exclusive turns | Host actor mailbox on main; draft #101 builds bounded scalar host actors. | Compile one `.ores` actor spawn→send→receive→retire fixture to real native code and fence stale generations. |
 | 4 | Actor groups, pub/sub and backpressure | No source `Topic<T>`, subscription or group member lowering; Java #2440 defines contract. | Two subscribers across independently joined groups, bounded FIFO and unsubscribe-vs-publish guest fixture. |
@@ -44,3 +44,19 @@ Promotion requires **positive and negative exact-head compiled guest receipts**,
 no zero-step substitutions, immutable fixture IDs/source digests, independent
 review and protected-main branch policy. No private source export to outside
 organizations is authorized by this matrix.
+
+## 2026-11-02 native-call immutable i64 slice (PR #171)
+The independent opt-in `run-calls` / `emit-call-asm` compiler now has
+bounded `Local` references and `Let` initializer/body nodes in its owned
+postfix AST. Typed `int`, `const int`, and inferred `const` declarations
+are checked-i64 and immutable; names become visible only after initialization.
+Its verifier checks the lexical binding tree independently of the parser,
+including malformed/unknown local names, param shadowing, duplicate bindings,
+and the 32-local limit. The interpreter and native x86-64 emitter preserve
+declaration order and evaluate initializer expressions once, with locals
+stored in existing per-call stack slots; no new heap allocation or GC path.
+The native executable acceptance suite has positive parameter-dependent helper
+calls, lazy-branch locals, and overflow traps for unused initializers.
+**These are authored compiler changes and test vectors, not stepful hosted
+receipts.** Never claim full Java/Graal typed-local parity, real actor source
+lowering or AOT multi-platform completion from this slice.
