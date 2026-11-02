@@ -162,6 +162,30 @@ int main() {
         if(node.kind==calls::Kind::Local)node.name="missing";
       reject_diagnostic([&]{calls::verify(invalid_scope);},
                         "callable local out of scope");
+      // Public Module input must fail before emission even when a caller
+      // bypasses the textual parser or mutates a previously verified tree.
+      auto self_init=calls::parse("fnc main():int{int x=1;return x;}");
+      for(auto& node:self_init.functions[0].nodes) {
+        if(node.kind==calls::Kind::Constant) {
+          node.kind=calls::Kind::Local;
+          node.name="x";
+          break;
+        }
+      }
+      reject_diagnostic([&]{calls::verify(self_init);},
+                        "callable local out of scope");
+      auto dup_binding=calls::parse(
+        "fnc main():int{int x=1;int y=x+1;return y;}");
+      for(auto& node:dup_binding.functions[0].nodes)
+        if(node.kind==calls::Kind::Let && node.name=="y")node.name="x";
+      reject_diagnostic([&]{calls::verify(dup_binding);},
+                        "duplicate immutable local");
+      reject_diagnostic([]{calls::parse(
+        "fnc const():int{return 1;} fnc main():int{return 1;}");},
+                        "reserved function name");
+      reject_diagnostic([]{calls::parse(
+        "fnc main(const:int):int{return 1;}");},
+                        "invalid or duplicate parameter");
       auto invalid_binding=calls::parse("fnc main():int{int x=1;return x;}");
       for(auto& node : invalid_binding.functions[0].nodes)
         if(node.kind==calls::Kind::Let)node.name="return";
