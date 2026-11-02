@@ -119,7 +119,7 @@ class Parser {
     }
     expect("fnc");
     const std::string name=identifier();
-    if (name=="int"||name=="return"||name=="if"||name=="else"||name=="then")
+    if (name=="int"||name=="const"||name=="return"||name=="if"||name=="else"||name=="then")
       fail("reserved function name");
     if (names_.contains(name))fail("duplicate function");
     if (module_.functions.size()>=kMaxFunctions)fail("function count budget exceeded");
@@ -132,7 +132,7 @@ class Parser {
     if (token_.text!=")") {
       do {
         const std::string param=identifier();
-        if (param=="int"||param=="if"||param=="then"||param=="else"||
+        if (param=="int"||param=="const"||param=="if"||param=="then"||param=="else"||
             param=="return"||param=="fnc"||
             std::find(current_->parameters.begin(),current_->parameters.end(),param)
             !=current_->parameters.end())fail("invalid or duplicate parameter");
