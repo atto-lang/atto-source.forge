@@ -29,6 +29,8 @@ CASES = (
 FUNCTION_CASES = (
     ("immutable-type-first-chain",
      "fnc main():int{int x=7;const int y=x+2;return y*3;}", "27"),
+    ("immutable-inferred-const",
+     "fnc main():int{const x=7;const y=x+2;return y*3;}", "27"),
     ("immutable-helper-initializer",
      "fnc add(x:int):int{return x+1;}"
      " fnc main():int{int value=add(6);return value*3;}", "21"),
@@ -50,6 +52,8 @@ FUNCTION_CASES = (
 FUNCTION_REJECTIONS = (
     ("immutable-self-reference",
      "fnc main():int{int x=x;return x;}", "expected integer at byte"),
+    ("inferred-const-self-reference",
+     "fnc main():int{const x=x;return x;}", "expected integer at byte"),
     ("immutable-reassignment",
      "fnc main():int{const int x=1;x=2;return x;}",
      "immutable local reassignment is forbidden"),

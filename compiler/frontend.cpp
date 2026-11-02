@@ -290,10 +290,13 @@ class Parser {
     std::vector<std::pair<std::string,ExprPtr>> locals;
     std::unordered_set<std::string> bound(fn.parameters.begin(),fn.parameters.end());
     while (tok_.text=="int" || tok_.text=="const") {
-      take("const");
-      expect("int");
+      const bool explicit_const=take("const");
+      // This frontend's expression type is always checked i64. Thus
+      // "const x = ..." safely infers int without a conversion rule.
+      if (!explicit_const || tok_.text=="int") expect("int");
       const std::string local=identifier();
       if (local=="int" || local=="fnc" || local=="return" ||
+          local=="const" ||
           !bound.insert(local).second)
         error("invalid or duplicate immutable local");
       expect("=");

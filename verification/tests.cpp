@@ -54,6 +54,8 @@ int main() {
     for (const auto& [program,expected] : std::vector<std::pair<std::string,std::int64_t>>{
       {"fnc main():int{int x=7;return x;}",7},
       {"fnc main():int{const int x=7;return x;}",7},
+      {"fnc main():int{const x=7;return x;}",7},
+      {"fnc main():int{int x=5;const y=x+3;return y*2;}",16},
       {"fnc main():int{int x=7;const int y=x+2;return y*3;}",27},
       {"fnc add(x:int):int{int z=x+1;return z;} fnc main():int{return add(41);}",42},
       {"fnc add(x:int):int{return x+1;} fnc main():int{int z=add(6);return z*3;}",21},
@@ -66,12 +68,16 @@ int main() {
     }
     {
       const auto program=parse_runtime_source(
-        "fnc main(n:int):int{int x=n+2;const int y=x*3;return y;}");
+        "fnc main(n:int):int{int x=n+2;const y=x*3;return y;}");
       const std::array<std::int64_t,1> args{7};
       ensure(interpret(program,args)==27,"runtime-parameter immutable local");
     }
     for (const char* invalid : {
       "fnc main():int{int x=x;return x;}",
+      "fnc main():int{const x=x;return x;}",
+      "fnc main():int{const x=1;const x=2;return x;}",
+      "fnc main():int{const x;return x;}",
+      "fnc main():int{const x=1;x=2;return x;}",
       "fnc main():int{int x=y;int y=2;return x;}",
       "fnc main():int{int x=1;int x=2;return x;}",
       "fnc main(x:int):int{int x=2;return x;}",

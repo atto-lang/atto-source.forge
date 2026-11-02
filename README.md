@@ -95,8 +95,9 @@ branch evidence. Do not treat this syntax subset as complete Oreslang syntax.
 ## Immutable-by-default i64 bindings (stage-0 slice)
 
 The default scalar and opt-in runtime-argument frontends now accept
-initialized, type-first `int name = expression;` and explicit
-`const int name = expression;` before the single terminal `return`.
+initialized, type-first `int name = expression;`, explicit
+`const int name = expression;`, and inferred-i64 `const name = expression;`
+before the single terminal `return`.
 Both lower to immutable SSA values; a later declaration cannot shadow a
 parameter or another local, and self/forward references are rejected.
 The initializer may call a pure helper or depend on an earlier binding.
