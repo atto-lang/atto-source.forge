@@ -306,25 +306,33 @@ struct Evaluator {
     if (depth>=kMaxStackDepth)throw std::runtime_error("call depth exceeded");
     const auto& f=m.functions.at(id);
     if(args.size()!=f.parameters.size())throw std::runtime_error("runtime argument count mismatch");
-    return visit(f,f.result,args,depth);
+    return visit(f,f.result,args,depth,{});
   }
   std::int64_t visit(const Function& fn,int id,std::span<const std::int64_t> args,
-                     std::size_t depth) {
+                     std::size_t depth,const std::map<std::string,std::int64_t>& locals) {
     if (remaining--==0)throw std::runtime_error("callable execution budget exceeded");
     const auto& n=fn.nodes.at(static_cast<std::size_t>(id));
     if(n.kind==Kind::Constant)return n.value;
     if(n.kind==Kind::Parameter)return args[static_cast<std::size_t>(n.value)];
+    if(n.kind==Kind::Local)return locals.at(n.name);
+    if(n.kind==Kind::Let) {
+      const auto initializer=visit(fn,n.children[0],args,depth,locals);
+      auto nested=locals;
+      if(!nested.emplace(n.name,initializer).second)
+        throw std::runtime_error("duplicate immutable local");
+      return visit(fn,n.children[1],args,depth,nested);
+    }
     if(n.kind==Kind::If) {
-      const auto pred=visit(fn,n.children[0],args,depth);
-      return visit(fn,n.children[pred ? 1u:2u],args,depth);
+      const auto pred=visit(fn,n.children[0],args,depth,locals);
+      return visit(fn,n.children[pred ? 1u:2u],args,depth,locals);
     }
     if(n.kind==Kind::Call) {
       std::vector<std::int64_t> vals;
-      for (int arg:n.children) vals.push_back(visit(fn,arg,args,depth));
+      for (int arg:n.children) vals.push_back(visit(fn,arg,args,depth,locals));
       return evaluate(static_cast<std::size_t>(n.callee),vals,depth+1);
     }
-    const auto a=visit(fn,n.children.at(0),args,depth);
-    const auto b=visit(fn,n.children.at(1),args,depth);
+    const auto a=visit(fn,n.children.at(0),args,depth,locals);
+    const auto b=visit(fn,n.children.at(1),args,depth,locals);
     return checked(n.kind,a,b);
   }
 };
