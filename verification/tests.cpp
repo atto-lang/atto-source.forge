@@ -186,6 +186,17 @@ int main() {
       duplicate_abi.functions[0].parameters.push_back("p");
       reject_diagnostic([&]{calls::verify(duplicate_abi);},
                         "invalid or duplicate callable parameter");
+      auto malformed_local=calls::parse("fnc main():int{int x=1;return x;}");
+      for(auto& node:malformed_local.functions[0].nodes) {
+        if(node.kind==calls::Kind::Let || node.kind==calls::Kind::Local)
+          node.name="x-invalid";
+      }
+      reject_diagnostic([&]{calls::verify(malformed_local);},
+                        "invalid callable local payload");
+      auto malformed_abi=calls::parse("fnc main(p:int):int{return p;}");
+      malformed_abi.functions[0].parameters[0]="p with spaces";
+      reject_diagnostic([&]{calls::verify(malformed_abi);},
+                        "invalid or duplicate callable parameter");
       // The parser still admits a valid parameter/local flow unmodified.
       ensure(calls::interpret(calls::parse(
         "fnc main(p:int):int{const value=p+1;return value;}"),
