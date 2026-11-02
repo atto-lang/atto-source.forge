@@ -25,6 +25,11 @@ constexpr std::size_t kMaxEvalSteps = 200000;
 constexpr std::size_t kMaxLocals = 32;
 bool letter(char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_'; }
 bool digit(char c) { return c >= '0' && c <= '9'; }
+bool valid_identifier(std::string_view name) {
+  if(name.empty() || !letter(name.front()))return false;
+  for(const char c:name) if(!letter(c) && !digit(c))return false;
+  return true;
+}
 bool space(char c) { return c == ' ' || c == '\r' || c == '\n' || c == '\t' || c == '\v' || c == '\f'; }
 struct Token { std::string_view text; std::size_t offset=0; };
 
@@ -453,7 +458,7 @@ void verify(const Module& m) {
   std::size_t total=0;
   for (std::size_t fi=0;fi<m.functions.size();++fi) {
     const auto& fn=m.functions[fi];
-    if(fn.name.empty() || !names.emplace(fn.name,fi).second)
+    if(!valid_identifier(fn.name) || !names.emplace(fn.name,fi).second)
       throw std::runtime_error("duplicate or invalid function");
     if(fn.parameters.size()>4)throw std::runtime_error("function parameter budget exceeded");
     // Public Module values may be constructed or mutated without Parser.
@@ -461,7 +466,7 @@ void verify(const Module& m) {
     // Parameter, and duplicate parameter names must not collapse a scope.
     std::set<std::string> parameters;
     for(const auto& param:fn.parameters) {
-      if(param.empty() || !parameters.insert(param).second)
+      if(!valid_identifier(param) || !parameters.insert(param).second)
         throw std::runtime_error("invalid or duplicate callable parameter");
     }
     if(fn.nodes.empty() || fn.nodes.size()>kMaxNodesPerFunction)
@@ -488,7 +493,7 @@ void verify(const Module& m) {
          !n.name.empty())
         throw std::runtime_error("unexpected callable symbol payload");
       if((n.kind==Kind::Let || n.kind==Kind::Local) &&
-         (n.name.empty() || n.value!=0 || n.callee!=-1))
+         (!valid_identifier(n.name) || n.value!=0 || n.callee!=-1))
         throw std::runtime_error("invalid callable local payload");
       if(n.kind==Kind::Let &&
          (n.name=="int"||n.name=="const"||n.name=="return"||n.name=="fnc"||
