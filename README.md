@@ -24,7 +24,7 @@ Requires CMake >= 3.20, a C++20-capable GCC/Clang, and a POSIX toolchain for nat
 ## Self-hosting and native execution evidence
 
 **OresForge is not yet self-hosting.** Its current compiler is C++20, not
-Oreslang source compiled by Oreslang. See [the stage-by-stage self-hosting
+AttoLang source compiled by AttoLang. See [the stage-by-stage self-hosting
 acceptance plan](docs/SELF_HOSTING.md). The Linux x86-64/ARM64 CTest
 `oresforge_native_asm_executable` now assembles, links and **runs** the
 compiler's constant-return assembly and compares results with the checked
@@ -91,10 +91,10 @@ step budget. Arithmetic overflow and excessive recursion trap in generated
 native code and raise explicit errors in the interpreter.
 
 This is an intentionally separate **stage-0 C++ compiler path**; it does not
-yet provide the general Oreslang ABI, mutable local bindings, statements,
+yet provide the general AttoLang ABI, mutable local bindings, statements,
 loops, closures, floating-point division, actors, native ARM64 call lowering,
 or compiler self-hosting. Only Linux x86-64 has executed native call and
-branch evidence. Do not treat this syntax subset as complete Oreslang syntax.
+branch evidence. Do not treat this syntax subset as complete AttoLang syntax.
 
 ## Immutable-by-default i64 bindings (stage-0 slice)
 
@@ -139,9 +139,9 @@ source-level capability, **not** Java/Graal language parity.
 
 ### Current supported grammar
 
-A zero-argument \`fnc main() : int { [up to 32 immutable int bindings] return EXPR; }\`, with optional \`define\` and \`pub\` modifiers. Expressions include i64 decimal literals, parentheses, unary +/- and binary + - *. Source division is rejected because reference Oreslang `int / int` returns `float`; float lowering is not implemented. Internal checked-i64 IR division remains independently tested. Arithmetic is checked for overflow. The IR is single-block and every operand must refer to an earlier definition. There are still no runtime function-call instructions, stack frames, conditional branches, or loops. Tokenization is deterministically ASCII for the admitted grammar regardless of the host locale. Valid UTF-8 in comments is accepted, but non-ASCII identifiers or whitespace are rejected. The native CTest now executes assembled results for multi-function constant-folded sources and rejects invalid helper programs consistently across CLI modes. All emitted machine-code functions simply return the **compile-time computed constant** in \`oresforge_entry()\`; general instruction selection is not implemented.
+A zero-argument \`fnc main() : int { [up to 32 immutable int bindings] return EXPR; }\`, with optional \`define\` and \`pub\` modifiers. Expressions include i64 decimal literals, parentheses, unary +/- and binary + - *. Source division is rejected because reference AttoLang `int / int` returns `float`; float lowering is not implemented. Internal checked-i64 IR division remains independently tested. Arithmetic is checked for overflow. The IR is single-block and every operand must refer to an earlier definition. There are still no runtime function-call instructions, stack frames, conditional branches, or loops. Tokenization is deterministically ASCII for the admitted grammar regardless of the host locale. Valid UTF-8 in comments is accepted, but non-ASCII identifiers or whitespace are rejected. The native CTest now executes assembled results for multi-function constant-folded sources and rejects invalid helper programs consistently across CLI modes. All emitted machine-code functions simply return the **compile-time computed constant** in \`oresforge_entry()\`; general instruction selection is not implemented.
 
-Actors as Oreslang language constructs, ownership/borrows, concurrent scheduling, async/await, hot reload, true native JIT, native object generation, and OresVM integration **are not implemented**. Actor references now carry an **opaque, unforgeable-from-numeric-fields local
+Actors as AttoLang language constructs, ownership/borrows, concurrent scheduling, async/await, hot reload, true native JIT, native object generation, and OresVM integration **are not implemented**. Actor references now carry an **opaque, unforgeable-from-numeric-fields local
 incarnation authority**, rotating on restart. This only prevents one local
 mailbox from accepting a different mailbox's numerically matching handle;
 it is **not** a cryptographically authenticated or network-serializable
