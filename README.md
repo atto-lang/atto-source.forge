@@ -2,6 +2,8 @@
 
 An **independent, experimental C++20 compiler and execution stack** for **AttoLang** (formerly Oreslang), distinct from GraalVM/Truffle and LLVM. This is a working **bootstrap prototype**, not a production AttoLang compiler.
 
+Stage-0 extension admission is not import parity: `.atto` names pass through the existing bounded single-file parser, while imports, cross-backend guest parity, production AOT, and zero-GC guarantees remain unproven. See [Atto source admission](docs/ATTO_SOURCE_ADMISSION.md).
+
 **AttoLang source files use the canonical `.atto` extension.** Legacy `oresforge` CLI/ABI names and `oreslang-*` repository names are retained temporarily for tooling compatibility. Existing `.ores` fixture archives are legacy conformance artifacts, not the format for new examples.
 
 ## Getting started
