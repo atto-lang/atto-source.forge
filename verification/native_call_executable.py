@@ -135,7 +135,7 @@ def require(value,message):
     if not value:raise RuntimeError(message)
 
 def build(compiler,cc,root,label,source,param_count):
-    file=root/"entry.ores"
+    file=root/"entry.atto"
     file.write_text(source+"\n",encoding="utf8")
     emit=execute([compiler,"emit-call-asm","x86_64",str(file)],root)
     require(emit.returncode==0 and not emit.stderr,
@@ -195,7 +195,7 @@ def main():
                     "native overflow/depth failed to trap "+label+": "+str(native.returncode))
             negatives+=1
         for label,source,diagnostic in INVALID:
-            file=root/"bad.ores"
+            file=root/"bad.atto"
             file.write_text(source+"\n",encoding="utf8")
             for command in ((compiler,"run-calls",str(file)),(compiler,"emit-call-asm","x86_64",str(file))):
                 failure=execute(command,root)
@@ -203,7 +203,7 @@ def main():
                         diagnostic.encode() in failure.stderr,
                         "semantic invalid case admitted or leaked output "+label)
             negatives+=1
-        file=root/"unsupported.ores"
+        file=root/"unsupported.atto"
         file.write_text("fnc main():int{return 42;}\n",encoding="ascii")
         unsupported=execute([compiler,"emit-call-asm","arm64",str(file)],root)
         require(unsupported.returncode==1 and unsupported.stdout==b"" and
