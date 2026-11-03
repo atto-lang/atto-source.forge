@@ -1,0 +1,4 @@
+// AttoLang stage-0 scalar example; legacy Oreslang repo names are compatibility identifiers.
+define pub fnc main() : int {
+    return 2 + 3 * 4;
+}
