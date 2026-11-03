@@ -10,8 +10,8 @@ Host components remain opt-in. Existing runtime/CLI defaults and guest feature a
 
 ## Exact component Git blobs
 
-- `runtime/SharedReactorPool.hpp`: `2b39bf63b17d2bb5461052996d94eb8c1e958924`
-- `verification/shared_reactor_pool_test.cpp`: `1a6900baadc492108ff94d299666ef5a12c49aac`
+- `runtime/SharedReactorPool.hpp`: `90542d00e55d98e1d1ce1ea9510c2d76e7e5ea68`
+- `verification/shared_reactor_pool_test.cpp`: `05570efaa8abebeded0d9700aeb511630409606a`
 - `verification/shared_worker_layout_benchmark.cpp`: `753dd4769e6160ceb03def0f8a99cd94bbc2c6a5`
 
 ## Counter microbenchmark (local shared host)
@@ -34,3 +34,13 @@ Hot-queue submissions avoid calling the reactor wake function when the single po
 Exact native component and test Git blobs match LLVM. Those identical bytes passed 20/20 GCC/Clang O1/O2 ASan+UBSan standalone host executions; LeakSanitizer disabled. No Forge-specific production source-guest or complete toolchain execution claimed.
 
 These results are standalone host-substrate evidence only. The PR remains draft and opt-in; runtime wiring, actor authority, CONTROL priority, cancellation generation fencing, and total-process thread measurements are still required. Remote zero-step workflow failures are not execution evidence.
+
+## Poll failure containment, fail-closed drain and runner capacity — 2026-11-03
+
+A faulting reactor must not leave a worker spinning or lose previously accepted entries: once an exception seals admission, workers drain already-admitted work but do not re-enter polling. C++17 no longer requires `poll` to be `noexcept`; unexpected exceptions are caught at the scheduler boundary while `wake` still must be nonblocking and `noexcept`.
+
+Exact implementation and test Git blob SHAs match LLVM; the same native bytes passed GCC/Clang × O1/O2 ASan/UBSan 5 runs each (20/20), with LeakSanitizer disabled. Fault-injected reactor failure regression passes. Forge compiler and compiled source guest execution NOT_EXECUTED.
+
+GitHub focused CI jobs in the source organization have previously failed without executed steps; these are not test failures. A separately authorized **source-free** GitHub Actions runner canary succeeded in private alternate-org carrier `opto-sync-test/go-java-validation`, run https://github.com/opto-sync-test/go-java-validation/actions/runs/41589765720, commit `7705a21d567f9637dbe035c69cd9be8dfbd1e8e2`. This demonstrates runner capacity only and does not certify or authorize exporting private source.
+
+The protected-source repository policies have no active approval for cross-organization source mirroring; no source, tree, or runtime test fixture was transferred to the alternate org. Real cross-org source-bearing CI remains BLOCKED by governance. The opt-in pool and draft PR must not be treated as production 2-thread startup or five-backend guest parity proof.
