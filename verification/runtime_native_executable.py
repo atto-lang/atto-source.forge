@@ -74,7 +74,7 @@ def check(condition,message):
     if not condition: raise RuntimeError(message)
 
 def assemble(compiler,cc,arch,root,source_text,parameter_count):
-    source=root/"source.ores"
+    source=root/"source.atto"
     source.write_text(source_text+"\n",encoding="utf-8")
     proc=execute([compiler,"emit-runtime-asm",arch,str(source)],root)
     check(proc.returncode==0 and not proc.stderr,
