@@ -71,11 +71,11 @@ if(BUILD_TESTING)
   add_test(NAME oresforge_cli_atto_guest
     COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.atto")
   set_tests_properties(oresforge_cli_atto_guest PROPERTIES
-    PASS_REGULAR_EXPRESSION "^14$" TIMEOUT 10)
+    PASS_REGULAR_EXPRESSION "^14\n?$" TIMEOUT 10)
   add_test(NAME oresforge_cli_legacy_ores_guest
     COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.ores")
   set_tests_properties(oresforge_cli_legacy_ores_guest PROPERTIES
-    PASS_REGULAR_EXPRESSION "^14$" TIMEOUT 10)
+    PASS_REGULAR_EXPRESSION "^14\n?$" TIMEOUT 10)
   # Host-only positive filesystem resolution substrate, not guest import linking.
   add_executable(oresforge_root_resolver_test verification/project_root_resolver_test.cpp)
   target_include_directories(oresforge_root_resolver_test PRIVATE .)
