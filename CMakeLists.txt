@@ -72,6 +72,11 @@ if(BUILD_TESTING)
     COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.atto")
   set_tests_properties(oresforge_cli_atto_guest PROPERTIES
     PASS_REGULAR_EXPRESSION "^14\n?$" TIMEOUT 10)
+  # Canonical byte-identical shared .atto guest. Real Forge parser + checked IR.
+  add_test(NAME oresforge_atto_canonical_interpreter_42
+    COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/contracts/atto-parity-v1/add.atto")
+  set_tests_properties(oresforge_atto_canonical_interpreter_42 PROPERTIES
+    PASS_REGULAR_EXPRESSION "^42\\n?$" TIMEOUT 10)
   add_test(NAME oresforge_cli_legacy_ores_guest
     COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.ores")
   set_tests_properties(oresforge_cli_legacy_ores_guest PROPERTIES
@@ -194,6 +199,14 @@ endif()
 if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
    CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|aarch64|arm64)$")
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  # Exact-source Forge emitter -> assembler/linker -> native binary execution.
+  # Codegen remains stage-0 constant-folded i64; not actor or full AOT parity.
+  add_test(NAME oresforge_atto_canonical_native_42
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/atto_canonical_native_executable.py"
+      --compiler "$<TARGET_FILE:oresforge>"
+      --source "${CMAKE_CURRENT_SOURCE_DIR}/contracts/atto-parity-v1/add.atto")
+  set_tests_properties(oresforge_atto_canonical_native_42 PROPERTIES TIMEOUT 90)
   add_test(NAME oresforge_native_asm_executable
     COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/verification/native_asm_executable.py"
