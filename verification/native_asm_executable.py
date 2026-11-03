@@ -136,7 +136,7 @@ def main():
         root = Path(tmp)
         driver = root / "driver.c"
         driver.write_text(DRIVER, encoding="ascii")
-        source = root / "source.ores"
+        source = root / "source.atto"
         asm = root / "entry.s"
         executable = root / "native-test"
         all_cases = [
