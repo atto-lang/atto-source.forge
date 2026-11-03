@@ -86,6 +86,12 @@ if(BUILD_TESTING)
   add_test(NAME oresforge_project_root_resolver_host_only COMMAND oresforge_root_resolver_test)
   set_tests_properties(oresforge_project_root_resolver_host_only PROPERTIES TIMEOUT 20)
   # Already present in main via PR #34; keep these registrations exactly once.
+  # This is a trusted-local mailbox policy regression, not a process sandbox
+  # or compiled Oreslang tenant execution test.
+  add_executable(oresforge_tenant_isolation_policy verification/tenant_isolation_policy.cpp)
+  target_link_libraries(oresforge_tenant_isolation_policy PRIVATE oresforge_core)
+  add_test(NAME oresforge_tenant_isolation_policy COMMAND oresforge_tenant_isolation_policy)
+  set_tests_properties(oresforge_tenant_isolation_policy PROPERTIES TIMEOUT 15)
   add_executable(oresforge_mailbox_destructor verification/actor_mailbox_destructor.cpp)
   target_link_libraries(oresforge_mailbox_destructor PRIVATE oresforge_core)
   add_test(NAME oresforge_actor_mailbox_destructor COMMAND oresforge_mailbox_destructor)
