@@ -345,6 +345,8 @@ class Parser {
       }
       if (operation=="mut") {
         next();
+        if (tok_.text=="share")
+          error("native rt mut share requires verified SharedMutex<T> capability, guarded lowering and allocation-domain proof; refusing unsynchronized alias");
         if (tok_.text!="borrow")
           error("'rt mut' only supports borrowing; use 'rt mut borrow value'");
         error("runtime ownership operation requires typed lowering in Forge");
