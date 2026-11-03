@@ -67,6 +67,15 @@ if(BUILD_TESTING)
   target_include_directories(oresforge_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
   target_link_libraries(oresforge_tests PRIVATE oresforge_core)
   add_test(NAME oresforge_unit COMMAND oresforge_tests)
+  # Stage-0 single-file AttoLang path admission. Imports remain fail-closed in Forge.
+  add_test(NAME oresforge_cli_atto_guest
+    COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.atto")
+  set_tests_properties(oresforge_cli_atto_guest PROPERTIES
+    PASS_REGULAR_EXPRESSION "^14\n?$" TIMEOUT 10)
+  add_test(NAME oresforge_cli_legacy_ores_guest
+    COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.ores")
+  set_tests_properties(oresforge_cli_legacy_ores_guest PROPERTIES
+    PASS_REGULAR_EXPRESSION "^14\n?$" TIMEOUT 10)
   # Host-only positive filesystem resolution substrate, not guest import linking.
   add_executable(oresforge_root_resolver_test verification/project_root_resolver_test.cpp)
   target_include_directories(oresforge_root_resolver_test PRIVATE .)
