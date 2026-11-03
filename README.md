@@ -1,6 +1,8 @@
-# OresForge
+# AttoLang Forge (legacy OresForge)
 
-An **independent, experimental C++20 compiler and execution stack** for Oreslang, distinct from GraalVM/Truffle and LLVM. This is a working **bootstrap prototype**, not a production Oreslang compiler.
+An **independent, experimental C++20 compiler and execution stack** for **AttoLang** (formerly Oreslang), distinct from GraalVM/Truffle and LLVM. This is a working **bootstrap prototype**, not a production AttoLang compiler.
+
+**AttoLang source files use the canonical `.atto` extension.** Legacy `oresforge` CLI/ABI names and `oreslang-*` repository names are retained temporarily for tooling compatibility. Existing `.ores` fixture archives are legacy conformance artifacts, not the format for new examples.
 
 ## Getting started
 
@@ -8,11 +10,11 @@ An **independent, experimental C++20 compiler and execution stack** for Oreslang
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
-./build/oresforge run examples/hello.ores       # 14
-./build/oresforge ir examples/hello.ores
-./build/oresforge emit-asm x86_64 examples/hello.ores
-./build/oresforge emit-asm arm64 examples/hello.ores
-./build/oresforge run examples/hello.ores  # expected: 14
+./build/oresforge run examples/hello.atto       # 14
+./build/oresforge ir examples/hello.atto
+./build/oresforge emit-asm x86_64 examples/hello.atto
+./build/oresforge emit-asm arm64 examples/hello.atto
+./build/oresforge run examples/hello.atto  # expected: 14
 ~~~
 
 Requires CMake >= 3.20, a C++20-capable GCC/Clang, and a POSIX toolchain for native smoke testing. CI builds this experimental bootstrap and executes its CTest suite. The former `verification/smoke.sh` reference was removed because that file does not exist.
@@ -37,9 +39,9 @@ zero-argument, compile-time checked behavior. New commands:
 
 ~~~sh
 # Source example: fnc main(x:int,y:int):int{return x*3+y;}
-./build/oresforge run-runtime example.ores 7 8       # 29
-./build/oresforge ir-runtime example.ores             # param.i64 instructions
-./build/oresforge emit-runtime-asm x86_64 example.ores > entry.s
+./build/oresforge run-runtime examples/runtime-args.atto 7 8       # 29
+./build/oresforge ir-runtime examples/runtime-args.atto             # param.i64 instructions
+./build/oresforge emit-runtime-asm x86_64 examples/runtime-args.atto > entry.s
 ~~~
 
 `emit-runtime-asm` generates **actual native integer operations on runtime
@@ -64,7 +66,7 @@ a separate, verified callable source subset. Unlike `run-runtime`, helper
 functions are **not statically inlined**: x86-64 code emits actual
 `call` and `ret` instructions, with real stack frames.
 
-~~~oreslang
+~~~atto
 fnc factorial(n:int):int {
   return if n <= 1 then 1 else n * factorial(n-1);
 }
@@ -72,8 +74,8 @@ fnc main(n:int):int { return factorial(n); }
 ~~~
 
 ~~~sh
-./build/oresforge run-calls factorial.ores 10         # 3628800
-./build/oresforge emit-call-asm x86_64 factorial.ores > factorial.s
+./build/oresforge run-calls examples/factorial.atto 10         # 3628800
+./build/oresforge emit-call-asm x86_64 examples/factorial.atto > factorial.s
 ~~~
 
 Supported here: signed 64-bit integer literals and parameters; arithmetic
