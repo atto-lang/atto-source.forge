@@ -76,7 +76,7 @@ if(BUILD_TESTING)
   add_test(NAME oresforge_atto_canonical_interpreter_42
     COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/contracts/atto-parity-v1/add.atto")
   set_tests_properties(oresforge_atto_canonical_interpreter_42 PROPERTIES
-    PASS_REGULAR_EXPRESSION "^42\\n?$" TIMEOUT 10)
+    PASS_REGULAR_EXPRESSION "^42\n?$" TIMEOUT 10)
   add_test(NAME oresforge_cli_legacy_ores_guest
     COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.ores")
   set_tests_properties(oresforge_cli_legacy_ores_guest PROPERTIES
