@@ -2,7 +2,9 @@
 """Real Forge CLI macro-denial gate: no guest, IR, ASM or runtime fallback."""
 import argparse
 import hashlib
+import os
 import pathlib
+import signal
 import subprocess
 import tempfile
 
@@ -41,9 +43,27 @@ def compiler_digest(compiler):
 
 def run(compiler, options, source, cwd):
     cmd = [str(compiler), *options, str(source)]
-    return subprocess.run(cmd, cwd=cwd, stdin=subprocess.DEVNULL,
-                          stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                          timeout=10, check=False)
+    process = subprocess.Popen(
+        cmd, cwd=cwd, stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        start_new_session=(os.name == "posix"))
+    try:
+        stdout, stderr = process.communicate(timeout=10)
+    except subprocess.TimeoutExpired as error:
+        # A timed-out compiler must not leave assembler or child processes
+        # alive to publish artifacts after the negative case has finished.
+        if os.name == "posix":
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        else:
+            process.kill()
+        process.communicate()
+        raise AssertionError("Forge macro compiler timed out") from error
+    if len(stdout) > 8192 or len(stderr) > 8192:
+        raise AssertionError("Forge macro compiler emitted unbounded diagnostic or IR")
+    return subprocess.CompletedProcess(cmd, process.returncode, stdout, stderr)
 
 
 def main():
