@@ -284,11 +284,15 @@ class Parser {
       do {
         if (tok_.text=="tuple" || tok_.text=="structural" || tok_.text=="(")
           error("tuple-v2 parameter requires typed ownership/ABI lowering");
+        // Canonical AttoLang spells parameters "int x"; preserve the
+        // older "x:int" form for source compatibility during migration.
+        // Both normalize to the same ordered, readonly i64 parameter.
+        const bool type_first=take("int");
         const std::string parameter=identifier();
         if (parameter=="int" || parameter=="fnc" || parameter=="return" ||
             std::find(fn.parameters.begin(),fn.parameters.end(),parameter)!=fn.parameters.end())
           error("invalid or duplicate parameter");
-        expect(":"); expect("int");
+        if (!type_first) { expect(":"); expect("int"); }
         fn.parameters.push_back(parameter);
         if (fn.parameters.size()>64) error("too many parameters");
         if (!take(",")) break;
