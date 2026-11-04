@@ -233,6 +233,8 @@ class Parser {
   }
   std::string identifier() {
     if (tok_.kind!=Kind::Word) error("expected identifier");
+    if (tok_.text=="guard")
+      error("GUARD_BACKEND_UNSUPPORTED: guard is reserved until checked CFG and ownership lowering");
     std::string name(tok_.text);
     next(); return name;
   }
@@ -298,7 +300,10 @@ class Parser {
     if (!take(":")) expect("->");
     if (tok_.text=="tuple" || tok_.text=="structural" || tok_.text=="(")
       error("tuple-v2 return requires typed ABI lowering");
-    expect("int"); expect("{"); expect("return");
+    expect("int"); expect("{");
+    if (tok_.text=="guard")
+      error("GUARD_BACKEND_UNSUPPORTED: early-exit CFG and ownership lowering required");
+    expect("return");
     fn.body=expression(0);
     expect(";"); expect("}");
     if (functions_.contains(name)) error("duplicate function");
