@@ -69,6 +69,31 @@ int main() {
     ensure(interpret(parse_source(
       "fnc main():int{return 42;} // define virtual actor Spoof"))==42,
       "declaration head inside a comment is not executable source");
+    // Forge must not claim Java/LLVM/.NET scalar macro parity by accepting
+    // syntax with missing typed AST provenance or runtime expansion.
+    for (std::string_view source_text : {
+      "define macro identity(Syntax<Expr> value) -> Syntax<Expr> { return value; } fnc main():int{return 42;}",
+      "define pub macro literal(Const<int> value) -> Syntax<Expr> { return quote(value); } fnc main():int{return 42;}",
+      "pub define macro twice(Syntax<Expr> value) -> Syntax<Expr> { return quote(unquote(value) + unquote(value)); } fnc main():int{return 42;}"
+    }) {
+      reject_diagnostic([&] { (void)parse_source(source_text); },
+                        "FORGE_MACRO_EXPANDER_REQUIRED");
+      reject_diagnostic([&] { (void)parse_runtime_source(source_text); },
+                        "FORGE_MACRO_EXPANDER_REQUIRED");
+    }
+    for (std::string_view source_text : {
+      "fnc main():int{return identity!(syntax expr 42);}",
+      "fnc main():int{return literal!(const 42);}",
+      "fnc main():int{return missing!(syntax expr 42);}"
+    }) {
+      reject_diagnostic([&] { (void)parse_source(source_text); },
+                        "FORGE_MACRO_EXPANDER_REQUIRED");
+      reject_diagnostic([&] { (void)parse_runtime_source(source_text); },
+                        "FORGE_MACRO_EXPANDER_REQUIRED");
+    }
+    ensure(interpret(parse_source(
+      "fnc main():int{return 42;} /* define macro identity(Syntax<Expr> x) */"))==42,
+      "macro-like comment text must not trigger capability denial");
     // Cross-backend i64 positive controls run against the real Forge parser,
     // verified IR and checked interpreter. These are not Python-only data tests.
     for (const auto& [expression, expected] : kPortableNumericalCases) {
