@@ -80,6 +80,8 @@ int main() {
                         "FORGE_MACRO_EXPANDER_REQUIRED");
       reject_diagnostic([&] { (void)parse_runtime_source(source_text); },
                         "FORGE_MACRO_EXPANDER_REQUIRED");
+      reject_diagnostic([&] { (void)oresforge::calls::parse(source_text); },
+                        "FORGE_MACRO_EXPANDER_REQUIRED");
     }
     for (std::string_view source_text : {
       "fnc main():int{return identity!(syntax expr 42);}",
@@ -89,6 +91,8 @@ int main() {
       reject_diagnostic([&] { (void)parse_source(source_text); },
                         "FORGE_MACRO_EXPANDER_REQUIRED");
       reject_diagnostic([&] { (void)parse_runtime_source(source_text); },
+                        "FORGE_MACRO_EXPANDER_REQUIRED");
+      reject_diagnostic([&] { (void)oresforge::calls::parse(source_text); },
                         "FORGE_MACRO_EXPANDER_REQUIRED");
     }
     ensure(interpret(parse_source(
