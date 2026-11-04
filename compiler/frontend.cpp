@@ -101,6 +101,7 @@ class Parser {
     throw std::runtime_error(std::string(s)+" at byte "+std::to_string(tok_.offset));
   }
   void next() {
+    const auto previousToken = tok_.text;
     while (at_<source_.size()) {
       const auto c=static_cast<unsigned char>(source_[at_]);
       if (ascii_space(c)) { ++at_; continue; }
@@ -159,6 +160,8 @@ class Parser {
       // These require typed method dispatch and ownership-checked closure IR.
       if (tok_.text=="abstract")
         error("private abstract hooks require typed native vtables and superclass-only dispatch");
+      if (tok_.text=="actor" && previousToken=="virtual")
+        error("VIRTUAL_ACTOR_BACKEND_UNSUPPORTED: logical key and activation fencing required");
       if (tok_.text=="class" || tok_.text=="actor")
         error("class/actor methods require typed native lowering");
       if (tok_.text=="lex" || tok_.text=="nlex")
@@ -259,6 +262,18 @@ class Parser {
       if (take("define")) { if (defined) error("duplicate define"); defined=true; }
       else if (take("pub")) { if (public_) error("duplicate pub"); public_=true; }
     }
+    if (tok_.text=="state") {
+      next();
+      if (tok_.text=="container")
+        error("STATE_CONTAINER_BACKEND_UNSUPPORTED: protected heap region and critical guard lowering required");
+      error("unexpected declaration after state");
+    }
+    if (tok_.text=="virtual") {
+      next();
+      if (tok_.text=="actor")
+        error("VIRTUAL_ACTOR_BACKEND_UNSUPPORTED: logical key and activation fencing required");
+      error("unexpected declaration after virtual");
+    }
     expect("fnc");
     const std::string name=identifier();
     if (name=="int" || name=="fnc" || name=="return")
@@ -330,6 +345,8 @@ class Parser {
       }
       if (operation=="mut") {
         next();
+        if (tok_.text=="share")
+          error("native rt mut share requires verified SharedMutex<T> capability, guarded lowering and allocation-domain proof; refusing unsynchronized alias");
         if (tok_.text!="borrow")
           error("'rt mut' only supports borrowing; use 'rt mut borrow value'");
         error("runtime ownership operation requires typed lowering in Forge");

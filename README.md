@@ -1,4 +1,14 @@
-# OresForge
+# AttoLang Forge backend
+
+**AttoLang** is the current public language name (formerly **Oreslang**).
+OresForge is the historical executable/engine identifier and is not renamed; this is the independent experimental C++20 AttoLang backend.
+This branding change does not establish new syntax, source-extension support,
+execution parity, AOT capabilities or zero-GC guarantees. New source SHOULD
+use `.atto` only after this particular backend has passed a real compile/run
+admission test; `.ores` remains supported wherever already implemented.
+Do not rename repositories, dependencies, commands or fixed interfaces merely
+to make their names match the public brand.
+
 
 ## VM isolate execution architecture
 

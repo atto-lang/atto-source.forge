@@ -44,6 +44,31 @@ oresforge::Program source(const std::string& expr) {
 int main() {
   try {
     using namespace oresforge;
+    // Two-word contextual declarations are not executable stage-0 scalar
+    // functions; every mode must reject with the correct semantic capability.
+    for (std::string_view source_text : {
+      "define state container Counter as end",
+      "define pub state container Counter as end",
+      "pub define state container Counter as end"
+    }) {
+      reject_diagnostic([&] { (void)parse_source(source_text); },
+                        "STATE_CONTAINER_BACKEND_UNSUPPORTED");
+      reject_diagnostic([&] { (void)parse_runtime_source(source_text); },
+                        "STATE_CONTAINER_BACKEND_UNSUPPORTED");
+    }
+    for (std::string_view source_text : {
+      "define virtual actor Cart as end",
+      "define pub virtual actor Cart as end",
+      "pub define virtual actor Cart as end"
+    }) {
+      reject_diagnostic([&] { (void)parse_source(source_text); },
+                        "VIRTUAL_ACTOR_BACKEND_UNSUPPORTED");
+      reject_diagnostic([&] { (void)parse_runtime_source(source_text); },
+                        "VIRTUAL_ACTOR_BACKEND_UNSUPPORTED");
+    }
+    ensure(interpret(parse_source(
+      "fnc main():int{return 42;} // define virtual actor Spoof"))==42,
+      "declaration head inside a comment is not executable source");
     // Cross-backend i64 positive controls run against the real Forge parser,
     // verified IR and checked interpreter. These are not Python-only data tests.
     for (const auto& [expression, expected] : kPortableNumericalCases) {
@@ -214,6 +239,32 @@ int main() {
                       "legacy 'rt borrow mut' is not valid Oreslang");
     reject_diagnostic([] { parse_source("fnc main():int{return rt mut borrow value;}"); },
                       "runtime ownership operation requires typed lowering in Forge");
+    // Shared mutation cannot silently degrade to a scalar alias. The scalar
+    // compiler and the opt-in runtime-entry profile must diagnose the feature
+    // itself before any interpreted result, IR, or executable is produced.
+    constexpr std::array<std::string_view,8> mut_share_invalid{
+      "rt mut share 42",
+      "(rt mut share 42)",
+      "1+(rt mut share 42)",
+      "rt mut share (rt borrow 42)",
+      "rt mut share (rt mut share 42)",
+      "rt mut share (40+2)",
+      "rt /* boundary */ mut /* owner */ share 42",
+      "rt\nmut\nshare 42",
+    };
+    for (const auto expression : mut_share_invalid) {
+      const auto source_text=std::string("fnc main():int{return ")+
+                             std::string(expression)+";}";
+      reject_diagnostic([&] { (void)parse_source(source_text); },
+                        "native rt mut share requires verified SharedMutex<T> capability");
+      reject_diagnostic([&] { (void)parse_runtime_source(source_text); },
+                        "native rt mut share requires verified SharedMutex<T> capability");
+    }
+    ensure(interpret(parse_source("fnc main():int{return 42;} // rt mut share ignored"))==42,
+           "ownership keywords in trailing comment cannot affect scalar result");
+    ensure(interpret(parse_source("fnc main():int{/* rt mut share ignored */ return 42;}"))==42,
+           "ownership keywords in block comments cannot affect scalar result");
+
     reject([] { parse_source("fnc main():int{return &value;}"); });
     reject([] { parse_source("fnc main():int{return &mut value;}"); });
     reject([] { parse_source("fnc main():int{return *value;}"); });

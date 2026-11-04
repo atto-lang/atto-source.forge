@@ -22,8 +22,12 @@ void discard_queued(std::deque<std::vector<std::uint8_t>>& queue) noexcept {
 // Clean pending mailbox-owned data on destruction, not just explicit close.
 // As with any C++ object, destruction requires all users to have stopped.
 Mailbox::~Mailbox() noexcept { discard_queued(queue_); }
-Mailbox::Mailbox(std::uint64_t id,std::size_t capacity,std::size_t bytes):
+Mailbox::Mailbox(std::uint64_t id,std::size_t capacity,std::size_t bytes,
+                 TenantIsolationMode isolation,bool untrusted):
     id_(id),capacity_(capacity),byte_capacity_(bytes) {
+  // Check requested physical/security boundary before creating any actor
+  // authority. The stage-0 Forge mailbox is trusted-in-process only.
+  require_tenant_isolation(isolation, untrusted);
   // Reject invalid admission budgets before allocating a capability.
   if (id==0 || capacity==0 || capacity>kMaxMailboxMessages ||
       bytes==0 || bytes>kMaxMailboxBytes)

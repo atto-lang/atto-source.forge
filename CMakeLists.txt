@@ -67,6 +67,15 @@ if(BUILD_TESTING)
   target_include_directories(oresforge_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
   target_link_libraries(oresforge_tests PRIVATE oresforge_core)
   add_test(NAME oresforge_unit COMMAND oresforge_tests)
+  # Stage-0 single-file AttoLang path admission. Imports remain fail-closed in Forge.
+  add_test(NAME oresforge_cli_atto_guest
+    COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.atto")
+  set_tests_properties(oresforge_cli_atto_guest PROPERTIES
+    PASS_REGULAR_EXPRESSION "^14\n?$" TIMEOUT 10)
+  add_test(NAME oresforge_cli_legacy_ores_guest
+    COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.ores")
+  set_tests_properties(oresforge_cli_legacy_ores_guest PROPERTIES
+    PASS_REGULAR_EXPRESSION "^14\n?$" TIMEOUT 10)
   # Host-only positive filesystem resolution substrate, not guest import linking.
   add_executable(oresforge_root_resolver_test verification/project_root_resolver_test.cpp)
   target_include_directories(oresforge_root_resolver_test PRIVATE .)
@@ -77,6 +86,12 @@ if(BUILD_TESTING)
   add_test(NAME oresforge_project_root_resolver_host_only COMMAND oresforge_root_resolver_test)
   set_tests_properties(oresforge_project_root_resolver_host_only PROPERTIES TIMEOUT 20)
   # Already present in main via PR #34; keep these registrations exactly once.
+  # This is a trusted-local mailbox policy regression, not a process sandbox
+  # or compiled Oreslang tenant execution test.
+  add_executable(oresforge_tenant_isolation_policy verification/tenant_isolation_policy.cpp)
+  target_link_libraries(oresforge_tenant_isolation_policy PRIVATE oresforge_core)
+  add_test(NAME oresforge_tenant_isolation_policy COMMAND oresforge_tenant_isolation_policy)
+  set_tests_properties(oresforge_tenant_isolation_policy PROPERTIES TIMEOUT 15)
   add_executable(oresforge_mailbox_destructor verification/actor_mailbox_destructor.cpp)
   target_link_libraries(oresforge_mailbox_destructor PRIVATE oresforge_core)
   add_test(NAME oresforge_actor_mailbox_destructor COMMAND oresforge_mailbox_destructor)
@@ -206,6 +221,21 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
   endif()
 endif()
 
+# HOST-ONLY AI dispatch fencing parity v1; NOT an Oreslang guest / durable store.
+if(BUILD_TESTING)
+  add_executable(ores_agent_host_dispatch_parity_v1
+    contracts/v1/agent-dispatch/agent_host_dispatch_test.cpp)
+  target_include_directories(ores_agent_host_dispatch_parity_v1 PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/contracts/v1/agent-dispatch")
+  target_compile_features(ores_agent_host_dispatch_parity_v1 PRIVATE cxx_std_17)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(ores_agent_host_dispatch_parity_v1 PRIVATE
+      -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+  endif()
+  add_test(NAME agent_model_dispatch_host_fencing_v1
+    COMMAND ores_agent_host_dispatch_parity_v1)
+  set_tests_properties(agent_model_dispatch_host_fencing_v1 PROPERTIES TIMEOUT 15)
+endif()
 
 # Host-only tenant isolate admission. Executable native guest sandboxing is NOT proven.
 if(BUILD_TESTING)
