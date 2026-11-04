@@ -23,6 +23,7 @@ COMMANDS = [
     ("run",), ("ir",), ("emit-asm", "x86_64"),
     ("run-runtime",), ("ir-runtime",),
     ("emit-runtime-asm", "x86_64"),
+    ("run-calls",), ("emit-call-asm", "x86_64"),
 ]
 
 
