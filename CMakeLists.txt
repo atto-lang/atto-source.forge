@@ -122,6 +122,13 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/verification/cli_source_budget.py"
       "$<TARGET_FILE:oresforge>")
   set_tests_properties(oresforge_cli_source_budget PROPERTIES TIMEOUT 20)
+  # Actual compiler executable denial: every source/IR/ASM entry remains
+  # fail-closed for unsupported macros; no host-only mock is accepted.
+  add_test(NAME forge_macro_compiler_negative_gate
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/forge_macro_denial.py"
+      --compiler "$<TARGET_FILE:oresforge>")
+  set_tests_properties(forge_macro_compiler_negative_gate PROPERTIES TIMEOUT 60)
   # Source to IR interpreter (not machine code or native AOT parity).
   add_test(NAME oresforge_source_i64_interpreter
     COMMAND "${Python3_EXECUTABLE}"

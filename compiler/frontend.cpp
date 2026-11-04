@@ -152,6 +152,11 @@ class Parser {
       // Reject with a stable diagnostic rather than emitting an unrelated
       // scalar result from a source that depends on external modules.
       if (tok_.text=="import") error("source imports require verified module graph lowering");
+      // Forge has no typed syntax/macro artifact expansion or runtime
+      // fallback. Reject even unused macro declarations at token admission,
+      // instead of a generic fnc parse error that can mask missing lowering.
+      if (tok_.text=="macro")
+        error("FORGE_MACRO_EXPANDER_REQUIRED: typed compile-time macro lowering unavailable; runtime fallback forbidden");
       // Scalar bootstrap lacks nominal enum declarations and compiler-owned
       // prebound virtual method slots. Never attempt arity-only fallback.
       if (tok_.text=="enum") error("nominal enum overloads require compiler-bound dispatch");
@@ -214,6 +219,12 @@ class Parser {
     if (c=='|')
       throw std::runtime_error("lexical captures require checked closure lowering at byte "+
                                std::to_string(start));
+    // Any bang invocation is unsupported in this scalar bootstrap. Never
+    // treat the callee as an ordinary i64 function or emit partial scalar IR.
+    if (c=='!')
+      throw std::runtime_error(
+        "FORGE_MACRO_EXPANDER_REQUIRED: macro invocation requires checked compile-time AST and ownership lowering at byte "+
+        std::to_string(start));
     if (source_[at_]=='-' && at_+1<source_.size() && source_[at_+1]=='>') {
       at_+=2; tok_={Kind::Punct,source_.substr(start,2),start}; return;
     }
