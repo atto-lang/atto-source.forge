@@ -76,6 +76,13 @@
       "expected_i64": "42"
     },
     {
+      "id": "type-first-parameter",
+      "kind": "positive",
+      "path": "contracts/atto-scalar-v1/positive/type-first-parameter.atto",
+      "git_blob_sha1": "3d6c16ed04aa86f954461885ec77c8f10b47fb5c",
+      "expected_i64": "42"
+    },
+    {
       "id": "checked-add-overflow",
       "kind": "negative",
       "path": "contracts/atto-scalar-v1/negative/checked-add-overflow.atto",

@@ -201,14 +201,14 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   # Exact-source Forge emitter -> assembler/linker -> native binary execution.
   # Codegen remains stage-0 constant-folded i64; not actor or full AOT parity.
-  # 18 byte-identical .atto scalar programs from common-source PR #217.
+  # 19 byte-identical .atto scalar programs from common-source PR #217.
   # Exercises the real Forge parser, IR and assembled native guest; it is NOT
   # five-backend parity or an implementation of unsupported actor features.
-  add_test(NAME oresforge_atto_scalar_18_native
+  add_test(NAME oresforge_atto_scalar_19_native
     COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/verification/atto_scalar_corpus_v1.py"
       --compiler "$<TARGET_FILE:oresforge>")
-  set_tests_properties(oresforge_atto_scalar_18_native PROPERTIES TIMEOUT 240)
+  set_tests_properties(oresforge_atto_scalar_19_native PROPERTIES TIMEOUT 240)
   add_test(NAME oresforge_atto_canonical_native_42
     COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/verification/atto_canonical_native_executable.py"
