@@ -236,3 +236,32 @@ if(BUILD_TESTING)
     COMMAND ores_agent_host_dispatch_parity_v1)
   set_tests_properties(agent_model_dispatch_host_fencing_v1 PROPERTIES TIMEOUT 15)
 endif()
+
+# Host-only tenant isolate admission. Executable native guest sandboxing is NOT proven.
+if(BUILD_TESTING)
+  add_executable(oresforge_isolate_host_test verification/isolate_host_test.cpp)
+  target_include_directories(oresforge_isolate_host_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_isolate_host_test PRIVATE cxx_std_20)
+  find_package(Threads REQUIRED)
+  target_link_libraries(oresforge_isolate_host_test PRIVATE Threads::Threads)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_isolate_host_test PRIVATE -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+  endif()
+  add_test(NAME oresforge_tenant_isolate_host_admission COMMAND oresforge_isolate_host_test)
+  set_tests_properties(oresforge_tenant_isolate_host_admission PROPERTIES TIMEOUT 30)
+endif()
+
+# First verified native Forge IsolateVM bridge: compile .ores to actual
+# runtime-argument x86-64 assembly, link with an independent C++ host driver,
+# run two tenant states against the same guest machine code.
+if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+   CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64)$")
+  add_test(NAME oresforge_compiled_tenant_isolate_native
+    COMMAND "${CMAKE_COMMAND}"
+      "-DORESFORGE_COMPILER=$<TARGET_FILE:oresforge>"
+      "-DORESFORGE_CXX=${CMAKE_CXX_COMPILER}"
+      "-DROOT=${CMAKE_CURRENT_SOURCE_DIR}"
+      "-DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/tenant_native_entry"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/verification/tenant_native_entry.cmake")
+  set_tests_properties(oresforge_compiled_tenant_isolate_native PROPERTIES TIMEOUT 90)
+endif()
