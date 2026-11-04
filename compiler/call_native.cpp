@@ -85,6 +85,14 @@ class Parser {
     const char c=text_[at_++];
     if (letter(c)) {
       while (at_<text_.size() && (letter(text_[at_])||digit(text_[at_]))) ++at_;
+      if (text_.substr(begin,at_-begin)=="macro")
+        throw std::runtime_error(
+          "FORGE_MACRO_EXPANDER_REQUIRED: typed macro declaration requires checked compile-time lowering at byte "+
+          std::to_string(begin));
+    } else if (c=='!' && (at_==text_.size() || text_[at_]!='=')) {
+      throw std::runtime_error(
+        "FORGE_MACRO_EXPANDER_REQUIRED: typed macro invocation requires checked compile-time lowering at byte "+
+        std::to_string(begin));
     } else if (digit(c)) {
       while (at_<text_.size() && digit(text_[at_])) ++at_;
     } else if ((c=='<'||c=='>'||c=='='||c=='!') &&
