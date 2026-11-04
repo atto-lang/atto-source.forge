@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Real Forge CLI macro-denial gate: no guest, IR, ASM or runtime fallback."""
 import argparse
+import hashlib
 import pathlib
 import subprocess
 import tempfile
@@ -27,6 +28,17 @@ COMMANDS = [
 ]
 
 
+def compiler_digest(compiler):
+    size = compiler.stat().st_size
+    if size <= 0 or size > 256 * 1024 * 1024:
+        raise AssertionError("Forge compiler binary exceeds 256 MiB execution budget")
+    digest = hashlib.sha256()
+    with compiler.open("rb") as stream:
+        while chunk := stream.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def run(compiler, options, source, cwd):
     cmd = [str(compiler), *options, str(source)]
     return subprocess.run(cmd, cwd=cwd, stdin=subprocess.DEVNULL,
@@ -43,6 +55,7 @@ def main():
     compiler = opts.compiler.resolve(strict=True)
     if not compiler.is_file():
         raise AssertionError("compiler is not a regular file")
+    compiler_sha256 = compiler_digest(compiler)
     count = 0
     with tempfile.TemporaryDirectory(prefix="forge-macro-deny-") as folder:
         root = pathlib.Path(folder)
@@ -67,8 +80,10 @@ def main():
         actual = run(compiler, ("run",), source, folder)
         if (actual.returncode, actual.stdout, actual.stderr) != (0, b"42\n", b""):
             raise AssertionError("macro comment decoy modified real scalar guest")
+    if compiler_digest(compiler) != compiler_sha256:
+        raise AssertionError("Forge compiler executable changed during macro denial tests")
     print(f"PASS Forge real CLI macro fail-closed: {count} negatives, 1 scalar positive; "
-          "NOT a macro-guest parity claim")
+          f"compiler_sha256={compiler_sha256}; NOT a macro-guest parity claim")
 
 
 if __name__ == "__main__":
