@@ -27,6 +27,12 @@ CASES = (
 # Entire source programs exercising the PR #95 pure-function inliner.
 # The returned value is still *constant-folded* before emission.
 FUNCTION_CASES = (
+    ("type-first-parameter-call",
+     "fnc inc(int x):int{return x+1;}"
+     " fnc main():int{return inc(41);}", "42"),
+    ("mixed-parameter-spellings",
+     "fnc add(int x,y:int):int{return x+y;}"
+     " fnc main():int{return add(40,2);}", "42"),
     ("immutable-type-first-chain",
      "fnc main():int{int x=7;const int y=x+2;return y*3;}", "27"),
     ("immutable-inferred-const",
@@ -66,6 +72,10 @@ FUNCTION_REJECTIONS = (
     ("direct-recursion",
      "fnc main():int{return recur(1);}"
      " fnc recur(x:int):int{return recur(x);}", "recursive calls not supported"),
+    ("type-first-param-duplicate",
+     "fnc add(int x,int x):int{return x;}"
+     " fnc main():int{return add(40,2);}",
+     "invalid or duplicate parameter"),
     ("arity-mismatch",
      "fnc main():int{return inc(1,2);}"
      " fnc inc(x:int):int{return x+1;}", "function arity mismatch"),
