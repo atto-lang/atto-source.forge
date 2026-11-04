@@ -30,6 +30,8 @@ static_assert(!std::is_constructible_v<ActorArena::Scratch, std::uint64_t, std::
 static_assert(std::is_copy_constructible_v<ActorArena::Turn>);
 static_assert(std::is_copy_constructible_v<ActorArena::Handle>);
 static_assert(std::is_copy_constructible_v<ActorArena::Scratch>);
+static_assert(!std::is_copy_constructible_v<ActorArena::ExternalLease>);
+static_assert(std::is_move_constructible_v<ActorArena::ExternalLease>);
 static void ensure(bool ok) { if (!ok) throw std::runtime_error("actor arena invariant failed"); }
 template <typename F> static void rejects(F&& f) {
   bool caught = false;
@@ -156,6 +158,50 @@ int main() {
   }
   migrating.end_turn(m1);
   migrating.retire();
+
+  // External lifetime pins model continuations, FFI and I/O callbacks.
+  // They grant no arena access, but must delay physical reclamation after
+  // logical retirement until the final external owner quiesces.
+  ActorArena quiescing(700, 3);
+  auto qturn = quiescing.begin_turn(700, 3);
+  auto qhandle = quiescing.allocate(qturn, 8);
+  quiescing.write(qturn, qhandle, payload);
+  auto external = quiescing.acquire_external(qturn);
+  ensure(quiescing.outstanding_external_leases() == 1);
+  quiescing.end_turn(qturn);
+  quiescing.retire();
+  ensure(quiescing.retired());
+  ensure(!quiescing.physically_reclaimed());
+  rejects([&] { (void)quiescing.begin_turn(700, 3); });
+  std::thread callbackCarrier([lease = std::move(external)]() mutable {
+    lease.close();
+    lease.close();
+  });
+  callbackCarrier.join();
+  ensure(quiescing.outstanding_external_leases() == 0);
+  ensure(quiescing.physically_reclaimed());
+  quiescing.retire();
+  // Register a real callback while the actor turn is admitted. The wrapper
+  // itself carries only the lifetime lease and releases it after invocation,
+  // including when the callback runs on another carrier.
+  ActorArena callbackPinned(405, 1);
+  auto callbackTurn = callbackPinned.begin_turn(405, 1);
+  auto trackedCallback = callbackPinned.track_external_callback(
+      callbackTurn, [] { return 23; });
+  ensure(callbackPinned.outstanding_external_leases() == 1);
+  callbackPinned.end_turn(callbackTurn);
+  callbackPinned.retire();
+  ensure(callbackPinned.retired());
+  ensure(!callbackPinned.physically_reclaimed());
+
+  std::atomic<int> callbackResult{0};
+  std::thread completionCarrier([&] { callbackResult.store(trackedCallback()); });
+  completionCarrier.join();
+  ensure(callbackResult.load() == 23);
+  ensure(callbackPinned.outstanding_external_leases() == 0);
+  ensure(callbackPinned.physically_reclaimed());
+  rejects([&] { (void)trackedCallback(); });
+
 
   // The actual runtime's saturating allocator must not wrap or reuse IDs.
   // Drive it with independent counters so global capability domains remain
