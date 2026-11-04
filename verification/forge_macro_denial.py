@@ -64,11 +64,19 @@ def main():
             source.write_text(text + "\n", encoding="utf-8")
             for command in COMMANDS:
                 before = {p.name for p in root.iterdir()}
+                source_bytes = source.read_bytes()
+                source_identity = source.stat()
                 outcome = run(compiler, command, source, folder)
                 after = {p.name for p in root.iterdir()}
+                current_identity = source.stat()
+                source_changed = (source.is_symlink() or
+                    source.read_bytes() != source_bytes or
+                    (current_identity.st_dev, current_identity.st_ino) !=
+                    (source_identity.st_dev, source_identity.st_ino))
                 if (outcome.returncode != 1 or outcome.stdout or
                         b"FORGE_MACRO_EXPANDER_REQUIRED" not in outcome.stderr or
-                        len(outcome.stderr) > 8192 or after != before):
+                        len(outcome.stderr) > 8192 or after != before or
+                        source_changed):
                     raise AssertionError(
                         f"unexpected macro admission {command}: "
                         f"status={outcome.returncode} stdout={outcome.stdout!r} "
@@ -77,8 +85,14 @@ def main():
         source.write_text(
             "pub fnc main():int{return 42;} // define macro decoy\n",
             encoding="utf-8")
+        positive_bytes = source.read_bytes()
+        positive_identity = source.stat()
         actual = run(compiler, ("run",), source, folder)
-        if (actual.returncode, actual.stdout, actual.stderr) != (0, b"42\n", b""):
+        unchanged = (not source.is_symlink() and
+            source.read_bytes() == positive_bytes and
+            (source.stat().st_dev, source.stat().st_ino) ==
+            (positive_identity.st_dev, positive_identity.st_ino))
+        if not unchanged or (actual.returncode, actual.stdout, actual.stderr) != (0, b"42\n", b""):
             raise AssertionError("macro comment decoy modified real scalar guest")
     if compiler_digest(compiler) != compiler_sha256:
         raise AssertionError("Forge compiler executable changed during macro denial tests")
