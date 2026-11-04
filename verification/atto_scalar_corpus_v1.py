@@ -94,25 +94,39 @@ def main():
             blob=hashlib.sha1(b"blob "+str(len(data)).encode("ascii")+b"\0"+data).hexdigest()
             require(blob==case["git_blob_sha1"] and 0<len(data)<=8192,
                     "fixture source identity mismatch: "+case["id"])
+            # The compiler must consume the exact bytes that were hashed,
+            # not a mutable original checkout path after hash verification.
+            staged=work / (case["id"]+".atto")
+            with staged.open("xb") as pinned:
+                pinned.write(data)
+            staged.chmod(0o400)
+            require(staged.read_bytes()==data and not staged.is_symlink(),
+                    "staged Forge source differs from reviewed fixture")
             if case["kind"]=="positive":
                 expected=case["expected_i64"].encode("ascii")+b"\n"
-                status,out,err=invoke([str(compiler),"run",str(source)],work)
+                status,out,err=invoke([str(compiler),"run",str(staged)],work)
                 require((status,out,err)==(0,expected,b""),
                         "checked IR mismatch: "+case["id"])
-                status,out,err=invoke([str(compiler),"ir",str(source)],work)
+                status,out,err=invoke([str(compiler),"ir",str(staged)],work)
                 require(status==0 and out and err==b"",
                         "IR verification mismatch: "+case["id"])
-                status,asm,err=invoke([str(compiler),"emit-asm",arch,str(source)],work)
+                status,asm,err=invoke([str(compiler),"emit-asm",arch,str(staged)],work)
                 require(status==0 and err==b"" and
                         asm.startswith(b".text\n.globl oresforge_entry\noresforge_entry:\n") and
                         asm.rstrip().endswith(b"ret") and len(asm)<=1024,
                         "native assembly emission mismatch: "+case["id"])
                 assembly.write_bytes(asm)
+                # A failed/misconfigured assembler may not borrow a previous
+                # case's output and report a false new native guest.
+                binary.unlink(missing_ok=True)
                 status,out,err=invoke([cc,"-std=c11","-Wall","-Wextra",
                                        "-Werror",str(driver),str(assembly),
                                        "-o",str(binary)],work)
                 require(status==0, "native assembly/link failed: "+case["id"]+
                         " "+err.decode("utf-8","replace")[:1000])
+                require(binary.is_file() and not binary.is_symlink() and
+                        0 < binary.stat().st_size <= 32*1024*1024,
+                        "assembler did not publish a fresh bounded native binary: "+case["id"])
                 status,out,err=invoke([str(binary)],work)
                 require((status,out,err)==(0,expected,b""),
                         "native linked guest mismatch: "+case["id"])
@@ -121,8 +135,11 @@ def main():
                     "native_sha256":hashlib.sha256(binary.read_bytes()).hexdigest()})
             else:
                 for mode in ("run","ir","emit-asm"):
+                    before={p.name for p in work.iterdir()}
                     cmd=[str(compiler),mode]+([arch] if mode=="emit-asm" else [])
-                    status,out,err=invoke(cmd+[str(source)],work)
+                    status,out,err=invoke(cmd+[str(staged)],work)
+                    require({p.name for p in work.iterdir()} == before,
+                            "negative compiler created an artifact: "+case["id"]+"/"+mode)
                     require(status!=0 and out==b"" and err.startswith(b"oresforge: "),
                             "negative accepted or leaked success output: "+case["id"]+"/"+mode)
                     diag=ERRORS.get(case["id"])
