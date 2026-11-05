@@ -352,8 +352,20 @@ int main() {
     ensure(calls::interpret(mutually_recursive,std::array<std::int64_t,1>{100000})==1,
            "100k mutual tail hops stay bounded in stage-0 interpreter");
     const auto tail_asm=calls::emit_asm(self_tail,Arch::X86_64);
-    ensure(tail_asm.find("  leave\n  jmp .Lores_fn_")!=std::string::npos,
-           "native x86-64 tail call reclaims the caller frame");
+    ensure(tail_asm.find("  movq -40(%rbp), %r8\n  leave\n  jmp .Lores_fn_")
+           !=std::string::npos,
+           "native tail transfer restores physical depth after argument evaluation");
+    auto nested_before_tail=calls::parse(
+      "fnc identity(n:int):int{return n;}"
+      " fnc prior(n:int):int{return 1+identity(n-1);}"
+      " fnc walk(n:int):int{return if n==0 then 0 else walk(prior(n-1));}"
+      " fnc main(n:int):int{return walk(n);}");
+    ensure(calls::interpret(nested_before_tail,std::array<std::int64_t,1>{100000})==0,
+           "deep tail loop with non-tail argument helper stays bounded");
+    ensure(calls::emit_asm(nested_before_tail,Arch::X86_64).find(
+           "  movq -40(%rbp), %r8\n  leave\n  jmp .Lores_fn_")
+           !=std::string::npos,
+           "depth register restored before nested-argument tail jump");
     ensure(tail_asm.find("  subq $1, %r9\n")!=std::string::npos &&
            tail_asm.find(".Lores_fuel:\n  ud2\n")!=std::string::npos,
            "native tail jumps retain bounded execution fuel");
