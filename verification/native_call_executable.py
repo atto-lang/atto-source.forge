@@ -94,11 +94,16 @@ int main(int argc,char **argv) {
 }
 """
 
-def execute(args,cwd,timeout=10):
+NATIVE_STACK_LIMIT_BYTES = 512 * 1024  # bounded-stack proof; Linux/x86-64 only
+
+def execute(args,cwd,timeout=10,stack_limit_bytes=None):
     # Do not create large core files for deliberate SIGILL depth/overflow tests.
     def limits():
         import resource
         resource.setrlimit(resource.RLIMIT_CORE,(0,0))
+        if stack_limit_bytes is not None:
+            resource.setrlimit(resource.RLIMIT_STACK,
+                               (stack_limit_bytes,stack_limit_bytes))
     return subprocess.run(args,cwd=cwd,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,
                           stderr=subprocess.PIPE,timeout=timeout,check=False,
                           preexec_fn=limits)
@@ -138,6 +143,7 @@ def main():
     cc=shutil.which("cc")
     require(bool(cc),"C linker missing")
     positives=negatives=0
+    negative_tail_mutation = False
     with tempfile.TemporaryDirectory(prefix="oresforge-native-calls-") as tmp:
         root=Path(tmp)
         for label,source,cases in POSITIVE:
@@ -156,18 +162,41 @@ def main():
                 inp=row[:-1]
                 expected=(str(row[-1])+"\n").encode()
                 checked=execute([compiler,"run-calls",str(file),*map(str,inp)],root)
-                native=execute([str(exe),*map(str,inp)],root)
+                native=execute([str(exe),*map(str,inp)],root,
+                               stack_limit_bytes=NATIVE_STACK_LIMIT_BYTES)
                 require((checked.returncode,checked.stdout,checked.stderr)==(0,expected,b""),
                         "interpreter returned wrong result "+label+"/"+repr(inp))
                 require((native.returncode,native.stdout,native.stderr)==(0,expected,b""),
                         "native call returned wrong result "+label+"/"+repr(inp))
                 positives+=1
+            if label == "self-tail-100k":
+                # Mutation witness: replacing the recursive tail jump with a
+                # non-tail call must exceed the SAME low-stack budget. A mere
+                # successful deep execution is insufficient evidence for TCO.
+                native_tail = "  movq -40(%rbp), %r8\\n  leave\\n  jmp .Lores_fn_"
+                require(asm.count(native_tail) >= 1,
+                        "self-tail native transfer not located for mutation")
+                mutant = asm.replace(native_tail, "  movq -40(%rbp), %r8\\n  call .Lores_fn_", 1)
+                (root/"mutant.s").write_text(mutant,encoding="ascii")
+                bad = root/"native-mutant"
+                link = execute([cc,"-std=c11","-Wall","-Wextra","-Werror",
+                                str(root/"driver.c"),str(root/"mutant.s"),
+                                "-o",str(bad)],root)
+                require(link.returncode==0,
+                        "native tail mutation did not link: "+
+                        link.stderr.decode(errors="replace"))
+                mutated = execute([str(bad),"100000"],root,
+                                  stack_limit_bytes=NATIVE_STACK_LIMIT_BYTES)
+                require(mutated.returncode != 0 and mutated.stdout == b"",
+                        "negative native tail mutation incorrectly passed low-stack proof")
+                negative_tail_mutation = True
         for label,source,inp,diagnostic in TRAPS:
             file,exe,_=build(compiler,cc,root,label,source,len(inp))
             checked=execute([compiler,"run-calls",str(file),*map(str,inp)],root)
             require(checked.returncode==1 and checked.stdout==b"" and
                     diagnostic.encode() in checked.stderr,"interpreter failed to reject "+label)
-            native=execute([str(exe),*map(str,inp)],root)
+            native=execute([str(exe),*map(str,inp)],root,
+                           stack_limit_bytes=NATIVE_STACK_LIMIT_BYTES)
             require(native.returncode==-signal.SIGILL and native.stdout==b"",
                     "native overflow/depth failed to trap "+label+": "+str(native.returncode))
             negatives+=1
@@ -186,11 +215,14 @@ def main():
         require(unsupported.returncode==1 and unsupported.stdout==b"" and
                 b"currently supports x86_64 only" in unsupported.stderr,
                 "ARM64 must fail explicitly, not produce wrong assembly")
+    require(negative_tail_mutation, "negative native tail mutation not exercised")
     print(json.dumps({"kind":"forge-real-native-function-call-execution",
                       "arch":"x86_64","positives":positives,"negative_controls":negatives,
                       "native_interfunction_calls":True,"runtime_lazy_branch":True,
                       "bounded_recursion":True,"proper_tail_scalar_100k":True,
                       "tail_abi":"stage0-x86_64-pure-i64",
+                      "native_stack_limit_bytes":NATIVE_STACK_LIMIT_BYTES,
+                      "negative_tail_jump_mutation":negative_tail_mutation,
                       "arm64_execution":False,
                       "self_hosted":False},sort_keys=True))
 
