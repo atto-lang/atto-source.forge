@@ -187,8 +187,9 @@ def main():
                         link.stderr.decode(errors="replace"))
                 mutated = execute([str(bad),"100000"],root,
                                   stack_limit_bytes=NATIVE_STACK_LIMIT_BYTES)
-                require(mutated.returncode != 0 and mutated.stdout == b"",
-                        "negative native tail mutation incorrectly passed low-stack proof")
+                require(mutated.returncode == -signal.SIGSEGV and mutated.stdout == b"",
+                        "negative native tail mutation did not exhaust the low-stack budget: "+
+                        str(mutated.returncode))
                 negative_tail_mutation = True
         for label,source,inp,diagnostic in TRAPS:
             file,exe,_=build(compiler,cc,root,label,source,len(inp))
