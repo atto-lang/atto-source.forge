@@ -351,7 +351,11 @@ struct Native {
       if(tail_position) {
         // Argument registers are ready before this frame is reclaimed;
         // preserve the caller's return address across same-ABI tail hops.
-        out<<"  leave\n  jmp .Lores_fn_"<<n.callee<<"\n";
+        // A nested argument call may have overwritten caller-saved %r8.
+        // Restore this activation's physical depth before transferring:
+        // tail hops must not inherit the depth of argument evaluation.
+        out<<"  movq -40(%rbp), %r8\n"
+           <<"  leave\n  jmp .Lores_fn_"<<n.callee<<"\n";
       } else {
         out<<"  movq -40(%rbp), %r8\n"
            <<"  addq $1, %r8\n"
