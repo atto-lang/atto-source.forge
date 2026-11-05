@@ -329,7 +329,7 @@ struct Native {
   std::string parameter_slot(int id) const {
     return "-"+std::to_string(8u*(static_cast<std::size_t>(id)+1u))+"(%rbp)";
   }
-  void emit_node(const Function& fn,int index) {
+  void emit_node(const Function& fn,int index,bool tail_position=false) {
     const auto& n=fn.nodes.at(static_cast<std::size_t>(index));
     if(n.kind==Kind::Constant) {
       out<<"  movabsq $"<<n.value<<", %rax\n";
@@ -339,18 +339,24 @@ struct Native {
       const auto tag=label++;
       emit_node(fn,n.children[0]);
       out<<"  cmpq $0, %rax\n  je .Lores_else_"<<tag<<"\n";
-      emit_node(fn,n.children[1]);
+      emit_node(fn,n.children[1],tail_position);
       out<<"  jmp .Lores_end_"<<tag<<"\n"
          <<".Lores_else_"<<tag<<":\n";
-      emit_node(fn,n.children[2]);
+      emit_node(fn,n.children[2],tail_position);
       out<<".Lores_end_"<<tag<<":\n";
     } else if(n.kind==Kind::Call) {
       for (int child:n.children)emit_node(fn,child);
       for (std::size_t i=0;i<n.children.size();++i)
         out<<"  movq "<<value_slot(n.children[i])<<", "<<argument_reg(i)<<"\n";
-      out<<"  movq -40(%rbp), %r8\n"
-         <<"  addq $1, %r8\n"
-         <<"  call .Lores_fn_"<<n.callee<<"\n";
+      if(tail_position) {
+        // Argument registers are ready before this frame is reclaimed;
+        // preserve the caller's return address across same-ABI tail hops.
+        out<<"  leave\n  jmp .Lores_fn_"<<n.callee<<"\n";
+      } else {
+        out<<"  movq -40(%rbp), %r8\n"
+           <<"  addq $1, %r8\n"
+           <<"  call .Lores_fn_"<<n.callee<<"\n";
+      }
     } else {
       emit_node(fn,n.children[0]);
       emit_node(fn,n.children[1]);
@@ -383,12 +389,15 @@ struct Native {
   std::string build() {
     out<<".text\n.globl oresforge_entry\n.type oresforge_entry, @function\n"
        <<"oresforge_entry:\n  xorl %r8d, %r8d\n"
+       <<"  movq $"<<kMaxNativeSteps<<", %r9\n"
        <<"  jmp .Lores_fn_"<<program.entry<<"\n";
     for (std::size_t i=0;i<program.functions.size();++i) {
       const auto& fn=program.functions[i];
       const std::size_t slots=5u+fn.nodes.size();
       const std::size_t bytes=((slots*8u+15u)/16u)*16u;
       out<<".Lores_fn_"<<i<<":\n"
+         <<"  subq $1, %r9\n"
+         <<"  jz .Lores_fuel\n"
          <<"  cmpq $"<<kMaxStackDepth<<", %r8\n"
          <<"  jae .Lores_depth\n"
          <<"  pushq %rbp\n  movq %rsp, %rbp\n"
@@ -396,10 +405,11 @@ struct Native {
       for (std::size_t arg=0;arg<4;++arg)
         out<<"  movq "<<argument_reg(arg)<<", "<<parameter_slot(static_cast<int>(arg))<<"\n";
       out<<"  movq %r8, -40(%rbp)\n";
-      emit_node(fn,fn.result);
+      emit_node(fn,fn.result,true);
       out<<"  leave\n  ret\n";
     }
     out<<".Lores_depth:\n  ud2\n"
+       <<".Lores_fuel:\n  ud2\n"
        <<".Lores_overflow:\n  ud2\n"
        <<".size oresforge_entry, .-oresforge_entry\n"
        <<".section .note.GNU-stack,\"\",@progbits\n";
