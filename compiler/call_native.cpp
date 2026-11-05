@@ -19,7 +19,8 @@ constexpr std::size_t kMaxNodes = 4096;
 constexpr std::size_t kMaxNodesPerFunction = 256;
 constexpr std::size_t kMaxDepth = 128;
 constexpr std::size_t kMaxStackDepth = 128;
-constexpr std::size_t kMaxEvalSteps = 200000;
+constexpr std::size_t kMaxEvalSteps = 1000000;
+constexpr std::size_t kMaxNativeSteps = 1000000;
 bool letter(char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_'; }
 bool digit(char c) { return c >= '0' && c <= '9'; }
 bool space(char c) { return c == ' ' || c == '\r' || c == '\n' || c == '\t' || c == '\v' || c == '\f'; }
@@ -269,9 +270,29 @@ struct Evaluator {
   std::size_t remaining=kMaxEvalSteps;
   std::int64_t evaluate(std::size_t id,std::span<const std::int64_t> args,std::size_t depth) {
     if (depth>=kMaxStackDepth)throw std::runtime_error("call depth exceeded");
-    const auto& f=m.functions.at(id);
-    if(args.size()!=f.parameters.size())throw std::runtime_error("runtime argument count mismatch");
-    return visit(f,f.result,args,depth);
+    std::vector<std::int64_t> values(args.begin(),args.end());
+    while (true) {
+      const auto& f=m.functions.at(id);
+      if(values.size()!=f.parameters.size())
+        throw std::runtime_error("runtime argument count mismatch");
+      // A returned call, or a selected branch ending in one, reuses this
+      // activation. Nested argument calls remain ordinary stack calls.
+      int result=f.result;
+      while(f.nodes.at(static_cast<std::size_t>(result)).kind==Kind::If) {
+        if(remaining--==0)throw std::runtime_error("callable execution budget exceeded");
+        const auto& branch=f.nodes.at(static_cast<std::size_t>(result));
+        const auto pred=visit(f,branch.children[0],values,depth);
+        result=branch.children[pred?1u:2u];
+      }
+      const auto& tail=f.nodes.at(static_cast<std::size_t>(result));
+      if(tail.kind!=Kind::Call)return visit(f,result,values,depth);
+      if(remaining--==0)throw std::runtime_error("callable execution budget exceeded");
+      std::vector<std::int64_t> next;
+      next.reserve(tail.children.size());
+      for(int child:tail.children)next.push_back(visit(f,child,values,depth));
+      id=static_cast<std::size_t>(tail.callee);
+      values=std::move(next);
+    }
   }
   std::int64_t visit(const Function& fn,int id,std::span<const std::int64_t> args,
                      std::size_t depth) {
