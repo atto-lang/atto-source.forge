@@ -219,6 +219,16 @@ class Parser {
     }
     if (source_.substr(at_,3)=="...")
       error("tuple-v2 explicit spread requires single-evaluation checked lowering");
+    // Canonical AttoLang exposes named Integer.rem/mod/pow/bitXor APIs,
+    // never the legacy percent or caret operators. Report the actual byte
+    // offset before generic punctuation handling, including unreachable
+    // helper definitions: these characters cannot become silent aliases.
+    if (c=='%')
+      throw std::runtime_error("legacy % operator is removed; use Integer.rem/mod at byte "+
+                               std::to_string(start));
+    if (c=='^')
+      throw std::runtime_error("legacy ^/^^ operators are removed; use Integer.pow/bitXor at byte "+
+                               std::to_string(start));
     if (std::string_view("()+-*/{};:,?").find(static_cast<char>(c)) ==
         std::string_view::npos) error("invalid character");
     ++at_;
