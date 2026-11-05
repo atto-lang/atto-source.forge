@@ -34,6 +34,13 @@ POSITIVE = (
     ("signed-comparisons", "fnc main(a:int,b:int):int{return if a<b then 1 else if a>=b then 2 else 3;}",
      ((-9223372036854775808,9223372036854775807,1),(2,2,2),(10,2,2))),
     ("no-args", "fnc main():int{return 42;}", ((42,),)),
+    ("self-tail-100k",
+     "fnc down(n:int):int{return if n==0 then 0 else down(n-1);}"
+     " fnc main(n:int):int{return down(n);}", ((100000,0),)),
+    ("mutual-tail-100k",
+     "fnc even(n:int):int{return if n==0 then 1 else odd(n-1);}"
+     " fnc odd(n:int):int{return if n==0 then 0 else even(n-1);}"
+     " fnc main(n:int):int{return even(n);}", ((100000,1),(100001,0))),
 )
 TRAPS = (
     ("overflow-add", "fnc plus(n:int):int{return n+1;}"
@@ -44,9 +51,13 @@ TRAPS = (
      (9223372036854775807,), "i64 mul overflow"),
     ("overflow-sub", "fnc main(n:int):int{return n-1;}",
      (-9223372036854775808,), "i64 sub overflow"),
-    ("unbounded-recursion", "fnc always(n:int):int{return always(n);}"
+    ("unbounded-tail-fuel", "fnc always(n:int):int{return always(n);}"
      " fnc main(n:int):int{return always(n);}",
-     (1,), "call depth exceeded"),
+     (1,), "callable execution budget exceeded"),
+    ("non-tail-depth",
+     "fnc deep(n:int):int{return if n==0 then 0 else 1+deep(n-1);}"
+     " fnc main(n:int):int{return deep(n);}",
+     (1000,), "call depth exceeded"),
 )
 INVALID = (
     ("wrong-arity", "fnc f(n:int):int{return n;} fnc main():int{return f(1,2);}", "function arity mismatch"),
@@ -127,8 +138,12 @@ def main():
         for label,source,cases in POSITIVE:
             number=len(cases[0])-1
             file,exe,asm=build(compiler,cc,root,label,source,number)
-            if label in ("factorial","fibonacci","mutual","nested"):
-                require(asm.count("  call .Lores_fn_")>=1,"missing real native call "+label)
+            if label in ("factorial","fibonacci","nested"):
+                require(asm.count("  call .Lores_fn_")>=1,"missing real native non-tail call "+label)
+            if label in ("mutual","self-tail-100k","mutual-tail-100k"):
+                require("  leave\n  jmp .Lores_fn_" in asm and
+                        "  subq $1, %r9\n" in asm and ".Lores_fuel:" in asm,
+                        "tail-call transfer or execution fuel missing "+label)
             if label in ("factorial","lazy"):
                 require("  je .Lores_else_" in asm,"missing native lazy branch "+label)
             for row in cases:
@@ -168,7 +183,9 @@ def main():
     print(json.dumps({"kind":"forge-real-native-function-call-execution",
                       "arch":"x86_64","positives":positives,"negative_controls":negatives,
                       "native_interfunction_calls":True,"runtime_lazy_branch":True,
-                      "bounded_recursion":True,"arm64_execution":False,
+                      "bounded_recursion":True,"proper_tail_scalar_100k":True,
+                      "tail_abi":"stage0-x86_64-pure-i64",
+                      "arm64_execution":False,
                       "self_hosted":False},sort_keys=True))
 
 if __name__=="__main__":
