@@ -173,10 +173,10 @@ def main():
                 # Mutation witness: replacing the recursive tail jump with a
                 # non-tail call must exceed the SAME low-stack budget. A mere
                 # successful deep execution is insufficient evidence for TCO.
-                native_tail = "  movq -40(%rbp), %r8\\n  leave\\n  jmp .Lores_fn_"
+                native_tail = "  movq -40(%rbp), %r8\n  leave\n  jmp .Lores_fn_"
                 require(asm.count(native_tail) >= 1,
                         "self-tail native transfer not located for mutation")
-                mutant = asm.replace(native_tail, "  movq -40(%rbp), %r8\\n  call .Lores_fn_", 1)
+                mutant = asm.replace(native_tail, "  movq -40(%rbp), %r8\n  call .Lores_fn_", 1)
                 (root/"mutant.s").write_text(mutant,encoding="ascii")
                 bad = root/"native-mutant"
                 link = execute([cc,"-std=c11","-Wall","-Wextra","-Werror",
