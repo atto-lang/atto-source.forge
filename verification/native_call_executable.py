@@ -41,6 +41,11 @@ POSITIVE = (
      "fnc even(n:int):int{return if n==0 then 1 else odd(n-1);}"
      " fnc odd(n:int):int{return if n==0 then 0 else even(n-1);}"
      " fnc main(n:int):int{return even(n);}", ((100000,1),(100001,0))),
+    ("nested-argument-tail-100k",
+     "fnc identity(n:int):int{return n;}"
+     " fnc prior(n:int):int{return 1+identity(n-1);}"
+     " fnc walk(n:int):int{return if n==0 then 0 else walk(prior(n-1));}"
+     " fnc main(n:int):int{return walk(n);}", ((100000,0),)),
 )
 TRAPS = (
     ("overflow-add", "fnc plus(n:int):int{return n+1;}"
@@ -140,10 +145,11 @@ def main():
             file,exe,asm=build(compiler,cc,root,label,source,number)
             if label in ("factorial","fibonacci","nested"):
                 require(asm.count("  call .Lores_fn_")>=1,"missing real native non-tail call "+label)
-            if label in ("mutual","self-tail-100k","mutual-tail-100k"):
-                require("  leave\n  jmp .Lores_fn_" in asm and
+            if label in ("mutual","self-tail-100k","mutual-tail-100k",
+                         "nested-argument-tail-100k"):
+                require("  movq -40(%rbp), %r8\n  leave\n  jmp .Lores_fn_" in asm and
                         "  subq $1, %r9\n" in asm and ".Lores_fuel:" in asm,
-                        "tail-call transfer or execution fuel missing "+label)
+                        "tail-call depth restore or execution fuel missing "+label)
             if label in ("factorial","lazy"):
                 require("  je .Lores_else_" in asm,"missing native lazy branch "+label)
             for row in cases:
