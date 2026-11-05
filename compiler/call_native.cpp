@@ -19,7 +19,7 @@ constexpr std::size_t kMaxNodes = 4096;
 constexpr std::size_t kMaxNodesPerFunction = 256;
 constexpr std::size_t kMaxDepth = 128;
 constexpr std::size_t kMaxStackDepth = 128;
-constexpr std::size_t kMaxEvalSteps = 1000000;
+constexpr std::size_t kMaxEvalSteps = 3000000; // bounded nested-argument tail evaluation
 constexpr std::size_t kMaxNativeSteps = 1000000;
 bool letter(char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_'; }
 bool digit(char c) { return c >= '0' && c <= '9'; }
