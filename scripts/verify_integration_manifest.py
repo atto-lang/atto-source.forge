@@ -97,7 +97,19 @@ def _read_manifest_physically(root: Path) -> bytes:
 
     directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
     leaf_flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
-    root_fd = os.open(root, directory_flags)
+    # A no-follow open of an absolute path checks only its final component.
+    # Walk from the filesystem root to reject symlinks in *all* ancestors.
+    if not root.is_absolute():
+        raise InvalidManifest('repository root must be absolute')
+    root_fd = os.open(root.anchor, directory_flags)
+    try:
+        for component in root.parts[1:]:
+            next_fd = os.open(component, directory_flags, dir_fd=root_fd)
+            os.close(root_fd)
+            root_fd = next_fd
+    except BaseException:
+        os.close(root_fd)
+        raise
     try:
         parent_fd = os.open('.oreslang', directory_flags, dir_fd=root_fd)
         try:
