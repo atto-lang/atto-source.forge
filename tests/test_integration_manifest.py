@@ -162,6 +162,63 @@ class IntegrationManifestGateTests(unittest.TestCase):
             self.assertEqual(module.main(['--repository-root', str(root_alias)]), 1)
             self.assertEqual(module.main(['--repository-root', str(root_alias) + '/.']), 1)
 
+    @unittest.skipUnless(os.name == 'posix', 'Unix descriptor gate')
+    def test_cli_rejects_directory_as_manifest(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / REPO_NAME
+            (root / '.oreslang/integration.json').mkdir(parents=True)
+            self.assertEqual(module.main(['--repository-root', str(root)]), 1)
+
+    @unittest.skipUnless(os.name == 'posix', 'Unix descriptor gate')
+    def test_cli_rejects_oversized_manifest_before_parsing(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / REPO_NAME
+            (root / '.oreslang').mkdir(parents=True)
+            (root / '.oreslang/integration.json').write_bytes(b'x' * (module.MAX_BYTES + 1))
+            self.assertEqual(module.main(['--repository-root', str(root)]), 1)
+
+    @unittest.skipUnless(os.name == 'posix', 'Unix bounded short-read gate')
+    def test_cli_accepts_short_reads_without_losing_manifest_bytes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / REPO_NAME
+            (root / '.oreslang').mkdir(parents=True)
+            (root / '.oreslang/integration.json').write_bytes(encode(valid_manifest()))
+            original_read = os.read
+            sizes = []
+
+            def fragmented_read(fd, size):
+                sizes.append(size)
+                return original_read(fd, min(size, 7))
+
+            with mock.patch.object(module.os, 'read', side_effect=fragmented_read):
+                self.assertEqual(module.main(['--repository-root', str(root)]), 0)
+            self.assertGreater(len(sizes), 2)
+            self.assertTrue(all(0 < count <= module.MAX_BYTES + 1 for count in sizes))
+
+    @unittest.skipUnless(os.name == 'posix', 'Unix parent no-follow gate')
+    def test_cli_rejects_parent_swapped_to_symlink_at_open(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / REPO_NAME
+            (root / '.oreslang').mkdir(parents=True)
+            (root / '.oreslang/integration.json').write_bytes(encode(valid_manifest()))
+            outside = Path(temp) / 'outside'
+            outside.mkdir()
+            (outside / 'integration.json').write_bytes(encode(valid_manifest()))
+            original_open = os.open
+            swapped = False
+
+            def parent_swap(path, flags, *args, **kwargs):
+                nonlocal swapped
+                if path == '.oreslang' and not swapped:
+                    (root / '.oreslang').rename(root / '.original-oreslang')
+                    (root / '.oreslang').symlink_to(outside, target_is_directory=True)
+                    swapped = True
+                return original_open(path, flags, *args, **kwargs)
+
+            with mock.patch.object(module.os, 'open', side_effect=parent_swap):
+                self.assertEqual(module.main(['--repository-root', str(root)]), 1)
+            self.assertTrue(swapped)
+
     @unittest.skipUnless(os.name == 'posix', 'descriptor relative Unix gate')
     def test_cli_accepts_regular_manifest_after_fd_pinning(self):
         with tempfile.TemporaryDirectory() as temp:
