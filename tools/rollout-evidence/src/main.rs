@@ -89,6 +89,50 @@ fn inspect(
     Ok(seen.len())
 }
 
+// A user-supplied receipt path may be a FIFO (which blocks File::open), a
+// device, a symlink or an external hardlink. Reject these *before* opening,
+// then bind the descriptor back to the inspected inode where available.
+// This is receipt-input hardening, not authenticity/CI execution proof.
+fn read_receipt_file(path: &std::path::Path) -> Result<Vec<u8>, String> {
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|_| "receipt path is missing or unreadable".to_owned())?;
+    if !metadata.file_type().is_file() {
+        return Err("receipt must be a regular non-symlink file".into());
+    }
+    if metadata.len() > LIMIT {
+        return Err("receipt exceeds 1 MiB".into());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if metadata.nlink() != 1 {
+            return Err("receipt has hardlink aliases".into());
+        }
+    }
+    let file = std::fs::File::open(path).map_err(|_| "cannot open receipt".to_owned())?;
+    let opened = file.metadata().map_err(|_| "cannot inspect receipt".to_owned())?;
+    if !opened.is_file() {
+        return Err("opened receipt must be regular".into());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if opened.dev() != metadata.dev() || opened.ino() != metadata.ino()
+            || opened.nlink() != 1
+        {
+            return Err("receipt identity changed during open".into());
+        }
+    }
+    let mut bytes = Vec::new();
+    file.take(LIMIT + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "cannot read receipt".to_owned())?;
+    if bytes.len() as u64 > LIMIT {
+        return Err("receipt exceeds 1 MiB".into());
+    }
+    Ok(bytes)
+}
+
 fn run() -> Result<(), String> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args.as_slice() == ["--cases"] {
@@ -100,14 +144,7 @@ fn run() -> Result<(), String> {
             "usage: ores-rollout-evidence RECEIPT.tsv COMMIT TREE CORPUS_SHA256; or --cases".into(),
         );
     }
-    let file = std::fs::File::open(&args[0]).map_err(|e| e.to_string())?;
-    let mut bytes = Vec::new();
-    file.take(LIMIT + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|e| e.to_string())?;
-    if bytes.len() as u64 > LIMIT {
-        return Err("receipt exceeds 1 MiB".into());
-    }
+    let bytes = read_receipt_file(std::path::Path::new(&args[0]))?;
     let text = std::str::from_utf8(&bytes).map_err(|e| e.to_string())?;
     let count = inspect(text, CASES, REPOSITORY, &args[1], &args[2], &args[3])?;
     println!("CONSISTENT_UNAUTHENTICATED_RECEIPT cases={count}; requires independent run/artifact verification");
@@ -140,6 +177,47 @@ mod tests {
         let (commit, tree, corpus) = pins();
         inspect(text, cases, REPOSITORY, &commit, &tree, &corpus)
     }
+    #[test]
+    fn receipt_input_is_regular_and_size_bounded() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "oresforge-receipt-boundary-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let normal = directory.join("receipt.tsv");
+        std::fs::write(&normal, b"safe receipt fixture").unwrap();
+        assert_eq!(read_receipt_file(&normal).unwrap(), b"safe receipt fixture");
+        assert!(read_receipt_file(&directory).is_err());
+        let oversized = directory.join("oversized.tsv");
+        std::fs::write(&oversized, vec![b'X'; LIMIT as usize + 1]).unwrap();
+        assert!(read_receipt_file(&oversized).is_err());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            let link = directory.join("symlink.tsv");
+            symlink(&normal, &link).unwrap();
+            assert!(read_receipt_file(&link).is_err());
+            let alias = directory.join("hardlink.tsv");
+            std::fs::hard_link(&normal, &alias).unwrap();
+            assert!(read_receipt_file(&alias).is_err());
+            // A blocking FIFO must be denied at metadata admission without
+            // ever calling File::open and hanging the verifier.
+            let fifo = directory.join("unwritten-fifo.tsv");
+            let status = std::process::Command::new("mkfifo")
+                .arg(&fifo)
+                .status()
+                .unwrap();
+            assert!(status.success());
+            assert!(read_receipt_file(&fifo).is_err());
+        }
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
     #[test]
     fn complete_local_profile_is_consistent_only() {
         assert_eq!(
