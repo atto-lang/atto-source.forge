@@ -137,6 +137,17 @@ class IntegrationManifestGateTests(unittest.TestCase):
             self.assertEqual(module.main(['--repository-root', str(root)]), 1)
 
 
+    @unittest.skipUnless(os.name == 'posix', 'Unix no-follow ancestor gate')
+    def test_cli_rejects_symlinked_root_ancestor_with_valid_external_manifest(self):
+        with tempfile.TemporaryDirectory() as temp:
+            tmp = Path(temp)
+            outside_root = tmp / 'outside-parent' / REPO_NAME
+            (outside_root / '.oreslang').mkdir(parents=True)
+            (outside_root / '.oreslang/integration.json').write_bytes(encode(valid_manifest()))
+            alias_parent = tmp / 'parent-alias'
+            alias_parent.symlink_to(outside_root.parent, target_is_directory=True)
+            self.assertEqual(module.main(['--repository-root', str(alias_parent / REPO_NAME)]), 1)
+
     @unittest.skipUnless(os.name == 'posix', 'Unix no-follow root gate')
     def test_cli_rejects_symlinked_repository_root_with_valid_external_manifest(self):
         with tempfile.TemporaryDirectory() as temp:
