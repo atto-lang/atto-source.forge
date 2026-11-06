@@ -133,6 +133,16 @@ def _read_manifest_physically(root: Path) -> bytes:
                         break
                     chunks.append(chunk)
                     remaining -= len(chunk)
+                # Reject detectable in-place mutation after the descriptor was
+                # admitted. Identity, link count, size, mtime and ctime must
+                # remain stable. This is defense in depth, not a cryptographic
+                # guarantee against a malicious concurrent filesystem writer.
+                after = os.fstat(leaf_fd)
+                fields = ('st_mode', 'st_dev', 'st_ino', 'st_nlink',
+                          'st_size', 'st_mtime_ns', 'st_ctime_ns')
+                if any(getattr(opened, field) != getattr(after, field)
+                       for field in fields):
+                    raise InvalidManifest('manifest changed during bounded read')
                 return b''.join(chunks)
             finally:
                 os.close(leaf_fd)
