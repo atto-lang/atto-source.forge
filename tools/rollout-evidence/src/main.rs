@@ -191,7 +191,7 @@ mod tests {
         std::fs::create_dir(&directory).unwrap();
         let normal = directory.join("receipt.tsv");
         std::fs::write(&normal, b"safe receipt fixture").unwrap();
-        assert_eq!(read_receipt_file(&normal).unwrap(), b"safe receipt fixture");
+        assert_eq!(read_receipt_file(&normal).unwrap(), b"safe receipt fixture".to_vec());
         assert!(read_receipt_file(&directory).is_err());
         let oversized = directory.join("oversized.tsv");
         std::fs::write(&oversized, vec![b'X'; LIMIT as usize + 1]).unwrap();
