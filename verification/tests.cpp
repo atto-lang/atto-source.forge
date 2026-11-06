@@ -300,6 +300,19 @@ int main() {
     reject_diagnostic([] {
       parse_source("pub fnc main():int{return gpu task { 42 };}");
     }, "execution region requires verified CPU/GPU Task lowering");
+    // quantum is reserved with cpu/gpu: every source position, including
+    // function and parameter names, fails before lowering.
+    reject_diagnostic([] {
+      parse_source("pub fnc main():int{return quantum { 42 };}");
+    }, "execution region requires verified CPU/GPU Task lowering");
+    reject_diagnostic([] {
+      parse_source("fnc quantum(a:int):int{return a+1;}\nfnc main():int{return quantum(41);}");
+    }, "execution region requires verified CPU/GPU Task lowering");
+    reject_diagnostic([] {
+      parse_source("fnc f(quantum:int):int{return quantum+1;}\nfnc main():int{return f(41);}");
+    }, "execution region requires verified CPU/GPU Task lowering");
+    ensure(interpret(parse_source("fnc f(quantum_bits:int):int{return quantum_bits+1;}\nfnc main():int{return f(41);}"))==42,
+           "quantum-prefixed identifier stays ordinary");
     reject_diagnostic([] {
       parse_source("pub fnc main():int{return task { 42 };}");
     }, "execution task requires scheduler-aware Future/continuation lowering");

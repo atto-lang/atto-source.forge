@@ -166,7 +166,7 @@ class Parser {
         error("class/actor methods require typed native lowering");
       if (tok_.text=="lex" || tok_.text=="nlex")
         error("lexical captures require checked closure lowering");
-      if (tok_.text=="cpu" || tok_.text=="gpu" || tok_.text=="nb")
+      if (tok_.text=="cpu" || tok_.text=="gpu" || tok_.text=="quantum" || tok_.text=="nb")
         error("execution region requires verified CPU/GPU Task lowering; unsupported execution domain: typed effect graph required; no implicit CPU fallback");
       if (tok_.text=="task") {
         auto look=at_;
