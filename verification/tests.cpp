@@ -66,6 +66,23 @@ int main() {
       reject_diagnostic([&] { (void)parse_runtime_source(source_text); },
                         "VIRTUAL_ACTOR_BACKEND_UNSUPPORTED");
     }
+    // Guard is reserved across AttoLang even where Forge stage-0 cannot
+    // compile its checked early-exit CFG. Rejection must be precise, and
+    // must occur before verified IR or an executable is emitted.
+    for (std::string_view guard_source : {
+        "fnc main():int{guard true{return 1;}return 42;}",
+        "fnc main():int{guard 1>0{return 1;}return 42;}",
+        "fnc guard():int{return 42;}",
+        "fnc helper(guard:int):int{return 42;} fnc main():int{return 42;}"
+    }) {
+      reject_diagnostic([&] { (void)parse_source(guard_source); },
+                        "GUARD_BACKEND_UNSUPPORTED");
+      reject_diagnostic([&] { (void)parse_runtime_source(guard_source); },
+                        "GUARD_BACKEND_UNSUPPORTED");
+    }
+    ensure(interpret(parse_source(
+        "fnc main():int{return 42;} // guard is not a token"))==42,
+        "guard spelling in comment must remain ignored");
     ensure(interpret(parse_source(
       "fnc main():int{return 42;} // define virtual actor Spoof"))==42,
       "declaration head inside a comment is not executable source");

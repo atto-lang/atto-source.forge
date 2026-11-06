@@ -219,6 +219,16 @@ class Parser {
     }
     if (source_.substr(at_,3)=="...")
       error("tuple-v2 explicit spread requires single-evaluation checked lowering");
+    // Canonical AttoLang exposes named Integer.rem/mod/pow/bitXor APIs,
+    // never the legacy percent or caret operators. Report the actual byte
+    // offset before generic punctuation handling, including unreachable
+    // helper definitions: these characters cannot become silent aliases.
+    if (c=='%')
+      throw std::runtime_error("legacy % operator is removed; use Integer.rem/mod at byte "+
+                               std::to_string(start));
+    if (c=='^')
+      throw std::runtime_error("legacy ^/^^ operators are removed; use Integer.pow/bitXor at byte "+
+                               std::to_string(start));
     if (std::string_view("()+-*/{};:,?").find(static_cast<char>(c)) ==
         std::string_view::npos) error("invalid character");
     ++at_;
@@ -233,6 +243,8 @@ class Parser {
   }
   std::string identifier() {
     if (tok_.kind!=Kind::Word) error("expected identifier");
+    if (tok_.text=="guard")
+      error("GUARD_BACKEND_UNSUPPORTED: guard is reserved until checked CFG and ownership lowering");
     std::string name(tok_.text);
     next(); return name;
   }
@@ -298,7 +310,10 @@ class Parser {
     if (!take(":")) expect("->");
     if (tok_.text=="tuple" || tok_.text=="structural" || tok_.text=="(")
       error("tuple-v2 return requires typed ABI lowering");
-    expect("int"); expect("{"); expect("return");
+    expect("int"); expect("{");
+    if (tok_.text=="guard")
+      error("GUARD_BACKEND_UNSUPPORTED: early-exit CFG and ownership lowering required");
+    expect("return");
     fn.body=expression(0);
     expect(";"); expect("}");
     if (functions_.contains(name)) error("duplicate function");
@@ -379,6 +394,11 @@ class Parser {
       if (tok_.text=="match" || tok_.text=="switch")
         error("expected integer");
       const std::string name=identifier();
+      // The Forge scalar interpreter/JIT has no ETS table authority or pg
+      // ActorGroup/mailbox integration. Reject explicit namespace access
+      // instead of accepting it as an unbound scalar variable.
+      if ((name=="ets" || name=="pg") && tok_.text==".")
+        error("Forge ETS/pg guest APIs require authenticated isolate, table and mailbox lowering");
       if (!take("(")) return node(Expr::Tag::Parameter,{},0,name,offset);
       std::vector<ExprPtr> args;
       if (tok_.text!=")") {

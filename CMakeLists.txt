@@ -67,6 +67,14 @@ if(BUILD_TESTING)
   target_include_directories(oresforge_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
   target_link_libraries(oresforge_tests PRIVATE oresforge_core)
   add_test(NAME oresforge_unit COMMAND oresforge_tests)
+  # This invokes the real Forge frontend on operator-positive and
+  # operator-negative sources, including unreachable declarations.
+  add_executable(oresforge_legacy_operator_grammar
+    verification/legacy_operator_grammar.cpp)
+  target_link_libraries(oresforge_legacy_operator_grammar PRIVATE oresforge_core)
+  add_test(NAME oresforge_legacy_operator_grammar
+    COMMAND oresforge_legacy_operator_grammar)
+  set_tests_properties(oresforge_legacy_operator_grammar PROPERTIES TIMEOUT 15)
   # Stage-0 single-file AttoLang path admission. Imports remain fail-closed in Forge.
   add_test(NAME oresforge_cli_atto_guest
     COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.atto")
@@ -123,6 +131,13 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/verification/cli_source_budget.py"
       "$<TARGET_FILE:oresforge>")
   set_tests_properties(oresforge_cli_source_budget PROPERTIES TIMEOUT 20)
+  # Explicit bootstrap denial of ETS/pg before scalar interpreter/JIT/IR
+  # publication. These are compiler negative tests, not guest feature proof.
+  add_test(NAME oresforge_ets_pg_fail_closed_source
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/ets_pg_source_admission.py"
+      "$<TARGET_FILE:oresforge>")
+  set_tests_properties(oresforge_ets_pg_fail_closed_source PROPERTIES TIMEOUT 30)
   # Source to IR interpreter (not machine code or native AOT parity).
   add_test(NAME oresforge_source_i64_interpreter
     COMMAND "${Python3_EXECUTABLE}"
@@ -264,4 +279,15 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
       "-DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/tenant_native_entry"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/verification/tenant_native_entry.cmake")
   set_tests_properties(oresforge_compiled_tenant_isolate_native PROPERTIES TIMEOUT 90)
+endif()
+
+# HOST-ONLY Option<T> recursive flatten substrate. Source-language admission,
+# Future<T> scheduler integration, and guest execution remain independent gates.
+if(BUILD_TESTING)
+  add_executable(oresforge_wrapper_flatten_option_host verification/wrapper_flatten_option_host_test.cpp)
+  target_include_directories(oresforge_wrapper_flatten_option_host PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/runtime")
+  target_compile_options(oresforge_wrapper_flatten_option_host PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic -Werror>)
+  add_test(NAME forge_wrapper_option_host_conformance COMMAND oresforge_wrapper_flatten_option_host)
+  set_tests_properties(forge_wrapper_option_host_conformance PROPERTIES TIMEOUT 20)
 endif()
