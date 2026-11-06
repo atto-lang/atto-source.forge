@@ -148,9 +148,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     # Preserve the final path component for O_NOFOLLOW; resolve() would
     # silently dereference a symlinked repository-root authority alias.
-    root = Path(os.path.abspath(args.repository_root))
-    expected_name = root.name
     try:
+        # Reject parent traversal before abspath() folds it lexically. In
+        # particular, "symlink/../repo" can resolve somewhere different from
+        # the lexically normalized path when the kernel follows the symlink.
+        if '..' in args.repository_root.parts:
+            raise InvalidManifest('repository root parent traversal is forbidden')
+        root = Path(os.path.abspath(args.repository_root))
+        expected_name = root.name
         verify_bytes(_read_manifest_physically(root), expected_name)
     except (InvalidManifest, OSError) as exc:
         print(f'integration manifest DENIED: {exc}', file=sys.stderr)
