@@ -67,6 +67,14 @@ if(BUILD_TESTING)
   target_include_directories(oresforge_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
   target_link_libraries(oresforge_tests PRIVATE oresforge_core)
   add_test(NAME oresforge_unit COMMAND oresforge_tests)
+  # This invokes the real Forge frontend on operator-positive and
+  # operator-negative sources, including unreachable declarations.
+  add_executable(oresforge_legacy_operator_grammar
+    verification/legacy_operator_grammar.cpp)
+  target_link_libraries(oresforge_legacy_operator_grammar PRIVATE oresforge_core)
+  add_test(NAME oresforge_legacy_operator_grammar
+    COMMAND oresforge_legacy_operator_grammar)
+  set_tests_properties(oresforge_legacy_operator_grammar PROPERTIES TIMEOUT 15)
   # Stage-0 single-file AttoLang path admission. Imports remain fail-closed in Forge.
   add_test(NAME oresforge_cli_atto_guest
     COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.atto")
