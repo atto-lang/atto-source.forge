@@ -137,6 +137,20 @@ class IntegrationManifestGateTests(unittest.TestCase):
             self.assertEqual(module.main(['--repository-root', str(root)]), 1)
 
 
+    @unittest.skipUnless(os.name == 'posix', 'Unix no-follow root gate')
+    def test_cli_rejects_symlinked_repository_root_with_valid_external_manifest(self):
+        with tempfile.TemporaryDirectory() as temp:
+            tmp = Path(temp)
+            external_root = tmp / 'outside' / REPO_NAME
+            (external_root / '.oreslang').mkdir(parents=True)
+            (external_root / '.oreslang/integration.json').write_bytes(encode(valid_manifest()))
+            root_alias = tmp / REPO_NAME
+            root_alias.symlink_to(external_root, target_is_directory=True)
+            # Even a fully valid outside manifest must not be admitted through
+            # a symlinked repository-root argument.
+            self.assertEqual(module.main(['--repository-root', str(root_alias)]), 1)
+            self.assertEqual(module.main(['--repository-root', str(root_alias) + '/.']), 1)
+
     @unittest.skipUnless(os.name == 'posix', 'descriptor relative Unix gate')
     def test_cli_accepts_regular_manifest_after_fd_pinning(self):
         with tempfile.TemporaryDirectory() as temp:
