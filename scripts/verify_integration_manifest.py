@@ -134,7 +134,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--repository-root', type=Path, default=Path(__file__).resolve().parent.parent)
     args = parser.parse_args(argv)
-    root = args.repository_root.resolve()
+    # Preserve the final path component for O_NOFOLLOW; resolve() would
+    # silently dereference a symlinked repository-root authority alias.
+    root = Path(os.path.abspath(args.repository_root))
     expected_name = root.name
     try:
         verify_bytes(_read_manifest_physically(root), expected_name)
