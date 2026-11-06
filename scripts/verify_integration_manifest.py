@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
+import stat
 import sys
 
 PROTOCOL = 'oreslang-ecosystem-integration'
@@ -81,26 +83,61 @@ def verify_bytes(raw: bytes, repository_name: str) -> dict[str, object]:
     return value
 
 
+
+def _read_manifest_physically(root: Path) -> bytes:
+    """Pin both path components to directory fds; never follow a swapped leaf.
+
+    A source-controlled security gate cannot silently fall back to racy path
+    reads on a platform without descriptor-relative, no-follow access.
+    Native Windows reparse-point support needs a separate implementation.
+    """
+    required = ('O_DIRECTORY', 'O_NOFOLLOW', 'O_NONBLOCK', 'O_CLOEXEC')
+    if os.name != 'posix' or any(not hasattr(os, flag) for flag in required):
+        raise InvalidManifest('secure descriptor-relative manifest reads unavailable')
+
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    leaf_flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+    root_fd = os.open(root, directory_flags)
+    try:
+        parent_fd = os.open('.oreslang', directory_flags, dir_fd=root_fd)
+        try:
+            leaf_fd = os.open('integration.json', leaf_flags, dir_fd=parent_fd)
+            try:
+                opened = os.fstat(leaf_fd)
+                if not stat.S_ISREG(opened.st_mode):
+                    raise InvalidManifest('opened manifest is not a regular file')
+                if opened.st_nlink != 1:
+                    raise InvalidManifest('manifest has unexpected hardlink aliases')
+                if opened.st_size > MAX_BYTES:
+                    raise InvalidManifest('manifest exceeds size limit')
+
+                # The file may grow after fstat. Request no more than 4097
+                # bytes total, including the one-byte overlimit witness.
+                chunks: list[bytes] = []
+                remaining = MAX_BYTES + 1
+                while remaining:
+                    chunk = os.read(leaf_fd, remaining)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    remaining -= len(chunk)
+                return b''.join(chunks)
+            finally:
+                os.close(leaf_fd)
+        finally:
+            os.close(parent_fd)
+    finally:
+        os.close(root_fd)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--repository-root', type=Path, default=Path(__file__).resolve().parent.parent)
     args = parser.parse_args(argv)
     root = args.repository_root.resolve()
     expected_name = root.name
-    manifest = root / '.oreslang' / 'integration.json'
     try:
-        # A regular integration.json reached through a symlinked .oreslang
-        # directory is still an external, unauthenticated manifest.
-        if manifest.parent.is_symlink():
-            raise InvalidManifest('manifest parent directory is symlinked')
-        if manifest.is_symlink() or not manifest.is_file():
-            raise InvalidManifest('manifest missing or symlinked')
-        info = manifest.stat()
-        if info.st_nlink != 1:
-            raise InvalidManifest('manifest has unexpected hardlink aliases')
-        if info.st_size > MAX_BYTES:
-            raise InvalidManifest('manifest exceeds size limit')
-        verify_bytes(manifest.read_bytes(), expected_name)
+        verify_bytes(_read_manifest_physically(root), expected_name)
     except (InvalidManifest, OSError) as exc:
         print(f'integration manifest DENIED: {exc}', file=sys.stderr)
         return 1
