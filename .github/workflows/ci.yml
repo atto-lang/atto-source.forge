@@ -99,6 +99,30 @@ jobs:
             build/atto-core-identity-stage1.log
             build/atto-core-identity-stage1-receipt.txt
           if-no-files-found: warn
+      - name: Execute compiler-owned numeric.atto real native 42/43 and receipts
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/check_atto_core_numeric_guest.sh ./build/oresforge "$PWD" "${{ matrix.compiler }}" | tee build/atto-core-numeric-stage2.log
+          grep -F 'ATTO_FORGE_STAGE2_NUMERIC_EXECUTED|result=42|mutation_result=43|canonical_resource=YES|native_harness=HOSTED|guest_imports=NOT_VERIFIED|pie=YES|exec_stack=NO' build/atto-core-numeric-stage2.log
+          grep -E '^ATTO_FORGE_STAGE2_NATIVE_BINARY_SHA256=[0-9a-f]{64}$' build/atto-core-numeric-stage2.log
+          {
+            echo "head=$(git rev-parse HEAD)"
+            echo "tree=$(git rev-parse 'HEAD^{tree}')"
+            echo "compiler_sha256=$(sha256sum build/oresforge | cut -d' ' -f1)"
+            for file in contracts/atto-core-v1/numeric.atto examples/atto-core-numeric.atto; do
+              test "$(git hash-object --no-filters -- "$file")" = "$(git rev-parse "HEAD:$file")"
+              echo "blob:$file=$(git hash-object --no-filters -- "$file")"
+            done
+          } > build/atto-core-numeric-stage2-receipt.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: atto-forge-stage2-numeric-${{ matrix.compiler }}
+          path: |
+            build/atto-core-numeric-stage2.log
+            build/atto-core-numeric-stage2-receipt.txt
+          if-no-files-found: warn
       - name: Execute documented source fixture
         run: test "$(./build/oresforge run examples/hello.ores)" = "14"
 

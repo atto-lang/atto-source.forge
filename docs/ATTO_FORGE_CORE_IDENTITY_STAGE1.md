@@ -63,3 +63,17 @@ i64 comparison opcode, not a source-level text rewrite or host helper.
 This intentionally bounded numeric grammar does not support arbitrary
 nested language features, allocator/Std/actor capabilities, or general
 module graphs. All such requests remain fail-closed.
+
+## Native stage-2 numeric CI regression gates
+
+The new CTest and the existing GCC/Clang GitHub bootstrap workflow
+compile the canonical embedded `numeric.atto` with exact checked-in
+source identity, then execute native x86-64 guest outputs 42 and 43
+through a hosted harness. Native assembly and binary hashes must
+change with the source mutation, and both binaries must remain PIE and
+non-executable-stack. Seven unsupported imports fail without any
+published assembly. Twelve in-process numeric interpreter/CIL parity
+controls cover min/max/clamp equality, extremes and reversed bounds.
+The job receipt records immutable git HEAD/tree, compiler SHA and
+source blob identities. These are authored gates, not executed
+GitHub receipts; source-owned runner allocation is still blocked.

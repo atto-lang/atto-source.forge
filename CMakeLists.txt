@@ -82,6 +82,15 @@ if(BUILD_TESTING)
   target_include_directories(oresforge_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
   target_link_libraries(oresforge_tests PRIVATE oresforge_core)
   add_test(NAME oresforge_unit COMMAND oresforge_tests)
+  # Canonical compiler-owned numeric.atto is parsed as a separate
+  # read-only Core unit; CTest executes real linked native 42/43 guests.
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+     CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
+    add_test(NAME oresforge_atto_stage2_core_numeric
+      COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_atto_core_numeric_guest.sh"
+        "$<TARGET_FILE:oresforge>" "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CXX_COMPILER}")
+    set_tests_properties(oresforge_atto_stage2_core_numeric PROPERTIES TIMEOUT 90)
+  endif()
   # This invokes the real Forge frontend on operator-positive and
   # operator-negative sources, including unreachable declarations.
   # Real compiler-embedded canonical Core source through native callable

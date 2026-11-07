@@ -375,6 +375,64 @@ int main() {
       calls::parse_core_identity("import module identity from \"atto.core/identity\";"
                                  " fnc main():int{return identity.not_exported(42);}");
     }, "unknown function");
+    // The exact immutable canonical numeric.atto resource, not a
+    // handwritten replacement, supplies real callable i64 functions.
+    for(const auto& pair : std::vector<std::pair<std::string,std::int64_t>>{
+        {"numeric.min_int(40,42)",40},
+        {"numeric.min_int(42,40)",40},
+        {"numeric.min_int(42,42)",42},
+        {"numeric.max_int(40,42)",42},
+        {"numeric.max_int(42,40)",42},
+        {"numeric.max_int(42,42)",42},
+        {"numeric.clamp_int(50,0,42)",42},
+        {"numeric.clamp_int(-10,0,42)",0},
+        {"numeric.clamp_int(20,0,42)",20},
+        {"numeric.clamp_int(2,10,5)",10},
+        {"numeric.clamp_int(5,5,5)",5},
+        {"numeric.max_int(-9223372036854775807,9223372036854775807)",
+         9223372036854775807LL}
+    }) {
+      const std::string input=
+        "import module numeric from \"atto.core/numeric\";"
+        " pub fnc main():int{return "+pair.first+";}";
+      const auto linked=calls::parse_core_numeric(input);
+      ensure(linked.functions.size()==4,"numeric Core module has three functions plus main");
+      ensure(calls::interpret(linked,{})==pair.second,
+             "canonical numeric guest function result");
+      ensure(calls::emit_asm(linked,Arch::X86_64).find("  call .Lores_fn_")!=
+             std::string::npos,"canonical numeric guest emits real native call");
+    }
+    for(const auto alias : {
+        "atto.core/numeric", "atto.core/numeric.atto", "atto.core/numeric.ores",
+        "ores.core/numeric", "ores.core/numeric.atto", "ores.core/numeric.ores"
+    }) {
+      const auto linked=calls::parse_core_numeric(
+          std::string("import module numeric from \"")+alias+
+          "\";pub fnc main():int{return numeric.max_int(40,42);}");
+      ensure(calls::interpret(linked,{})==42,"numeric aliases select embedded source");
+    }
+    for(const auto denied : {
+        "atto.core/missing", "atto.core/numeric/",
+        "atto.core/numeric//", "atto.core/../numeric",
+        "atto.alloc/numeric", "atto.std/numeric",
+        "atto.runtime.actor/numeric", "./numeric.atto"
+    }) {
+      reject_diagnostic([&] {
+        calls::parse_core_numeric(
+          std::string("import module numeric from \"")+denied+
+          "\";fnc main():int{return 42;}");
+      }, "unknown compiler-owned atto.core module");
+    }
+    reject_diagnostic([] {
+      calls::parse_core_numeric(
+        "import module counterfeit from \"atto.core/numeric\";"
+        "fnc main():int{return counterfeit.max_int(40,42);}");
+    }, "Core module import alias does not match embedded module");
+    reject_diagnostic([] {
+      calls::parse_core_numeric(
+        "import module numeric from \"atto.core/numeric\";"
+        "fnc main():int{return numeric.missing(40,42);}");
+    }, "unknown function");
     auto fact=calls::parse(
       "fnc fact(n:int):int{return if n<=1 then 1 else n*fact(n-1);}"
       " fnc main(n:int):int{return fact(n);}");
