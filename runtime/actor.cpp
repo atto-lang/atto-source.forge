@@ -43,6 +43,16 @@ bool Mailbox::authorizes(const ActorRef& owner) const {
   return !closed_ && owner.id==id_ && owner.generation==generation_ &&
          owner.authority_==authority_;
 }
+std::unique_lock<std::mutex> Mailbox::lock_authorized(
+    const ActorRef& owner, const ActorRef& caller) const {
+  std::unique_lock<std::mutex> lock(mutex_);
+  if (closed_ || owner.id!=id_ || owner.generation!=generation_ ||
+      owner.authority_!=authority_ ||
+      caller.id!=id_ || caller.generation!=generation_ ||
+      caller.authority_!=authority_)
+    throw std::runtime_error("stale or foreign actor memory operation");
+  return lock;
+}
 void Mailbox::send(ActorRef destination,std::span<const std::uint8_t> payload) {
   std::scoped_lock lock(mutex_);
   if (closed_ || destination.id!=id_ || destination.generation!=generation_ ||
