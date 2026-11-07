@@ -62,6 +62,17 @@ if(BUILD_TESTING)
   endif()
   add_test(NAME oresforge_scalar_actor_heap_and_turns COMMAND oresforge_scalar_actor_tests)
   set_tests_properties(oresforge_scalar_actor_heap_and_turns PROPERTIES TIMEOUT 30)
+  # Actual ScalarActor host ABI: one logical byte-frame arena per incarnation.
+  # This is not compiled source-actor or guarded physical stack evidence.
+  add_executable(oresforge_actor_frames_test verification/actor_frames_test.cpp)
+  target_link_libraries(oresforge_actor_frames_test PRIVATE oresforge_scalar_actor Threads::Threads)
+  target_compile_features(oresforge_actor_frames_test PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_actor_frames_test PRIVATE
+      -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+  endif()
+  add_test(NAME oresforge_actor_owned_frame_arena_host COMMAND oresforge_actor_frames_test)
+  set_tests_properties(oresforge_actor_owned_frame_arena_host PROPERTIES TIMEOUT 30)
   add_executable(oresforge_scalar_heap_safety_tests verification/scalar_heap_safety.cpp)
   target_link_libraries(oresforge_scalar_heap_safety_tests PRIVATE oresforge_scalar_actor)
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
