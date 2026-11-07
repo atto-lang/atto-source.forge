@@ -34,6 +34,11 @@ class Mailbox {
   // No concurrent calls may outlive mailbox destruction.
   ~Mailbox() noexcept;
   ActorRef ref() const;
+  bool authorizes(const ActorRef& owner) const;
+  // Hold mailbox-generation authority through a trusted native byte operation.
+  // No guest code/callback may run while this lease owns the mailbox mutex.
+  [[nodiscard]] std::unique_lock<std::mutex> lock_authorized(
+      const ActorRef& owner, const ActorRef& caller) const;
   void send(ActorRef,std::span<const std::uint8_t>);
   std::optional<std::vector<std::uint8_t>> receive();
   void close();

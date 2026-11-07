@@ -1,3 +1,4 @@
 # Exact source snapshots approved for a specific private CI destination repository ID.
 # No snapshots are approved by default.
 # Format: source_commit_40hex source_root_tree_40hex destination_repository_id
+46dc99c5261843e64bc1f232a2d3158bf02b71bf 1b83a33cb14305157977992849063085f4851e63 1343209023
