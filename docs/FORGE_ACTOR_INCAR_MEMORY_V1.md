@@ -45,9 +45,13 @@ are authored, not yet observed to have executed.
 - A mailbox capability does not constitute a physical turn or carrier lease.
   The host must enforce non-reentrant dispatch and trusted continuation
   ownership. Suspension here is a bounded byte-state transition only.
-- Mailbox::authorizes is independently checked on each operation. A restart
-  can race after authorization; no atomic publish-vs-restart lease spans an
-  entire memory operation yet. Do not expose this boundary to untrusted guests.
+- Mailbox::lock_authorized now holds the live mailbox-generation mutex
+  throughout each native heap/frame byte operation, so STOP and restart wait
+  for that operation rather than invalidating its authority mid-copy. The
+  lock is held only across trusted bounded memory operations; no guest
+  callbacks run while it is held. This establishes byte-operation fencing,
+  not full async scheduler, in-flight FFI or guest STOP linearization.
+  Do not expose this primitive directly to untrusted guests.
 - Only per-instance quotas are present. Process/tenant aggregate reservation,
   FFI lifetime pins, full allocation recycling, and deterministic asynchronous
   reclamation must be implemented before unrestricted actors.
