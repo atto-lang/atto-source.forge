@@ -1,0 +1,70 @@
+name: Forge actor frames exact-head native tests
+on:
+  push:
+    branches:
+      - feature/actor-owned-frames-forge-20261107
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  actor-frames-host:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lane: gcc
+            cc: gcc
+            cxx: g++
+            flags: "-O2"
+          - lane: clang
+            cc: clang
+            cxx: clang++
+            flags: "-O2"
+          - lane: asan-ubsan
+            cc: clang
+            cxx: clang++
+            flags: "-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Pin tested Git tree and build native actor frame suite
+        shell: bash
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+          CXXFLAGS: ${{ matrix.flags }}
+          CFLAGS: ${{ matrix.flags }}
+        run: |
+          set -euo pipefail
+          expected='${{ github.event.pull_request.head.sha || github.sha }}'
+          test "$(git rev-parse HEAD)" = "$expected"
+          mkdir -p receipts
+          {
+            echo "head=$(git rev-parse HEAD)"
+            echo "tree=$(git rev-parse 'HEAD^{tree}')"
+            echo "run_id=${{ github.run_id }}"
+            echo "run_attempt=${{ github.run_attempt }}"
+            echo "compiler=$CXX"
+            echo "lane=${{ matrix.lane }}"
+            for f in runtime/ActorFrameArena.hpp runtime/scalar_actor.hpp runtime/scalar_actor.cpp verification/actor_frames_test.cpp CMakeLists.txt; do
+              test "$(git hash-object --no-filters "$f")" = "$(git rev-parse "HEAD:$f")"
+              echo "blob:$f=$(git rev-parse "HEAD:$f")"
+            done
+          } | tee receipts/actor-frame-provenance.txt
+          cmake -S . -B build-frame -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER="$CC" -DCMAKE_CXX_COMPILER="$CXX"
+          cmake --build build-frame --target oresforge_actor_frames_test oresforge_scalar_actor_tests oresforge_scalar_heap_safety_tests --parallel 2
+          ctest --test-dir build-frame --output-on-failure -R '^(oresforge_actor_owned_frame_arena_host|oresforge_scalar_actor_heap_and_turns|oresforge_scalar_heap_safety)$' | tee receipts/actor-frame-ctest.txt
+          grep -F '100% tests passed' receipts/actor-frame-ctest.txt
+          ./build-frame/oresforge_actor_frames_test | tee receipts/actor-frame-marker.txt
+          grep -F 'ATTO_FORGE_ACTOR_FRAME_HOST_EXECUTED|cases=20|guest=NOT_EXECUTED' receipts/actor-frame-marker.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: forge-actor-frames-${{ matrix.lane }}-${{ github.run_attempt }}
+          path: receipts/
+          if-no-files-found: warn
