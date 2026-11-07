@@ -2,7 +2,7 @@
 # Compiler-backed Forge x86-64 native stage-2 numeric.atto (hosted harness).
 set -euo pipefail
 test "$#" -eq 3 || { echo 'usage: COMPILER REPO_ROOT CXX' >&2; exit 2; }
-compiler="$1"; root="$2"; cxx="$3"
+compiler="$(realpath -- "$1")"; root="$(realpath -- "$2")"; cxx="$3"
 test -x "$compiler"
 command -v "$cxx" >/dev/null
 command -v readelf >/dev/null

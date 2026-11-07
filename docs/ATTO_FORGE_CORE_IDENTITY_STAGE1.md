@@ -77,3 +77,14 @@ controls cover min/max/clamp equality, extremes and reversed bounds.
 The job receipt records immutable git HEAD/tree, compiler SHA and
 source blob identities. These are authored gates, not executed
 GitHub receipts; source-owned runner allocation is still blocked.
+
+## Working-directory and incremental source-freshness hardening
+
+Both Core stage-1 and numeric stage-2 native test scripts now
+canonicalize their compiler and repository paths with `realpath`
+**before** switching to hostile per-test working directories. A
+relative `./build/oresforge` otherwise resolved under the scratch
+directory and prevented the guest test from running at all. CMake also
+tracks both canonical compiler-owned `.atto` inputs in
+`CMAKE_CONFIGURE_DEPENDS`, so an incremental rebuild cannot silently
+reuse stale generated embedded source after a source mutation.

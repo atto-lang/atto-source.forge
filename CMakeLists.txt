@@ -2,6 +2,11 @@ cmake_minimum_required(VERSION 3.20)
 project(OresForge VERSION 0.1.0 LANGUAGES CXX)
 option(ORESFORGE_FUZZ "Build Clang libFuzzer target" OFF)
 add_library(oresforge_core STATIC compiler/frontend.cpp compiler/ir.cpp compiler/call_native.cpp codegen/native.cpp runtime/actor.cpp jit/tiered.cpp)
+# Changes to either canonical .atto source must invalidate CMake's generated
+# embedded compiler bytes even in incremental build directories.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/contracts/atto-core-v1/identity.atto"
+  "${CMAKE_CURRENT_SOURCE_DIR}/contracts/atto-core-v1/numeric.atto")
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/contracts/atto-core-v1/identity.atto"
      ATTO_CORE_IDENTITY_SOURCE)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/contracts/atto-core-v1/numeric.atto"
