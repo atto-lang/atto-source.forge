@@ -26,6 +26,7 @@ int main() {
     accept("pub fnc main(): int { return (2 * 3) + 1; }");
     accept("pub fnc main(): int { /* % ^ ^^ */ return 7; }");
     accept("pub fnc main(): int { // % ^ ^^ in comment\n return 7; }");
+    accept("pub fnc main(): int { /* operator true false */ return 7; }");
     reject("pub fnc main(): int { return 7 % 3; }","legacy % operator is removed");
     reject("pub fnc main(): int { return 7%3; }","legacy % operator is removed");
     reject("pub fnc main(): int { return 7 ^ 3; }","legacy ^/^^ operators are removed");
@@ -33,7 +34,17 @@ int main() {
     reject("pub fnc main(): int { return (2 + 3) % 2; }","legacy % operator is removed");
     reject("pub fnc hidden(): int { return 4 ^ 3; } pub fnc main(): int { return 7; }",
            "legacy ^/^^ operators are removed");
-    std::cout<<"FORGE_LEGACY_OPERATOR_GRAMMAR_PASS positive=3 negative=6\n";
+    // Reject prohibited declarations and implicit bool-to-int values even in
+    // unused helper functions. These are bootstrap admission tests only.
+    reject("pub fnc operator(a:int):int{return a;} pub fnc main():int{return 7;}",
+           "user-defined operator overloading is forbidden");
+    reject("define operator +(int a,int b):int{return a+b;} pub fnc main():int{return 7;}",
+           "user-defined operator overloading is forbidden");
+    reject("pub fnc main():int{return true;}",
+           "no implicit bool-to-int conversion");
+    reject("pub fnc hidden():int{return false;} pub fnc main():int{return 7;}",
+           "no implicit bool-to-int conversion");
+    std::cout<<"FORGE_LEGACY_OPERATOR_GRAMMAR_PASS positive=4 negative=10\\n";
     return 0;
   }catch(const std::exception& e){
     std::cerr<<"FORGE_LEGACY_OPERATOR_GRAMMAR_FAIL "<<e.what()<<"\n";
