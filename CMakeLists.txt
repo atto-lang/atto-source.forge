@@ -45,6 +45,16 @@ if(BUILD_TESTING)
       -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
   endif()
   add_test(NAME oresforge_actor_owned_frame_arena_host COMMAND oresforge_actor_frames_test)
+  # Preserve #101's zero-allocation turn instrumentation on supported linkers.
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    foreach(actor_test IN ITEMS
+        oresforge_actor_arena_tests oresforge_scalar_actor_tests
+        oresforge_scalar_heap_safety_tests)
+      target_compile_definitions(${actor_test} PRIVATE ORES_ARENA_TEST_ALLOCATIONS=1)
+      target_link_options(${actor_test} PRIVATE
+        -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=free)
+    endforeach()
+  endif()
   set_tests_properties(oresforge_actor_arena_persistent_scratch
     oresforge_scalar_actor_heap_and_turns oresforge_scalar_heap_safety
     oresforge_actor_owned_frame_arena_host PROPERTIES TIMEOUT 40)
