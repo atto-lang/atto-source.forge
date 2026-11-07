@@ -107,6 +107,23 @@ class IntegrationManifestGateTests(unittest.TestCase):
         value['note'] = 'CI parity is asserted.'
         self.assert_reject(encode(value))
 
+    def test_cli_rejects_embedded_nul_root_without_unhandled_exception(self):
+        # Argparse accepts this when invoked as a Python callable even though
+        # an OS shell cannot pass an actual NUL in argv.
+        self.assertEqual(module.main(['--repository-root',
+                                      '/' + REPO_NAME + '\x00outside']), 1)
+
+    @unittest.skipUnless(os.name == 'posix', 'POSIX dir_fd support gate')
+    def test_cli_denies_missing_descriptor_relative_open_support(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / REPO_NAME
+            (root / '.oreslang').mkdir(parents=True)
+            (root / '.oreslang/integration.json').write_bytes(encode(valid_manifest()))
+            # A platform with O_NOFOLLOW constants but no dir_fd-compatible
+            # os.open must deny the manifest, never fall back to path reads.
+            with mock.patch.object(module.os, 'supports_dir_fd', set()):
+                self.assertEqual(module.main(['--repository-root', str(root)]), 1)
+
     def test_cli_rejects_symlinked_manifest(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp) / REPO_NAME
