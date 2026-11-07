@@ -54,5 +54,5 @@ for spec in atto.core/missing atto.alloc/identity atto.std/identity \
   test ! -s "$tmp/deny.s"
   grep -F 'unknown compiler-owned atto.core module' "$tmp/deny.err" >/dev/null
 done
-printf 'ATTO_FORGE_STAGE1_CORE_IDENTITY_EXECUTED|result=42|mutation_result=43|compiler_owned=YES|host_imports=0|pie=YES|exec_stack=NO\n'
+printf 'ATTO_FORGE_STAGE1_CORE_IDENTITY_EXECUTED|result=42|mutation_result=43|compiler_owned=YES|native_harness=HOSTED|guest_host_imports=NOT_VERIFIED|pie=YES|exec_stack=NO\n'
 printf 'ATTO_FORGE_STAGE1_NATIVE_BINARY_SHA256=%s\n' "$(sha256sum "$tmp/guest42" | cut -d' ' -f1)"

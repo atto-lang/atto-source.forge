@@ -26,3 +26,14 @@ and local-path substitutions with no emitted assembly. The script
 records a native ELF SHA-256 when it actually executes. This does
 not prove full `numeric.atto`, portable backend parity or source-owned
 CI until runners allocate.
+
+## Hosted binary evidence scope
+
+The stage-1 native script links the generated guest assembly with a
+C++ test harness using the normal hosted runtime. PIE and non-executable
+stack flags do **not** imply zero ELF/libc imports or freestanding Core.
+Its emitted scope explicitly says `native_harness=HOSTED` and
+`guest_host_imports=NOT_VERIFIED`. The source's lack of imported
+Std/actor declarations is not a substitute for a compiled ELF import
+inventory audit. The native backend here is Forge's x86-64 compiler,
+not a separately proven Cranelift implementation.
