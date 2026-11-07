@@ -112,6 +112,15 @@ TRAPS = (
      (1,), "call depth exceeded"),
 )
 INVALID = (
+    ("guard-native-local",
+     "fnc main():int{const guard=1;return guard;}",
+     "GUARD_BACKEND_UNSUPPORTED"),
+    ("guard-native-function",
+     "fnc guard():int{return 42;} fnc main():int{return guard();}",
+     "GUARD_BACKEND_UNSUPPORTED"),
+    ("guard-native-parameter",
+     "fnc helper(guard:int):int{return 42;} fnc main():int{return helper(1);}",
+     "GUARD_BACKEND_UNSUPPORTED"),
     ("named-duplicate",
      "fnc pair(a:int,b:int):int{return a*10+b;}"
      " fnc main():int{return pair(a:4,a:2);}", "duplicate named argument"),

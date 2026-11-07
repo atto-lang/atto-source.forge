@@ -647,6 +647,11 @@ int main() {
       renamed_formal.functions.front().parameters[0]="changed";
       reject_diagnostic([&]{calls::verify(renamed_formal);},
                         "unknown named argument: a");
+      auto forged_guard_local=calls::parse("fnc main():int{const ok=1;return ok;}");
+      for(auto& node:forged_guard_local.functions[0].nodes)
+        if(node.kind==calls::Kind::Let)node.name="guard";
+      reject_diagnostic([&]{calls::verify(forged_guard_local);},
+                        "invalid callable local name");
     }
     // Opt-in callable program has its own fully verified representation.
     // Unlike the scalar profile, these helpers compile to real native calls.

@@ -148,6 +148,10 @@ class Parser {
   void expect(std::string_view s) {if(!take(s))fail("unexpected token");}
   std::string identifier() {
     if (token_.text.empty() || !letter(token_.text[0])) fail("expected identifier");
+    // Scalar and native-call frontends must agree: checked guard CFG is
+    // unsupported. A local/function/parameter named guard cannot bypass it.
+    if (token_.text=="guard")
+      fail("GUARD_BACKEND_UNSUPPORTED: checked early-exit CFG lowering required");
     const std::string result(token_.text);
     next();
     return result;
@@ -587,7 +591,7 @@ void verify(const Module& m) {
         throw std::runtime_error("invalid callable local payload");
       if(n.kind==Kind::Let &&
          (n.name=="int"||n.name=="const"||n.name=="return"||n.name=="fnc"||
-          n.name=="if"||n.name=="then"||n.name=="else"))
+          n.name=="if"||n.name=="then"||n.name=="else"||n.name=="guard"))
         throw std::runtime_error("invalid callable local name");
       for(int arg:n.children) {
         if(arg<0 || static_cast<std::size_t>(arg)>=i)
