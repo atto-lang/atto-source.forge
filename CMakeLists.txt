@@ -104,7 +104,7 @@ if(BUILD_TESTING)
     add_test(NAME oresforge_atto_stage2_core_numeric
       COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_atto_core_numeric_guest.sh"
         "$<TARGET_FILE:oresforge>" "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CXX_COMPILER}")
-    set_tests_properties(oresforge_atto_stage2_core_numeric PROPERTIES TIMEOUT 90)
+    set_tests_properties(oresforge_atto_stage2_core_numeric PROPERTIES TIMEOUT 150)
   endif()
   # This invokes the real Forge frontend on operator-positive and
   # operator-negative sources, including unreachable declarations.

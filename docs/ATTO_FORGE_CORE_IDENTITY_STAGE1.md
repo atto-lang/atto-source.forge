@@ -111,3 +111,23 @@ The pinned `ATTO_FORGE_STAGE{1,2}_COMPILER_SHA256` is printed
 alongside the guest artifact digest. This supplies a more defensible
 compiler binary witness but does not prove the compiler source
 itself or provide independent native guest parity review.
+
+## 30,000 parameterized native numeric differential cases
+
+The stage-2 native CTest and the exact-head GCC/Clang CI lane now
+generate **three ordinary AttoLang parameterized entrypoints**
+(importing the same unchanged compiler-owned numeric.atto), compile
+them through `emit-core-numeric-asm`, assemble and link the emitted
+x86-64 code into hosted PIE test executables, and exercise 10,000
+deterministic calls per operation for min/max/clamp. The independent
+C++ oracle covers all combinations of a nine-value edge pool for
+the first 729 cases (i64 min/max, equal, negative, zero and positive,
+reversed bounds), followed by fixed-seed SplitMix64 inputs. The test
+checks expected checksums, ELF PIE/NX invariants and individual
+binary SHA-256 witnesses. No C++ oracle code is used to implement
+or compile the imported `.atto` functions. This 30k-case suite was
+locally built under GCC/Clang against a **synthetic C++ stub** to verify
+harness determinism and expected checksums, but it has **not** yet
+executed with Forge-generated assembly from the current PR on
+a hosted Actions runner. The stub control must not be counted as
+AttoLang guest evidence.

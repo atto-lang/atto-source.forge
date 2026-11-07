@@ -52,5 +52,37 @@ test "$(sha256sum "$compiler" | cut -d' ' -f1)" = "$compiler_sha_before" || {
   echo 'Forge executable changed during stage-2 numeric guest test' >&2; exit 1
 }
 printf 'ATTO_FORGE_STAGE2_COMPILER_SHA256=%s\n' "$compiler_sha_before"
+# Parameterized source programs stay independent of the C++ reference
+# oracle. Each compiler-emitted entry executes 10k deterministic i64 inputs.
+# In particular the first 729 cases cover all triples from the boundary
+# pool, including reversed clamp bounds and signed i64 extremes.
+for mode in min max clamp; do
+  case "$mode" in
+    min) expression='numeric.min_int(left,right)'; signature='int left,int right'; checksum='a52c659779088c2b';;
+    max) expression='numeric.max_int(left,right)'; signature='int left,int right'; checksum='bb3870b3c10fd615';;
+    clamp) expression='numeric.clamp_int(value,lower,upper)'; signature='int value,int lower,int upper'; checksum='e71b3e7766936548';;
+  esac
+  printf 'import module numeric from "atto.core/numeric"; pub fnc main(%s):int{return %s;}\n' \
+    "$signature" "$expression" > "$tmp/param-$mode.atto"
+  "$compiler" emit-core-numeric-asm x86_64 "$tmp/param-$mode.atto" > "$tmp/param-$mode.s"
+  test -s "$tmp/param-$mode.s"
+  grep -F '  call .Lores_fn_' "$tmp/param-$mode.s" >/dev/null
+  "$cxx" -x assembler -c "$tmp/param-$mode.s" -o "$tmp/param-$mode.o"
+  upper_mode="${mode^^}"
+  "$cxx" -std=c++20 -Wall -Wextra -Werror -O2 -fPIE -pie \
+    "-DATTO_NUMERIC_$upper_mode" \
+    "$root/verification/atto_core_numeric_differential_harness.cpp" \
+    "$tmp/param-$mode.o" -o "$tmp/param-$mode"
+  "$tmp/param-$mode" > "$tmp/param-$mode.log"
+  grep -Fx "ATTO_FORGE_NUMERIC_DIFFERENTIAL_EXECUTED|mode=$mode|cases=10000|checksum=$checksum|native=YES|hosted_harness=YES" \
+    "$tmp/param-$mode.log" >/dev/null
+  readelf -W -h "$tmp/param-$mode" | grep -E 'Type: *DYN ' >/dev/null
+  readelf -W -l "$tmp/param-$mode" | awk '
+    $1=="GNU_STACK" {found=1; if ($7 ~ /E/) bad=1}
+    END {exit (!found || bad)}'
+  cat "$tmp/param-$mode.log"
+  printf 'ATTO_FORGE_NUMERIC_DIFF_ELF_SHA256|mode=%s|sha256=%s\n' \
+    "$mode" "$(sha256sum "$tmp/param-$mode" | cut -d' ' -f1)"
+done
 printf 'ATTO_FORGE_STAGE2_NUMERIC_EXECUTED|result=42|mutation_result=43|canonical_resource=YES|native_harness=HOSTED|guest_imports=NOT_VERIFIED|pie=YES|exec_stack=NO\n'
 printf 'ATTO_FORGE_STAGE2_NATIVE_BINARY_SHA256=%s\n' "$(sha256sum "$tmp/42" | cut -d' ' -f1)"
