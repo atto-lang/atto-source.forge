@@ -152,6 +152,16 @@ class Parser {
       // Reject with a stable diagnostic rather than emitting an unrelated
       // scalar result from a source that depends on external modules.
       if (tok_.text=="import") error("source imports require verified module graph lowering");
+      // Operators are fixed by the language. Never treat an 'operator'
+      // declaration as an ordinary function, even when unreachable.
+      if (tok_.text=="operator")
+        error("user-defined operator overloading is forbidden");
+      // Stage-0 only lowers i64. Reject bool at source admission rather
+      // than quietly treating true/false as integer identifiers/values.
+      // This is not a substitute for typed cross-backend coercion tests.
+      if (tok_.text=="true" || tok_.text=="false")
+        error("typed bool lowering unavailable; no implicit bool-to-int conversion");
+
       // Scalar bootstrap lacks nominal enum declarations and compiler-owned
       // prebound virtual method slots. Never attempt arity-only fallback.
       if (tok_.text=="enum") error("nominal enum overloads require compiler-bound dispatch");
