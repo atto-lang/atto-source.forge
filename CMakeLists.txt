@@ -249,6 +249,13 @@ if(BUILD_TESTING)
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/import_parity_admission.py"
       "$<TARGET_FILE:oresforge>")
   set_tests_properties(source_import_parity_admission PROPERTIES TIMEOUT 60)
+  # Real frontend must NOT publish partial actor IR or assembly until
+  # actor heap/frame lowering is connected to compiled .atto source.
+  add_test(NAME forge_actor_source_admission_fail_closed
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/actor_frames_source_admission.py"
+      "$<TARGET_FILE:oresforge>")
+  set_tests_properties(forge_actor_source_admission_fail_closed PROPERTIES TIMEOUT 120)
   add_test(NAME scalar_parity_harness_selftest
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/contracts/scalar/v1/selftest.py")
   set_tests_properties(scalar_parity_harness_selftest PROPERTIES TIMEOUT 30)
