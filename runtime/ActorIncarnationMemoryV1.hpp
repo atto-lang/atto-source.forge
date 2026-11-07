@@ -83,11 +83,14 @@ class ActorIncarnationMemoryV1 final {
     volatile std::uint8_t* p = buffer;
     for (std::size_t i = 0; i < bytes; ++i) p[i] = 0;
   }
-  void authorize(const ActorRef& caller) const {
-    if (retired_ || !mailbox_.authorizes(owner_) ||
-        !mailbox_.authorizes(caller) ||
-        caller.id != owner_.id || caller.generation != owner_.generation)
-      throw std::runtime_error("closed, foreign or stale actor memory incarnation");
+  [[nodiscard]] std::unique_lock<std::mutex> authorize(
+      const ActorRef& caller) const {
+    if (retired_)
+      throw std::runtime_error("actor incarnation memory retired");
+    // Invariant: callers already own gate_. Mailbox close/restart acquires
+    // only its mailbox mutex, and never calls back into actor memory.
+    // The returned lock holds generation authority through the byte copy.
+    return mailbox_.lock_authorized(owner_, caller);
   }
   void frame_healthy() const {
     if (stack_poisoned_)
@@ -169,7 +172,7 @@ class ActorIncarnationMemoryV1 final {
 
   ActorMemoryHeapHandle alloc(const ActorRef& actor, std::size_t bytes) {
     std::scoped_lock lock(gate_);
-    authorize(actor);
+    [[maybe_unused]] auto mailbox_lease = authorize(actor);
     if (!bytes || bytes > heap_bytes_ - heap_top_)
       throw std::length_error("actor heap quota");
     auto it = std::find_if(slots_.begin(), slots_.end(),
@@ -190,7 +193,7 @@ class ActorIncarnationMemoryV1 final {
   void heap_write(const ActorRef& actor, const ActorMemoryHeapHandle& handle,
                   std::size_t offset, std::span<const std::uint8_t> bytes) {
     std::scoped_lock lock(gate_);
-    authorize(actor);
+    [[maybe_unused]] auto mailbox_lease = authorize(actor);
     const Slot& slot = slots_[find_heap(handle)];
     check_range(slot.length, offset, bytes.size());
     std::copy(bytes.begin(), bytes.end(), heap_.get() + slot.offset + offset);
@@ -198,14 +201,14 @@ class ActorIncarnationMemoryV1 final {
   void heap_read(const ActorRef& actor, const ActorMemoryHeapHandle& handle,
                  std::size_t offset, std::span<std::uint8_t> out) const {
     std::scoped_lock lock(gate_);
-    authorize(actor);
+    [[maybe_unused]] auto mailbox_lease = authorize(actor);
     const Slot& slot = slots_[find_heap(handle)];
     check_range(slot.length, offset, out.size());
     std::copy_n(heap_.get() + slot.offset + offset, out.size(), out.begin());
   }
   void drop(const ActorRef& actor, const ActorMemoryHeapHandle& handle) {
     std::scoped_lock lock(gate_);
-    authorize(actor);
+    [[maybe_unused]] auto mailbox_lease = authorize(actor);
     Slot& slot = slots_[find_heap(handle)];
     clear(heap_.get() + slot.offset, slot.length);
     slot = Slot{};
@@ -217,7 +220,7 @@ class ActorIncarnationMemoryV1 final {
 
   ActorMemoryExecution begin(const ActorRef& actor) {
     std::scoped_lock lock(gate_);
-    authorize(actor);
+    [[maybe_unused]] auto mailbox_lease = authorize(actor);
     frame_healthy();
     if (execution_) throw std::runtime_error("actor already has a logical stack");
     execution_ = issue();
@@ -227,7 +230,7 @@ class ActorIncarnationMemoryV1 final {
                               const ActorMemoryExecution& execution,
                               std::size_t bytes) {
     std::scoped_lock lock(gate_);
-    authorize(actor);
+    [[maybe_unused]] auto mailbox_lease = authorize(actor);
     execution_active(execution);
     if (!bytes || frames_.size() == frame_limit_ ||
         bytes > stack_bytes_ - stack_top_)
@@ -242,7 +245,7 @@ class ActorIncarnationMemoryV1 final {
                    const ActorMemoryFrameHandle& handle, std::size_t offset,
                    std::span<const std::uint8_t> bytes) {
     std::scoped_lock lock(gate_);
-    authorize(actor);
+    [[maybe_unused]] auto mailbox_lease = authorize(actor);
     execution_active(execution);
     const Frame& frame = frames_[find_frame(handle)];
     check_range(frame.length, offset, bytes.size());
@@ -252,7 +255,7 @@ class ActorIncarnationMemoryV1 final {
                   const ActorMemoryFrameHandle& handle, std::size_t offset,
                   std::span<std::uint8_t> out) {
     std::scoped_lock lock(gate_);
-    authorize(actor);
+    [[maybe_unused]] auto mailbox_lease = authorize(actor);
     execution_active(execution);
     const Frame& frame = frames_[find_frame(handle)];
     check_range(frame.length, offset, out.size());
@@ -261,7 +264,7 @@ class ActorIncarnationMemoryV1 final {
   void pop(const ActorRef& actor, const ActorMemoryExecution& execution,
            const ActorMemoryFrameHandle& handle) {
     std::scoped_lock lock(gate_);
-    authorize(actor);
+    [[maybe_unused]] auto mailbox_lease = authorize(actor);
     execution_active(execution);
     if (frames_.empty() || frames_.back().issued != handle.token_)
       poison("actor frame pop is not strict LIFO");
@@ -272,7 +275,7 @@ class ActorIncarnationMemoryV1 final {
   }
   void finish(const ActorRef& actor, const ActorMemoryExecution& execution) {
     std::scoped_lock lock(gate_);
-    authorize(actor);
+    [[maybe_unused]] auto mailbox_lease = authorize(actor);
     execution_active(execution);
     if (!frames_.empty()) poison("actor handler escaped with live frames");
     execution_.reset();
@@ -280,7 +283,7 @@ class ActorIncarnationMemoryV1 final {
   ActorMemoryContinuation suspend(const ActorRef& actor,
                                   const ActorMemoryExecution& execution) {
     std::scoped_lock lock(gate_);
-    authorize(actor);
+    [[maybe_unused]] auto mailbox_lease = authorize(actor);
     execution_active(execution);
     if (frames_.empty()) poison("actor cannot suspend empty stack");
     continuation_ = issue();
@@ -290,7 +293,7 @@ class ActorIncarnationMemoryV1 final {
   void resume(const ActorRef& actor, const ActorMemoryExecution& execution,
               const ActorMemoryContinuation& continuation) {
     std::scoped_lock lock(gate_);
-    authorize(actor);
+    [[maybe_unused]] auto mailbox_lease = authorize(actor);
     frame_healthy();
     if (!suspended_ || !execution_ || execution_ != execution.token_ ||
         !continuation_ || continuation_ != continuation.token_)
@@ -300,7 +303,7 @@ class ActorIncarnationMemoryV1 final {
   }
   void verify_handler_exit(const ActorRef& actor) {
     std::scoped_lock lock(gate_);
-    authorize(actor);
+    [[maybe_unused]] auto mailbox_lease = authorize(actor);
     frame_healthy();
     if (execution_ && !suspended_)
       poison("actor handler returned with unbalanced frames");
