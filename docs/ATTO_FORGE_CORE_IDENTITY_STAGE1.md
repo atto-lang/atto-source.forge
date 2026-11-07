@@ -88,3 +88,15 @@ directory and prevented the guest test from running at all. CMake also
 tracks both canonical compiler-owned `.atto` inputs in
 `CMAKE_CONFIGURE_DEPENDS`, so an incremental rebuild cannot silently
 reuse stale generated embedded source after a source mutation.
+
+## Generated-header raw-literal escape control
+
+Both canonical `.atto` units are embedded in generated C++
+raw-string literals. A future file containing the exact
+`)__ATTO_NUM__"` or `)__ATTO_CORE__"` sequence would
+prematurely close the literal, potentially breaking or injecting
+C++ in the compiler build. The configure-time guard now rejects
+that source **before** generating a header. A CTest host-only
+gate verifies the two real canonical inputs are accepted and both
+malicious closing-delimiter variants are rejected with the intended
+diagnostic. This does not replace compiler-backed guest evidence.

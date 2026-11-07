@@ -11,6 +11,12 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/contracts/atto-core-v1/identity.atto"
      ATTO_CORE_IDENTITY_SOURCE)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/contracts/atto-core-v1/numeric.atto"
      ATTO_CORE_NUMERIC_SOURCE)
+# The C++ wrapper embeds these source bytes in raw string literals.
+# A new library comment containing the exact closing delimiter would
+# otherwise break out of the generated header. Fail closed on collision.
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/AttoCoreResourceGuard.cmake")
+atto_guard_core_raw_literal(ATTO_CORE_IDENTITY_SOURCE "__ATTO_CORE__")
+atto_guard_core_raw_literal(ATTO_CORE_NUMERIC_SOURCE "__ATTO_NUM__")
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/atto-generated")
 configure_file(
   "${CMAKE_CURRENT_SOURCE_DIR}/compiler/atto_core_identity_source.hpp.in"
@@ -87,6 +93,10 @@ if(BUILD_TESTING)
   target_include_directories(oresforge_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
   target_link_libraries(oresforge_tests PRIVATE oresforge_core)
   add_test(NAME oresforge_unit COMMAND oresforge_tests)
+  add_test(NAME oresforge_atto_core_raw_literal_guard
+    COMMAND "${CMAKE_COMMAND}" -P
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/test_atto_core_resource_guard.cmake")
+  set_tests_properties(oresforge_atto_core_raw_literal_guard PROPERTIES TIMEOUT 15)
   # Canonical compiler-owned numeric.atto is parsed as a separate
   # read-only Core unit; CTest executes real linked native 42/43 guests.
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
