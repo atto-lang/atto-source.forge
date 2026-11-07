@@ -60,6 +60,25 @@ printf 'pub fnc main():int{return 43;}\n' > "$tmp/mutated.atto"
 test "$("$tmp/mutated-guest")" = 'ATTO_FORGE_NATIVE_GUEST=43' || {
   echo 'source mutation did not propagate through native codegen and execution' >&2; exit 1
 }
+# Treat the mutated output as an independently linked executable. The
+# source mutation must not turn a hardened PIE/NX guest into an unsafe ELF.
+readelf -W -h "$tmp/mutated-guest" | grep -E 'Type: *DYN ' >/dev/null || {
+  echo 'mutated native ELF is not PIE' >&2; exit 1
+}
+readelf -W -l "$tmp/mutated-guest" | audit_nonexec_stack || {
+  echo 'mutated native ELF has executable stack or missing GNU_STACK' >&2; exit 1
+}
+test "$(sha256sum "$tmp/core.s" | cut -d' ' -f1)" != \
+     "$(sha256sum "$tmp/mutated.s" | cut -d' ' -f1)" || {
+  echo '42 to 43 source mutation did not change native assembly' >&2; exit 1
+}
+test "$(sha256sum "$tmp/native-guest" | cut -d' ' -f1)" != \
+     "$(sha256sum "$tmp/mutated-guest" | cut -d' ' -f1)" || {
+  echo '42 to 43 source mutation did not change executable binary' >&2; exit 1
+}
+test "$("$compiler" run "$tmp/mutated.atto")" = 43 || {
+  echo 'mutated source did not change Forge interpreted scalar result' >&2; exit 1
+}
 # Main parser must reject ALL source imports: no hidden synthetic fallback
 # from a source snapshot or filesystem path may masquerade as executable Core.
 if "$compiler" ir "$root/examples/atto-core-stage0-deny.atto" >"$tmp/invalid.ll" 2>"$tmp/invalid.err"; then

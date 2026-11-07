@@ -50,3 +50,13 @@ sanitizers, fuzz-smoke and mailbox-thread-safety jobs must occur exactly
 once. The stage-0 feature-branch push trigger enables branch-local
 source-owned CI before merge. The older `jobs=[]` workflow runs indicate
 configuration/admission failure, **not** successfully executed tests.
+
+## Independent PIE/NX and changed-artifact proof for mutant guest
+
+The 42→43 source mutation now must change native assembly **and** linked
+executable SHA-256, produce interpreted scalar result `43`, execute
+the generated native scalar result `43`, and separately satisfy PIE
+(`Type: DYN`) and GNU_STACK non-executable audits on its own binary.
+This prevents a fake mutation pass in which an unchanged or non-PIE
+mutant executable is returned. These are source-owned script checks
+and still require GitHub runner execution to become guest evidence.
