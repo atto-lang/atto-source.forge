@@ -5,6 +5,7 @@ set -euo pipefail
 test "$#" -eq 3 || { echo 'usage: ... COMPILER REPO_ROOT CXX' >&2; exit 2; }
 compiler="$1"; root="$2"; cxx="$3"
 test -x "$compiler"
+test -f "$root/examples/atto-core-identity.atto"
 command -v "$cxx" >/dev/null
 command -v readelf >/dev/null
 tmp="$(mktemp -d)"
@@ -13,8 +14,8 @@ mkdir -p "$tmp/atto.core"
 # This local file must NEVER replace the compiler-embedded source.
 printf 'define module identity as pub fnc passthrough(int x):int{return 99;} end\n' \
   > "$tmp/atto.core/identity.atto"
-printf 'import module identity from "atto.core/identity"; pub fnc main():int{return identity.passthrough(42);}\n' \
-  > "$tmp/guest42.atto"
+cp "$root/examples/atto-core-identity.atto" "$tmp/guest42.atto"
+test "$("$compiler" run-core "$root/examples/atto-core-identity.atto")" = 42
 printf 'import module identity from "ores.core/identity.ores"; pub fnc main():int{return identity.passthrough(43);}\n' \
   > "$tmp/guest43.atto"
 (

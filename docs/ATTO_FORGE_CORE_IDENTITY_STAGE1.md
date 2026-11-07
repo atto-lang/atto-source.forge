@@ -37,3 +37,14 @@ Its emitted scope explicitly says `native_harness=HOSTED` and
 Std/actor declarations is not a substitute for a compiled ELF import
 inventory audit. The native backend here is Forge's x86-64 compiler,
 not a separately proven Cranelift implementation.
+
+## Exact-head CI receipt integration
+
+The native Forge CI bootstrap now reruns the compiler-owned Core
+identity script under both GCC and Clang, binds the source commit and
+tree and the exact two committed `.atto` file Git blobs, records the
+compiled Forge executable's SHA-256 and the native guest ELF digest,
+and uploads the log/receipt. The script consumes a checked-in example
+`examples/atto-core-identity.atto` and tests its byte-equivalent
+scratch copy with a local hostile namespace-shadow source. Hosted
+runner steps are still unexecuted as of authoring.

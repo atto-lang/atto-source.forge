@@ -75,6 +75,30 @@ jobs:
             build/atto-forge-stage0.log
             build/atto-forge-stage0-receipt.txt
           if-no-files-found: warn
+      - name: Execute compiler-owned Atto Core identity stage-1 native guest and receipts
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/check_atto_core_identity_guest.sh ./build/oresforge "$PWD" "${{ matrix.compiler }}" | tee build/atto-core-identity-stage1.log
+          grep -F 'ATTO_FORGE_STAGE1_CORE_IDENTITY_EXECUTED|result=42|mutation_result=43|compiler_owned=YES|native_harness=HOSTED|guest_host_imports=NOT_VERIFIED|pie=YES|exec_stack=NO' build/atto-core-identity-stage1.log
+          grep -E '^ATTO_FORGE_STAGE1_NATIVE_BINARY_SHA256=[0-9a-f]{64}$' build/atto-core-identity-stage1.log
+          {
+            echo "head=$(git rev-parse HEAD)"
+            echo "tree=$(git rev-parse 'HEAD^{tree}')"
+            echo "compiler_sha256=$(sha256sum build/oresforge | cut -d' ' -f1)"
+            for source in contracts/atto-core-v1/identity.atto examples/atto-core-identity.atto; do
+              test "$(git hash-object --no-filters -- "$source")" = "$(git rev-parse "HEAD:$source")"
+              echo "blob:$source=$(git hash-object --no-filters -- "$source")"
+            done
+          } > build/atto-core-identity-stage1-receipt.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: atto-forge-stage1-source-bound-${{ matrix.compiler }}
+          path: |
+            build/atto-core-identity-stage1.log
+            build/atto-core-identity-stage1-receipt.txt
+          if-no-files-found: warn
       - name: Execute documented source fixture
         run: test "$(./build/oresforge run examples/hello.ores)" = "14"
 
