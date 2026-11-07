@@ -5,7 +5,7 @@
 ## Exact source provenance
 
 - Same-repository native heap and scratch arena C blobs are taken unmodified from draft Forge #101, including `ActorOwnedI64Heap.c` blob `008be708d79559c8afd7b7271f9385920f7a3aca`.
-- The host-only logical frame arena and `ScalarActor::run_one` integration come from draft Forge #208.
+- The host-only logical frame storage and `ScalarActor::run_one` bridge come from pre-existing Forge #207; exact Git blobs are reused rather than introducing competing implementations.
 - No Java or LLVM private source is mirrored into this branch. Portable semantics must be compared using reviewed shared fixture contracts and independent backends.
 
 ## Implemented runtime properties
@@ -18,7 +18,7 @@
 | Suspension | Host arena retains bytes across suspend; resumes on another carrier | ScalarActor callbacks still synchronous; scheduler continuation bridge absent |
 | Cancellation / STOP | Quiesced frame cancellation and retirement zeroize bytes; actor callback failure seals mailbox | No supervisor/compiler STOP lowering |
 | Fault isolation | Host frame overflow poisons its actor and sibling can continue | Does not prove native stack-overflow signal containment |
-| Conformance | Four CTests for actor arena, actor heap turns, scalar heap safety, frames + sanitizer lane | Exact-head hosted steps and compiled guest traces required |
+| Conformance | Five native host CTests for arena, heap turns, heap safety, frames, callback bridge, plus a source-compiler negative gate | Exact-head hosted steps and compiled guest traces required |
 
 ## Parity gates against Java and LLVM
 
@@ -35,4 +35,8 @@ Must-have source/compiler acceptance before claiming a production actor stack:
 
 ## Local / hosted evidence
 
-The separate #208 host-frame implementation was compiled on local GNU and Clang with warnings-as-errors against a *minimal heap ABI stub*, emitting `ATTO_FORGE_ACTOR_FRAME_HOST_EXECUTED|cases=20|guest=NOT_EXECUTED`. **The current-main composition has not yet produced a linked actual native heap test receipt**. The added three-lane workflow builds and executes against the real `ActorOwnedI64Heap.c`; wait for admitted jobs and nonempty step records before assigning a verified status.
+Existing Forge #207 records local GCC, Clang and ASan+UBSan execution of its standalone frame program at exact source blob identities. Its complete callback bridge and current-main CMake composition have **not** yet produced an exact-head linked native-heap test receipt. The added three-lane workflow builds and executes against the real `ActorOwnedI64Heap.c`; wait for admitted jobs and nonempty step records before assigning a verified status.
+
+## Additional compiler admission hardening
+
+`verification/actor_frames_source_admission.py` checks 24 negative invocations (three unsupported `.atto` actor forms across eight compiler CLI paths) and two positive scalar controls. Negative cases require exit 1, an error diagnostic and no published stdout, IR or assembly. These new checks are source-authored **and have not yet executed on hosted exact-head CI**. They deny false source actor parity until real compiler lowering exists.
