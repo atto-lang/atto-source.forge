@@ -30,7 +30,8 @@ public:
                             std::span<const Instruction> code,
                             std::int64_t input,
                             std::size_t instruction_budget = 16384) {
-        if (code.empty() || code.size() > 4096 || instruction_budget == 0)
+        if (code.empty() || code.size() > 4096 || instruction_budget == 0 ||
+            instruction_budget > 65536)
             throw std::invalid_argument("invalid actor VM instruction budget");
         // Reject malformed compiler output before modifying actor state.
         for (const auto& instruction : code) {

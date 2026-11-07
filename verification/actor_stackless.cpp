@@ -64,6 +64,11 @@ int main() {
             (void)Machine::run(arena, invalid_target, 0);
         });
         CHECK(arena.depth(arena.current_turn()) == 0);
+        // Host callers cannot disable the instruction ceiling with a huge budget.
+        rejects<std::invalid_argument>([&] {
+            (void)Machine::run(arena, countdown, 0, 65537);
+        });
+        CHECK(arena.depth(arena.current_turn()) == 0);
         const std::array<Machine::Instruction, 1> bad_opcode{{
             {static_cast<Machine::Op>(255)}
         }};
