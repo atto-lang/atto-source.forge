@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <stdexcept>
+#include <string>
 #include <thread>
 using Actor = oresforge::runtime::ScalarActor;
 using Frames = oresforge::runtime::ActorFrameStack;
