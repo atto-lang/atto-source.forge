@@ -23,6 +23,7 @@ DRIVER = r"""
 #include <cstdio>
 #include <limits>
 #include <stdexcept>
+#include <string>
 #include <thread>
 using oresforge::runtime::ScalarActor;
 using oresforge::runtime::ActorFrameStack;
@@ -95,7 +96,7 @@ def mutate_source(source):
         source.replace("return ", "await return ", 1),
         source.replace("  end\nend", "  end\nend\nimport unsafe", 1),
         source.replace("  end\nend", "  end\nend\n" + source, 1),
-        source.replace(" = total + message", " = total * message", 1),
+        source.replace(" = ", " *= ", 1),
         source.replace("9223372036854775807", "9223372036854775808", 1)
               if "9223372036854775807" in source else source + "\x00",
         source + "\x00",
