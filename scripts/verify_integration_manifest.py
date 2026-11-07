@@ -26,6 +26,9 @@ UPSTREAMS = {
 }
 EXPECTED_KEYS = frozenset({'schemaVersion', 'protocol', 'repository', 'role', 'upstreams', 'evidence', 'note'})
 MAX_BYTES = 4096
+# Capture the actual OS implementation for capability detection. Adversarial
+# tests instrument os.open without changing the platform's dir_fd support.
+_NATIVE_OPEN = os.open
 
 
 class InvalidManifest(ValueError):
@@ -96,7 +99,7 @@ def _read_manifest_physically(root: Path) -> bytes:
         raise InvalidManifest('secure descriptor-relative manifest reads unavailable')
     # Some POSIX Python builds expose the flag constants but do not support
     # dir_fd for os.open. Reject the platform before opening any descriptor.
-    if os.open not in getattr(os, 'supports_dir_fd', ()):
+    if _NATIVE_OPEN not in getattr(os, 'supports_dir_fd', ()):
         raise InvalidManifest('descriptor-relative open is unsupported')
 
     directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
