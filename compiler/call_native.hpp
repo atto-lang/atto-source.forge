@@ -21,7 +21,8 @@ struct Node {
   std::vector<int> children;
   int callee = -1;
   // Formal slot for each lexical/source-order argument.
-  // Empty metadata represents legacy positional-only constructed IR.
+  // Nonzero-arity calls must carry one label (empty means positional)
+  // and one formal slot per operand. Only zero-arity calls may omit them.
   std::vector<std::string> argument_labels;
   std::vector<std::size_t> argument_slots;
 };

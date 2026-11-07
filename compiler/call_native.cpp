@@ -38,8 +38,9 @@ struct Token { std::string_view text; std::size_t offset=0; };
 std::vector<std::size_t> bind_call_slots(const Node& call,const Function& fn) {
   if(call.children.size()!=fn.parameters.size())
     throw std::runtime_error("function arity mismatch");
-  if(!call.argument_labels.empty() &&
-     call.argument_labels.size()!=call.children.size())
+  // Nonzero-arity calls must retain complete provenance. Erasing both
+  // inventories cannot silently turn a named call into a positional call.
+  if(call.argument_labels.size()!=call.children.size())
     throw std::runtime_error("invalid named call label inventory");
   std::vector<std::size_t> slots;
   std::vector<bool> assigned(fn.parameters.size(),false);
@@ -47,8 +48,7 @@ std::vector<std::size_t> bind_call_slots(const Node& call,const Function& fn) {
   bool seen_named=false;
   slots.reserve(call.children.size());
   for(std::size_t i=0;i<call.children.size();++i) {
-    const std::string label=call.argument_labels.empty() ?
-      std::string{} : call.argument_labels[i];
+    const std::string& label=call.argument_labels[i];
     std::size_t slot=0;
     if(label.empty()) {
       if(seen_named)
@@ -439,7 +439,7 @@ struct Evaluator {
       std::vector<std::int64_t> vals(n.children.size());
       for(std::size_t i=0;i<n.children.size();++i) {
         const auto value=visit(fn,n.children[i],args,depth,locals);
-        const auto slot=n.argument_slots.empty()?i:n.argument_slots[i];
+        const auto slot=n.argument_slots.at(i);
         vals[slot]=value;
       }
       return evaluate(static_cast<std::size_t>(n.callee),vals,depth+1);
@@ -494,7 +494,7 @@ struct Native {
     } else if(n.kind==Kind::Call) {
       for (int child:n.children)emit_node(fn,child,locals);
       for (std::size_t i=0;i<n.children.size();++i) {
-        const auto slot=n.argument_slots.empty()?i:n.argument_slots[i];
+        const auto slot=n.argument_slots.at(i);
         out<<"  movq "<<value_slot(n.children[i])<<", "<<argument_reg(slot)<<"\n";
       }
       out<<"  movq -40(%rbp), %r8\n"
@@ -649,10 +649,9 @@ void verify(const Module& m) {
           throw std::runtime_error("callable target/name mismatch");
         const auto expected=bind_call_slots(
           n,m.functions[static_cast<std::size_t>(n.callee)]);
-        // Parsed calls always carry explicit bindings, while host-constructed
-        // positional-only Modules may omit both label and slot metadata.
-        if((!n.argument_labels.empty() || !n.argument_slots.empty()) &&
-           n.argument_slots!=expected)
+        // Every nonzero-arity call needs explicit source-owned bindings.
+        // Hosts cannot erase metadata and reinterpret it as positional.
+        if(n.argument_slots!=expected)
           throw std::runtime_error("callable named-binding slots mismatch");
       } else if(n.callee!=-1)throw std::runtime_error("unexpected callable target");
     }

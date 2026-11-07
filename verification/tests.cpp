@@ -662,6 +662,38 @@ int main() {
                "source positional call must carry complete explicit slots");
       }
       ensure(inspected_positional,"expected source positional call node");
+      ensure(calls::interpret(positional,{})==42,
+             "positional calls retain exact formal order");
+      auto erased_positional=positional;
+      for(auto& node:erased_positional.functions.back().nodes)
+        if(node.kind==calls::Kind::Call){
+          node.argument_labels.clear();
+          node.argument_slots.clear();
+        }
+      reject_diagnostic([&]{calls::verify(erased_positional);},
+                        "invalid named call label inventory");
+      reject_diagnostic([&]{(void)calls::emit_asm(erased_positional,Arch::X86_64);},
+                        "invalid named call label inventory");
+      auto erased_named=valid;
+      for(auto& node:erased_named.functions.back().nodes)
+        if(node.kind==calls::Kind::Call){
+          node.argument_labels.clear();
+          node.argument_slots.clear();
+        }
+      reject_diagnostic([&]{calls::verify(erased_named);},
+                        "invalid named call label inventory");
+      reject_diagnostic([&]{(void)calls::interpret(
+        erased_named,std::array<std::int64_t,1>{4});},
+                        "invalid named call label inventory");
+      auto missing_slots=valid;
+      for(auto& node:missing_slots.functions.back().nodes)
+        if(node.kind==calls::Kind::Call)node.argument_slots.clear();
+      reject_diagnostic([&]{calls::verify(missing_slots);},
+                        "callable named-binding slots mismatch");
+      const auto zero_args=calls::parse(
+        "fnc answer():int{return 42;} fnc main():int{return answer();}");
+      ensure(calls::interpret(zero_args,{})==42,
+             "genuine zero-argument call metadata remains valid");
       ensure(calls::interpret(valid,std::array<std::int64_t,1>{4})==42,
              "checked native named ABI order");
       ensure(calls::emit_asm(valid,Arch::X86_64).find("  call .Lores_fn_")!=

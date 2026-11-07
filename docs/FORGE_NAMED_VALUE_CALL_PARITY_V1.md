@@ -29,3 +29,7 @@ Do not equate passing source-readback or an empty-step Actions failure with succ
 ## Lexer hardening audit — November 7, 2026
 
 Native-call source admission now accepts bounded nested block comments (maximum depth 128), consistent with the scalar lexer; declaration-like and removed-operator text inside comments must not be admitted as code. Unterminated blocks and depth 129 fail before any IR/assembly output. Removed `%`, `^` and `^^` operators now produce explicit canonical diagnostic substrings in `run-calls` and `emit-call-asm`. Regression cases execute through the real compiler path and source/IR mutation checks. This is **authored test coverage**, not stepful CI evidence.
+
+## Native-call IR provenance hardening
+
+All nonzero-arity `Kind::Call` nodes must include a source-order label vector (empty strings denote positional arguments) and a signature-validated slot permutation. Public `verify` rejects calls with erased inventories instead of silently treating originally named arguments as positional. Interpreter and x86-64 emitter exclusively use verified slot indices; true zero-argument calls legitimately retain empty inventories. Mutations test erased named and positional metadata, removed slots, and zero-argument acceptance. Hosted execution evidence remains pending.
