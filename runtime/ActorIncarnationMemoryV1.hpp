@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <memory>
 #include <mutex>
 #include <span>
@@ -40,6 +41,42 @@ class ActorMemoryContinuation {
       : token_(std::move(token)) {}
 };
 
+// A bounded, thread-safe reservation ledger for simultaneous actor heaps and
+// frame slabs. Scope budgets must outlive every actor memory object using them.
+// A process-wide ledger is always charged, even for a custom runtime budget.
+class ActorMemoryAggregateBudgetV1 final {
+  const std::size_t limit_;
+  mutable std::mutex gate_;
+  std::size_t reserved_ = 0;
+
+ public:
+  explicit ActorMemoryAggregateBudgetV1(std::size_t limit) : limit_(limit) {
+    if (!limit) throw std::invalid_argument("invalid aggregate actor memory budget");
+  }
+  ActorMemoryAggregateBudgetV1(const ActorMemoryAggregateBudgetV1&) = delete;
+  ActorMemoryAggregateBudgetV1& operator=(const ActorMemoryAggregateBudgetV1&) = delete;
+  static ActorMemoryAggregateBudgetV1& process() {
+    static ActorMemoryAggregateBudgetV1 ledger(512ULL * 1024 * 1024);
+    return ledger;
+  }
+  void reserve(std::size_t bytes) {
+    std::scoped_lock lock(gate_);
+    if (!bytes || bytes > limit_ - reserved_)
+      throw std::length_error("aggregate actor memory quota exceeded");
+    reserved_ += bytes;
+  }
+  void refund(std::size_t bytes) noexcept {
+    std::scoped_lock lock(gate_);
+    if (bytes > reserved_) std::terminate(); // never hide double refunds
+    reserved_ -= bytes;
+  }
+  std::size_t reserved() const {
+    std::scoped_lock lock(gate_);
+    return reserved_;
+  }
+  std::size_t limit() const noexcept { return limit_; }
+};
+
 // Stage-0 host substrate: one native heap and one independent native *logical*
 // frame stack per mailbox incarnation. This is NOT a fiber, alternate OS stack,
 // compiled .atto actor, Cranelift frame layout, or StackOverflow containment.
@@ -64,6 +101,9 @@ class ActorIncarnationMemoryV1 final {
   std::unique_ptr<std::uint8_t[]> stack_;
   std::size_t heap_bytes_;
   std::size_t stack_bytes_;
+  ActorMemoryAggregateBudgetV1& aggregate_;
+  bool process_charged_ = false;
+  bool aggregate_charged_ = false;
   std::vector<Slot> slots_;
   std::vector<Frame> frames_;
   std::size_t heap_top_ = 0;
@@ -87,6 +127,8 @@ class ActorIncarnationMemoryV1 final {
       const ActorRef& caller) const {
     if (retired_)
       throw std::runtime_error("actor incarnation memory retired");
+    if (stack_poisoned_)
+      throw std::runtime_error("actor fault is terminal for all memory access");
     // Invariant: callers already own gate_. Mailbox close/restart acquires
     // only its mailbox mutex, and never calls back into actor memory.
     // The returned lock holds generation authority through the byte copy.
@@ -135,19 +177,37 @@ class ActorIncarnationMemoryV1 final {
                            std::size_t heap_bytes = 1024 * 1024,
                            std::size_t stack_bytes = 64 * 1024,
                            std::size_t heap_slots = 256,
-                           std::size_t max_frames = 64)
+                           std::size_t max_frames = 64,
+                           ActorMemoryAggregateBudgetV1& aggregate =
+                               ActorMemoryAggregateBudgetV1::process())
       : mailbox_(mailbox), owner_(std::move(actor)), heap_bytes_(heap_bytes),
-        stack_bytes_(stack_bytes) {
+        stack_bytes_(stack_bytes), aggregate_(aggregate) {
     if (!mailbox_.authorizes(owner_) || heap_bytes == 0 ||
         heap_bytes > max_heap_bytes || stack_bytes == 0 ||
         stack_bytes > max_stack_bytes || heap_slots == 0 ||
         heap_slots > 65536 || max_frames == 0 || max_frames > 4096)
       throw std::invalid_argument("invalid actor memory incarnation or quota");
-    slots_.resize(heap_slots);
-    frames_.reserve(max_frames);
-    frame_limit_ = max_frames;
-    heap_ = std::make_unique<std::uint8_t[]>(heap_bytes);
-    stack_ = std::make_unique<std::uint8_t[]>(stack_bytes);
+    const std::size_t bytes = heap_bytes_ + stack_bytes_;
+    auto& process = ActorMemoryAggregateBudgetV1::process();
+    process.reserve(bytes);
+    bool charged_local = false;
+    try {
+      if (&aggregate_ != &process) {
+        aggregate_.reserve(bytes);
+        charged_local = true;
+      }
+      slots_.resize(heap_slots);
+      frames_.reserve(max_frames);
+      frame_limit_ = max_frames;
+      heap_ = std::make_unique<std::uint8_t[]>(heap_bytes);
+      stack_ = std::make_unique<std::uint8_t[]>(stack_bytes);
+      process_charged_ = true;
+      aggregate_charged_ = charged_local;
+    } catch (...) {
+      if (charged_local) aggregate_.refund(bytes);
+      process.refund(bytes);
+      throw;
+    }
   }
   ActorIncarnationMemoryV1(const ActorIncarnationMemoryV1&) = delete;
   ActorIncarnationMemoryV1& operator=(const ActorIncarnationMemoryV1&) = delete;
@@ -168,6 +228,15 @@ class ActorIncarnationMemoryV1 final {
     execution_.reset();
     continuation_.reset();
     suspended_ = false;
+    const std::size_t bytes = heap_bytes_ + stack_bytes_;
+    if (aggregate_charged_) {
+      aggregate_.refund(bytes);
+      aggregate_charged_ = false;
+    }
+    if (process_charged_) {
+      ActorMemoryAggregateBudgetV1::process().refund(bytes);
+      process_charged_ = false;
+    }
   }
 
   ActorMemoryHeapHandle alloc(const ActorRef& actor, std::size_t bytes) {
@@ -305,8 +374,11 @@ class ActorIncarnationMemoryV1 final {
     std::scoped_lock lock(gate_);
     [[maybe_unused]] auto mailbox_lease = authorize(actor);
     frame_healthy();
-    if (execution_ && !suspended_)
-      poison("actor handler returned with unbalanced frames");
+    // No Forge scheduler owns parked continuations yet. Do not silently
+    // admit the next mailbox message when a logical execution is suspended.
+    if (execution_)
+      poison(suspended_ ? "suspended actor handler escaped without scheduler"
+                        : "actor handler returned with unbalanced frames");
   }
   bool poisoned() const { std::scoped_lock lock(gate_); return stack_poisoned_; }
   std::size_t depth() const { std::scoped_lock lock(gate_); return frames_.size(); }
