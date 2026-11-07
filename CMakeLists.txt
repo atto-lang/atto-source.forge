@@ -200,3 +200,19 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
     set_tests_properties(oresforge_real_native_recursive_calls PROPERTIES TIMEOUT 180)
   endif()
 endif()
+
+# Compiler-backed opt-in stage-0 .atto actor path. The real oresforge parser
+# emits C++ callbacks, which are built with Forge's actual private heap and
+# logical frame runtime and then executed in native CTests. Not Cranelift,
+# general actor codegen or a self-hosted compiler.
+if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  add_test(NAME oresforge_compiled_atto_scalar_actor_native
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/compiled_atto_scalar_actor.py"
+      --compiler "$<TARGET_FILE:oresforge>"
+      --root "${CMAKE_CURRENT_SOURCE_DIR}"
+      --cc "${CMAKE_C_COMPILER}"
+      --cxx "${CMAKE_CXX_COMPILER}")
+  set_tests_properties(oresforge_compiled_atto_scalar_actor_native PROPERTIES TIMEOUT 180)
+endif()
