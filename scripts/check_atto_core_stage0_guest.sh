@@ -3,7 +3,9 @@
 # interpreted scalar result and verifies native assembly emission. This is not
 # cross-module or zero-libc/OS parity.
 set -euo pipefail
-test "$#" -eq 2 || { echo 'usage: check_... COMPILER REPO_ROOT' >&2; exit 2; }
+test "$#" -ge 2 && test "$#" -le 3 || { echo 'usage: check_atto_core_stage0_guest.sh COMPILER REPO_ROOT [CXX]' >&2; exit 2; }
+cxx="${3:-${CXX:-c++}}"
+command -v "$cxx" >/dev/null || { echo "missing native C++ compiler: $cxx" >&2; exit 2; }
 compiler="$1"
 root="$2"
 test -x "$compiler"
@@ -17,6 +19,23 @@ test "$answer" = 42 || { echo "Forge stage-0 .atto guest returned $answer, expec
 test -s "$tmp/core.ll"
 "$compiler" emit-asm x86_64 "$root/examples/atto-core-stage0.atto" > "$tmp/core.s"
 test -s "$tmp/core.s"
+"$cxx" -x assembler -c "$tmp/core.s" -o "$tmp/core.o"
+"$cxx" -std=c++20 -O2 -fno-pie -no-pie "$root/verification/atto_core_stage0_native_harness.cpp" \
+  "$tmp/core.o" -o "$tmp/native-guest"
+native_answer="$("$tmp/native-guest")"
+test "$native_answer" = 'ATTO_FORGE_NATIVE_GUEST=42' || {
+  echo "Forge native generated assembly returned unexpected value: $native_answer" >&2
+  exit 1
+}
+# Prove actual backend output changes for altered source, not a fixed stub.
+printf 'pub fnc main():int{return 43;}\n' > "$tmp/mutated.atto"
+"$compiler" emit-asm x86_64 "$tmp/mutated.atto" > "$tmp/mutated.s"
+"$cxx" -x assembler -c "$tmp/mutated.s" -o "$tmp/mutated.o"
+"$cxx" -std=c++20 -O2 -fno-pie -no-pie "$root/verification/atto_core_stage0_native_harness.cpp" \
+  "$tmp/mutated.o" -o "$tmp/mutated-guest"
+test "$("$tmp/mutated-guest")" = 'ATTO_FORGE_NATIVE_GUEST=43' || {
+  echo 'source mutation did not propagate through native codegen and execution' >&2; exit 1
+}
 # Main parser must reject ALL source imports: no hidden synthetic fallback
 # from a source snapshot or filesystem path may masquerade as executable Core.
 if "$compiler" ir "$root/examples/atto-core-stage0-deny.atto" >"$tmp/invalid.ll" 2>"$tmp/invalid.err"; then
@@ -32,4 +51,6 @@ for namespace in atto.alloc atto.std atto.runtime.actor; do
   test ! -s "$tmp/negative.ll"
   grep -F 'source imports require verified module graph lowering' "$tmp/negative.err" >/dev/null
 done
-echo 'ATTO_FORGE_STAGE0_GUEST_EXECUTED|result=42|module_imports=UNSUPPORTED|native_asm=EMITTED|native_exec=NOT_EXECUTED'
+printf 'ATTO_FORGE_NATIVE_ASM_SHA256=%s\n' "$(sha256sum "$tmp/core.s" | cut -d' ' -f1)"
+printf 'ATTO_FORGE_NATIVE_BINARY_SHA256=%s\n' "$(sha256sum "$tmp/native-guest" | cut -d' ' -f1)"
+echo 'ATTO_FORGE_STAGE0_GUEST_EXECUTED|result=42|module_imports=UNSUPPORTED|native_asm=EMITTED|native_exec=EXECUTED|mutation_result=43'

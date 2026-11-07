@@ -80,7 +80,7 @@ if(BUILD_TESTING)
   # This is stage-0 scalar evidence, NOT atto.core module-graph parity.
   add_test(NAME oresforge_atto_stage0_core_boundary
     COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_atto_core_stage0_guest.sh"
-      "$<TARGET_FILE:oresforge>" "${CMAKE_CURRENT_SOURCE_DIR}")
+      "$<TARGET_FILE:oresforge>" "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CXX_COMPILER}")
   set_tests_properties(oresforge_atto_stage0_core_boundary PROPERTIES TIMEOUT 15)
   # Stage-0 single-file AttoLang path admission. Imports remain fail-closed in Forge.
   add_test(NAME oresforge_cli_atto_guest
