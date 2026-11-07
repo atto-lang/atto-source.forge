@@ -612,6 +612,42 @@ int main() {
         "fnc spare():int{return 3;}"),{})==42,
         "callable line comments cannot swallow another definition");
     }
+    // Named call metadata must be fully validated even when an embedding
+    // host passes a forged Module directly, bypassing source admission.
+    {
+      auto valid=calls::parse(
+        "fnc pair(int a,int b):int{return a*10+b;}"
+        "fnc main(n:int):int{return pair(b:2,a:n);}");
+      ensure(calls::interpret(valid,std::array<std::int64_t,1>{4})==42,
+             "checked native named ABI order");
+      ensure(calls::emit_asm(valid,Arch::X86_64).find("  call .Lores_fn_")!=
+               std::string::npos,"named native call emitted");
+      auto wrong_slots=valid;
+      for(auto& node:wrong_slots.functions.back().nodes)
+        if(node.kind==calls::Kind::Call)node.argument_slots={0,1};
+      reject_diagnostic([&]{calls::verify(wrong_slots);},
+                        "callable named-binding slots mismatch");
+      reject_diagnostic([&]{(void)calls::emit_asm(wrong_slots,Arch::X86_64);},
+                        "callable named-binding slots mismatch");
+      auto missing_label=valid;
+      for(auto& node:missing_label.functions.back().nodes)
+        if(node.kind==calls::Kind::Call)node.argument_labels.pop_back();
+      reject_diagnostic([&]{calls::verify(missing_label);},
+                        "invalid named call label inventory");
+      auto invalid_slot=valid;
+      for(auto& node:invalid_slot.functions.back().nodes)
+        if(node.kind==calls::Kind::Call)node.argument_slots={1,9};
+      reject_diagnostic([&]{calls::verify(invalid_slot);},
+                        "callable named-binding slots mismatch");
+      auto non_call_slot=valid;
+      non_call_slot.functions.back().nodes.front().argument_slots={0};
+      reject_diagnostic([&]{calls::verify(non_call_slot);},
+                        "unexpected non-call argument bindings");
+      auto renamed_formal=valid;
+      renamed_formal.functions.front().parameters[0]="changed";
+      reject_diagnostic([&]{calls::verify(renamed_formal);},
+                        "unknown named argument: a");
+    }
     // Opt-in callable program has its own fully verified representation.
     // Unlike the scalar profile, these helpers compile to real native calls.
     auto fact=calls::parse(

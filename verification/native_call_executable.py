@@ -4,6 +4,7 @@
 The stage-0 compiler itself is C++ and this is not self-hosting.
 """
 import argparse
+import itertools
 import json
 import os
 from pathlib import Path
@@ -26,6 +27,36 @@ BOUNDARY_33 = ("fnc main(n:int):int{" +
                "return v32;}")
 
 POSITIVE = (
+    ("named-reordered-runtime",
+     "fnc pair(int a,int b):int{return a*10+b;}"
+     " fnc main(n:int):int{return pair(b:2,a:n);}",
+     ((4,42),(7,72),(-1,-8))),
+    ("named-positional-prefix",
+     "fnc pair(a:int,b:int):int{return a*10+b;}"
+     " fnc main(n:int):int{return pair(n,b:2);}",
+     ((4,42),(7,72))),
+    ("named-nested-call",
+     "fnc inc(x:int):int{return x+1;}"
+     " fnc pair(a:int,b:int):int{return a*10+b;}"
+     " fnc main(n:int):int{return pair(b:inc(x:1),a:inc(x:n));}",
+     ((3,42),(0,12))),
+    ("named-case-exact",
+     "fnc pair(int A,int b):int{return A*10+b;}"
+     " fnc main(int n):int{return pair(b:2,A:n);}",
+     ((4,42),(6,62))),
+    ("named-recursion",
+     "fnc fact(n:int):int{return if n<=1 then 1 else n*fact(n:n-1);}"
+     " fnc main(n:int):int{return fact(n:n);}",
+     ((0,1),(5,120),(8,40320))),
+    ("named-four-registers",
+     "fnc four(a:int,b:int,c:int,d:int):int{return a*1000+b*100+c*10+d;}"
+     " fnc main(n:int):int{return four(d:4,c:3,b:2,a:n);}",
+     ((1,1234),(5,5234))),
+    ("named-immutable-local",
+     "fnc id(int x):int{return x;}"
+     " fnc pair(int a,int b):int{return a*10+b;}"
+     " fnc main(n:int):int{const value=id(x:n);return pair(b:2,a:value);}",
+     ((4,42),(-1,-8))),
     ("immutable-32-local-boundary", BOUNDARY_32,
      ((0,31),(-31,0),(9223372036854775776,9223372036854775807))),
     ("factorial", "fnc fact(n:int):int{return if n<=1 then 1 else n*fact(n-1);}"
@@ -59,6 +90,10 @@ POSITIVE = (
      ((-2,0),(0,6),(5,21))),
 )
 TRAPS = (
+    ("named-eager-unused-argument-overflow",
+     "fnc ignore(a:int,b:int):int{return 42;}"
+     " fnc main(n:int):int{return ignore(b:0,a:n+1);}",
+     (9223372036854775807,), "i64 add overflow"),
     ("overflow-add", "fnc plus(n:int):int{return n+1;}"
      " fnc main(n:int):int{return plus(n);}",
      (9223372036854775807,), "i64 add overflow"),
@@ -77,6 +112,31 @@ TRAPS = (
      (1,), "call depth exceeded"),
 )
 INVALID = (
+    ("named-duplicate",
+     "fnc pair(a:int,b:int):int{return a*10+b;}"
+     " fnc main():int{return pair(a:4,a:2);}", "duplicate named argument"),
+    ("named-unknown",
+     "fnc pair(a:int,b:int):int{return a*10+b;}"
+     " fnc main():int{return pair(z:4,b:2);}", "unknown named argument: z"),
+    ("named-positional-after",
+     "fnc pair(a:int,b:int):int{return a*10+b;}"
+     " fnc main():int{return pair(b:2,4);}", "positional argument after named argument"),
+    ("named-positional-collision",
+     "fnc pair(a:int,b:int):int{return a*10+b;}"
+     " fnc main():int{return pair(4,a:2);}", "duplicate named argument"),
+    ("named-case-sensitive",
+     "fnc pair(a:int,b:int):int{return a*10+b;}"
+     " fnc main():int{return pair(A:4,b:2);}", "unknown named argument: A"),
+    ("named-missing",
+     "fnc pair(a:int,b:int):int{return a*10+b;}"
+     " fnc main():int{return pair(b:2);}", "function arity mismatch"),
+    ("named-extra",
+     "fnc pair(a:int,b:int):int{return a*10+b;}"
+     " fnc main():int{return pair(a:4,b:2,z:0);}", "function arity mismatch"),
+    ("named-unreachable-invalid",
+     "fnc pair(a:int,b:int):int{return a*10+b;}"
+     " fnc unused():int{return pair(a:4,z:2);}"
+     " fnc main():int{return 42;}", "unknown named argument: z"),
     ("wrong-arity", "fnc f(n:int):int{return n;} fnc main():int{return f(1,2);}", "function arity mismatch"),
     ("unknown-target", "fnc main():int{return absent(1);}", "unknown function"),
     ("unreachable-invalid", "fnc bad():int{return absent();} fnc main():int{return 1;}", "unknown function"),
@@ -168,10 +228,22 @@ def main():
     positives=negatives=0
     with tempfile.TemporaryDirectory(prefix="oresforge-native-calls-") as tmp:
         root=Path(tmp)
-        for label,source,cases in POSITIVE:
+        # Exhaust all 24 permutations of four signature labels. The native
+        # ABI must bind to formal register slots, not the spelling order.
+        permutation_cases=[]
+        for index,order in enumerate(itertools.permutations(("a","b","c","d"))):
+            values={"a":"n","b":"2","c":"3","d":"4"}
+            args=",".join(name+":"+values[name] for name in order)
+            source=("fnc four(a:int,b:int,c:int,d:int):int{"
+                    "return a*1000+b*100+c*10+d;}"
+                    "fnc main(n:int):int{return four("+args+");}")
+            permutation_cases.append(("named-four-permutation-%02d"%index,source,
+                                      ((1,1234),(5,5234))))
+        for label,source,cases in POSITIVE+tuple(permutation_cases):
             number=len(cases[0])-1
             file,exe,asm=build(compiler,cc,root,label,source,number)
-            if label in ("factorial","fibonacci","mutual","nested","immutable-helper-bindings"):
+            if label in ("factorial","fibonacci","mutual","nested","immutable-helper-bindings",
+                         "named-reordered-runtime","named-nested-call","named-four-registers"):
                 require(asm.count("  call .Lores_fn_")>=1,"missing real native call "+label)
             if label in ("factorial","lazy"):
                 require("  je .Lores_else_" in asm,"missing native lazy branch "+label)
