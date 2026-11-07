@@ -7,6 +7,7 @@ Cranelift codegen, general actor language support, or self-hosting.
 import argparse
 import hashlib
 import json
+import resource
 from pathlib import Path
 import subprocess
 import sys
@@ -74,8 +75,11 @@ int main() {
 """
 
 def run(command, cwd, timeout=60):
+    def disable_core_dumps():
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     return subprocess.run(command, cwd=cwd, stdin=subprocess.DEVNULL,
-                          capture_output=True, timeout=timeout, check=False)
+                          capture_output=True, timeout=timeout, check=False,
+                          preexec_fn=disable_core_dumps)
 
 def require(condition, message):
     if not condition:
@@ -176,7 +180,7 @@ def main():
                 path.write_bytes(bad.encode("utf-8"))
                 denied = run([str(compiler), "emit-actor-cxx", str(path)], temp)
                 require(denied.returncode != 0 and denied.stdout == b"" and
-                        b"actor source:" in denied.stderr,
+                        b"oresforge:" in denied.stderr,
                         "unsupported actor syntax leaked partial output: " +
                         fixture + ":" + str(index))
                 denials += 1
