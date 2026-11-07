@@ -53,8 +53,10 @@ int main() {
   a.run_turn([&](ActorStackDomain& actor){
     int local=41;
     a_addr=reinterpret_cast<std::uintptr_t>(&local);
+#if !ORESFORGE_ACTOR_ASAN
     assert(actor.contains_stack_address(&local));
     assert(!b.contains_stack_address(&local));
+#endif
     a_handle=actor.allocate(sizeof(local));
     actor.write(a_handle, 0, &local, sizeof(local));
     must_fail([&]{ b.allocate(1); });
@@ -64,8 +66,10 @@ int main() {
   b.run_turn([&](ActorStackDomain& actor){
     int local=13;
     b_addr=reinterpret_cast<std::uintptr_t>(&local);
+#if !ORESFORGE_ACTOR_ASAN
     assert(actor.contains_stack_address(&local));
     assert(!a.contains_stack_address(&local));
+#endif
     b_handle=actor.allocate(sizeof(local));
     actor.write(b_handle, 0, &local, sizeof(local));
     must_fail([&]{ actor.read(a_handle,0,&local,sizeof(local)); });
@@ -82,7 +86,14 @@ int main() {
   });
   must_fail([&]{ a.run_turn([](auto&){throw std::runtime_error("actor failure");}); });
   // An exception unwinds on the actor's own stack; later turns still work.
-  a.run_turn([&](ActorStackDomain& actor){int n=1;assert(actor.contains_stack_address(&n));});
+  a.run_turn([&](ActorStackDomain& actor){
+    int n=1;
+#if !ORESFORGE_ACTOR_ASAN
+    assert(actor.contains_stack_address(&n));
+#else
+    (void)actor; (void)n; // ASan may substitute a fake stack address.
+#endif
+  });
   std::thread outsider([&]{must_fail([&]{a.run_turn([](auto&){});});});
   outsider.join();
   b.stop();b.stop();

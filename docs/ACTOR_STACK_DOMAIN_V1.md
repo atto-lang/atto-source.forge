@@ -60,6 +60,8 @@ The API is a trusted-host prototype, not a malicious-native-code boundary.
 On other OS/architectures this header intentionally refuses compilation;
 CMake does not register this test there.
 
+> Follow-up (current mainline integration): the actor-stack scheduler now supports Linux x86-64 trusted-host stackful continuations. See [the cooperative scheduler integration contract](ACTOR_COOPERATIVE_SCHEDULER_V1.md). This does not certify source-language actor execution or full cross-backend parity.
+
 ## Required parity integration gates (still NOT_EXECUTED for this draft)
 
 1. Integrate the existing Forge actor-owned arena work (PR #117) and bounded

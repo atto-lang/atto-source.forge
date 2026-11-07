@@ -349,3 +349,25 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
   set_tests_properties(forge_actor_stack_domain_host_v1 PROPERTIES
     TIMEOUT 30 LABELS "host-only;native-actor-stack")
 endif()
+
+# HOST-ONLY stackful cooperative native actor callbacks over the existing
+# capability mailbox. Does not imply source 'define actor' lowering.
+if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+   CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64)$")
+  add_executable(oresforge_cooperative_actor_scheduler
+    verification/actor_cooperative_scheduler_test.cpp)
+  target_include_directories(oresforge_cooperative_actor_scheduler PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_cooperative_actor_scheduler PRIVATE cxx_std_20)
+  find_package(Threads REQUIRED)
+  target_link_libraries(oresforge_cooperative_actor_scheduler PRIVATE
+    oresforge_core Threads::Threads)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_cooperative_actor_scheduler PRIVATE
+      -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+  endif()
+  add_test(NAME forge_cooperative_actor_scheduler_host_v1
+    COMMAND oresforge_cooperative_actor_scheduler)
+  set_tests_properties(forge_cooperative_actor_scheduler_host_v1 PROPERTIES
+    TIMEOUT 30 LABELS "host-only;native-actor-continuations")
+endif()

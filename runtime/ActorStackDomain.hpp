@@ -6,6 +6,7 @@
 #error "ActorStackDomain v1 requires Linux x86-64; other targets must fail closed"
 #endif
 
+#include "runtime/ActorIncarnationMemoryV1.hpp"
 #include <array>
 #include <atomic>
 #include <cstddef>
@@ -17,6 +18,7 @@
 #include <memory>
 #include <stdexcept>
 #include <thread>
+#include <utility>
 #include <ucontext.h>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -69,14 +71,25 @@ class ActorStackDomain final {
     if (stack_size_ > std::numeric_limits<std::size_t>::max() - 2 * page_size_)
       throw std::invalid_argument("actor stack address overflow");
     map_size_ = stack_size_ + 2 * page_size_;
+    if (heap_bytes > std::numeric_limits<std::size_t>::max() - map_size_)
+      throw std::invalid_argument("aggregate actor memory size overflow");
+    // Charge the existing process-wide bounded actor-memory ledger BEFORE
+    // any mapped stack or heap allocation. Logical frames and physical
+    // stack domains must share the same fail-closed process admission gate.
+    charged_bytes_ = map_size_ + heap_bytes;
+    ActorMemoryAggregateBudgetV1::process().reserve(charged_bytes_);
     void* region = ::mmap(nullptr, map_size_, PROT_NONE,
                           MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (region == MAP_FAILED) throw std::runtime_error("actor stack mmap failed");
+    if (region == MAP_FAILED) {
+      refund_charge();
+      throw std::runtime_error("actor stack mmap failed");
+    }
     region_ = region;
     stack_base_ = static_cast<std::byte*>(region_) + page_size_;
     if (::mprotect(stack_base_, stack_size_, PROT_READ | PROT_WRITE) != 0) {
       ::munmap(region_, map_size_);
       region_ = nullptr;
+      refund_charge();
       throw std::runtime_error("actor stack mprotect failed");
     }
     try {
@@ -90,6 +103,7 @@ class ActorStackDomain final {
     } catch (...) {
       ::munmap(region_, map_size_);
       region_ = nullptr;
+      refund_charge();
       throw;
     }
   }
@@ -101,7 +115,7 @@ class ActorStackDomain final {
   ~ActorStackDomain() noexcept {
     // Destroying a live stack from its own execution context would unmap
     // return addresses. Concurrent destruction also requires owner fencing.
-    if (active_ == this || in_turn_) std::terminate();
+    if (active_ == this || in_turn_ || state_ == TaskState::Suspended) std::terminate();
     scrub_and_unmap();
   }
 
@@ -114,41 +128,71 @@ class ActorStackDomain final {
     return p >= b && p - b < stack_size_;
   }
 
-  // Every callback runs on this actor's separately mapped and guarded stack.
-  // Callbacks must return; cooperative suspension is a future contract.
+  enum class TaskState { Idle, Running, Suspended, Finished };
+  class Cancelled final : public std::runtime_error {
+   public: Cancelled() : std::runtime_error("actor task cancelled") {}
+  };
+
+  TaskState task_state() const noexcept { return state_; }
+  static bool inside_actor_turn() noexcept { return active_ != nullptr; }
+
+  // One-shot native callback with its own physical stack. A normal run_turn
+  // cannot suspend; resumable tasks use start_task/resume_task instead.
   void run_turn(std::function<void(ActorStackDomain&)> callback) {
+    prepare(std::move(callback), false);
+    try {
+      switch_to_actor();
+    } catch (...) {
+      state_ = TaskState::Idle;
+      throw;
+    }
+    state_ = TaskState::Idle;
+  }
+
+  // Single-owner carrier, same-thread, stackful native continuations.
+  // When yielded, all stack locals persist on the actor's private stack.
+  // No migration, source-language actor lowering or preemption is implied.
+  TaskState start_task(std::function<void(ActorStackDomain&)> callback) {
+    prepare(std::move(callback), true);
+    return switch_to_actor();
+  }
+  TaskState resume_task() {
     require_owner();
-    if (!alive_ || in_turn_ || active_ != nullptr || !callback)
-      throw std::logic_error("actor turn admission denied");
-    callback_ = std::move(callback);
-    callback_error_ = nullptr;
-    if (::getcontext(&actor_ctx_) != 0) {
-      callback_ = {};
-      throw std::runtime_error("actor context capture failed");
-    }
-    actor_ctx_.uc_stack.ss_sp = stack_base_;
-    actor_ctx_.uc_stack.ss_size = stack_size_;
-    actor_ctx_.uc_stack.ss_flags = 0;
-    actor_ctx_.uc_link = &caller_ctx_;
-    ::makecontext(&actor_ctx_, &ActorStackDomain::trampoline, 0);
-    in_turn_ = true;
-    active_ = this;
-#if ORESFORGE_ACTOR_ASAN
-    __sanitizer_start_switch_fiber(&caller_fake_stack_, stack_base_, stack_size_);
-#endif
-    if (::swapcontext(&caller_ctx_, &actor_ctx_) != 0) {
-      active_ = nullptr;
-      in_turn_ = false;
-      callback_ = {};
-      throw std::runtime_error("actor context switch failed");
-    }
-#if ORESFORGE_ACTOR_ASAN
-    __sanitizer_finish_switch_fiber(caller_fake_stack_, nullptr, nullptr);
-#endif
-    active_ = nullptr;
+    if (!alive_ || state_ != TaskState::Suspended || in_turn_ || active_)
+      throw std::logic_error("actor continuation admission denied");
+    state_ = TaskState::Running;
+    return switch_to_actor();
+  }
+  void yield() {
+    require_turn();
+    if (!resumable_ || state_ != TaskState::Running)
+      throw std::logic_error("only a resumable actor task may yield");
+    state_ = TaskState::Suspended;
     in_turn_ = false;
-    callback_ = {};
-    if (callback_error_) std::rethrow_exception(callback_error_);
+    active_ = nullptr;
+#if ORESFORGE_ACTOR_ASAN
+    __sanitizer_start_switch_fiber(&actor_fake_stack_, caller_stack_base_,
+                                   caller_stack_bytes_);
+#endif
+    if (::swapcontext(&actor_ctx_, &caller_ctx_) != 0)
+      std::terminate(); // Cannot recover safely from a broken saved context.
+#if ORESFORGE_ACTOR_ASAN
+    __sanitizer_finish_switch_fiber(actor_fake_stack_, nullptr, nullptr);
+#endif
+    active_ = this;
+    in_turn_ = true;
+    state_ = TaskState::Running;
+    if (cancel_requested_) throw Cancelled{};
+  }
+  // Cooperative cancellation requires the actor to be suspended; a resumed
+  // yield throws inside the actor so C++ destructors can unwind normally.
+  // Catch-all native callbacks can suppress cancellation, so callers must
+  // verify Finished before releasing resources.
+  void request_cancel() {
+    require_owner();
+    if (state_ != TaskState::Suspended)
+      throw std::logic_error("only suspended actor tasks may be cancelled");
+    cancel_requested_ = true;
   }
 
   ActorHeapHandle allocate(std::size_t bytes) {
@@ -182,7 +226,8 @@ class ActorStackDomain final {
   // this domain. Nothing is allowed to run after STOP.
   void stop() {
     require_owner();
-    if (active_ == this || in_turn_) throw std::logic_error("cannot stop live actor");
+    if (active_ == this || in_turn_ || state_ == TaskState::Suspended)
+      throw std::logic_error("cannot stop live or suspended actor");
     if (!alive_) return;
     scrub_and_unmap();
   }
@@ -194,6 +239,7 @@ class ActorStackDomain final {
   std::uint64_t actor_id_, incarnation_ = 0;
   const std::thread::id owner_thread_;
   std::size_t page_size_ = 0, stack_size_ = 0, map_size_ = 0;
+  std::size_t charged_bytes_ = 0;
   void* region_ = nullptr;
   std::byte* stack_base_ = nullptr;
   std::unique_ptr<std::byte[]> heap_;
@@ -201,9 +247,12 @@ class ActorStackDomain final {
   std::array<Slot, kMaxSlots> slots_{};
   ucontext_t actor_ctx_{}, caller_ctx_{};
   std::function<void(ActorStackDomain&)> callback_;
+  TaskState state_ = TaskState::Idle;
+  bool resumable_ = false, cancel_requested_ = false;
   std::exception_ptr callback_error_;
 #if ORESFORGE_ACTOR_ASAN
   void* caller_fake_stack_ = nullptr;
+  void* actor_fake_stack_ = nullptr;
   const void* caller_stack_base_ = nullptr;
   std::size_t caller_stack_bytes_ = 0;
 #endif
@@ -212,6 +261,11 @@ class ActorStackDomain final {
   static void secure_wipe(void* ptr, std::size_t len) noexcept {
     auto* p = static_cast<volatile unsigned char*>(ptr);
     while (len--) *p++ = 0;
+  }
+  void refund_charge() noexcept {
+    if (!charged_bytes_) return;
+    ActorMemoryAggregateBudgetV1::process().refund(charged_bytes_);
+    charged_bytes_ = 0;
   }
   void scrub_and_unmap() noexcept {
     if (heap_) secure_wipe(heap_.get(), heap_size_);
@@ -223,6 +277,7 @@ class ActorStackDomain final {
       region_ = nullptr;
       stack_base_ = nullptr;
     }
+    refund_charge();
     alive_ = false;
   }
   void require_owner() const {
@@ -242,6 +297,50 @@ class ActorStackDomain final {
       throw std::logic_error("retired actor heap handle");
     return s;
   }
+  void prepare(std::function<void(ActorStackDomain&)> callback, bool resumable) {
+    require_owner();
+    if (!alive_ || state_ != TaskState::Idle || in_turn_ || active_ || !callback)
+      throw std::logic_error("actor task admission denied");
+    callback_ = std::move(callback);
+    callback_error_ = nullptr;
+    if (::getcontext(&actor_ctx_) != 0) {
+      callback_ = {};
+      throw std::runtime_error("actor context capture failed");
+    }
+    actor_ctx_.uc_stack.ss_sp = stack_base_;
+    actor_ctx_.uc_stack.ss_size = stack_size_;
+    actor_ctx_.uc_stack.ss_flags = 0;
+    actor_ctx_.uc_link = &caller_ctx_;
+    ::makecontext(&actor_ctx_, &ActorStackDomain::trampoline, 0);
+    state_ = TaskState::Running;
+    resumable_ = resumable;
+    cancel_requested_ = false;
+  }
+  TaskState switch_to_actor() {
+    in_turn_ = true;
+    active_ = this;
+#if ORESFORGE_ACTOR_ASAN
+    __sanitizer_start_switch_fiber(&caller_fake_stack_, stack_base_, stack_size_);
+#endif
+    if (::swapcontext(&caller_ctx_, &actor_ctx_) != 0) {
+      active_ = nullptr;
+      in_turn_ = false;
+      std::terminate(); // Unrecoverable after an attempted context swap.
+    }
+#if ORESFORGE_ACTOR_ASAN
+    __sanitizer_finish_switch_fiber(caller_fake_stack_, nullptr, nullptr);
+#endif
+    active_ = nullptr;
+    in_turn_ = false;
+    if (state_ == TaskState::Finished) {
+      callback_ = {};
+      if (callback_error_) {
+        auto error = std::exchange(callback_error_, nullptr);
+        std::rethrow_exception(error);
+      }
+    }
+    return state_;
+  }
   static void trampoline() noexcept {
     auto* self = active_;
     if (!self) std::terminate();
@@ -251,6 +350,7 @@ class ActorStackDomain final {
 #endif
     try { self->callback_(*self); }
     catch (...) { self->callback_error_ = std::current_exception(); }
+    self->state_ = TaskState::Finished;
 #if ORESFORGE_ACTOR_ASAN
     __sanitizer_start_switch_fiber(nullptr, self->caller_stack_base_,
                                    self->caller_stack_bytes_);
