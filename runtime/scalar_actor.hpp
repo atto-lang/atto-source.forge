@@ -1,5 +1,6 @@
 #pragma once
 #include "runtime/arena/ActorOwnedI64Heap.h"
+#include "runtime/ActorFrameArena.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -15,12 +16,9 @@ class ScalarActorRef {
         : identity_(std::move(identity)) {}
     friend class ScalarActor;
 };
-
-// Host runtime for the fixed-i64 compiler actor ABI. The caller schedules
-// run_one on its own pool; this class creates no threads or interpreter.
-// Every instance owns a separate bounded heap and preallocated FIFO.
-// Callbacks must not leak loans/heap pointers or outlive this object.
-// As with Mailbox, destruction requires all external callers to be fenced.
+// Host bridge for the bounded scalar compiler ABI. Each incarnation owns a
+// private heap AND an independently bounded logical stack-frame arena.
+// External callers must fence all activity before destruction.
 class ScalarActor {
 public:
     using Initializer = void (*)(OresActorI64Heap*, std::uint64_t, std::uint64_t);
@@ -28,7 +26,6 @@ public:
     enum class Send { Accepted, Full, Closed, Foreign };
     enum class Turn { Initialized, Executed, Empty, Busy, Stopped };
     struct Result { Turn status; std::int64_t value = 0; };
-
     ScalarActor(std::uint64_t id, std::size_t fields, std::size_t mailbox_capacity,
                 Initializer, Handler);
     ~ScalarActor() noexcept;
@@ -37,7 +34,6 @@ public:
     ScalarActorRef ref() const;
     Send try_send(const ScalarActorRef&, std::int64_t);
     Result run_one();
-    // Close ingress, then allow run_one to drain previously accepted data.
     void stop();
     bool done() const;
     std::size_t queued() const;
@@ -46,6 +42,9 @@ private:
     std::shared_ptr<const ScalarActorIdentity> identity_;
     std::vector<std::int64_t> ring_;
     OresActorI64Heap* heap_ = nullptr;
+    // Actual byte-frame storage, not replacement of a native carrier stack.
+    ActorFrameArena frames_;
+    std::uint64_t next_execution_ = 0;
     Initializer initializer_;
     Handler handler_;
     mutable std::mutex mutex_;
