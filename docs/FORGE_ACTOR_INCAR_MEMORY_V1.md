@@ -27,7 +27,11 @@ Frame handles are distinct opaque capabilities. Strict LIFO, byte/depth
 bounds, zero-on-pop, terminal poisoning on invalid ordering/quota failure,
 exact execution identity, and one-shot suspended continuation fencing are
 implemented. Native frame bytes remain present across trusted host-directed
-suspension/resumption on a different carrier.
+suspension/resumption on a different carrier. A poisoned logical stack also
+revokes all subsequent heap operations on that incarnation. Because Forge has
+no integrated continuation scheduler, `verify_handler_exit` refuses any
+live execution, including a suspended one: it cannot return and admit
+another message just because a continuation token was issued.
 
 The new CMake regression compiles against Forge's real authenticated mailbox.
 The source-local workflow requests GCC/Clang optimized and ASan/UBSan builds
@@ -52,9 +56,18 @@ are authored, not yet observed to have executed.
   callbacks run while it is held. This establishes byte-operation fencing,
   not full async scheduler, in-flight FFI or guest STOP linearization.
   Do not expose this primitive directly to untrusted guests.
-- Only per-instance quotas are present. Process/tenant aggregate reservation,
-  FFI lifetime pins, full allocation recycling, and deterministic asynchronous
-  reclamation must be implemented before unrestricted actors.
+- Every instance charges its combined heap-and-stack capacity against a
+  thread-safe process ledger (512 MiB bootstrap ceiling). An optional
+  runtime-scoped `ActorMemoryAggregateBudgetV1` is charged in addition
+  to the process ledger. Both credits are reserved before native allocation,
+  rolled back if construction fails, and refunded once on retirement/destruction.
+  The caller must keep its scoped ledger alive until all admitted actor memory
+  instances have been retired. The host regression tests budget contention,
+  failed-constructor rollback, re-admission, and destructor refund.
+- Tenant-specific quotas/admission, FFI lifetime pins, full allocation
+  recycling, and deterministic asynchronous reclamation still require
+  integration. The process ledger covers this v1 primitive only, not other
+  existing runtime allocation families.
 - C++ calls still use the carrier's physical OS stack. A logical frame slab
   cannot prevent a process-fatal recursive native stack overflow.
 - Forge and Cranelift need distinct compiler-backed receipts. A C++ host test
