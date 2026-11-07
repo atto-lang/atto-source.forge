@@ -37,3 +37,16 @@ header must fail. This defends against a vacuous stack check alongside
 the separate 42→43 guest-source mutation and ELF PIE requirement.
 All of these remain proposed executable CI checks until runner allocation
 and exact-head test receipts are available.
+
+## GitHub Actions workflow configuration repair
+
+A previous scripted workflow edit used a JavaScript replacement string
+containing the special `$'` sequence (part of an anchored `grep -E`
+pattern). It unintentionally expanded to the remainder of the workflow,
+duplicating job sections and breaking CI parsing. The CI workflow has been
+restored from the last intact pinned Git blob with the native guest/PIE/NX
+receipt gate reapplied using literal-safe replacement. The valid bootstrap,
+sanitizers, fuzz-smoke and mailbox-thread-safety jobs must occur exactly
+once. The stage-0 feature-branch push trigger enables branch-local
+source-owned CI before merge. The older `jobs=[]` workflow runs indicate
+configuration/admission failure, **not** successfully executed tests.
