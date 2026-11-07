@@ -94,6 +94,10 @@ def _read_manifest_physically(root: Path) -> bytes:
     required = ('O_DIRECTORY', 'O_NOFOLLOW', 'O_NONBLOCK', 'O_CLOEXEC')
     if os.name != 'posix' or any(not hasattr(os, flag) for flag in required):
         raise InvalidManifest('secure descriptor-relative manifest reads unavailable')
+    # Some POSIX Python builds expose the flag constants but do not support
+    # dir_fd for os.open. Reject the platform before opening any descriptor.
+    if os.open not in getattr(os, 'supports_dir_fd', ()):
+        raise InvalidManifest('descriptor-relative open is unsupported')
 
     directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
     leaf_flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
@@ -164,6 +168,11 @@ def main(argv: list[str] | None = None) -> int:
         # the lexically normalized path when the kernel follows the symlink.
         if '..' in args.repository_root.parts:
             raise InvalidManifest('repository root parent traversal is forbidden')
+        # os.path.abspath preserves embedded NULs; os.open then raises
+        # ValueError, outside this CLI's normal (InvalidManifest/OSError)
+        # fail-closed diagnostic path.
+        if '\x00' in os.fspath(args.repository_root):
+            raise InvalidManifest('repository root contains NUL')
         root = Path(os.path.abspath(args.repository_root))
         expected_name = root.name
         verify_bytes(_read_manifest_physically(root), expected_name)
