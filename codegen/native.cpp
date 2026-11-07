@@ -127,6 +127,10 @@ std::string emit_runtime_asm(const Program& p,Arch arch) {
     out<<".Loresforge_overflow:\n  brk #0\n";
   }
   out<<".size oresforge_entry, .-oresforge_entry\n";
+  // Runtime-argument native paths need the same ELF stack contract as
+  // compile-time scalar emission; no implicit executable process stack.
+  if (arch == Arch::X86_64)
+    out<<".section .note.GNU-stack,\"\",@progbits\n";
   return out.str();
 }
 

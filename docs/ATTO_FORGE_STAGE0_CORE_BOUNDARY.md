@@ -25,3 +25,5 @@ The original stage-0 gate only produced assembly. The revised gate assembles and
 ## ELF stack and position-independent native proof
 
 The GNU/ELF x86-64 scalar emitter now emits `.note.GNU-stack` so its object does not request an executable stack. The independent integration test links the actual guest assembly with `-fPIE -pie`, uses `readelf` to require ELF type DYN and a non-executable `GNU_STACK`, and still executes results 42 and 43 from separate source programs. This gate is registered only on Linux x86-64; other architectures/host ABIs are not certified. A zero-step hosted CI run is not evidence that this test executed.
+
+Runtime-argument x86-64 ELF emission now carries the same non-executable-stack note as the scalar emitter; the source-level regression checks both codegen paths. This note is platform-specific to GNU/ELF and does not certify ARM64/Linux, macOS or Windows guest execution.

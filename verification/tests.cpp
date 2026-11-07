@@ -412,6 +412,8 @@ int main() {
            x86_native.find("jo .Loresforge_overflow")!=std::string::npos &&
            x86_native.find("%rdi")!=std::string::npos,
            "x86 checked runtime operations and ABI");
+    ensure(x86_native.find(".note.GNU-stack")!=std::string::npos,
+           "runtime-argument x86 ELF assembly declares non-executable stack");
     const auto arm_native=emit_runtime_asm(runtime,Arch::ARM64);
     ensure(arm_native.find("smulh x12")!=std::string::npos &&
            arm_native.find("b.vs .Loresforge_overflow")!=std::string::npos &&
