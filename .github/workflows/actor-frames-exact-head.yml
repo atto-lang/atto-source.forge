@@ -51,15 +51,17 @@ jobs:
             echo "run_attempt=${{ github.run_attempt }}"
             echo "compiler=$CXX"
             echo "lane=${{ matrix.lane }}"
-            for f in runtime/actor_frames.hpp runtime/scalar_actor.hpp runtime/scalar_actor.cpp verification/actor_frames.cpp verification/scalar_actor_frames.cpp CMakeLists.txt; do
+            for f in runtime/actor_frames.hpp runtime/actor_stackless.hpp verification/actor_stackless.cpp runtime/scalar_actor.hpp runtime/scalar_actor.cpp verification/actor_frames.cpp verification/scalar_actor_frames.cpp CMakeLists.txt; do
               test "$(git hash-object --no-filters "$f")" = "$(git rev-parse "HEAD:$f")"
               echo "blob:$f=$(git rev-parse "HEAD:$f")"
             done
           } | tee receipts/actor-frame-provenance.txt
           cmake -S . -B build-frame -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER="$CC" -DCMAKE_CXX_COMPILER="$CXX"
-          cmake --build build-frame --target oresforge_actor_frames_tests oresforge_scalar_actor_frames_tests oresforge_actor_arena_tests oresforge_scalar_actor_tests oresforge_scalar_heap_safety_tests oresforge --parallel 2
-          ctest --test-dir build-frame --output-on-failure -R '^(oresforge_actor_private_frames_host|oresforge_actor_heap_frame_bridge_host|oresforge_actor_arena_persistent_scratch|oresforge_scalar_actor_heap_and_turns|oresforge_scalar_heap_safety|forge_actor_source_admission_fail_closed)$' | tee receipts/actor-frame-ctest.txt
+          cmake --build build-frame --target oresforge_actor_stackless_tests oresforge_actor_frames_tests oresforge_scalar_actor_frames_tests oresforge_actor_arena_tests oresforge_scalar_actor_tests oresforge_scalar_heap_safety_tests oresforge --parallel 2
+          ctest --test-dir build-frame --output-on-failure -R '^(oresforge_actor_stackless_host|oresforge_actor_private_frames_host|oresforge_actor_heap_frame_bridge_host|oresforge_actor_arena_persistent_scratch|oresforge_scalar_actor_heap_and_turns|oresforge_scalar_heap_safety|forge_actor_source_admission_fail_closed)$' | tee receipts/actor-frame-ctest.txt
           grep -F '100% tests passed' receipts/actor-frame-ctest.txt
+          ./build-frame/oresforge_actor_stackless_tests | tee receipts/actor-stackless-marker.txt
+          grep -F 'ATTO_FORGE_STACKLESS_HOST_EXECUTED|iterative=1|sibling_survival=1|migration=1|quota=1|budget=1|guest=NOT_EXECUTED' receipts/actor-stackless-marker.txt
           ./build-frame/oresforge_actor_frames_tests | tee receipts/actor-frame-marker.txt
           test -s receipts/actor-frame-marker.txt
           python3 verification/actor_frames_source_admission.py ./build-frame/oresforge | tee receipts/actor-source-denial.txt

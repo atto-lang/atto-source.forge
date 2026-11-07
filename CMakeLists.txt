@@ -57,6 +57,15 @@ if(BUILD_TESTING)
   add_test(NAME oresforge_actor_private_frames_host COMMAND oresforge_actor_frames_tests)
   add_test(NAME oresforge_actor_heap_frame_bridge_host
     COMMAND oresforge_scalar_actor_frames_tests)
+  # Iterative, bounded actor call lowering uses actor-owned frames, not C++ recursion.
+  add_executable(oresforge_actor_stackless_tests verification/actor_stackless.cpp)
+  target_link_libraries(oresforge_actor_stackless_tests PRIVATE oresforge_scalar_actor)
+  target_compile_features(oresforge_actor_stackless_tests PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_actor_stackless_tests PRIVATE -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+  endif()
+  add_test(NAME oresforge_actor_stackless_host COMMAND oresforge_actor_stackless_tests)
+  set_tests_properties(oresforge_actor_stackless_host PROPERTIES TIMEOUT 40)
   # Preserve #101's zero-allocation turn instrumentation on supported linkers.
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     foreach(actor_test IN ITEMS

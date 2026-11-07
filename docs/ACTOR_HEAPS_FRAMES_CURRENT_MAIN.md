@@ -40,3 +40,9 @@ Existing Forge #207 records local GCC, Clang and ASan+UBSan execution of its sta
 ## Additional compiler admission hardening
 
 `verification/actor_frames_source_admission.py` checks 24 negative invocations (three unsupported `.atto` actor forms across eight compiler CLI paths) and two positive scalar controls. Negative cases require exit 1, an error diagnostic and no published stdout, IR or assembly. These new checks are source-authored **and have not yet executed on hosted exact-head CI**. They deny false source actor parity until real compiler lowering exists.
+
+## Iterative actor call lowering (stackless runtime foundation)
+
+- `runtime/actor_stackless.hpp` contains a small bounded i64 instruction executor. Guest register and PC state is persisted in the *actor-owned frame arena*, using a fixed-size carrier-local array of opaque frame handles rather than recursive C++ calls. Every call is charged before execution; depth, instruction budget, bounds, checked arithmetic, malformed opcode/target, and unwinding are explicit. This is an internal lowering target, **not** a source-level AttoLang actor compiler.
+- `verification/actor_stackless.cpp` tests 64-frame depth, actor-private overflow/poison, same-process sibling survival, thread migration, invalid bytecode, loop budget, integer underflow and full frame unwind; CMake/CI run this as `oresforge_actor_stackless_host`.
+- **Evidence status:** hosted workflows are blocked at runner admission (zero executed steps), and the exact-head new test has not been executed. No `.atto` source actor is compiled or run; there is no general guest scheduler/continuation, physical machine stack switch or guest parity proof. The next compiler milestone is to emit validated instructions from typed `.atto` actor AST/HIR and execute actor A overflow alongside actor B in the same process.
