@@ -34,6 +34,7 @@ class Mailbox {
   // No concurrent calls may outlive mailbox destruction.
   ~Mailbox() noexcept;
   ActorRef ref() const;
+  bool authorizes(const ActorRef& owner) const;
   void send(ActorRef,std::span<const std::uint8_t>);
   std::optional<std::vector<std::uint8_t>> receive();
   void close();
