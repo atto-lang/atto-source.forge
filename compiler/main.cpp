@@ -126,7 +126,7 @@ int main(int argc,char** argv) {
       std::cout.flush();
       return 0;
     }
-    std::cerr<<"usage: oresforge run-core <file.atto> | emit-core-asm x86_64 <file.atto> | run|ir <file.atto|file.ores> | emit-asm <arch> <file.atto|file.ores> | run-runtime <file.atto|file.ores> [i64-args...] | ir-runtime <file.atto|file.ores> | emit-runtime-asm <arch> <file.atto|file.ores> | run-calls <file.atto|file.ores> [i64-args...] | emit-call-asm x86_64 <file.atto|file.ores>\n";
+    std::cerr<<"usage: oresforge run-core-numeric <file.atto> | emit-core-numeric-asm x86_64 <file.atto> | run-core <file.atto> | emit-core-asm x86_64 <file.atto> | run|ir <file.atto|file.ores> | emit-asm <arch> <file.atto|file.ores> | run-runtime <file.atto|file.ores> [i64-args...] | ir-runtime <file.atto|file.ores> | emit-runtime-asm <arch> <file.atto|file.ores> | run-calls <file.atto|file.ores> [i64-args...] | emit-call-asm x86_64 <file.atto|file.ores>\n";
     return 2;
   } catch (const std::exception& e) {
     std::cerr<<"oresforge: "<<e.what()<<'\n';
