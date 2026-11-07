@@ -37,6 +37,9 @@ POSITIVE = (
     ("ternary-at-to",
      (Path(__file__).resolve().parents[1]/"examples"/"ternary.atto").read_text(encoding="utf8"),
      ((0,42),(7,12),(-5,10))),
+    ("ternary-unselected-overflow-at-to",
+     (Path(__file__).resolve().parents[1]/"examples"/"ternary_unselected_overflow.atto").read_text(encoding="utf8"),
+     ((0,42),)),
 )
 TRAPS = (
     ("overflow-add", "fnc plus(n:int):int{return n+1;}"
@@ -50,6 +53,9 @@ TRAPS = (
     ("unbounded-recursion", "fnc always(n:int):int{return always(n);}"
      " fnc main(n:int):int{return always(n);}",
      (1,), "call depth exceeded"),
+    ("ternary-selected-overflow-at-to",
+     (Path(__file__).resolve().parents[1]/"examples"/"ternary_unselected_overflow.atto").read_text(encoding="utf8"),
+     (1,), "i64 add overflow"),
 )
 INVALID = (
     ("wrong-arity", "fnc f(n:int):int{return n;} fnc main():int{return f(1,2);}", "function arity mismatch"),

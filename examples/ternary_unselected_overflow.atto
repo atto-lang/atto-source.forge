@@ -1,0 +1,5 @@
+// Test selected-arm-only evaluation against checked native arithmetic.
+// n == 0 selects a safe result; n == 1 must overflow in interpreter/native.
+pub fnc main(n: int): int {
+  return n == 0 ? 42 : 9223372036854775807 + n;
+}
