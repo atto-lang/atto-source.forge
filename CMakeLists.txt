@@ -207,12 +207,17 @@ endif()
 # general actor codegen or a self-hosted compiler.
 if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  set(ORESFORGE_ACTOR_SANITIZED_ARG "")
+  if(CMAKE_CXX_FLAGS MATCHES "fsanitize")
+    set(ORESFORGE_ACTOR_SANITIZED_ARG "--sanitized")
+  endif()
   add_test(NAME oresforge_compiled_atto_scalar_actor_native
     COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/verification/compiled_atto_scalar_actor.py"
       --compiler "$<TARGET_FILE:oresforge>"
       --root "${CMAKE_CURRENT_SOURCE_DIR}"
       --cc "${CMAKE_C_COMPILER}"
-      --cxx "${CMAKE_CXX_COMPILER}")
+      --cxx "${CMAKE_CXX_COMPILER}"
+      ${ORESFORGE_ACTOR_SANITIZED_ARG})
   set_tests_properties(oresforge_compiled_atto_scalar_actor_native PROPERTIES TIMEOUT 180)
 endif()
