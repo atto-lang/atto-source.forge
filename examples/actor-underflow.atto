@@ -1,0 +1,8 @@
+// Underflow must also fail only the offending actor, including INT64_MIN.
+define actor UnderflowCounter as
+  let int total: -9223372036854775808
+  receive(int delta) -> int ::
+    total = total - delta
+    return total
+  end
+end
