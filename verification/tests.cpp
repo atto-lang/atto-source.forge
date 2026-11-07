@@ -337,6 +337,44 @@ int main() {
            "valid UTF-8 callable comment");
     // Opt-in callable program has its own fully verified representation.
     // Unlike the scalar profile, these helpers compile to real native calls.
+    // Independently parsed canonical Core module plus caller, actual native
+    // call graph (not a source-text marker or simulated fixed result).
+    for (const std::string_view alias : {
+        "atto.core/identity", "atto.core/identity.atto",
+        "atto.core/identity.ores", "ores.core/identity",
+        "ores.core/identity.atto", "ores.core/identity.ores"
+    }) {
+      const auto input=std::string("import module identity from \"")+
+        std::string(alias)+
+        "\"; pub fnc main():int{return identity.passthrough(42);}";
+      const auto linked=calls::parse_core_identity(input);
+      ensure(linked.functions.size()==2, "real Core module and caller functions");
+      ensure(calls::interpret(linked,{})==42, "embedded Core identity executes 42");
+      ensure(calls::emit_asm(linked,Arch::X86_64).find("  call .Lores_fn_")!=
+        std::string::npos, "Core call lowers to a native call instruction");
+    }
+    const auto mutated_core=calls::parse_core_identity(
+      "import module identity from \"atto.core/identity\";"
+      " pub fnc main():int{return identity.passthrough(43);}");
+    ensure(calls::interpret(mutated_core,{})==43,
+      "42-to-43 source mutation changes actual Core linked execution");
+    for (std::string_view invalid : {
+      "atto.core/missing", "atto.core/../identity", "atto.alloc/identity",
+      "atto.std/identity", "./identity.atto", "atto.runtime.actor/identity"
+    }) {
+      reject_diagnostic([&] {
+        calls::parse_core_identity(std::string("import module identity from \"")+
+          std::string(invalid)+"\"; fnc main():int{return 42;}");
+      }, "unknown compiler-owned atto.core module");
+    }
+    reject_diagnostic([] {
+      calls::parse_core_identity("import module counterfeit from \"atto.core/identity\";"
+                                 " fnc main():int{return 42;}");
+    }, "Core module import alias must be identity");
+    reject_diagnostic([] {
+      calls::parse_core_identity("import module identity from \"atto.core/identity\";"
+                                 " fnc main():int{return identity.not_exported(42);}");
+    }, "unknown function");
     auto fact=calls::parse(
       "fnc fact(n:int):int{return if n<=1 then 1 else n*fact(n-1);}"
       " fnc main(n:int):int{return fact(n);}");

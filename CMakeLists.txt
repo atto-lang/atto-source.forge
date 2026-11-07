@@ -78,6 +78,14 @@ if(BUILD_TESTING)
   add_test(NAME oresforge_unit COMMAND oresforge_tests)
   # This invokes the real Forge frontend on operator-positive and
   # operator-negative sources, including unreachable declarations.
+  # Real compiler-embedded canonical Core source through native callable
+  # lowering; separate from the existing import-rejecting scalar frontend.
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
+    add_test(NAME oresforge_atto_stage1_core_identity
+      COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_atto_core_identity_guest.sh"
+        "$<TARGET_FILE:oresforge>" "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CXX_COMPILER}")
+    set_tests_properties(oresforge_atto_stage1_core_identity PROPERTIES TIMEOUT 75)
+  endif()
   add_executable(oresforge_legacy_operator_grammar
     verification/legacy_operator_grammar.cpp)
   target_link_libraries(oresforge_legacy_operator_grammar PRIVATE oresforge_core)
