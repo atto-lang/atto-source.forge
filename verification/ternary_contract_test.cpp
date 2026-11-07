@@ -54,6 +54,8 @@ int main() {
     rejects("fnc main():int{return true;}","Boolean is not an int");
     rejects("fnc main():int{return false ? 1 : 2 ? 3 : 4;}","condition_not_bool");
     rejects("fnc main():int{return true ? absent() : 42;}","unknown function");
+    rejects("fnc main(true:int):int{return 42;}","boolean literal cannot be identifier");
+    rejects("fnc true():int{return 1;} fnc main():int{return 42;}","boolean literal cannot be identifier");
 
     auto invalid=oresforge::calls::parse("fnc main():int{return true ? 42 : 7;}");
     invalid.functions.at(0).nodes.at(0).value=2;
@@ -65,7 +67,7 @@ int main() {
     invalid.functions.at(0).nodes.at(1).kind=oresforge::calls::Kind::Boolean;
     invalid.functions.at(0).nodes.at(1).value=1;
     rejects_verifier(invalid,"conditional branch is not int");
-    std::cout<<"FORGE_TERNARY_CONTRACT_PASS vectors=5 negative=6 mutations=3\n";
+    std::cout<<"FORGE_TERNARY_CONTRACT_PASS vectors=5 negative=8 mutations=3\n";
     return 0;
   } catch(const std::exception& e) {
     std::cerr<<"FORGE_TERNARY_CONTRACT_FAIL "<<e.what()<<"\n";

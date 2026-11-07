@@ -106,6 +106,8 @@ class Parser {
   void expect(std::string_view s) {if(!take(s))fail("unexpected token");}
   std::string identifier() {
     if (token_.text.empty() || !letter(token_.text[0])) fail("expected identifier");
+    if (token_.text=="true" || token_.text=="false")
+      fail("boolean literal cannot be identifier");
     const std::string result(token_.text);
     next();
     return result;
