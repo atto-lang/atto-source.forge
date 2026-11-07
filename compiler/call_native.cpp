@@ -1,5 +1,6 @@
 #include "compiler/source_utf8.hpp"
 #include "compiler/call_native.hpp"
+#include "atto_core_identity_source.hpp"
 #include <algorithm>
 #include <charconv>
 #include <cstdint>
@@ -28,6 +29,39 @@ struct Token { std::string_view text; std::size_t offset=0; };
 class Parser {
  public:
   explicit Parser(std::string_view text) : text_(text) { next(); }
+  Module parse_core_identity() {
+    const auto guest = text_;
+    // Compile immutable canonical source in its own namespace, then the
+    // caller source. No project-root filesystem lookup or token splicing.
+    reset_source(embedded_identity_source);
+    expect("define"); expect("module");
+    if (identifier()!="identity") fail("unexpected compiler-owned Core module name");
+    expect("as");
+    core_namespace_=true;
+    std::size_t count=0;
+    while (token_.text!="end" && !token_.text.empty()) {
+      definition();
+      ++count;
+    }
+    expect("end");
+    if (!token_.text.empty() || count!=1 || !names_.contains("identity.passthrough"))
+      fail("compiler-owned Core identity module has unexpected exports");
+    core_namespace_=false;
+    reset_source(guest);
+    expect("import"); expect("module");
+    if (identifier()!="identity") fail("Core module import alias must be identity");
+    expect("from");
+    const std::string specifier(token_.text);
+    if (specifier!="\"atto.core/identity\"" &&
+        specifier!="\"atto.core/identity.atto\"" &&
+        specifier!="\"atto.core/identity.ores\"" &&
+        specifier!="\"ores.core/identity\"" &&
+        specifier!="\"ores.core/identity.atto\"" &&
+        specifier!="\"ores.core/identity.ores\"")
+      fail("unknown compiler-owned atto.core module");
+    next(); expect(";");
+    return parse();
+  }
   Module parse() {
     while (!token_.text.empty()) definition();
     for (std::size_t i=0; i<module_.functions.size(); ++i) {
@@ -55,6 +89,10 @@ class Parser {
   Module module_;
   std::map<std::string,int> names_;
   std::size_t node_count_=0;
+  bool core_namespace_=false;
+  void reset_source(std::string_view source) {
+    text_=source; at_=0; token_={}; next();
+  }
   Function* current_=nullptr;
 
   [[noreturn]] void fail(const char* message) const {
@@ -83,7 +121,15 @@ class Parser {
       ++at_;
     } else if (c=='-' && at_<text_.size() && text_[at_]=='>') {
       ++at_;
-    } else if (std::string_view("()+-*{};:,<>=").find(c)==std::string_view::npos) {
+    } else if (c=='"') {
+      while (at_<text_.size() && text_[at_]!='"') {
+        const auto value=static_cast<unsigned char>(text_[at_]);
+        if (value<32 || text_[at_]=='\\') fail("invalid Core import string");
+        ++at_;
+      }
+      if(at_==text_.size())fail("unterminated Core import string");
+      ++at_;
+    } else if (std::string_view("()+-*{};:,<>=.").find(c)==std::string_view::npos) {
       at_=begin;
       fail("invalid character");
     }
@@ -114,9 +160,12 @@ class Parser {
       else if (take("pub")) {if(public_)fail("duplicate pub");public_=true;}
     }
     expect("fnc");
-    const std::string name=identifier();
-    if (name=="int"||name=="return"||name=="if"||name=="else"||name=="then")
+    const std::string local=identifier();
+    if (local=="int"||local=="return"||local=="if"||local=="else"||local=="then")
       fail("reserved function name");
+    if (core_namespace_ && (!public_ || local=="main"))
+      fail("compiler-owned Core exports must be public non-entry functions");
+    const std::string name=core_namespace_ ? "identity."+local : local;
     if (names_.contains(name))fail("duplicate function");
     if (module_.functions.size()>=kMaxFunctions)fail("function count budget exceeded");
     const int index=static_cast<int>(module_.functions.size());
@@ -126,12 +175,13 @@ class Parser {
     expect("(");
     if (token_.text!=")") {
       do {
-        const std::string param=identifier();
+        std::string param;
+        if (take("int")) param=identifier();
+        else { param=identifier(); expect(":"); expect("int"); }
         if (param=="int"||param=="if"||param=="then"||param=="else"||
             param=="return"||param=="fnc"||
             std::find(current_->parameters.begin(),current_->parameters.end(),param)
             !=current_->parameters.end())fail("invalid or duplicate parameter");
-        expect(":");expect("int");
         current_->parameters.push_back(param);
         if(current_->parameters.size()>4)fail("function parameter budget exceeded");
         if (!take(","))break;
@@ -221,7 +271,8 @@ class Parser {
       next();return add(Kind::Constant,value);
     }
     if (!token_.text.empty() && letter(token_.text.front())) {
-      const std::string name=identifier();
+      std::string name=identifier();
+      if (take(".")) name += "."+identifier();
       if (!take("(")) {
         auto& params=current_->parameters;
         auto found=std::find(params.begin(),params.end(),name);
@@ -390,6 +441,13 @@ Module parse(std::string_view source) {
   if (source.size()>kMaxSource)throw std::runtime_error("callable source budget exceeded");
   oresforge::source::validate_utf8(source);
   return Parser(source).parse();
+}
+Module parse_core_identity(std::string_view source) {
+  if(source.size()>kMaxSource)
+    throw std::runtime_error("Core linked source budget exceeded");
+  oresforge::source::validate_utf8(source);
+  oresforge::source::validate_utf8(embedded_identity_source);
+  return Parser(source).parse_core_identity();
 }
 void verify(const Module& m) {
   if(m.entry<0 || static_cast<std::size_t>(m.entry)>=m.functions.size())

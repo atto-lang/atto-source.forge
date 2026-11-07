@@ -37,6 +37,21 @@ int main(int argc,char** argv) {
       std::cout.flush();
       return 0;
     }
+    // Stage-1 compiler-owned Core identity linking. No ambient guest source
+    // imports; the full numeric.atto/Core ABI remains explicitly unsupported.
+    if(argc==3 && std::string(argv[1])=="run-core") {
+      auto program=oresforge::calls::parse_core_identity(read_file(argv[2]));
+      std::cout<<oresforge::calls::interpret(program,{})<<'\n';
+      std::cout.flush();
+      return 0;
+    }
+    if(argc==4 && std::string(argv[1])=="emit-core-asm") {
+      auto target=oresforge::parse_arch(argv[2]);
+      auto program=oresforge::calls::parse_core_identity(read_file(argv[3]));
+      std::cout<<oresforge::calls::emit_asm(program,target);
+      std::cout.flush();
+      return 0;
+    }
     // A separate stage-0 callable profile: true SysV native calls and lazy
     // runtime branches. Legacy scalar and runtime-entry modes remain intact.
     if (argc>=3 && std::string(argv[1])=="run-calls") {

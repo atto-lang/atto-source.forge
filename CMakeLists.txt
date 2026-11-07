@@ -2,7 +2,16 @@ cmake_minimum_required(VERSION 3.20)
 project(OresForge VERSION 0.1.0 LANGUAGES CXX)
 option(ORESFORGE_FUZZ "Build Clang libFuzzer target" OFF)
 add_library(oresforge_core STATIC compiler/frontend.cpp compiler/ir.cpp compiler/call_native.cpp codegen/native.cpp runtime/actor.cpp jit/tiered.cpp)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/contracts/atto-core-v1/identity.atto"
+     ATTO_CORE_IDENTITY_SOURCE)
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/atto-generated")
+configure_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/compiler/atto_core_identity_source.hpp.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/atto-generated/atto_core_identity_source.hpp"
+  @ONLY)
 target_include_directories(oresforge_core PUBLIC .)
+target_include_directories(oresforge_core PRIVATE
+  "${CMAKE_CURRENT_BINARY_DIR}/atto-generated")
 target_compile_features(oresforge_core PUBLIC cxx_std_20)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(oresforge_core PRIVATE -Wall -Wextra -Wconversion)

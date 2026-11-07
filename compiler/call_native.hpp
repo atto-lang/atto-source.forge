@@ -31,6 +31,8 @@ struct Module {
   int entry = -1;
 };
 Module parse(std::string_view source);
+// Compiler-embedded canonical Core identity module plus source-owned guest.
+Module parse_core_identity(std::string_view source);
 void verify(const Module& program);
 std::int64_t interpret(const Module& program, std::span<const std::int64_t> args);
 std::string emit_asm(const Module& program, Arch arch);
