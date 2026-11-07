@@ -38,6 +38,11 @@ ActorRef Mailbox::ref() const {
   std::scoped_lock lock(mutex_);
   return ActorRef{id_,generation_,authority_};
 }
+bool Mailbox::authorizes(const ActorRef& owner) const {
+  std::scoped_lock lock(mutex_);
+  return !closed_ && owner.id==id_ && owner.generation==generation_ &&
+         owner.authority_==authority_;
+}
 void Mailbox::send(ActorRef destination,std::span<const std::uint8_t> payload) {
   std::scoped_lock lock(mutex_);
   if (closed_ || destination.id!=id_ || destination.generation!=generation_ ||
