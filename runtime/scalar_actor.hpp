@@ -1,5 +1,6 @@
 #pragma once
 #include "runtime/arena/ActorOwnedI64Heap.h"
+#include "runtime/actor_frames.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -37,6 +38,9 @@ public:
     ScalarActorRef ref() const;
     Send try_send(const ScalarActorRef&, std::int64_t);
     Result run_one();
+    // Trusted host bridge only: frame data access still requires an admitted
+    // same-carrier turn token. No guest raw stack pointer is exposed.
+    ActorFrameStack& frame_stack() noexcept { return *frames_; }
     // Close ingress, then allow run_one to drain previously accepted data.
     void stop();
     bool done() const;
@@ -46,6 +50,7 @@ private:
     std::shared_ptr<const ScalarActorIdentity> identity_;
     std::vector<std::int64_t> ring_;
     OresActorI64Heap* heap_ = nullptr;
+    std::unique_ptr<ActorFrameStack> frames_;
     Initializer initializer_;
     Handler handler_;
     mutable std::mutex mutex_;
