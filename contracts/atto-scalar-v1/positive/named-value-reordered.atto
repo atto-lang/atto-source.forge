@@ -1,0 +1,8 @@
+// Canonical AttoLang scalar named-value call (stage-0).
+// The arguments evaluate as b, a in lexical order and bind to a, b.
+fnc pair(int a, int b): int {
+  return a * 10 + b;
+}
+fnc main(): int {
+  return pair(b: 2, a: 4);
+}

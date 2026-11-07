@@ -41,6 +41,9 @@ struct Expr {
   std::size_t offset = 0;
   std::vector<std::unique_ptr<Expr>> children;
   std::size_t depth = 1;
+  // One label per source-order operand; empty denotes positional.
+  // Labels must never select a different overload or reorder evaluation.
+  std::vector<std::string> argument_labels;
 };
 using ExprPtr = std::unique_ptr<Expr>;
 struct Function {
@@ -230,7 +233,6 @@ class Parser {
     }
     if (source_.substr(at_,3)=="...")
       error("tuple-v2 explicit spread requires single-evaluation checked lowering");
-    // Removed modulo and caret operators cannot silently alias host operations.
     if (c=='%')
       throw std::runtime_error("legacy % operator is removed; use Integer.rem/mod at byte "+
                                std::to_string(start));
@@ -442,15 +444,39 @@ class Parser {
         error("Forge ETS/pg guest APIs require authenticated isolate, table and mailbox lowering");
       if (!take("(")) return node(Expr::Tag::Parameter,{},0,name,offset);
       std::vector<ExprPtr> args;
+      std::vector<std::string> labels;
+      bool named_seen=false;
       if (tok_.text!=")") {
         do {
+          std::string label;
+          if (tok_.kind==Kind::Word) {
+            // Speculative one-token lookahead does not consume the actual
+            // operand unless a colon follows the identifier (also across
+            // whitespace and comments). Restore both cursor and token.
+            const auto saved_at=at_;
+            const auto saved_token=tok_;
+            const std::string candidate(tok_.text);
+            next();
+            if (take(":")) {
+              label=candidate;
+              named_seen=true;
+            } else {
+              at_=saved_at;
+              tok_=saved_token;
+            }
+          }
+          if (label.empty() && named_seen)
+            error("positional argument after named argument");
+          labels.push_back(label);
           args.push_back(expression(depth+1));
           if (args.size()>64) error("too many call arguments");
           if (!take(",")) break;
         } while (true);
       }
       expect(")");
-      return node(Expr::Tag::Call,std::move(args),0,name);
+      auto call=node(Expr::Tag::Call,std::move(args),0,name);
+      call->argument_labels=std::move(labels);
+      return call;
     }
     error("expected integer");
   }
@@ -459,6 +485,40 @@ class Parser {
       error("too many instructions");
     const int idx=static_cast<int>(program_.instructions.size());
     program_.instructions.push_back({op,value,a,b}); return idx;
+  }
+  // Formal binding is signature-driven and exact-case. Runtime labels are
+  // never overload selectors, inferred generic arguments or optional values.
+  std::vector<std::size_t> bind_call_arguments(const Expr& call,
+                                               const Function& fn) const {
+    if (call.children.size()!=fn.parameters.size())
+      throw std::runtime_error("function arity mismatch: "+call.name);
+    if (call.argument_labels.size()!=call.children.size())
+      throw std::runtime_error("invalid call label inventory");
+    std::vector<std::size_t> slots;
+    slots.reserve(call.children.size());
+    std::vector<bool> assigned(fn.parameters.size(),false);
+    std::size_t positional_count=0;
+    bool named_seen=false;
+    for (const auto& label : call.argument_labels) {
+      std::size_t slot=0;
+      if (label.empty()) {
+        if (named_seen)
+          throw std::runtime_error("positional argument after named argument");
+        slot=positional_count++;
+      } else {
+        named_seen=true;
+        const auto it=std::find(fn.parameters.begin(),fn.parameters.end(),label);
+        if (it==fn.parameters.end())
+          throw std::runtime_error("unknown named argument: "+label);
+        slot=static_cast<std::size_t>(it-fn.parameters.begin());
+      }
+      if (slot>=assigned.size() || assigned[slot])
+        throw std::runtime_error("duplicate named argument or positional collision: "+call.name);
+      assigned[slot]=true;
+      slots.push_back(slot);
+    }
+    // Arity and duplicate checks guarantee the slots are a permutation.
+    return slots;
   }
   void walk_calls(const Expr& e,
                   std::vector<std::string>& active,
@@ -478,8 +538,7 @@ class Parser {
       auto found=functions_.find(e.name);
       if (found==functions_.end())
         throw std::runtime_error("unknown function: "+e.name);
-      if (found->second.parameters.size()!=e.children.size())
-        throw std::runtime_error("function arity mismatch: "+e.name);
+      (void)bind_call_arguments(e,found->second);
       validate_calls(e.name,active,complete);
     }
     for (const auto& child:e.children)
@@ -534,15 +593,19 @@ class Parser {
         auto found=functions_.find(e.name);
         if (found==functions_.end()) throw std::runtime_error("unknown function: "+e.name);
         const auto& fn=found->second;
-        if (fn.parameters.size()!=e.children.size())
-          throw std::runtime_error("function arity mismatch: "+e.name);
+        const auto slots=bind_call_arguments(e,fn);
         if (std::find(active.begin(),active.end(),e.name)!=active.end())
           throw std::runtime_error("recursive calls not supported: "+e.name);
         if (call_depth>=kMaxCallDepth)
           throw std::runtime_error("function call depth exceeded");
-        std::unordered_map<std::string,int> bound;
+        // Evaluate every actual in lexical order, then bind its SSA result
+        // to the declared formal. Never evaluate in reordered formal order.
+        std::vector<int> values(fn.parameters.size(),-1);
         for (std::size_t i=0; i<e.children.size(); ++i)
-          bound.emplace(fn.parameters[i],lower(*e.children[i],env,active,call_depth));
+          values[slots[i]]=lower(*e.children[i],env,active,call_depth);
+        std::unordered_map<std::string,int> bound;
+        for (std::size_t i=0; i<fn.parameters.size(); ++i)
+          bound.emplace(fn.parameters[i],values[i]);
         active.push_back(e.name);
         const int result=lower(*fn.body,bound,active,call_depth+1);
         active.pop_back();
