@@ -115,16 +115,19 @@ def main():
     parser.add_argument("--root", required=True)
     parser.add_argument("--cc", default="cc")
     parser.add_argument("--cxx", default="c++")
+    parser.add_argument("--sanitized", action="store_true")
     opt = parser.parse_args()
     root = Path(opt.root).resolve(strict=True)
     compiler = Path(opt.compiler).resolve(strict=True)
+    native_flags = (["-O1", "-g", "-fsanitize=address,undefined",
+                     "-fno-omit-frame-pointer"] if opt.sanitized else ["-O2", "-DNDEBUG"])
     hashes = []
     successes = denials = mutations = 0
     with tempfile.TemporaryDirectory(prefix="oresforge-atto-actors-") as dirname:
         temp = Path(dirname)
         heap_obj = temp / "actor-heap.o"
         checked([opt.cc, "-std=c11", "-Wall", "-Wextra", "-Wpedantic", "-Werror",
-                 "-O1", "-I", str(root), "-c",
+                 *native_flags, "-I", str(root), "-c",
                  str(root/"runtime/arena/ActorOwnedI64Heap.c"), "-o", str(heap_obj)],
                 temp, "compile native actor heap")
         for fixture, initial, subtraction, results in CASES:
@@ -150,7 +153,7 @@ def main():
                 driver = driver.replace("EXPECT_" + str(i), str(v))
             (temp/"driver.cpp").write_text(driver, encoding="ascii")
             executable = temp/"actor-native"
-            checked([opt.cxx, "-std=c++20", "-O1", "-Wall", "-Wextra",
+            checked([opt.cxx, "-std=c++20", *native_flags, "-Wall", "-Wextra",
                      "-Wpedantic", "-Werror", "-UNDEBUG", "-pthread",
                      "-I", str(root), str(generated),
                      str(root/"runtime/scalar_actor.cpp"),
@@ -167,7 +170,7 @@ def main():
                 swapped = "old + argument" if subtraction else "old - argument"
                 require(native.count(expected) == 1, "ambiguous emitted arithmetic")
                 generated.write_text(native.replace(expected, swapped), encoding="ascii")
-                checked([opt.cxx, "-std=c++20", "-O1", "-pthread", "-I", str(root),
+                checked([opt.cxx, "-std=c++20", *native_flags, "-pthread", "-I", str(root),
                          str(generated), str(root/"runtime/scalar_actor.cpp"),
                          str(temp/"driver.cpp"), str(heap_obj), "-o", str(executable)],
                         temp, "link negative native mutation")
@@ -193,6 +196,7 @@ def main():
             })
     print(json.dumps({"classification": "compiler-source-to-C++-AOT-and-actor-host-runtime",
                       "self_hosted": False, "native_forge_asm": False,
+                      "sanitized": opt.sanitized,
                       "positive_executable_fixtures": successes,
                       "negative_source_admission": denials,
                       "negative_native_mutations": mutations,
