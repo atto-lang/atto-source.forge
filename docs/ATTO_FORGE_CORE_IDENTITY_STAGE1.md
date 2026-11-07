@@ -48,3 +48,18 @@ and uploads the log/receipt. The script consumes a checked-in example
 `examples/atto-core-identity.atto` and tests its byte-equivalent
 scratch copy with a local hostile namespace-shadow source. Hosted
 runner steps are still unexecuted as of authoring.
+
+## Stage-2 numeric.atto typed control-flow admission
+
+The Forge native callable frontend now supports a separate
+`parse_core_numeric` path, exposing `run-core-numeric` and
+`emit-core-numeric-asm x86_64`. It independently parses the existing
+**unchanged** `contracts/atto-core-v1/numeric.atto` via a CMake-
+embedded resource and resolves only the six canonical/historical
+numeric import spellings. Its `if CONDITION; do return VALUE; fi`
+early-return chain is lowered to lazy typed `If` nodes in the native
+call IR. A greater-than comparison uses the existing checked signed
+i64 comparison opcode, not a source-level text rewrite or host helper.
+This intentionally bounded numeric grammar does not support arbitrary
+nested language features, allocator/Std/actor capabilities, or general
+module graphs. All such requests remain fail-closed.

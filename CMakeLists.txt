@@ -4,10 +4,16 @@ option(ORESFORGE_FUZZ "Build Clang libFuzzer target" OFF)
 add_library(oresforge_core STATIC compiler/frontend.cpp compiler/ir.cpp compiler/call_native.cpp codegen/native.cpp runtime/actor.cpp jit/tiered.cpp)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/contracts/atto-core-v1/identity.atto"
      ATTO_CORE_IDENTITY_SOURCE)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/contracts/atto-core-v1/numeric.atto"
+     ATTO_CORE_NUMERIC_SOURCE)
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/atto-generated")
 configure_file(
   "${CMAKE_CURRENT_SOURCE_DIR}/compiler/atto_core_identity_source.hpp.in"
   "${CMAKE_CURRENT_BINARY_DIR}/atto-generated/atto_core_identity_source.hpp"
+  @ONLY)
+configure_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/compiler/atto_core_numeric_source.hpp.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/atto-generated/atto_core_numeric_source.hpp"
   @ONLY)
 target_include_directories(oresforge_core PUBLIC .)
 target_include_directories(oresforge_core PRIVATE

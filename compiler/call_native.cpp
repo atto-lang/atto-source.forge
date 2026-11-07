@@ -1,6 +1,7 @@
 #include "compiler/source_utf8.hpp"
 #include "compiler/call_native.hpp"
 #include "atto_core_identity_source.hpp"
+#include "atto_core_numeric_source.hpp"
 #include <algorithm>
 #include <charconv>
 #include <cstdint>
@@ -30,36 +31,55 @@ class Parser {
  public:
   explicit Parser(std::string_view text) : text_(text) { next(); }
   Module parse_core_identity() {
+    return parse_embedded_core("identity",embedded_identity_source,1);
+  }
+  Module parse_core_numeric() {
+    return parse_embedded_core("numeric",embedded_numeric_source,3);
+  }
+  Module parse_embedded_core(std::string_view module,std::string_view source,
+                             std::size_t expected_functions) {
     const auto guest = text_;
-    // Compile immutable canonical source in its own namespace, then the
-    // caller source. No project-root filesystem lookup or token splicing.
-    reset_source(embedded_identity_source);
-    expect("define"); expect("module");
-    if (identifier()!="identity") fail("unexpected compiler-owned Core module name");
+    // Core libraries are parsed from the compiler's build-time embedded
+    // source, independently from guest source and without file path lookup.
+    reset_source(source);
+    expect("define");expect("module");
+    if (identifier()!=module) fail("compiler-owned Core module name mismatch");
     expect("as");
     core_namespace_=true;
+    core_module_name_=std::string(module);
     std::size_t count=0;
-    while (token_.text!="end" && !token_.text.empty()) {
+    while(token_.text!="end" && !token_.text.empty()) {
       definition();
       ++count;
     }
     expect("end");
-    if (!token_.text.empty() || count!=1 || !names_.contains("identity.passthrough"))
-      fail("compiler-owned Core identity module has unexpected exports");
+    if(!token_.text.empty()||count!=expected_functions)
+      fail("compiler-owned Core module has unexpected function inventory");
+    if (module=="identity") {
+      if (!names_.contains("identity.passthrough"))
+        fail("compiler-owned Core identity export is missing");
+    } else if (module=="numeric") {
+      if (!names_.contains("numeric.min_int")||
+          !names_.contains("numeric.max_int")||
+          !names_.contains("numeric.clamp_int"))
+        fail("compiler-owned numeric exports are incomplete");
+    } else fail("unsupported compiler-owned Core module");
     core_namespace_=false;
     reset_source(guest);
-    expect("import"); expect("module");
-    if (identifier()!="identity") fail("Core module import alias must be identity");
+    expect("import");expect("module");
+    if (identifier()!=module) fail("Core module import alias does not match embedded module");
     expect("from");
     const std::string specifier(token_.text);
-    if (specifier!="\"atto.core/identity\"" &&
-        specifier!="\"atto.core/identity.atto\"" &&
-        specifier!="\"atto.core/identity.ores\"" &&
-        specifier!="\"ores.core/identity\"" &&
-        specifier!="\"ores.core/identity.atto\"" &&
-        specifier!="\"ores.core/identity.ores\"")
+    const std::string canonical="\"atto.core/"+std::string(module);
+    const std::string legacy="\"ores.core/"+std::string(module);
+    if (specifier!=canonical+"\"" &&
+        specifier!=canonical+".atto\"" &&
+        specifier!=canonical+".ores\"" &&
+        specifier!=legacy+"\"" &&
+        specifier!=legacy+".atto\"" &&
+        specifier!=legacy+".ores\"")
       fail("unknown compiler-owned atto.core module");
-    next(); expect(";");
+    next();expect(";");
     return parse();
   }
   Module parse() {
@@ -90,6 +110,7 @@ class Parser {
   std::map<std::string,int> names_;
   std::size_t node_count_=0;
   bool core_namespace_=false;
+  std::string core_module_name_;
   void reset_source(std::string_view source) {
     text_=source; at_=0; token_={}; next();
   }
@@ -165,7 +186,7 @@ class Parser {
       fail("reserved function name");
     if (core_namespace_ && (!public_ || local=="main"))
       fail("compiler-owned Core exports must be public non-entry functions");
-    const std::string name=core_namespace_ ? "identity."+local : local;
+    const std::string name=core_namespace_ ? core_module_name_+"."+local : local;
     if (names_.contains(name))fail("duplicate function");
     if (module_.functions.size()>=kMaxFunctions)fail("function count budget exceeded");
     const int index=static_cast<int>(module_.functions.size());
@@ -189,11 +210,35 @@ class Parser {
     }
     expect(")");
     if(!take(":"))expect("->");
-    expect("int");expect("{");expect("return");
-    current_->result=expr(0);
-    expect(";");expect("}");
+    expect("int");expect("{");
+    if (core_namespace_ && core_module_name_=="numeric") {
+      current_->result=numeric_body(0);
+    } else {
+      expect("return");
+      current_->result=expr(0);
+      expect(";");
+    }
+    expect("}");
   }
   void depth(std::size_t n) {if(n>kMaxDepth)fail("callable expression nesting too deep");}
+  // Direct lowering of the canonical numeric.atto early-return grammar.
+  // Each if condition is evaluated once; a taken return skips the remainder.
+  // Do not pre-evaluate untaken arms or rewrite .atto to C++.
+  int numeric_body(std::size_t d) {
+    depth(d);
+    if(take("if")) {
+      const int condition=comparison(d+1);
+      expect(";");expect("do");expect("return");
+      const int yes=expr(d+1);
+      expect(";");expect("fi");
+      const int no=numeric_body(d+1);
+      return add(Kind::If,0,{}, {condition,yes,no});
+    }
+    expect("return");
+    const int result=expr(d+1);
+    expect(";");
+    return result;
+  }
   int expr(std::size_t d) {
     depth(d);
     if (take("if")) {
@@ -448,6 +493,13 @@ Module parse_core_identity(std::string_view source) {
   oresforge::source::validate_utf8(source);
   oresforge::source::validate_utf8(embedded_identity_source);
   return Parser(source).parse_core_identity();
+}
+Module parse_core_numeric(std::string_view source) {
+  if(source.size()>kMaxSource)
+    throw std::runtime_error("Core linked source budget exceeded");
+  oresforge::source::validate_utf8(source);
+  oresforge::source::validate_utf8(embedded_numeric_source);
+  return Parser(source).parse_core_numeric();
 }
 void verify(const Module& m) {
   if(m.entry<0 || static_cast<std::size_t>(m.entry)>=m.functions.size())

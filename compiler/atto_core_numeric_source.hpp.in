@@ -1,0 +1,8 @@
+#pragma once
+#include <string_view>
+// Generated directly from canonical compiler-owned numeric.atto source.
+// Only the compiler/build can select this source, never a guest project.
+namespace oresforge::calls {
+inline constexpr std::string_view embedded_numeric_source =
+R"__ATTO_NUM__(@ATTO_CORE_NUMERIC_SOURCE@)__ATTO_NUM__";
+}

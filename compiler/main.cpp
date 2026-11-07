@@ -52,6 +52,21 @@ int main(int argc,char** argv) {
       std::cout.flush();
       return 0;
     }
+    // The canonical numeric.atto is parsed unchanged as compiler-owned
+    // source. Import resolution is explicit; these are not generic imports.
+    if(argc==3 && std::string(argv[1])=="run-core-numeric") {
+      auto program=oresforge::calls::parse_core_numeric(read_file(argv[2]));
+      std::cout<<oresforge::calls::interpret(program,{})<<'\n';
+      std::cout.flush();
+      return 0;
+    }
+    if(argc==4 && std::string(argv[1])=="emit-core-numeric-asm") {
+      auto target=oresforge::parse_arch(argv[2]);
+      auto program=oresforge::calls::parse_core_numeric(read_file(argv[3]));
+      std::cout<<oresforge::calls::emit_asm(program,target);
+      std::cout.flush();
+      return 0;
+    }
     // A separate stage-0 callable profile: true SysV native calls and lazy
     // runtime branches. Legacy scalar and runtime-entry modes remain intact.
     if (argc>=3 && std::string(argv[1])=="run-calls") {
