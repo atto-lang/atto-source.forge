@@ -1,0 +1,8 @@
+// Overflow must become an actor-local failure rather than a process trap.
+define actor OverflowCounter as
+  let int total: 9223372036854775807
+  receive(int delta) -> int ::
+    total = total + delta
+    return total
+  end
+end
