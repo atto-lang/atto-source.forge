@@ -510,6 +510,28 @@ int main() {
       "fnc main():int{return identity(9223372036854775807)+1;} "
       "fnc identity(x:int):int{return x;}")); }, "i64 add overflow");
 
+    // Language import admission is compiler-owned. Forge's scalar stage
+    // must reject all canonical capability tiers before lowering or IR
+    // emission; no borrowed host path is an implicit module registry.
+    for (const char* root : {"atto.core", "atto.alloc",
+                             "atto.std", "atto.runtime.actor"}) {
+      const std::string source_text=std::string("import module x from \"")+
+        root+"/numeric\"; pub fnc main():int{return 42;}";
+      reject_diagnostic([&] { (void)parse_source(source_text); },
+                        "source imports require verified module graph lowering");
+    }
+    reject_diagnostic([] {
+      (void)parse_source(
+        "import module x from \"./local.atto\"; pub fnc main():int{return 42;}");
+    }, "source imports require verified module graph lowering");
+    reject_diagnostic([] {
+      (void)parse_source(
+        "import fnc helper from \"./helper.ores\"; fnc main():int{return helper();}");
+    }, "source imports require verified module graph lowering");
+    ensure(interpret(parse_source(
+        "pub fnc main():int{return 42;} // import module x from atto.std"))==42,
+        "import wording in a source comment is not a module dependency");
+
     ensure(interpret(source("(2+3)*4"))==20,"parentheses");
     // Cross-backend Wave 2 scalar fixture (Git blob a8165323...).
     // This is a genuine evaluated Oreslang source result, not a parser-only gate.
