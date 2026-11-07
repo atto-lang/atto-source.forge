@@ -1,9 +1,23 @@
 cmake_minimum_required(VERSION 3.20)
-project(OresForge VERSION 0.1.0 LANGUAGES CXX)
+project(OresForge VERSION 0.1.0 LANGUAGES C CXX)
 option(ORESFORGE_FUZZ "Build Clang libFuzzer target" OFF)
 add_library(oresforge_core STATIC compiler/frontend.cpp compiler/ir.cpp compiler/call_native.cpp codegen/native.cpp runtime/actor.cpp jit/tiered.cpp)
 target_include_directories(oresforge_core PUBLIC .)
 target_compile_features(oresforge_core PUBLIC cxx_std_20)
+# Actor-private native heap and logical frame arena from Forge #101 + #208.
+# Keep the established current-main compiler, mailbox and tenant targets.
+find_package(Threads REQUIRED)
+add_library(oresforge_actor_arena STATIC runtime/arena/ActorArena.c)
+target_include_directories(oresforge_actor_arena PUBLIC runtime/arena)
+target_compile_features(oresforge_actor_arena PRIVATE c_std_11)
+add_library(oresforge_scalar_actor STATIC
+  runtime/scalar_actor.cpp runtime/arena/ActorOwnedI64Heap.c)
+target_include_directories(oresforge_scalar_actor PUBLIC . runtime/arena)
+target_compile_features(oresforge_scalar_actor PRIVATE c_std_11 PUBLIC cxx_std_20)
+target_link_libraries(oresforge_scalar_actor PUBLIC Threads::Threads)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(oresforge_actor_arena PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(oresforge_core PRIVATE -Wall -Wextra -Wconversion)
 endif()
@@ -12,6 +26,28 @@ target_link_libraries(oresforge PRIVATE oresforge_core)
 include(CTest)
 if(BUILD_TESTING)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  # Native HOST-ONLY actor-private heaps + per-incarnation logical frames.
+  add_executable(oresforge_actor_arena_tests verification/actor_arena.cpp)
+  target_link_libraries(oresforge_actor_arena_tests PRIVATE oresforge_actor_arena Threads::Threads)
+  target_compile_features(oresforge_actor_arena_tests PRIVATE cxx_std_20)
+  add_test(NAME oresforge_actor_arena_persistent_scratch COMMAND oresforge_actor_arena_tests)
+  add_executable(oresforge_scalar_actor_tests verification/scalar_actor.cpp)
+  target_link_libraries(oresforge_scalar_actor_tests PRIVATE oresforge_scalar_actor)
+  add_test(NAME oresforge_scalar_actor_heap_and_turns COMMAND oresforge_scalar_actor_tests)
+  add_executable(oresforge_scalar_heap_safety_tests verification/scalar_heap_safety.cpp)
+  target_link_libraries(oresforge_scalar_heap_safety_tests PRIVATE oresforge_scalar_actor)
+  add_test(NAME oresforge_scalar_heap_safety COMMAND oresforge_scalar_heap_safety_tests)
+  add_executable(oresforge_actor_frames_test verification/actor_frames_test.cpp)
+  target_link_libraries(oresforge_actor_frames_test PRIVATE oresforge_scalar_actor)
+  target_compile_features(oresforge_actor_frames_test PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_actor_frames_test PRIVATE
+      -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+  endif()
+  add_test(NAME oresforge_actor_owned_frame_arena_host COMMAND oresforge_actor_frames_test)
+  set_tests_properties(oresforge_actor_arena_persistent_scratch
+    oresforge_scalar_actor_heap_and_turns oresforge_scalar_heap_safety
+    oresforge_actor_owned_frame_arena_host PROPERTIES TIMEOUT 40)
   set(ORE_NUMERIC_I64_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated_numeric_i64_cases.hpp")
   add_custom_command(
     OUTPUT "${ORE_NUMERIC_I64_HEADER}"
