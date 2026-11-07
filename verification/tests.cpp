@@ -696,8 +696,13 @@ int main() {
              "genuine zero-argument call metadata remains valid");
       ensure(calls::interpret(valid,std::array<std::int64_t,1>{4})==42,
              "checked native named ABI order");
-      ensure(calls::emit_asm(valid,Arch::X86_64).find("  call .Lores_fn_")!=
-               std::string::npos,"named native call emitted");
+      const auto native_asm=calls::emit_asm(valid,Arch::X86_64);
+      ensure(native_asm.find("  call .Lores_fn_")!=std::string::npos,
+             "named native call emitted");
+      ensure(native_asm.find("  movq $200000, %r9")!=std::string::npos &&
+             native_asm.find("  js .Lores_budget")!=std::string::npos &&
+             native_asm.find(".Lores_budget:\n  ud2")!=std::string::npos,
+             "per-entry native execution budget is mandatory");
       auto wrong_slots=valid;
       for(auto& node:wrong_slots.functions.back().nodes)
         if(node.kind==calls::Kind::Call)node.argument_slots={0,1};
@@ -755,6 +760,15 @@ int main() {
       " fnc main(n:int):int{return fact(n);}");
     ensure(calls::interpret(fact,std::array<std::int64_t,1>{5})==120,
            "bounded direct recursion and lazy branch");
+    const auto exponential=calls::parse(
+      "fnc fib(n:int):int{return if n<=1 then n else fib(n-1)+fib(n-2);}"
+      "fnc main(n:int):int{return fib(n);}");
+    reject_diagnostic([&]{(void)calls::interpret(
+      exponential,std::array<std::int64_t,1>{25});},
+      "callable execution budget exceeded");
+    const auto exponential_asm=calls::emit_asm(exponential,Arch::X86_64);
+    ensure(exponential_asm.find("  js .Lores_budget")!=std::string::npos,
+           "native exponential work must be execution-budgeted");
     ensure(calls::interpret(fact,std::array<std::int64_t,1>{10})==3628800,
            "recursive checked i64 return");
     ensure(calls::emit_asm(fact,Arch::X86_64).find("  call .Lores_fn_")!=std::string::npos,

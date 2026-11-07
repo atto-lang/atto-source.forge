@@ -468,6 +468,12 @@ struct Native {
   void emit_node(const Function& fn,int index,
                  const std::map<std::string,int>& locals) {
     const auto& n=fn.nodes.at(static_cast<std::size_t>(index));
+    // The interpreter charges one visit per evaluated AST node. Enforce
+    // the same bounded work at runtime, including in exponential recursion
+    // whose call depth remains well below kMaxStackDepth. %r9 is private to
+    // this narrow in-module x86-64 callable ABI: only generated functions
+    // call each other, none clobber the per-entry budget register.
+    out<<"  subq $1, %r9\n  js .Lores_budget\n";
     if(n.kind==Kind::Constant) {
       out<<"  movabsq $"<<n.value<<", %rax\n";
     } else if(n.kind==Kind::Parameter) {
@@ -532,6 +538,7 @@ struct Native {
   std::string build() {
     out<<".text\n.globl oresforge_entry\n.type oresforge_entry, @function\n"
        <<"oresforge_entry:\n  xorl %r8d, %r8d\n"
+       <<"  movq $"<<kMaxEvalSteps<<", %r9\n"
        <<"  jmp .Lores_fn_"<<program.entry<<"\n";
     for (std::size_t i=0;i<program.functions.size();++i) {
       const auto& fn=program.functions[i];
@@ -550,6 +557,7 @@ struct Native {
     }
     out<<".Lores_depth:\n  ud2\n"
        <<".Lores_overflow:\n  ud2\n"
+       <<".Lores_budget:\n  ud2\n"
        <<".size oresforge_entry, .-oresforge_entry\n"
        <<".section .note.GNU-stack,\"\",@progbits\n";
     return out.str();
@@ -693,8 +701,8 @@ void verify(const Module& m) {
         throw std::runtime_error("callable AST unreachable node");
     }
   }
-  if(m.functions[static_cast<std::size_t>(m.entry)].name!="main")
-    throw std::runtime_error("callable entry is not main");
+  // Entry identity was already enforced near the top of verify(); do not
+  // repeat checks with a second, inconsistent diagnostic at the end.
 }
 std::int64_t interpret(const Module& m,std::span<const std::int64_t> args) {
   verify(m);

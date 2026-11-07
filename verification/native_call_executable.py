@@ -97,6 +97,13 @@ POSITIVE = (
      ((-2,0),(0,6),(5,21))),
 )
 TRAPS = (
+    # Fibonacci has shallow (<128) frames but exponential total work.
+    # The previously unbounded native backend could run indefinitely even
+    # though the interpreter hit its 200,000-node work limit.
+    ("bounded-work-exponential-fibonacci",
+     "fnc fib(n:int):int{return if n<=1 then n else fib(n-1)+fib(n-2);}"
+     "fnc main(n:int):int{return fib(n);}",
+     (25,), "callable execution budget exceeded"),
     # Both operands can fail: the first SOURCE expression must win,
     # regardless of which formal it binds to.
     ("named-lexical-overflow-before-recursion",
@@ -244,7 +251,10 @@ def build(compiler,cc,root,label,source,param_count):
     require("  call .Lores_fn_" in asm or "call ." not in asm,
             "native call syntax invalid in "+label)
     require(".Lores_depth:" in asm and ".Lores_overflow:" in asm and
-            len(asm)<5000000,"no bounded native call frame "+label)
+            ".Lores_budget:" in asm and
+            "  movq $200000, %r9" in asm and
+            "  js .Lores_budget" in asm and len(asm)<5000000,
+            "no bounded native call frame and execution work "+label)
     (root/"entry.s").write_text(asm,encoding="ascii")
     signature=", ".join("int64_t" for _ in range(param_count)) or "void"
     arguments=", ".join("v[%d]"%i for i in range(param_count))
