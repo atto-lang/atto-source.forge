@@ -25,7 +25,22 @@ test -s "$tmp/core.s"
 command -v readelf >/dev/null || { echo 'readelf required for ELF stack audit' >&2; exit 1; }
 readelf -W -l "$tmp/native-guest" > "$tmp/elf-headers"
 grep -E '^  *GNU_STACK ' "$tmp/elf-headers" >/dev/null
-awk '$1 == "GNU_STACK" { found=1; if ($7 ~ /E/) executable=1 } END { exit (!found || executable) }' "$tmp/elf-headers" || {
+# Audit the auditor with synthetic ELF headers before using it on
+# real linked guest output. The deliberate RWE and absent-header cases must
+# both be rejected (not just "grep passes" on arbitrary readelf text).
+audit_nonexec_stack() {
+  awk '$1 == "GNU_STACK" { found=1; if ($7 ~ /E/) executable=1 } END { exit (!found || executable) }'
+}
+printf '  GNU_STACK 0x0 0x0 0x0 0x0 0x0 RW 0x10\n' | audit_nonexec_stack || {
+  echo 'ELF stack auditor rejected a valid RW non-executable stack' >&2; exit 1
+}
+if printf '  GNU_STACK 0x0 0x0 0x0 0x0 0x0 RWE 0x10\n' | audit_nonexec_stack; then
+  echo 'ELF stack auditor admitted a synthetic executable stack' >&2; exit 1
+fi
+if printf '  LOAD 0x0 0x0 0x0 0x0 0x0 RW 0x10\n' | audit_nonexec_stack; then
+  echo 'ELF stack auditor admitted a missing GNU_STACK program header' >&2; exit 1
+fi
+audit_nonexec_stack < "$tmp/elf-headers" || {
   echo 'native binary has executable stack or lacks GNU_STACK' >&2; exit 1
 }
 readelf -W -h "$tmp/native-guest" | grep -E 'Type: *DYN ' >/dev/null || {
