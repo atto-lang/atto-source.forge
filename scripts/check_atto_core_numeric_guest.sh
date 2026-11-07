@@ -17,11 +17,11 @@ cp "$root/examples/atto-core-numeric.atto" "$tmp/42.atto"
 printf 'import module numeric from "ores.core/numeric.ores"; pub fnc main():int{return numeric.clamp_int(50,0,43);}\n' > "$tmp/43.atto"
 (
   cd "$tmp"
-  test "$("$compiler" run-core-numeric "$tmp/42.atto")" = 42
-  test "$("$compiler" run-core-numeric "$tmp/43.atto")" = 43
+  test "$("$compiler" run-core "$tmp/42.atto")" = 42
+  test "$("$compiler" run-core "$tmp/43.atto")" = 43
 )
-"$compiler" emit-core-numeric-asm x86_64 "$tmp/42.atto" > "$tmp/42.s"
-"$compiler" emit-core-numeric-asm x86_64 "$tmp/43.atto" > "$tmp/43.s"
+"$compiler" emit-core-asm x86_64 "$tmp/42.atto" > "$tmp/42.s"
+"$compiler" emit-core-asm x86_64 "$tmp/43.atto" > "$tmp/43.s"
 for case in 42 43; do
   grep -F '  call .Lores_fn_' "$tmp/$case.s" >/dev/null
   "$cxx" -x assembler -c "$tmp/$case.s" -o "$tmp/$case.o"
@@ -42,7 +42,7 @@ for spec in atto.core/missing atto.core/numeric/ atto.core/../numeric \
             atto.alloc/numeric atto.std/numeric atto.runtime.actor/numeric \
             ./numeric.atto; do
   printf 'import module numeric from "%s";fnc main():int{return 42;}\n' "$spec" > "$tmp/reject.atto"
-  if "$compiler" emit-core-numeric-asm x86_64 "$tmp/reject.atto" > "$tmp/reject.s" 2>"$tmp/reject.err"; then
+  if "$compiler" emit-core-asm x86_64 "$tmp/reject.atto" > "$tmp/reject.s" 2>"$tmp/reject.err"; then
     echo "invalid numeric import accepted: $spec" >&2; exit 1
   fi
   test ! -s "$tmp/reject.s"
@@ -64,7 +64,7 @@ for mode in min max clamp; do
   esac
   printf 'import module numeric from "atto.core/numeric"; pub fnc main(%s):int{return %s;}\n' \
     "$signature" "$expression" > "$tmp/param-$mode.atto"
-  "$compiler" emit-core-numeric-asm x86_64 "$tmp/param-$mode.atto" > "$tmp/param-$mode.s"
+  "$compiler" emit-core-asm x86_64 "$tmp/param-$mode.atto" > "$tmp/param-$mode.s"
   test -s "$tmp/param-$mode.s"
   grep -F '  call .Lores_fn_' "$tmp/param-$mode.s" >/dev/null
   "$cxx" -x assembler -c "$tmp/param-$mode.s" -o "$tmp/param-$mode.o"

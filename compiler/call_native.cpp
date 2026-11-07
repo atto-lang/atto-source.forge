@@ -30,6 +30,15 @@ struct Token { std::string_view text; std::size_t offset=0; };
 class Parser {
  public:
   explicit Parser(std::string_view text) : text_(text) { next(); }
+  Module parse_core() {
+    // Dispatch by parsed import syntax, not a numeric-only CLI flag or
+    // a path guess. The selected embedded unit is then parsed independently.
+    expect("import"); expect("module");
+    const std::string module=identifier();
+    if(module=="identity")return parse_core_identity();
+    if(module=="numeric")return parse_core_numeric();
+    fail("unsupported compiler-owned Core module alias");
+  }
   Module parse_core_identity() {
     return parse_embedded_core("identity",embedded_identity_source,1);
   }
@@ -486,6 +495,12 @@ Module parse(std::string_view source) {
   if (source.size()>kMaxSource)throw std::runtime_error("callable source budget exceeded");
   oresforge::source::validate_utf8(source);
   return Parser(source).parse();
+}
+Module parse_core(std::string_view source) {
+  if(source.size()>kMaxSource)
+    throw std::runtime_error("Core linked source budget exceeded");
+  oresforge::source::validate_utf8(source);
+  return Parser(source).parse_core();
 }
 Module parse_core_identity(std::string_view source) {
   if(source.size()>kMaxSource)

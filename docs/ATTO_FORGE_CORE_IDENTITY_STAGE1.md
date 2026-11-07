@@ -131,3 +131,19 @@ harness determinism and expected checksums, but it has **not** yet
 executed with Forge-generated assembly from the current PR on
 a hosted Actions runner. The stub control must not be counted as
 AttoLang guest evidence.
+
+## Unified compiler-owned Core import dispatch
+
+Forge's `run-core` and `emit-core-asm x86_64` paths now
+dispatch through one `parse_core` interface using the actual
+`import module <name> from "atto.core/<name>"` declaration.
+Both compiler-embedded `identity.atto` and `numeric.atto` use
+the same typed callable graph and native lowering path. Unknown
+module declarations and unsupported namespaces fail closed. New
+regression controls verify both modules and missing/unknown imports.
+The older `run-core-numeric`/`emit-core-numeric-asm` commands
+remain as temporary compatibility aliases; the stage-2 native script
+now uses the shared commands. This does **not** yet make the legacy
+scalar `run` pipeline a general-purpose AttoLang module linker.
+The real compiler-backed regression gates remain unexecuted while
+hosted runners cannot allocate.

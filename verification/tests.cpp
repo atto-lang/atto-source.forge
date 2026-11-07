@@ -353,6 +353,25 @@ int main() {
       ensure(calls::emit_asm(linked,Arch::X86_64).find("  call .Lores_fn_")!=
         std::string::npos, "Core call lowers to a native call instruction");
     }
+    for(const std::string_view module : {"identity","numeric"}) {
+      const std::string call=module=="identity"
+        ? "identity.passthrough(42)" : "numeric.max_int(40,42)";
+      const auto source=std::string("import module ")+std::string(module)+
+        " from \"atto.core/"+std::string(module)+
+        "\"; pub fnc main():int{return "+call+";}";
+      const auto linked=calls::parse_core(source);
+      ensure(calls::interpret(linked,{})==42,
+        "generic compiler-owned Core resolver executes canonical module");
+      ensure(calls::emit_asm(linked,Arch::X86_64).find("  call .Lores_fn_")!=
+        std::string::npos,"generic Core resolver retains native-call lowering");
+    }
+    reject_diagnostic([]{
+      calls::parse_core("import module unknown from \"atto.core/unknown\";"
+                        " pub fnc main():int{return 42;}");
+    },"unsupported compiler-owned Core module alias");
+    reject_diagnostic([]{
+      calls::parse_core("pub fnc main():int{return 42;}");
+    },"expected");
     const auto mutated_core=calls::parse_core_identity(
       "import module identity from \"atto.core/identity\";"
       " pub fnc main():int{return identity.passthrough(43);}");

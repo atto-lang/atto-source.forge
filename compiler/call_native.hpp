@@ -32,6 +32,7 @@ struct Module {
 };
 Module parse(std::string_view source);
 // Compiler-embedded canonical Core identity module plus source-owned guest.
+Module parse_core(std::string_view source);
 Module parse_core_identity(std::string_view source);
 Module parse_core_numeric(std::string_view source);
 void verify(const Module& program);
