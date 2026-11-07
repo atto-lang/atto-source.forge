@@ -27,6 +27,13 @@ BOUNDARY_33 = ("fnc main(n:int):int{" +
                "return v32;}")
 
 POSITIVE = (
+    ("named-nested-comment-label",
+     "fnc pair(int a,int b):int{return a*10+b;}"
+     " fnc main(int n):int{return pair(b/* % ^ guard /* nested */ */:2,a:n);}",
+     ((4,42),(5,52))),
+    ("comment-hidden-declaration",
+     "/* macro bogus /* guard and % and ^ */ */"
+     "fnc main():int{return 42;}", ((42,),)),
     ("named-reordered-runtime",
      "fnc pair(int a,int b):int{return a*10+b;}"
      " fnc main(n:int):int{return pair(b:2,a:n);}",
@@ -112,6 +119,18 @@ TRAPS = (
      (1,), "call depth exceeded"),
 )
 INVALID = (
+    ("unterminated-block-comment",
+     "fnc main():int{return 42;} /* never closed",
+     "unterminated block comment"),
+    ("legacy-percent-op",
+     "fnc main():int{return 10%3;}",
+     "legacy % operator is removed"),
+    ("legacy-single-caret-op",
+     "fnc main():int{return 2^3;}",
+     "legacy ^/^^ operators are removed"),
+    ("legacy-double-caret-op",
+     "fnc main():int{return 2^^3;}",
+     "legacy ^/^^ operators are removed"),
     ("guard-native-local",
      "fnc main():int{const guard=1;return guard;}",
      "GUARD_BACKEND_UNSUPPORTED"),
@@ -275,7 +294,23 @@ def main():
             require(native.returncode==-signal.SIGILL and native.stdout==b"",
                     "native overflow/depth failed to trap "+label+": "+str(native.returncode))
             negatives+=1
-        for label,source,diagnostic in INVALID:
+        # A depth of 128 is admissible; 129 must reject without publishing
+        # any output, including when the comments trail valid declarations.
+        boundary_comment="/*"*128+"*/"*128
+        positive_boundary="fnc main():int{return 42;}"+boundary_comment
+        file,exe,_=build(compiler,cc,root,"comment-depth-128",positive_boundary,0)
+        for command in ((compiler,"run-calls",str(file)),):
+            ok=execute(command,root)
+            require((ok.returncode,ok.stdout,ok.stderr)==(0,b"42\\n",b""),
+                    "comment nesting depth 128 must remain admissible")
+        passed=execute([str(exe)],root)
+        require((passed.returncode,passed.stdout,passed.stderr)==(0,b"42\\n",b""),
+                "native comment nesting boundary mismatch")
+        positives+=1
+        too_deep="fnc main():int{return 42;}"+"/*"*129+"*/"*129
+        # Include this generated 129-depth negative alongside static cases.
+        for label,source,diagnostic in INVALID+(
+            ("over-nested-block-comment",too_deep,"block comment nesting too deep"),):
             file=root/"bad.atto"
             file.write_text(source+"\n",encoding="utf8")
             for command in ((compiler,"run-calls",str(file)),(compiler,"emit-call-asm","x86_64",str(file))):

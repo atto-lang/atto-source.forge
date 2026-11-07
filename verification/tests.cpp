@@ -612,6 +612,36 @@ int main() {
         "fnc spare():int{return 3;}"),{})==42,
         "callable line comments cannot swallow another definition");
     }
+    // Native-call lexer must agree with the scalar lexer: nested block
+    // comments hide all operators/declarations, but must remain bounded.
+    {
+      const std::string good=
+        "fnc pair(a:int,b:int):int{return a*10+b;}"
+        "fnc main(n:int):int{return pair(b /* % ^ /* macro */ guard */ :2,a:n);}";
+      ensure(calls::interpret(calls::parse(good),
+        std::array<std::int64_t,1>{4})==42,
+        "nested comments must not affect named ABI slots");
+      const std::string depth_128=
+        "fnc main():int{return 42;}"+
+        ([](){ std::string v;for(int i=0;i<128;++i)v+="/*";
+               for(int i=0;i<128;++i)v+="*/";return v; }());
+      ensure(calls::interpret(calls::parse(depth_128),{})==42,
+             "comment nesting at maximum boundary");
+      std::string over="fnc main():int{return 42;}";
+      for(int i=0;i<129;++i)over+="/*";
+      for(int i=0;i<129;++i)over+="*/";
+      reject_diagnostic([&]{(void)calls::parse(over);},
+                        "block comment nesting too deep");
+      reject_diagnostic([]{(void)calls::parse(
+        "fnc main():int{return 42;} /*");},
+                        "unterminated block comment");
+      reject_diagnostic([]{(void)calls::parse(
+        "fnc main():int{return 10%3;}");},
+                        "legacy % operator is removed");
+      reject_diagnostic([]{(void)calls::parse(
+        "fnc main():int{return 2^^3;}");},
+                        "legacy ^/^^ operators are removed");
+    }
     // Named call metadata must be fully validated even when an embedding
     // host passes a forged Module directly, bypassing source admission.
     {

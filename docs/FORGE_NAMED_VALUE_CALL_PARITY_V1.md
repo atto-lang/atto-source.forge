@@ -25,3 +25,7 @@ In particular: `oresforge_named_value_call_guest_42` (scalar parser/IR/interpret
 - The mutated public-Module tests deliberately alter call slot metadata and require that independent `verify` and `emit_asm` reject it.
 
 Do not equate passing source-readback or an empty-step Actions failure with successful guest code execution.
+
+## Lexer hardening audit — November 7, 2026
+
+Native-call source admission now accepts bounded nested block comments (maximum depth 128), consistent with the scalar lexer; declaration-like and removed-operator text inside comments must not be admitted as code. Unterminated blocks and depth 129 fail before any IR/assembly output. Removed `%`, `^` and `^^` operators now produce explicit canonical diagnostic substrings in `run-calls` and `emit-call-asm`. Regression cases execute through the real compiler path and source/IR mutation checks. This is **authored test coverage**, not stepful CI evidence.

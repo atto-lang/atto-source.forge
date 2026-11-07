@@ -23,6 +23,7 @@ constexpr std::size_t kMaxDepth = 128;
 constexpr std::size_t kMaxStackDepth = 128;
 constexpr std::size_t kMaxEvalSteps = 200000;
 constexpr std::size_t kMaxLocals = 32;
+constexpr std::size_t kMaxCommentNesting = 128;
 bool letter(char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_'; }
 bool digit(char c) { return c >= '0' && c <= '9'; }
 bool valid_identifier(std::string_view name) {
@@ -113,6 +114,28 @@ class Parser {
         while (at_<text_.size() && text_[at_]!='\n' && text_[at_]!='\r') ++at_;
         continue;
       }
+      // The scalar frontend and Java accept bounded nested block comments.
+      // Refuse unterminated or over-nested input before parser/IR publication.
+      if (c=='/' && at_+1<text_.size() && text_[at_+1]=='*') {
+        const auto start=at_;
+        at_+=2;
+        std::size_t depth=1;
+        while(depth!=0) {
+          if(at_==text_.size())
+            throw std::runtime_error("unterminated block comment at byte "+
+                                     std::to_string(start));
+          if(at_+1<text_.size() && text_[at_]=='/' && text_[at_+1]=='*') {
+            if(++depth>kMaxCommentNesting)
+              throw std::runtime_error("block comment nesting too deep at byte "+
+                                       std::to_string(start));
+            at_+=2;
+          } else if(at_+1<text_.size() && text_[at_]=='*' && text_[at_+1]=='/') {
+            --depth;
+            at_+=2;
+          } else ++at_;
+        }
+        continue;
+      }
       break;
     }
     const std::size_t begin=at_;
@@ -135,6 +158,13 @@ class Parser {
       ++at_;
     } else if (c=='-' && at_<text_.size() && text_[at_]=='>') {
       ++at_;
+    } else if(c=='%' || c=='^') {
+      // Do not parse these as a legacy numeric operator or silently discard
+      // their operands. The i64 scalar and native-call entrypoints agree.
+      throw std::runtime_error(
+        std::string(c=='%' ? "legacy % operator is removed; use Integer.rem/mod"
+                           : "legacy ^/^^ operators are removed; use Integer.pow/bitXor")+
+        " at byte "+std::to_string(begin));
     } else if (std::string_view("()+-*{};:,<>=").find(c)==std::string_view::npos) {
       at_=begin;
       fail("invalid character");
