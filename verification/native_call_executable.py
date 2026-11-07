@@ -97,6 +97,18 @@ POSITIVE = (
      ((-2,0),(0,6),(5,21))),
 )
 TRAPS = (
+    # Both operands can fail: the first SOURCE expression must win,
+    # regardless of which formal it binds to.
+    ("named-lexical-overflow-before-recursion",
+     "fnc loop(n:int):int{return loop(n);}"
+     "fnc ignore(a:int,b:int):int{return 42;}"
+     "fnc main(n:int):int{return ignore(b:n+1,a:loop(n));}",
+     (9223372036854775807,), "i64 add overflow"),
+    ("named-lexical-recursion-before-overflow",
+     "fnc loop(n:int):int{return loop(n);}"
+     "fnc ignore(a:int,b:int):int{return 42;}"
+     "fnc main(n:int):int{return ignore(b:loop(n),a:n+1);}",
+     (9223372036854775807,), "call depth exceeded"),
     ("named-eager-unused-argument-overflow",
      "fnc ignore(a:int,b:int):int{return 42;}"
      " fnc main(n:int):int{return ignore(b:0,a:n+1);}",
@@ -301,10 +313,10 @@ def main():
         file,exe,_=build(compiler,cc,root,"comment-depth-128",positive_boundary,0)
         for command in ((compiler,"run-calls",str(file)),):
             ok=execute(command,root)
-            require((ok.returncode,ok.stdout,ok.stderr)==(0,b"42\\n",b""),
+            require((ok.returncode,ok.stdout,ok.stderr)==(0,b"42\n",b""),
                     "comment nesting depth 128 must remain admissible")
         passed=execute([str(exe)],root)
-        require((passed.returncode,passed.stdout,passed.stderr)==(0,b"42\\n",b""),
+        require((passed.returncode,passed.stdout,passed.stderr)==(0,b"42\n",b""),
                 "native comment nesting boundary mismatch")
         positives+=1
         too_deep="fnc main():int{return 42;}"+"/*"*129+"*/"*129
