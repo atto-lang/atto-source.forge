@@ -126,7 +126,9 @@ std::string emit_cxx(std::string_view source) {
               "extern \"C\" void oresforge_actor_init(OresActorI64Heap* h, std::uint64_t d, std::uint64_t e, oresforge::runtime::ActorFrameStack& frames) {\n"
               "  (void)frames;\n"
               "  ores_actor_i64_heap_field_init_mutable(h, d, e, 0, ";
-    output << plan.initial;
+    if (plan.initial == std::numeric_limits<std::int64_t>::min())
+        output << "std::numeric_limits<std::int64_t>::min()";
+    else output << plan.initial;
     output << ");\n}\n"
               "extern \"C\" std::int64_t oresforge_actor_handle(OresActorI64Heap* h, std::uint64_t d, std::uint64_t e, std::int64_t msg, oresforge::runtime::ActorFrameStack& frames) {\n"
               "  const auto token = frames.current_turn();\n"
