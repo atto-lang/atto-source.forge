@@ -314,3 +314,23 @@ if(BUILD_TESTING)
   add_test(NAME forge_wrapper_option_host_conformance COMMAND oresforge_wrapper_flatten_option_host)
   set_tests_properties(forge_wrapper_option_host_conformance PROPERTIES TIMEOUT 20)
 endif()
+
+# Linux x86-64 native actor stack/heap substrate. HOST CALLBACKS ONLY:
+# this is not `define actor` guest compilation or a tenant sandbox.
+if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+   CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64)$")
+  add_executable(oresforge_actor_stack_domain
+    verification/actor_stack_domain_test.cpp)
+  target_include_directories(oresforge_actor_stack_domain PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_actor_stack_domain PRIVATE cxx_std_20)
+  find_package(Threads REQUIRED)
+  target_link_libraries(oresforge_actor_stack_domain PRIVATE Threads::Threads)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_actor_stack_domain PRIVATE
+      -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+  endif()
+  add_test(NAME forge_actor_stack_domain_host_v1 COMMAND oresforge_actor_stack_domain)
+  set_tests_properties(forge_actor_stack_domain_host_v1 PROPERTIES
+    TIMEOUT 30 LABELS "host-only;native-actor-stack")
+endif()
