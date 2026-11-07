@@ -7,10 +7,24 @@ struct ScalarActorIdentity final {};
 
 ScalarActor::ScalarActor(std::uint64_t id, std::size_t fields, std::size_t capacity,
                          Initializer initialize, Handler handler)
-    : id_(id), initializer_(initialize), handler_(handler) {
+    : ScalarActor(id, fields, capacity, initialize, handler, nullptr, nullptr) {}
+
+ScalarActor::ScalarActor(std::uint64_t id, std::size_t fields, std::size_t capacity,
+                         FramedInitializer initialize, FramedHandler handler)
+    : ScalarActor(id, fields, capacity, nullptr, nullptr, initialize, handler) {}
+
+ScalarActor::ScalarActor(std::uint64_t id, std::size_t fields, std::size_t capacity,
+                         Initializer initialize, Handler handler,
+                         FramedInitializer framed_initialize, FramedHandler framed_handler)
+    : id_(id), initializer_(initialize), handler_(handler),
+      framed_initializer_(framed_initialize), framed_handler_(framed_handler) {
     // Validate before allocating either mailbox storage or an authority.
-    if (!id || !fields || fields > 4096 || !capacity || capacity > 4096
-            || !initialize || !handler)
+    const bool legacy = initialize != nullptr && handler != nullptr;
+    const bool framed = framed_initialize != nullptr && framed_handler != nullptr;
+    if (!id || !fields || fields > 4096 || !capacity || capacity > 4096 ||
+        legacy == framed ||
+        (initialize == nullptr) != (handler == nullptr) ||
+        (framed_initialize == nullptr) != (framed_handler == nullptr))
         throw std::invalid_argument("invalid bounded scalar actor configuration");
     // Reserve actor-private frame bytes during construction, never in a
     // guest turn. Failure does not publish an actor with half a stack.
@@ -82,10 +96,16 @@ ScalarActor::Result ScalarActor::run_one() {
         // Frame authority is active only while the matching heap turn runs.
         // This is separate *logical* frame storage, not a switched OS stack.
         ActorFrameStack::Turn frame_turn(*frames_);
-        if (!initialized_) initializer_(heap_, turn.domain, turn.epoch);
-        // The synchronized publication below is the only writer of the
-        // initialized state. Other run_one calls observe active_ meanwhile.
-        if (has_message) value = handler_(heap_, turn.domain, turn.epoch, message);
+        if (!initialized_) {
+            if (framed_initializer_) framed_initializer_(heap_, turn.domain, turn.epoch, *frames_);
+            else initializer_(heap_, turn.domain, turn.epoch);
+        }
+        // Only the admitted physical carrier invokes the callbacks; they
+        // use the same actor's private heap and private frame arena.
+        if (has_message) {
+            if (framed_handler_) value = framed_handler_(heap_, turn.domain, turn.epoch, message, *frames_);
+            else value = handler_(heap_, turn.domain, turn.epoch, message);
+        }
         // Even callbacks that catch their own frame-limit errors cannot
         // commit the turn after the actor's frame arena has been poisoned.
         if (frames_->poisoned()) throw std::logic_error("actor frame poison");
