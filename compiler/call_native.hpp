@@ -10,8 +10,8 @@ namespace oresforge::calls {
 // Opt-in, deliberately narrow stage-0 callable language. Distinct from the
 // legacy scalar IR; no misleading claims about the general Oreslang ABI.
 enum class Kind {
-  Constant, Parameter, Add, Sub, Mul, Less, LessEqual, Greater,
-  GreaterEqual, Equal, NotEqual, If, Call
+  Constant, Boolean, Parameter, Add, Sub, Mul, Less, LessEqual, Greater,
+  GreaterEqual, Equal, NotEqual, If, Ternary, Call
 };
 struct Node {
   Kind kind;

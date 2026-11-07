@@ -34,6 +34,9 @@ POSITIVE = (
     ("signed-comparisons", "fnc main(a:int,b:int):int{return if a<b then 1 else if a>=b then 2 else 3;}",
      ((-9223372036854775808,9223372036854775807,1),(2,2,2),(10,2,2))),
     ("no-args", "fnc main():int{return 42;}", ((42,),)),
+    ("ternary-at-to",
+     (Path(__file__).resolve().parents[1]/"examples"/"ternary.atto").read_text(encoding="utf8"),
+     ((0,42),(7,12),(-5,10))),
 )
 TRAPS = (
     ("overflow-add", "fnc plus(n:int):int{return n+1;}"

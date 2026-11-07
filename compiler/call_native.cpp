@@ -25,6 +25,16 @@ bool digit(char c) { return c >= '0' && c <= '9'; }
 bool space(char c) { return c == ' ' || c == '\r' || c == '\n' || c == '\t' || c == '\v' || c == '\f'; }
 struct Token { std::string_view text; std::size_t offset=0; };
 
+// This bootstrap represents predicates explicitly so the ternary operator
+// cannot coerce an integer into a Boolean. This does not provide a general
+// bool ABI or relax the legacy stage-0 if-expression profile.
+bool boolean_kind(Kind kind) {
+  return kind==Kind::Boolean ||
+         kind==Kind::Less || kind==Kind::LessEqual ||
+         kind==Kind::Greater || kind==Kind::GreaterEqual ||
+         kind==Kind::Equal || kind==Kind::NotEqual;
+}
+
 class Parser {
  public:
   explicit Parser(std::string_view text) : text_(text) { next(); }
@@ -83,7 +93,7 @@ class Parser {
       ++at_;
     } else if (c=='-' && at_<text_.size() && text_[at_]=='>') {
       ++at_;
-    } else if (std::string_view("()+-*{};:,<>=").find(c)==std::string_view::npos) {
+    } else if (std::string_view("()+-*{};:,<>?=").find(c)==std::string_view::npos) {
       at_=begin;
       fail("invalid character");
     }
@@ -106,6 +116,12 @@ class Parser {
     const int idx=static_cast<int>(current_->nodes.size());
     current_->nodes.push_back({kind,value,std::move(name),std::move(children),-1});
     return idx;
+  }
+  bool is_boolean(int id) const {
+    return boolean_kind(current_->nodes.at(static_cast<std::size_t>(id)).kind);
+  }
+  void require_integer(int id) const {
+    if (is_boolean(id)) fail("Boolean is not an int in the Forge callable subset");
   }
   void definition() {
     bool defining=false,public_=false;
@@ -141,6 +157,7 @@ class Parser {
     if(!take(":"))expect("->");
     expect("int");expect("{");expect("return");
     current_->result=expr(0);
+    require_integer(current_->result);
     expect(";");expect("}");
   }
   void depth(std::size_t n) {if(n>kMaxDepth)fail("callable expression nesting too deep");}
@@ -152,9 +169,23 @@ class Parser {
       const int yes=expr(d+1);
       expect("else");
       const int no=expr(d+1);
+      require_integer(yes);
+      require_integer(no);
       return add(Kind::If,0,{}, {condition,yes,no});
     }
-    return comparison(d+1);
+    const int condition=comparison(d+1);
+    if(take("?")) {
+      if(!is_boolean(condition)) fail("condition_not_bool: ternary requires bool");
+      const int yes=expr(d+1);
+      expect(":");
+      const int no=expr(d+1);
+      require_integer(yes);
+      require_integer(no);
+      // A distinct opcode makes Boolean admission enforceable by verify(),
+      // including when inspecting a program not produced by this parser.
+      return add(Kind::Ternary,0,{}, {condition,yes,no});
+    }
+    return condition;
   }
   int comparison(std::size_t d) {
     depth(d);
@@ -164,6 +195,8 @@ class Parser {
       const std::string op(token_.text);
       next();
       const int right=sum(d+1);
+      require_integer(left);
+      require_integer(right);
       Kind k=Kind::Equal;
       if(op=="<") k=Kind::Less;
       else if(op=="<=") k=Kind::LessEqual;
@@ -181,6 +214,8 @@ class Parser {
       const bool plus=take("+");
       if (!plus)expect("-");
       const int right=term(d+1);
+      require_integer(left);
+      require_integer(right);
       left=add(plus?Kind::Add:Kind::Sub,0,{}, {left,right});
     }
     return left;
@@ -191,19 +226,26 @@ class Parser {
     while (token_.text=="*") {
       next();
       const int right=factor(d+1);
+      require_integer(left);
+      require_integer(right);
       left=add(Kind::Mul,0,{}, {left,right});
     }
     return left;
   }
   int factor(std::size_t d) {
     depth(d);
-    if(take("+"))return factor(d+1);
+    if(take("+")) {
+      const int operand=factor(d+1);
+      require_integer(operand);
+      return operand;
+    }
     if(take("-")) {
       if(token_.text=="9223372036854775808"){
         next();return add(Kind::Constant,std::numeric_limits<std::int64_t>::min());
       }
       const int zero=add(Kind::Constant,0);
       const int other=factor(d+1);
+      require_integer(other);
       return add(Kind::Sub,0,{}, {zero,other});
     }
     if(take("(")) {
@@ -212,6 +254,8 @@ class Parser {
       return x;
     }
     if (token_.text=="if") return expr(d+1);
+    if(take("true")) return add(Kind::Boolean,1);
+    if(take("false")) return add(Kind::Boolean,0);
     if (!token_.text.empty() && digit(token_.text.front())) {
       std::int64_t value=0;
       auto bytes=token_.text;
@@ -232,6 +276,7 @@ class Parser {
       if (token_.text!=")") {
         do {
           args.push_back(expr(d+1));
+          require_integer(args.back());
           if(args.size()>4)fail("call argument budget exceeded");
           if(!take(","))break;
         }while(true);
@@ -277,9 +322,9 @@ struct Evaluator {
                      std::size_t depth) {
     if (remaining--==0)throw std::runtime_error("callable execution budget exceeded");
     const auto& n=fn.nodes.at(static_cast<std::size_t>(id));
-    if(n.kind==Kind::Constant)return n.value;
+    if(n.kind==Kind::Constant||n.kind==Kind::Boolean)return n.value;
     if(n.kind==Kind::Parameter)return args[static_cast<std::size_t>(n.value)];
-    if(n.kind==Kind::If) {
+    if(n.kind==Kind::If||n.kind==Kind::Ternary) {
       const auto pred=visit(fn,n.children[0],args,depth);
       return visit(fn,n.children[pred ? 1u:2u],args,depth);
     }
@@ -310,11 +355,11 @@ struct Native {
   }
   void emit_node(const Function& fn,int index) {
     const auto& n=fn.nodes.at(static_cast<std::size_t>(index));
-    if(n.kind==Kind::Constant) {
+    if(n.kind==Kind::Constant||n.kind==Kind::Boolean) {
       out<<"  movabsq $"<<n.value<<", %rax\n";
     } else if(n.kind==Kind::Parameter) {
       out<<"  movq "<<parameter_slot(static_cast<int>(n.value))<<", %rax\n";
-    } else if(n.kind==Kind::If) {
+    } else if(n.kind==Kind::If||n.kind==Kind::Ternary) {
       const auto tag=label++;
       emit_node(fn,n.children[0]);
       out<<"  cmpq $0, %rax\n  je .Lores_else_"<<tag<<"\n";
@@ -408,6 +453,8 @@ void verify(const Module& m) {
     if(total>kMaxNodes)throw std::runtime_error("callable AST node budget exceeded");
     if(fn.result<0||static_cast<std::size_t>(fn.result)!=fn.nodes.size()-1)
       throw std::runtime_error("invalid callable return/root");
+    if(boolean_kind(fn.nodes[static_cast<std::size_t>(fn.result)].kind))
+      throw std::runtime_error("callable int return cannot be Boolean");
     // This stage-0 AST must be an owned tree, not an arbitrary dataflow DAG.
     // Otherwise a node on an untaken if-branch could be reused without ever
     // initializing its stack slot. Enforce one reachable parent per child.
@@ -415,10 +462,10 @@ void verify(const Module& m) {
     for(std::size_t i=0;i<fn.nodes.size();++i) {
       const auto& n=fn.nodes[i];
       switch(n.kind) {
-        case Kind::Constant: case Kind::Parameter: case Kind::Add:
+        case Kind::Constant: case Kind::Boolean: case Kind::Parameter: case Kind::Add:
         case Kind::Sub: case Kind::Mul: case Kind::Less: case Kind::LessEqual:
         case Kind::Greater: case Kind::GreaterEqual: case Kind::Equal:
-        case Kind::NotEqual: case Kind::If: case Kind::Call: break;
+        case Kind::NotEqual: case Kind::If: case Kind::Ternary: case Kind::Call: break;
         default: throw std::runtime_error("unknown callable opcode");
       }
       if(n.kind!=Kind::Call && !n.name.empty())
@@ -430,10 +477,31 @@ void verify(const Module& m) {
           throw std::runtime_error("callable AST shared node");
       }
       std::size_t size=2;
-      if(n.kind==Kind::Constant||n.kind==Kind::Parameter)size=0;
-      else if(n.kind==Kind::If)size=3;
+      if(n.kind==Kind::Constant||n.kind==Kind::Boolean||n.kind==Kind::Parameter)size=0;
+      else if(n.kind==Kind::If||n.kind==Kind::Ternary)size=3;
       else if(n.kind==Kind::Call)size=n.children.size();
       if(n.children.size()!=size)throw std::runtime_error("callable operand arity mismatch");
+      if(n.kind==Kind::Boolean && n.value!=0 && n.value!=1)
+        throw std::runtime_error("invalid Boolean literal");
+      const auto child_boolean=[&](std::size_t pos) {
+        return boolean_kind(fn.nodes.at(static_cast<std::size_t>(n.children.at(pos))).kind);
+      };
+      if(n.kind==Kind::Ternary && !child_boolean(0))
+        throw std::runtime_error("condition_not_bool: ternary requires bool");
+      if(n.kind==Kind::If||n.kind==Kind::Ternary) {
+        if(child_boolean(1)||child_boolean(2))
+          throw std::runtime_error("conditional branch is not int");
+      }
+      if(n.kind==Kind::Add||n.kind==Kind::Sub||n.kind==Kind::Mul||
+         n.kind==Kind::Less||n.kind==Kind::LessEqual||n.kind==Kind::Greater||
+         n.kind==Kind::GreaterEqual||n.kind==Kind::Equal||n.kind==Kind::NotEqual) {
+        if(child_boolean(0)||child_boolean(1))
+          throw std::runtime_error("Boolean is not an int in the Forge callable subset");
+      }
+      if(n.kind==Kind::Call) {
+        for(std::size_t j=0;j<n.children.size();++j)
+          if(child_boolean(j)) throw std::runtime_error("Boolean is not an int argument");
+      }
       if(n.kind==Kind::Parameter && (n.value<0 ||
          static_cast<std::uint64_t>(n.value)>=fn.parameters.size()))
         throw std::runtime_error("invalid callable parameter");

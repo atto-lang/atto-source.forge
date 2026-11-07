@@ -67,6 +67,17 @@ if(BUILD_TESTING)
   target_include_directories(oresforge_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
   target_link_libraries(oresforge_tests PRIVATE oresforge_core)
   add_test(NAME oresforge_unit COMMAND oresforge_tests)
+  # Canonical Java/LLVM ternary contract: executed callable interpreter,
+  # explicit Boolean static checks and verifier mutation controls.
+  # Full-language ternary and actor/ownership lowering remain unimplemented.
+  add_executable(oresforge_ternary_contract verification/ternary_contract_test.cpp)
+  target_link_libraries(oresforge_ternary_contract PRIVATE oresforge_core)
+  add_test(NAME oresforge_ternary_contract_callable COMMAND oresforge_ternary_contract)
+  set_tests_properties(oresforge_ternary_contract_callable PROPERTIES TIMEOUT 20)
+  add_test(NAME oresforge_ternary_atto_guest
+    COMMAND oresforge run-calls "${CMAKE_CURRENT_SOURCE_DIR}/examples/ternary.atto" 0)
+  set_tests_properties(oresforge_ternary_atto_guest PROPERTIES
+    PASS_REGULAR_EXPRESSION "^42\\n?$" TIMEOUT 10)
   # This invokes the real Forge frontend on operator-positive and
   # operator-negative sources, including unreachable declarations.
   add_executable(oresforge_legacy_operator_grammar

@@ -1,0 +1,5 @@
+// Stage-0 typed Boolean ternary: runtime input, nested selection and checked math.
+// This is the opt-in `run-calls` profile; full AttoLang CFG support is separate.
+pub fnc main(n: int): int {
+  return n == 0 ? 42 : (n > 0 ? n + 5 : -(n * 2));
+}
