@@ -648,6 +648,20 @@ int main() {
       auto valid=calls::parse(
         "fnc pair(int a,int b):int{return a*10+b;}"
         "fnc main(n:int):int{return pair(b:2,a:n);}");
+      auto positional=calls::parse(
+        "fnc pair(a:int,b:int):int{return a*10+b;}"
+        "fnc main():int{return pair(4,2);}");
+      bool inspected_positional=false;
+      for(const auto& node:positional.functions.back().nodes) {
+        if(node.kind!=calls::Kind::Call)continue;
+        inspected_positional=true;
+        ensure(node.argument_labels.size()==2 &&
+                 node.argument_labels[0].empty() &&
+                 node.argument_labels[1].empty() &&
+                 node.argument_slots==std::vector<std::size_t>({0,1}),
+               "source positional call must carry complete explicit slots");
+      }
+      ensure(inspected_positional,"expected source positional call node");
       ensure(calls::interpret(valid,std::array<std::int64_t,1>{4})==42,
              "checked native named ABI order");
       ensure(calls::emit_asm(valid,Arch::X86_64).find("  call .Lores_fn_")!=

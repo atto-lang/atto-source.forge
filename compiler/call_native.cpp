@@ -190,7 +190,10 @@ class Parser {
     if (++node_count_>kMaxNodes || current_->nodes.size()>=kMaxNodesPerFunction)
       fail("callable AST node budget exceeded");
     const int idx=static_cast<int>(current_->nodes.size());
-    current_->nodes.push_back({kind,value,std::move(name),std::move(children),-1});
+    // Keep every aggregate member explicit. Missing-field-initializers
+    // becomes an error under strict compiler builds and can hide new IR state.
+    current_->nodes.push_back({kind,value,std::move(name),std::move(children),
+                               -1,{},{} });
     return idx;
   }
   void definition() {
@@ -207,7 +210,7 @@ class Parser {
     if (module_.functions.size()>=kMaxFunctions)fail("function count budget exceeded");
     const int index=static_cast<int>(module_.functions.size());
     names_[name]=index;
-    module_.functions.push_back({name,{},{}});
+    module_.functions.push_back({name,{},{},-1});
     current_=&module_.functions.back();
     local_names_.clear();
     expect("(");
