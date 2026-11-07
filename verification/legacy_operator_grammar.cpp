@@ -44,7 +44,7 @@ int main() {
            "no implicit bool-to-int conversion");
     reject("pub fnc hidden():int{return false;} pub fnc main():int{return 7;}",
            "no implicit bool-to-int conversion");
-    std::cout<<"FORGE_LEGACY_OPERATOR_GRAMMAR_PASS positive=4 negative=10\\n";
+    std::cout<<"FORGE_LEGACY_OPERATOR_GRAMMAR_PASS positive=4 negative=10\n";
     return 0;
   }catch(const std::exception& e){
     std::cerr<<"FORGE_LEGACY_OPERATOR_GRAMMAR_FAIL "<<e.what()<<"\n";
