@@ -27,6 +27,25 @@ CASES = (
 # Entire source programs exercising the PR #95 pure-function inliner.
 # The returned value is still *constant-folded* before emission.
 FUNCTION_CASES = (
+    ("named-reordered",
+     "fnc pair(int a,int b):int{return a*10+b;}"
+     " fnc main():int{return pair(b:2,a:4);}", "42"),
+    ("named-positional-prefix",
+     "fnc pair(int a,int b):int{return a*10+b;}"
+     " fnc main():int{return pair(4,b:2);}", "42"),
+    ("named-comment-separated-label",
+     "fnc pair(int a,int b):int{return a*10+b;}"
+     " fnc main():int{return pair(b /* label gap */ :2,a:4);}", "42"),
+    ("named-nested-call",
+     "fnc inc(int x):int{return x+1;}"
+     " fnc pair(int a,int b):int{return a*10+b;}"
+     " fnc main():int{return pair(b:inc(x:1),a:inc(x:3));}", "42"),
+    ("named-upper-case-exact",
+     "fnc pair(int A,int b):int{return A*10+b;}"
+     " fnc main():int{return pair(b:2,A:4);}", "42"),
+    ("named-legacy-formals",
+     "fnc pair(a:int,b:int):int{return a*10+b;}"
+     " fnc main():int{return pair(b:2,a:4);}", "42"),
     ("type-first-parameter-call",
      "fnc inc(int x):int{return x+1;}"
      " fnc main():int{return inc(41);}", "42"),
@@ -56,6 +75,31 @@ FUNCTION_CASES = (
      " fnc main():int{return twice(10)+twice(3);}", "26"),
 )
 FUNCTION_REJECTIONS = (
+    ("named-duplicate-label",
+     "fnc pair(int a,int b):int{return a*10+b;}"
+     " fnc main():int{return pair(a:4,a:2);}", "duplicate named argument"),
+    ("named-unknown-label",
+     "fnc pair(int a,int b):int{return a*10+b;}"
+     " fnc main():int{return pair(c:4,b:2);}", "unknown named argument: c"),
+    ("named-positional-after-named",
+     "fnc pair(int a,int b):int{return a*10+b;}"
+     " fnc main():int{return pair(b:2,4);}", "positional argument after named argument"),
+    ("named-positional-collision",
+     "fnc pair(int a,int b):int{return a*10+b;}"
+     " fnc main():int{return pair(4,a:2);}", "duplicate named argument"),
+    ("named-arity-missing",
+     "fnc pair(int a,int b):int{return a*10+b;}"
+     " fnc main():int{return pair(b:2);}", "function arity mismatch"),
+    ("named-arity-extra",
+     "fnc pair(int a,int b):int{return a*10+b;}"
+     " fnc main():int{return pair(a:4,b:2,c:0);}", "function arity mismatch"),
+    ("named-case-mismatch",
+     "fnc pair(int a,int b):int{return a*10+b;}"
+     " fnc main():int{return pair(A:4,b:2);}", "unknown named argument: A"),
+    ("named-unreachable-invalid-helper",
+     "fnc pair(int a,int b):int{return a*10+b;}"
+     " fnc unused():int{return pair(z:2,a:4);}"
+     " fnc main():int{return 42;}", "unknown named argument: z"),
     ("immutable-self-reference",
      "fnc main():int{int x=x;return x;}", "expected integer at byte"),
     ("inferred-const-self-reference",
@@ -158,6 +202,11 @@ def main():
             status, out, err = run([str(compiler), "run", str(source)], cwd=root)
             require((status, out, err) == (0, expected + "\n", ""),
                     "source interpreter mismatch in " + label)
+            if label == "named-reordered":
+                status, ir, err = run([str(compiler), "ir", str(source)], cwd=root)
+                require(status == 0 and err == "" and
+                        ir.startswith("%0 = const.i64 2\n%1 = const.i64 4\n"),
+                        "named arguments were evaluated in formal instead of source order")
             status, assembly, err = run([str(compiler), "emit-asm", arch, str(source)], cwd=root)
             require(status == 0 and err == "" and
                     assembly.startswith(".text\n.globl oresforge_entry\noresforge_entry:\n") and

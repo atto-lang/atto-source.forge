@@ -67,6 +67,14 @@ if(BUILD_TESTING)
   target_include_directories(oresforge_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
   target_link_libraries(oresforge_tests PRIVATE oresforge_core)
   add_test(NAME oresforge_unit COMMAND oresforge_tests)
+  # Exact-formal named scalar value calls; actual source remains evaluation order.
+  # Source compiler + IR + interpreter (native code emission is checked by
+  # oresforge_native_asm_executable on Linux x86-64/AArch64).
+  add_test(NAME oresforge_named_value_call_guest_42
+    COMMAND oresforge run
+      "${CMAKE_CURRENT_SOURCE_DIR}/contracts/atto-scalar-v1/positive/named-value-reordered.atto")
+  set_tests_properties(oresforge_named_value_call_guest_42 PROPERTIES
+    PASS_REGULAR_EXPRESSION "^42\\n?$" TIMEOUT 10)
   # Stage-0 single-file AttoLang path admission. Imports remain fail-closed in Forge.
   add_test(NAME oresforge_cli_atto_guest
     COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.atto")
