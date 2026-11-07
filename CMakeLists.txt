@@ -4,7 +4,7 @@ option(ORESFORGE_FUZZ "Build Clang libFuzzer target" OFF)
 add_library(oresforge_core STATIC compiler/frontend.cpp compiler/ir.cpp compiler/call_native.cpp codegen/native.cpp runtime/actor.cpp jit/tiered.cpp)
 target_include_directories(oresforge_core PUBLIC .)
 target_compile_features(oresforge_core PUBLIC cxx_std_20)
-# Actor-private native heap and logical frame arena from Forge #101 + #208.
+# Actor-private native heap and logical frame stack from Forge #101 + #207.
 # Keep the established current-main compiler, mailbox and tenant targets.
 find_package(Threads REQUIRED)
 add_library(oresforge_actor_arena STATIC runtime/arena/ActorArena.c)
@@ -37,14 +37,26 @@ if(BUILD_TESTING)
   add_executable(oresforge_scalar_heap_safety_tests verification/scalar_heap_safety.cpp)
   target_link_libraries(oresforge_scalar_heap_safety_tests PRIVATE oresforge_scalar_actor)
   add_test(NAME oresforge_scalar_heap_safety COMMAND oresforge_scalar_heap_safety_tests)
-  add_executable(oresforge_actor_frames_test verification/actor_frames_test.cpp)
-  target_link_libraries(oresforge_actor_frames_test PRIVATE oresforge_scalar_actor)
-  target_compile_features(oresforge_actor_frames_test PRIVATE cxx_std_20)
+  # Existing Forge #207 stack and callback tests: byte-identical blob reuse.
+  add_executable(oresforge_actor_frames_tests verification/actor_frames.cpp)
+  target_link_libraries(oresforge_actor_frames_tests PRIVATE Threads::Threads)
+  target_include_directories(oresforge_actor_frames_tests PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_actor_frames_tests PRIVATE cxx_std_20)
+  add_executable(oresforge_scalar_actor_frames_tests
+    verification/scalar_actor_frames.cpp)
+  target_link_libraries(oresforge_scalar_actor_frames_tests PRIVATE oresforge_scalar_actor)
+  target_compile_features(oresforge_scalar_actor_frames_tests PRIVATE cxx_std_20)
   if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(oresforge_actor_frames_test PRIVATE
-      -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+    foreach(actor_frames_test IN ITEMS
+        oresforge_actor_frames_tests oresforge_scalar_actor_frames_tests)
+      target_compile_options(${actor_frames_test} PRIVATE
+        -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+    endforeach()
   endif()
-  add_test(NAME oresforge_actor_owned_frame_arena_host COMMAND oresforge_actor_frames_test)
+  add_test(NAME oresforge_actor_private_frames_host COMMAND oresforge_actor_frames_tests)
+  add_test(NAME oresforge_actor_heap_frame_bridge_host
+    COMMAND oresforge_scalar_actor_frames_tests)
   # Preserve #101's zero-allocation turn instrumentation on supported linkers.
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     foreach(actor_test IN ITEMS
@@ -57,7 +69,8 @@ if(BUILD_TESTING)
   endif()
   set_tests_properties(oresforge_actor_arena_persistent_scratch
     oresforge_scalar_actor_heap_and_turns oresforge_scalar_heap_safety
-    oresforge_actor_owned_frame_arena_host PROPERTIES TIMEOUT 40)
+    oresforge_actor_private_frames_host
+    oresforge_actor_heap_frame_bridge_host PROPERTIES TIMEOUT 40)
   set(ORE_NUMERIC_I64_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated_numeric_i64_cases.hpp")
   add_custom_command(
     OUTPUT "${ORE_NUMERIC_I64_HEADER}"
