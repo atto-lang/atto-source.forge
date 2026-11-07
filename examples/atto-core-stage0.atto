@@ -1,0 +1,5 @@
+// AttoLang stage-0 freestanding-syntax scalar check.
+// No import is supported here; atto.core/numeric is a source snapshot only.
+// This fixture is parsed and interpreted by Forge's real scalar frontend.
+pub fnc twice(n:int):int { return n * 2; }
+pub fnc main():int { return twice(21); }

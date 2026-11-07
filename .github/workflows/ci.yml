@@ -55,6 +55,25 @@ jobs:
           if-no-files-found: ignore
       - name: Run regression tests
         run: ctest --test-dir build --output-on-failure
+      - name: Execute stage-0 AttoLang real scalar guest and negative import controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/check_atto_core_stage0_guest.sh ./build/oresforge "$PWD" | tee build/atto-forge-stage0.log
+          grep -F 'ATTO_FORGE_STAGE0_GUEST_EXECUTED|result=42|module_imports=UNSUPPORTED' build/atto-forge-stage0.log
+          echo "ATTO_FORGE_HEAD=$(git rev-parse HEAD) TREE=$(git rev-parse 'HEAD^{tree}')" > build/atto-forge-stage0-receipt.txt
+          for file in examples/atto-core-stage0.atto examples/atto-core-stage0-deny.atto; do
+            test "$(git hash-object "$file")" = "$(git rev-parse "HEAD:$file")"
+            git hash-object "$file" >> build/atto-forge-stage0-receipt.txt
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: atto-forge-stage0-source-bound-${{ matrix.compiler }}
+          path: |
+            build/atto-forge-stage0.log
+            build/atto-forge-stage0-receipt.txt
+          if-no-files-found: warn
       - name: Execute documented source fixture
         run: test "$(./build/oresforge run examples/hello.ores)" = "14"
 
