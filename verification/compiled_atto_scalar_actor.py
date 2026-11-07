@@ -17,6 +17,7 @@ CASES = (
     ("actor-counter.atto", 0, False, (5, 3, 9, 7, 10)),
     ("actor-subtract.atto", 20, True, (15, 17, 11, 13, 10)),
     ("actor-overflow.atto", 9223372036854775807, False, ()),
+    ("actor-underflow.atto", -9223372036854775808, True, ()),
 )
 DRIVER = r"""
 #include "runtime/scalar_actor.hpp"
@@ -46,7 +47,7 @@ int main() {
     CHECK(first.try_send(a, 2) == ScalarActor::Send::Closed);
     CHECK(first.run_one().status == ScalarActor::Turn::Stopped);
     CHECK(sibling.try_send(b, -1) == ScalarActor::Send::Accepted);
-    CHECK(sibling.run_one().value == std::numeric_limits<std::int64_t>::max()-1);
+    CHECK(sibling.run_one().value == EXPECT_OVERFLOW_SIBLING);
     sibling.stop();
     CHECK(sibling.done());
 #else
@@ -148,7 +149,9 @@ def main():
             generated = temp/"actor-generated.cpp"
             generated.write_text(native, encoding="ascii")
             values = list(results) + [0]*max(0, 5-len(results))
-            driver = DRIVER.replace("EXPECT_OVERFLOW", "1" if not results else "0")
+            driver = DRIVER.replace("EXPECT_OVERFLOW_SIBLING",
+                                    str(initial + 1 if subtraction else initial - 1))
+            driver = driver.replace("EXPECT_OVERFLOW", "1" if not results else "0")
             for i, v in enumerate(values[:5]):
                 driver = driver.replace("EXPECT_" + str(i), str(v))
             (temp/"driver.cpp").write_text(driver, encoding="ascii")
