@@ -667,6 +667,8 @@ int main() {
     reject([&] { verify(missing); });
     ensure(dump_ir(source("2+3*4")).find("mul.i64.checked")!=std::string::npos,"IR dump");
     ensure(emit_asm(source("2+3*4"),Arch::X86_64).find("movabs $14")!=std::string::npos,"x86_64 asm");
+    ensure(emit_asm(source("2+3*4"),Arch::X86_64).find(".note.GNU-stack")!=std::string::npos,
+           "native ELF scalar assembly declares non-executable stack");
     ensure(emit_asm(source("2+3*4"),Arch::ARM64).find("movz x0, #14")!=std::string::npos,"arm64 asm");
     reject([] { emit_asm(source("1/0"),Arch::X86_64); });
     reject_diagnostic([] { emit_asm(source("1"),static_cast<Arch>(99)); },

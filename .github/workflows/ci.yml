@@ -60,7 +60,7 @@ jobs:
         run: |
           set -euo pipefail
           bash scripts/check_atto_core_stage0_guest.sh ./build/oresforge "$PWD" "${{ matrix.compiler }}" | tee build/atto-forge-stage0.log
-          grep -F 'ATTO_FORGE_STAGE0_GUEST_EXECUTED|result=42|module_imports=UNSUPPORTED|native_asm=EMITTED|native_exec=EXECUTED|mutation_result=43' build/atto-forge-stage0.log
+          grep -F 'ATTO_FORGE_STAGE0_GUEST_EXECUTED|result=42|module_imports=UNSUPPORTED|native_asm=EMITTED|native_exec=EXECUTED|mutation_result=43|pie=YES|exec_stack=NO' build/atto-forge-stage0.log
           grep -E '^ATTO_FORGE_NATIVE_BINARY_SHA256=[0-9a-f]{64}
           echo "ATTO_FORGE_HEAD=$(git rev-parse HEAD) TREE=$(git rev-parse 'HEAD^{tree}')" > build/atto-forge-stage0-receipt.txt
           for file in examples/atto-core-stage0.atto examples/atto-core-stage0-deny.atto; do

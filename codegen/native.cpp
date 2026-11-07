@@ -27,6 +27,10 @@ std::string emit_asm(const Program& p,Arch arch) {
       out<<"  movk x0, #"<<((bits>>shift)&0xffffULL)<<", lsl #"<<shift<<"\n";
   }
   out<<"  ret\n";
+  // The native x86-64 scalar emitter targets GNU/ELF assembly. Without
+  // this note, a linked object can request an executable process stack.
+  if (arch==Arch::X86_64)
+    out<<".section .note.GNU-stack,\"\",@progbits\n";
   return out.str();
 }
 // Linux System V x86-64 and AAPCS64 integer-argument ABI only.

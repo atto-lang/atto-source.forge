@@ -21,3 +21,7 @@ This gate prevents semantic overclaiming while a future true Forge
 ## Native codegen execution hardening
 
 The original stage-0 gate only produced assembly. The revised gate assembles and links the **actual emitted x86-64 assembly** to a C++ harness, checks it returns 42, then changes the guest AttoLang source to return 43 and checks a distinct compiled native binary returns 43. It logs SHA-256 digests for original assembly and executable. This is a real linked native scalar guest once CI executes, not freestanding, import graph or full AttoLang runtime parity. CTest passes the configured C++ compiler; the CI GCC/Clang matrix uses matching toolchains.
+
+## ELF stack and position-independent native proof
+
+The GNU/ELF x86-64 scalar emitter now emits `.note.GNU-stack` so its object does not request an executable stack. The independent integration test links the actual guest assembly with `-fPIE -pie`, uses `readelf` to require ELF type DYN and a non-executable `GNU_STACK`, and still executes results 42 and 43 from separate source programs. This gate is registered only on Linux x86-64; other architectures/host ABIs are not certified. A zero-step hosted CI run is not evidence that this test executed.

@@ -78,10 +78,12 @@ if(BUILD_TESTING)
   # Real Forge parser/interpreter execution and native assembly emission from
   # a canonical .atto source, with direct Core/Alloc/Std imports still rejected.
   # This is stage-0 scalar evidence, NOT atto.core module-graph parity.
-  add_test(NAME oresforge_atto_stage0_core_boundary
-    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_atto_core_stage0_guest.sh"
-      "$<TARGET_FILE:oresforge>" "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CXX_COMPILER}")
-  set_tests_properties(oresforge_atto_stage0_core_boundary PROPERTIES TIMEOUT 15)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
+    add_test(NAME oresforge_atto_stage0_core_boundary
+      COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_atto_core_stage0_guest.sh"
+        "$<TARGET_FILE:oresforge>" "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CXX_COMPILER}")
+    set_tests_properties(oresforge_atto_stage0_core_boundary PROPERTIES TIMEOUT 15)
+  endif()
   # Stage-0 single-file AttoLang path admission. Imports remain fail-closed in Forge.
   add_test(NAME oresforge_cli_atto_guest
     COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.atto")

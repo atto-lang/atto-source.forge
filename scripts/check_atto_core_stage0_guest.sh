@@ -20,8 +20,17 @@ test -s "$tmp/core.ll"
 "$compiler" emit-asm x86_64 "$root/examples/atto-core-stage0.atto" > "$tmp/core.s"
 test -s "$tmp/core.s"
 "$cxx" -x assembler -c "$tmp/core.s" -o "$tmp/core.o"
-"$cxx" -std=c++20 -O2 -fno-pie -no-pie "$root/verification/atto_core_stage0_native_harness.cpp" \
+"$cxx" -std=c++20 -O2 -fPIE -pie "$root/verification/atto_core_stage0_native_harness.cpp" \
   "$tmp/core.o" -o "$tmp/native-guest"
+command -v readelf >/dev/null || { echo 'readelf required for ELF stack audit' >&2; exit 1; }
+readelf -W -l "$tmp/native-guest" > "$tmp/elf-headers"
+grep -E '^  *GNU_STACK ' "$tmp/elf-headers" >/dev/null
+awk '$1 == "GNU_STACK" { found=1; if ($7 ~ /E/) executable=1 } END { exit (!found || executable) }' "$tmp/elf-headers" || {
+  echo 'native binary has executable stack or lacks GNU_STACK' >&2; exit 1
+}
+readelf -W -h "$tmp/native-guest" | grep -E 'Type: *DYN ' >/dev/null || {
+  echo 'native ELF is not a PIE executable' >&2; exit 1
+}
 native_answer="$("$tmp/native-guest")"
 test "$native_answer" = 'ATTO_FORGE_NATIVE_GUEST=42' || {
   echo "Forge native generated assembly returned unexpected value: $native_answer" >&2
@@ -31,7 +40,7 @@ test "$native_answer" = 'ATTO_FORGE_NATIVE_GUEST=42' || {
 printf 'pub fnc main():int{return 43;}\n' > "$tmp/mutated.atto"
 "$compiler" emit-asm x86_64 "$tmp/mutated.atto" > "$tmp/mutated.s"
 "$cxx" -x assembler -c "$tmp/mutated.s" -o "$tmp/mutated.o"
-"$cxx" -std=c++20 -O2 -fno-pie -no-pie "$root/verification/atto_core_stage0_native_harness.cpp" \
+"$cxx" -std=c++20 -O2 -fPIE -pie "$root/verification/atto_core_stage0_native_harness.cpp" \
   "$tmp/mutated.o" -o "$tmp/mutated-guest"
 test "$("$tmp/mutated-guest")" = 'ATTO_FORGE_NATIVE_GUEST=43' || {
   echo 'source mutation did not propagate through native codegen and execution' >&2; exit 1
@@ -53,4 +62,4 @@ for namespace in atto.alloc atto.std atto.runtime.actor; do
 done
 printf 'ATTO_FORGE_NATIVE_ASM_SHA256=%s\n' "$(sha256sum "$tmp/core.s" | cut -d' ' -f1)"
 printf 'ATTO_FORGE_NATIVE_BINARY_SHA256=%s\n' "$(sha256sum "$tmp/native-guest" | cut -d' ' -f1)"
-echo 'ATTO_FORGE_STAGE0_GUEST_EXECUTED|result=42|module_imports=UNSUPPORTED|native_asm=EMITTED|native_exec=EXECUTED|mutation_result=43'
+echo 'ATTO_FORGE_STAGE0_GUEST_EXECUTED|result=42|module_imports=UNSUPPORTED|native_asm=EMITTED|native_exec=EXECUTED|mutation_result=43|pie=YES|exec_stack=NO'
