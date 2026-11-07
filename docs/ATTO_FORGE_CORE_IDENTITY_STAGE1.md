@@ -147,3 +147,13 @@ now uses the shared commands. This does **not** yet make the legacy
 scalar `run` pipeline a general-purpose AttoLang module linker.
 The real compiler-backed regression gates remain unexecuted while
 hosted runners cannot allocate.
+
+## CI exact 30k differential receipt admission
+
+The GCC and Clang source-owned workflow independently requires
+the three distinct 10,000-case differential success lines with
+their pinned i64 checksums (min/max/clamp), plus three native
+ELF SHA-256 lines. The script, CTest job, and workflow all
+fail if any expected operation or digest witness is absent.
+This is a **required future hosted execution gate**; until
+nonzero job steps are observed it remains unexecuted.

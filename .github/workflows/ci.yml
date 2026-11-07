@@ -108,6 +108,15 @@ jobs:
           grep -F 'ATTO_FORGE_STAGE2_NUMERIC_EXECUTED|result=42|mutation_result=43|canonical_resource=YES|native_harness=HOSTED|guest_imports=NOT_VERIFIED|pie=YES|exec_stack=NO' build/atto-core-numeric-stage2.log
           grep -E '^ATTO_FORGE_STAGE2_NATIVE_BINARY_SHA256=[0-9a-f]{64}$' build/atto-core-numeric-stage2.log
           grep -E '^ATTO_FORGE_STAGE2_COMPILER_SHA256=[0-9a-f]{64}$' build/atto-core-numeric-stage2.log
+          for pair in \
+            'min:a52c659779088c2b' \
+            'max:bb3870b3c10fd615' \
+            'clamp:e71b3e7766936548'; do
+            mode="${pair%%:*}"
+            checksum="${pair#*:}"
+            grep -Fx "ATTO_FORGE_NUMERIC_DIFFERENTIAL_EXECUTED|mode=$mode|cases=10000|checksum=$checksum|native=YES|hosted_harness=YES" build/atto-core-numeric-stage2.log
+            grep -E "^ATTO_FORGE_NUMERIC_DIFF_ELF_SHA256\\|mode=$mode\\|sha256=[0-9a-f]{64}$" build/atto-core-numeric-stage2.log
+          done
           {
             echo "head=$(git rev-parse HEAD)"
             echo "tree=$(git rev-parse 'HEAD^{tree}')"
