@@ -59,7 +59,7 @@ int main() {
   auto eb = b.begin(actorB);
   auto fb = b.push(actorB, eb, 32);
   b.frame_write(actorB, eb, fb, 0, std::array<std::uint8_t,1>{77});
-  auto suspended = b.suspend(actorB, eb);
+  [[maybe_unused]] auto suspended = b.suspend(actorB, eb);
   require(b.depth()==1, "suspend must preserve logical frame");
   denied([&]{ b.frame_read(actorB, eb, fb, 0, output); },
          "suspended actor frame was dereferenced");
@@ -96,7 +96,7 @@ int main() {
   const auto actorD = mailboxD.ref();
   ActorIncarnationMemoryV1 d(mailboxD, actorD, 128, 48, 2, 2);
   auto ed = d.begin(actorD);
-  auto hd = d.push(actorD, ed, 32);
+  [[maybe_unused]] auto hd = d.push(actorD, ed, 32);
   denied([&]{ d.push(actorD, ed, 17); },
          "stack byte quota did not fail closed");
   require(d.poisoned(), "stack byte quota did not poison actor");
