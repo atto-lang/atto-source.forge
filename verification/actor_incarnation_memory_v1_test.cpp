@@ -102,7 +102,26 @@ int main() {
   require(d.poisoned(), "stack byte quota did not poison actor");
 
   // The mailbox generation fence, not a matching numeric actor ID, is authority.
-  mailboxB.close();
+  // Deterministic restart/close linearization: an issued memory operation
+  // holds mailbox generation authority until its guarded scope ends.
+  std::atomic<bool> closeStarted{false};
+  std::atomic<bool> closeFinished{false};
+  bool closedBeforeLeaseExit = false;
+  std::thread closeWorker;
+  {
+    auto lease = mailboxB.lock_authorized(actorB, actorB);
+    closeWorker = std::thread([&] {
+      closeStarted.store(true, std::memory_order_release);
+      mailboxB.close();
+      closeFinished.store(true, std::memory_order_release);
+    });
+    while (!closeStarted.load(std::memory_order_acquire))
+      std::this_thread::yield();
+    closedBeforeLeaseExit = closeFinished.load(std::memory_order_acquire);
+  }
+  closeWorker.join();
+  require(!closedBeforeLeaseExit && closeFinished.load(std::memory_order_acquire),
+          "STOP must wait for the issued mailbox-generation byte-operation lease");
   denied([&]{ b.heap_read(actorB, hb, 0, output); },
          "closed actor incarnation retained heap read authority");
   const auto restarted = mailboxB.restart();
