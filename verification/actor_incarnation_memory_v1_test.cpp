@@ -55,6 +55,8 @@ int main() {
           "one actor frame fault poisoned its healthy sibling");
   denied([&]{ a.frame_read(actorA, ea, innerA, 0, output); },
          "poisoned actor A read old stack bytes");
+  denied([&]{ a.heap_read(actorA, ha2, 0, output); },
+         "a terminal actor frame fault left heap operations runnable");
 
   auto eb = b.begin(actorB);
   auto fb = b.push(actorB, eb, 32);
@@ -100,6 +102,60 @@ int main() {
   denied([&]{ d.push(actorD, ed, 17); },
          "stack byte quota did not fail closed");
   require(d.poisoned(), "stack byte quota did not poison actor");
+
+  // A host without a parked-actor scheduler must fail closed if a suspended
+  // logical stack escapes a handler. It cannot admit a second actor turn.
+  Mailbox mailboxE(9105);
+  const auto actorE = mailboxE.ref();
+  ActorIncarnationMemoryV1 e(mailboxE, actorE, 128, 48, 2, 2);
+  auto ee = e.begin(actorE);
+  [[maybe_unused]] auto fe = e.push(actorE, ee, 8);
+  [[maybe_unused]] auto ce = e.suspend(actorE, ee);
+  denied([&]{ e.verify_handler_exit(actorE); },
+         "suspended Forge actor escaped its synchronous handler");
+  require(e.poisoned(), "unsupported handler suspension must poison actor");
+  denied([&]{ e.begin(actorE); },
+         "suspended escape allowed the next message to start");
+
+  // Process and runtime quotas are charged before native allocation. A
+  // failed second admission must roll back its process reservation exactly.
+  ActorMemoryAggregateBudgetV1 scopedBudget(176);
+  Mailbox budgetMailboxA(9106), budgetMailboxB(9107);
+  const auto budgetActorA = budgetMailboxA.ref();
+  const auto budgetActorB = budgetMailboxB.ref();
+  auto& processBudget = ActorMemoryAggregateBudgetV1::process();
+  const std::size_t baseline = processBudget.reserved();
+  {
+    ActorIncarnationMemoryV1 admitted(
+        budgetMailboxA, budgetActorA, 128, 48, 2, 2, scopedBudget);
+    require(scopedBudget.reserved() == 176 &&
+            processBudget.reserved() == baseline + 176,
+            "actor admission must charge runtime and process budgets");
+    bool quotaRejected = false;
+    try {
+      ActorIncarnationMemoryV1 deniedActor(
+          budgetMailboxB, budgetActorB, 128, 48, 2, 2, scopedBudget);
+    } catch (const std::length_error&) { quotaRejected = true; }
+    require(quotaRejected, "concurrent actors exceeded aggregate native quota");
+    require(scopedBudget.reserved() == 176 &&
+            processBudget.reserved() == baseline + 176,
+            "failed actor construction leaked aggregate native credits");
+    admitted.retire();
+    admitted.retire();
+    require(scopedBudget.reserved() == 0 &&
+            processBudget.reserved() == baseline,
+            "native retirement must refund both budgets exactly once");
+  }
+  {
+    ActorIncarnationMemoryV1 successorAfterRefund(
+        budgetMailboxB, budgetActorB, 128, 48, 2, 2, scopedBudget);
+    require(scopedBudget.reserved() == 176 &&
+            processBudget.reserved() == baseline + 176,
+            "actor admission failed after native quota refund");
+  }
+  require(scopedBudget.reserved() == 0 &&
+          processBudget.reserved() == baseline,
+          "destructor must refund quota for unretired actor memory");
 
   // The mailbox generation fence, not a matching numeric actor ID, is authority.
   // Deterministic restart/close linearization: an issued memory operation
