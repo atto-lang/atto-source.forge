@@ -104,7 +104,7 @@ def main():
                ("-9223372036854775808-1","i64 sub overflow"),
                ("3037000500*3037000500","i64 mul overflow"))
     with tempfile.TemporaryDirectory(prefix="oresforge-source-i64-") as td:
-        source=Path(td)/"probe.ores"
+        source=Path(td)/"probe.atto"
         for case in cases:
             program="pub fnc main():int{return "+case["expression"]+";}\n"
             source.write_text(program,encoding="utf-8")

@@ -19,17 +19,17 @@ def main() -> int:
         raise SystemExit("usage: cli_source_budget.py <oresforge>")
     executable = str(Path(sys.argv[1]).resolve())
     with tempfile.TemporaryDirectory(prefix="oresforge-budget-") as temp:
-        good = Path(temp) / "good.ores"
+        good = Path(temp) / "good.atto"
         good.write_text("define pub fnc main() : int { return 2+3*4; }")
         control = run(executable, good)
         if control.returncode != 0 or "ret %" not in control.stdout:
             raise SystemExit("FAIL: executable did not compile a valid control")
         if os.name == "posix":
-            fifo = Path(temp) / "unwritten-fifo.ores"
+            fifo = Path(temp) / "unwritten-fifo.atto"
             os.mkfifo(fifo)
-            linked_fifo = Path(temp) / "fifo-link.ores"
+            linked_fifo = Path(temp) / "fifo-link.atto"
             linked_fifo.symlink_to(fifo)
-            linked_good = Path(temp) / "regular-link.ores"
+            linked_good = Path(temp) / "regular-link.atto"
             linked_good.symlink_to(good)
             for flags in (["run"], ["ir"], ["emit-asm", "x86_64"]):
                 for special in (fifo, linked_fifo, Path(temp), type(good)("/dev/zero")):
@@ -51,12 +51,12 @@ def main() -> int:
             if failed.returncode == 0:
                 raise SystemExit("FAIL: unwritable stdout reported success")
         # Exactly the source-byte limit must reach parsing, not fail admission.
-        exact = Path(temp) / "exact-limit.ores"
+        exact = Path(temp) / "exact-limit.atto"
         exact.write_bytes(b" " * (1024 * 1024))
         at_limit = run(executable, exact)
         if "source exceeds 1 MiB bootstrap limit" in at_limit.stderr:
             raise SystemExit("FAIL: exact 1 MiB source rejected by byte budget")
-        bad = Path(temp) / "too-large.ores"
+        bad = Path(temp) / "too-large.atto"
         bad.write_bytes(b" " * (1024 * 1024 + 1))
         rejected = run(executable, bad)
         if rejected.returncode == 0 or rejected.stdout:
@@ -71,7 +71,7 @@ def main() -> int:
             ("stray-continuation", b"// " + bytes([0x80]), "not valid UTF-8"),
             ("nul", b"// " + bytes([0x00]), "contains NUL byte"),
         ):
-            bad_encoding = Path(temp) / (label + ".ores")
+            bad_encoding = Path(temp) / (label + ".atto")
             bad_encoding.write_bytes(payload)
             invalid = run(executable, bad_encoding)
             if invalid.returncode == 0 or invalid.stdout:

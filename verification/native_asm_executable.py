@@ -27,6 +27,19 @@ CASES = (
 # Entire source programs exercising the PR #95 pure-function inliner.
 # The returned value is still *constant-folded* before emission.
 FUNCTION_CASES = (
+    ("type-first-parameter-call",
+     "fnc inc(int x):int{return x+1;}"
+     " fnc main():int{return inc(41);}", "42"),
+    ("mixed-parameter-spellings",
+     "fnc add(int x,y:int):int{return x+y;}"
+     " fnc main():int{return add(40,2);}", "42"),
+    ("immutable-type-first-chain",
+     "fnc main():int{int x=7;const int y=x+2;return y*3;}", "27"),
+    ("immutable-inferred-const",
+     "fnc main():int{const x=7;const y=x+2;return y*3;}", "27"),
+    ("immutable-helper-initializer",
+     "fnc add(x:int):int{return x+1;}"
+     " fnc main():int{int value=add(6);return value*3;}", "21"),
     ("forward-two-calls",
      "define pub fnc main():int{return square(3)+plus(4,5);}"
      " fnc square(x:int):int{return x*x;}"
@@ -43,9 +56,26 @@ FUNCTION_CASES = (
      " fnc main():int{return twice(10)+twice(3);}", "26"),
 )
 FUNCTION_REJECTIONS = (
+    ("immutable-self-reference",
+     "fnc main():int{int x=x;return x;}", "expected integer at byte"),
+    ("inferred-const-self-reference",
+     "fnc main():int{const x=x;return x;}", "expected integer at byte"),
+    ("immutable-reassignment",
+     "fnc main():int{const int x=1;x=2;return x;}",
+     "immutable local reassignment is forbidden"),
+    ("immutable-duplicate",
+     "fnc main():int{int x=1;int x=2;return x;}",
+     "invalid or duplicate immutable local"),
+    ("immutable-eager-overflow",
+     "fnc main():int{const unused=9223372036854775807+1;return 42;}",
+     "i64 add overflow"),
     ("direct-recursion",
      "fnc main():int{return recur(1);}"
      " fnc recur(x:int):int{return recur(x);}", "recursive calls not supported"),
+    ("type-first-param-duplicate",
+     "fnc add(int x,int x):int{return x;}"
+     " fnc main():int{return add(40,2);}",
+     "invalid or duplicate parameter"),
     ("arity-mismatch",
      "fnc main():int{return inc(1,2);}"
      " fnc inc(x:int):int{return x+1;}", "function arity mismatch"),
@@ -116,7 +146,7 @@ def main():
         root = Path(tmp)
         driver = root / "driver.c"
         driver.write_text(DRIVER, encoding="ascii")
-        source = root / "source.ores"
+        source = root / "source.atto"
         asm = root / "entry.s"
         executable = root / "native-test"
         all_cases = [

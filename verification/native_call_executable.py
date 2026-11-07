@@ -14,7 +14,20 @@ import subprocess
 import sys
 import tempfile
 
+# Exercise the full admitted local budget with real ABI-dependent values
+# and previous-local references. This catches a native frame-slot collision
+# or incorrectly scoped initializer that isolated single-local tests miss.
+BOUNDARY_32 = ("fnc main(n:int):int{" +
+               "int v0=n;" +
+               "".join("const v%d=v%d+1;" % (i, i-1) for i in range(1,32)) +
+               "return v31;}")
+BOUNDARY_33 = ("fnc main(n:int):int{" +
+               "".join("int v%d=n;" % i for i in range(33)) +
+               "return v32;}")
+
 POSITIVE = (
+    ("immutable-32-local-boundary", BOUNDARY_32,
+     ((0,31),(-31,0),(9223372036854775776,9223372036854775807))),
     ("factorial", "fnc fact(n:int):int{return if n<=1 then 1 else n*fact(n-1);}"
      " fnc main(n:int):int{return fact(n);}",
      ((0,1),(1,1),(5,120),(10,3628800),(20,2432902008176640000))),
@@ -34,6 +47,16 @@ POSITIVE = (
     ("signed-comparisons", "fnc main(a:int,b:int):int{return if a<b then 1 else if a>=b then 2 else 3;}",
      ((-9223372036854775808,9223372036854775807,1),(2,2,2),(10,2,2))),
     ("no-args", "fnc main():int{return 42;}", ((42,),)),
+    ("immutable-helper-bindings",
+     "fnc twice(n:int):int{const value=n+1;return value*2;}"
+     "fnc main(n:int):int{int result=twice(n);const answer=result+1;return answer;}",
+     ((0,3),(7,17),(20,43),(-2,-1))),
+    ("immutable-lazy-scope",
+     "fnc main(n:int):int{const value=n+1;return if value>0 then value else -value;}",
+     ((-3,2),(-1,0),(5,6))),
+    ("immutable-explicit-type",
+     "fnc main(n:int):int{const int v=n+2;return v*3;}",
+     ((-2,0),(0,6),(5,21))),
 )
 TRAPS = (
     ("overflow-add", "fnc plus(n:int):int{return n+1;}"
@@ -44,6 +67,11 @@ TRAPS = (
      (9223372036854775807,), "i64 mul overflow"),
     ("overflow-sub", "fnc main(n:int):int{return n-1;}",
      (-9223372036854775808,), "i64 sub overflow"),
+    ("immutable-unused-eager-overflow",
+     "fnc main(n:int):int{const unused=n+1;return 42;}",
+     (9223372036854775807,), "i64 add overflow"),
+    ("immutable-chain-overflow", BOUNDARY_32,
+     (9223372036854775807,), "i64 add overflow"),
     ("unbounded-recursion", "fnc always(n:int):int{return always(n);}"
      " fnc main(n:int):int{return always(n);}",
      (1,), "call depth exceeded"),
@@ -55,6 +83,22 @@ INVALID = (
     ("duplicate-name", "fnc f():int{return 1;} fnc f():int{return 2;} fnc main():int{return 1;}", "duplicate function"),
     ("unknown-param", "fnc main():int{return oops;}", "unknown parameter"),
     ("unsupported-loop", "fnc main():int{return while 1 then 2;}", "unknown parameter"),
+    ("immutable-self-reference",
+     "fnc main():int{int x=x;return x;}", "unknown parameter"),
+    ("immutable-duplicate",
+     "fnc main():int{int x=1;const x=2;return x;}",
+     "invalid or duplicate immutable local"),
+    ("immutable-reassignment",
+     "fnc main():int{int x=1;x=2;return x;}",
+     "immutable local reassignment is forbidden"),
+    ("immutable-forward-reference",
+     "fnc main():int{int x=y;int y=1;return x;}",
+     "unknown parameter"),
+    ("immutable-param-shadow",
+     "fnc main(n:int):int{int n=1;return n;}",
+     "invalid or duplicate immutable local"),
+    ("immutable-33-local-budget", BOUNDARY_33,
+     "immutable local budget exceeded"),
 )
 DRIVER = r"""#include <errno.h>
 #include <inttypes.h>
@@ -91,7 +135,7 @@ def require(value,message):
     if not value:raise RuntimeError(message)
 
 def build(compiler,cc,root,label,source,param_count):
-    file=root/"entry.ores"
+    file=root/"entry.atto"
     file.write_text(source+"\n",encoding="utf8")
     emit=execute([compiler,"emit-call-asm","x86_64",str(file)],root)
     require(emit.returncode==0 and not emit.stderr,
@@ -127,7 +171,7 @@ def main():
         for label,source,cases in POSITIVE:
             number=len(cases[0])-1
             file,exe,asm=build(compiler,cc,root,label,source,number)
-            if label in ("factorial","fibonacci","mutual","nested"):
+            if label in ("factorial","fibonacci","mutual","nested","immutable-helper-bindings"):
                 require(asm.count("  call .Lores_fn_")>=1,"missing real native call "+label)
             if label in ("factorial","lazy"):
                 require("  je .Lores_else_" in asm,"missing native lazy branch "+label)
@@ -151,7 +195,7 @@ def main():
                     "native overflow/depth failed to trap "+label+": "+str(native.returncode))
             negatives+=1
         for label,source,diagnostic in INVALID:
-            file=root/"bad.ores"
+            file=root/"bad.atto"
             file.write_text(source+"\n",encoding="utf8")
             for command in ((compiler,"run-calls",str(file)),(compiler,"emit-call-asm","x86_64",str(file))):
                 failure=execute(command,root)
@@ -159,7 +203,7 @@ def main():
                         diagnostic.encode() in failure.stderr,
                         "semantic invalid case admitted or leaked output "+label)
             negatives+=1
-        file=root/"unsupported.ores"
+        file=root/"unsupported.atto"
         file.write_text("fnc main():int{return 42;}\n",encoding="ascii")
         unsupported=execute([compiler,"emit-call-asm","arm64",str(file)],root)
         require(unsupported.returncode==1 and unsupported.stdout==b"" and

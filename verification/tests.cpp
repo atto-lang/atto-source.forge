@@ -86,10 +86,274 @@ int main() {
     ensure(interpret(parse_source(
       "fnc main():int{return 42;} // define virtual actor Spoof"))==42,
       "declaration head inside a comment is not executable source");
+    // Forge must not claim Java/LLVM/.NET scalar macro parity by accepting
+    // syntax with missing typed AST provenance or runtime expansion.
+    for (std::string_view source_text : {
+      "define macro identity(Syntax<Expr> value) -> Syntax<Expr> { return value; } fnc main():int{return 42;}",
+      "define pub macro literal(Const<int> value) -> Syntax<Expr> { return quote(value); } fnc main():int{return 42;}",
+      "pub define macro twice(Syntax<Expr> value) -> Syntax<Expr> { return quote(unquote(value) + unquote(value)); } fnc main():int{return 42;}"
+    }) {
+      reject_diagnostic([&] { (void)parse_source(source_text); },
+                        "FORGE_MACRO_EXPANDER_REQUIRED");
+      reject_diagnostic([&] { (void)parse_runtime_source(source_text); },
+                        "FORGE_MACRO_EXPANDER_REQUIRED");
+      reject_diagnostic([&] { (void)oresforge::calls::parse(source_text); },
+                        "FORGE_MACRO_EXPANDER_REQUIRED");
+    }
+    for (std::string_view source_text : {
+      "fnc main():int{return identity!(syntax expr 42);}",
+      "fnc main():int{return literal!(const 42);}",
+      "fnc main():int{return missing!(syntax expr 42);}"
+    }) {
+      reject_diagnostic([&] { (void)parse_source(source_text); },
+                        "FORGE_MACRO_EXPANDER_REQUIRED");
+      reject_diagnostic([&] { (void)parse_runtime_source(source_text); },
+                        "FORGE_MACRO_EXPANDER_REQUIRED");
+      reject_diagnostic([&] { (void)oresforge::calls::parse(source_text); },
+                        "FORGE_MACRO_EXPANDER_REQUIRED");
+    }
+    ensure(interpret(parse_source(
+      "fnc main():int{return 42;} /* define macro identity(Syntax<Expr> x) */"))==42,
+      "macro-like comment text must not trigger capability denial");
     // Cross-backend i64 positive controls run against the real Forge parser,
     // verified IR and checked interpreter. These are not Python-only data tests.
     for (const auto& [expression, expected] : kPortableNumericalCases) {
       ensure(interpret(source(expression))==expected,"numeric parity i64 source");
+    }
+    // Real compiler/IR/interpreter immutable-by-default i64 local slice.
+    // No aliasing or implicit conversion; each initializer is evaluated once.
+    for (const auto& [program,expected] : std::vector<std::pair<std::string,std::int64_t>>{
+      {"fnc main():int{int x=7;return x;}",7},
+      {"fnc main():int{const int x=7;return x;}",7},
+      {"fnc main():int{const x=7;return x;}",7},
+      {"fnc main():int{int x=5;const y=x+3;return y*2;}",16},
+      {"fnc main():int{int x=7;const int y=x+2;return y*3;}",27},
+      {"fnc add(x:int):int{int z=x+1;return z;} fnc main():int{return add(41);}",42},
+      {"fnc add(x:int):int{return x+1;} fnc main():int{int z=add(6);return z*3;}",21},
+      {"fnc unused():int{const int x=2;return x;} fnc main():int{return 11;}",11},
+      {"fnc main():int{int x=-9223372036854775808;return x;}",
+       std::numeric_limits<std::int64_t>::min()}
+    }) {
+      ensure(interpret(parse_source(program))==expected,
+             "immutable type-first source interpreter");
+    }
+    {
+      const auto program=parse_runtime_source(
+        "fnc main(n:int):int{int x=n+2;const y=x*3;return y;}");
+      const std::array<std::int64_t,1> args{7};
+      ensure(interpret(program,args)==27,"runtime-parameter immutable local");
+    }
+    for (const char* invalid : {
+      "fnc main():int{int x=x;return x;}",
+      "fnc main():int{const x=x;return x;}",
+      "fnc main():int{const x=1;const x=2;return x;}",
+      "fnc main():int{const x;return x;}",
+      "fnc main():int{const x=1;x=2;return x;}",
+      "fnc main():int{int x=y;int y=2;return x;}",
+      "fnc main():int{int x=1;int x=2;return x;}",
+      "fnc main(x:int):int{int x=2;return x;}",
+      "fnc main():int{int x;return x;}",
+      "fnc main():int{int x=1; x=2;return x;}",
+      "fnc main():int{const int x=1; x=2;return x;}",
+      "fnc main():int{int x=1;return x=2;}",
+      "fnc main():int{int x=1.5;return x;}",
+      "fnc main():int{int x=true;return x;}",
+      "fnc main():int{int x=1;return missing;}",
+      "fnc unused():int{int x=missing;return x;} fnc main():int{return 1;}",
+      "fnc main():int{let x=1;return x;}",
+      "fnc main():int{bool x=true;return x;}",
+      "fnc main():int{int x=1;int y=2;return x+y; return 0;}"
+    }) {
+      reject([&] { (void)parse_source(invalid); });
+    }
+    reject_diagnostic([] {
+      parse_source("fnc main():int{int x=1;int x=2;return x;}");
+    }, "invalid or duplicate immutable local");
+    reject_diagnostic([] {
+      parse_source("fnc main():int{int x=x;return x;}");
+    }, "expected integer at byte");
+    reject_diagnostic([] {
+      parse_source("fnc main():int{int x=1; x=2;return x;}");
+    }, "immutable local reassignment is forbidden");
+    reject_diagnostic([] {
+      (void)interpret(parse_source(
+        "fnc main():int{int x=9223372036854775807;return x+1;}"));
+    }, "i64 add overflow");
+    // The configured local budget must reject an extra binding before IR.
+    {
+      std::string maximum="fnc main():int{";
+      for (int i=0;i<32;++i)
+        maximum+="int v"+std::to_string(i)+"="+std::to_string(i)+";";
+      maximum+="return v31;}";
+      ensure(interpret(parse_source(maximum))==31,
+             "32 immutable locals are admitted");
+      reject_diagnostic([&] {
+        std::string excess="fnc main():int{";
+        for (int i=0;i<33;++i)
+          excess+="const v"+std::to_string(i)+"="+std::to_string(i)+";";
+        excess+="return 1;}";
+        (void)parse_source(excess);
+      }, "immutable local budget exceeded");
+    }
+    reject_diagnostic([] {
+      (void)interpret(parse_source(
+        "fnc main():int{const unused=9223372036854775807+1;return 42;}"));
+    }, "i64 add overflow");
+    reject_diagnostic([] {
+      (void)parse_source("fnc main():int{const x=unknown(1);return 42;}");
+    }, "unknown function");
+    // Independent native-call parser, interpreter and native stack-slot ABI:
+    // all three source forms must be positive checked-i64 operations.
+    for(const auto* positive : {
+      "fnc main():int{int x=1;return x;}",
+      "fnc main():int{const int x=1;return x;}",
+      "fnc main():int{const x=1;return x;}"
+    }) ensure(calls::interpret(calls::parse(positive),{})==1,
+              "native-call immutable local admission");
+    {
+      auto bound=calls::parse(
+        "fnc twice(n:int):int{const v=n+1;return v*2;}"
+        "fnc main(n:int):int{int result=twice(n);const answer=result+1;return answer;}");
+      for(const auto& [input,expected] :
+          std::vector<std::pair<std::int64_t,std::int64_t>>{
+            {0,3},{7,17},{20,43},{-2,-1}}) {
+        ensure(calls::interpret(bound,std::array<std::int64_t,1>{input})==expected,
+               "native-call helper-local value parity");
+      }
+      ensure(calls::emit_asm(bound,Arch::X86_64).find("  call .Lores_fn_")!=
+             std::string::npos,"native-call local linked through real call");
+      auto lazy=calls::parse(
+        "fnc main(n:int):int{const x=n+1;return if x>0 then x else -x;}");
+      ensure(calls::interpret(lazy,std::array<std::int64_t,1>{-3})==2,
+             "native-call locals inside lazy conditional");
+      ensure(calls::interpret(lazy,std::array<std::int64_t,1>{5})==6,
+             "native-call locals in positive branch");
+      auto invalid_scope=calls::parse("fnc main():int{int x=1;return x;}");
+      for(auto& node : invalid_scope.functions[0].nodes)
+        if(node.kind==calls::Kind::Local)node.name="missing";
+      reject_diagnostic([&]{calls::verify(invalid_scope);},
+                        "callable local out of scope");
+      // A forged Local named exactly like an ABI Parameter used to pass
+      // verification, then fail inside Native::emit_node's local slot map.
+      // Reject it before either interpreter execution or assembly emission.
+      auto parameter_alias=calls::parse(
+        "fnc main(p:int):int{const value=p+1;return value;}");
+      for(auto& node:parameter_alias.functions[0].nodes)
+        if(node.kind==calls::Kind::Local)node.name="p";
+      reject_diagnostic([&]{calls::verify(parameter_alias);},
+                        "callable local out of scope");
+      reject_diagnostic([&]{(void)calls::emit_asm(parameter_alias,Arch::X86_64);},
+                        "callable local out of scope");
+      reject_diagnostic([&]{(void)calls::interpret(
+        parameter_alias,std::array<std::int64_t,1>{7});},
+                        "callable local out of scope");
+      auto forged_shadow=calls::parse(
+        "fnc main(p:int):int{const value=p;return value;}");
+      for(auto& node:forged_shadow.functions[0].nodes)
+        if(node.kind==calls::Kind::Let)node.name="p";
+      reject_diagnostic([&]{calls::verify(forged_shadow);},
+                        "duplicate immutable local");
+      auto duplicate_abi=calls::parse("fnc main(p:int):int{return p;}");
+      duplicate_abi.functions[0].parameters.push_back("p");
+      reject_diagnostic([&]{calls::verify(duplicate_abi);},
+                        "invalid or duplicate callable parameter");
+      auto keyword_parameter=calls::parse(
+        "fnc main(p:int):int{return p;}");
+      keyword_parameter.functions[0].parameters[0]="if";
+      reject_diagnostic([&]{calls::verify(keyword_parameter);},
+                        "invalid or duplicate callable parameter");
+      reject_diagnostic([&]{(void)calls::interpret(
+        keyword_parameter,std::array<std::int64_t,1>{7});},
+                        "invalid or duplicate callable parameter");
+      auto keyword_helper=calls::parse(
+        "fnc helper():int{return 2;} fnc main():int{return 1;}");
+      keyword_helper.functions[0].name="if";
+      reject_diagnostic([&]{calls::verify(keyword_helper);},
+                        "duplicate or invalid function");
+      reject_diagnostic([&]{(void)calls::emit_asm(keyword_helper,Arch::X86_64);},
+                        "duplicate or invalid function");
+      auto malformed_local=calls::parse("fnc main():int{int x=1;return x;}");
+      for(auto& node:malformed_local.functions[0].nodes) {
+        if(node.kind==calls::Kind::Let || node.kind==calls::Kind::Local)
+          node.name="x-invalid";
+      }
+      reject_diagnostic([&]{calls::verify(malformed_local);},
+                        "invalid callable local payload");
+      auto numeric_payload=calls::parse(
+        "fnc main(p:int):int{const value=p+1;return value;}");
+      for(auto& node:numeric_payload.functions[0].nodes)
+        if(node.kind==calls::Kind::Add)node.value=98765;
+      reject_diagnostic([&]{calls::verify(numeric_payload);},
+                        "unexpected callable numeric payload");
+      reject_diagnostic([&]{(void)calls::emit_asm(numeric_payload,Arch::X86_64);},
+                        "unexpected callable numeric payload");
+      reject_diagnostic([&]{(void)calls::interpret(
+        numeric_payload,std::array<std::int64_t,1>{7});},
+                        "unexpected callable numeric payload");
+      auto malformed_abi=calls::parse("fnc main(p:int):int{return p;}");
+      malformed_abi.functions[0].parameters[0]="p with spaces";
+      reject_diagnostic([&]{calls::verify(malformed_abi);},
+                        "invalid or duplicate callable parameter");
+      // The parser still admits a valid parameter/local flow unmodified.
+      ensure(calls::interpret(calls::parse(
+        "fnc main(p:int):int{const value=p+1;return value;}"),
+        std::array<std::int64_t,1>{7})==8,"unforged callable ABI binding");
+      // Public Module input must fail before emission even when a caller
+      // bypasses the textual parser or mutates a previously verified tree.
+      auto self_init=calls::parse("fnc main():int{int x=1;return x;}");
+      for(auto& node:self_init.functions[0].nodes) {
+        if(node.kind==calls::Kind::Constant) {
+          node.kind=calls::Kind::Local;
+          node.name="x";
+          break;
+        }
+      }
+      reject_diagnostic([&]{calls::verify(self_init);},
+                        "callable local out of scope");
+      auto dup_binding=calls::parse(
+        "fnc main():int{int x=1;int y=x+1;return y;}");
+      for(auto& node:dup_binding.functions[0].nodes)
+        if(node.kind==calls::Kind::Let && node.name=="y")node.name="x";
+      reject_diagnostic([&]{calls::verify(dup_binding);},
+                        "duplicate immutable local");
+      reject_diagnostic([]{calls::parse(
+        "fnc const():int{return 1;} fnc main():int{return 1;}");},
+                        "reserved function name");
+      reject_diagnostic([]{calls::parse(
+        "fnc main(const:int):int{return 1;}");},
+                        "invalid or duplicate parameter");
+      auto invalid_binding=calls::parse("fnc main():int{int x=1;return x;}");
+      for(auto& node : invalid_binding.functions[0].nodes)
+        if(node.kind==calls::Kind::Let)node.name="return";
+      reject_diagnostic([&]{calls::verify(invalid_binding);},
+                        "invalid callable local name");
+    }
+    for(const auto* invalid : {
+      "fnc main():int{int x=x;return x;}",
+      "fnc main():int{const x=x;return x;}",
+      "fnc main():int{int x=y;int y=2;return x;}",
+      "fnc main():int{int x=1;int x=2;return x;}",
+      "fnc main(n:int):int{int n=1;return n;}",
+      "fnc main():int{int x=1;x=2;return x;}"
+    })reject([&] { (void)calls::parse(invalid); });
+    reject_diagnostic([] { calls::parse(
+      "fnc main():int{int x=1;x=2;return x;}"); },
+      "immutable local reassignment is forbidden");
+    reject_diagnostic([] { (void)calls::interpret(calls::parse(
+      "fnc main():int{const unused=9223372036854775807+1;return 42;}"),{}); },
+      "i64 add overflow");
+    {
+      std::string maximum="fnc main():int{";
+      for(int i=0;i<32;++i)
+        maximum+="int v"+std::to_string(i)+"="+std::to_string(i)+";";
+      maximum+="return v31;}";
+      ensure(calls::interpret(calls::parse(maximum),{})==31,
+             "native-call maximum 32 immutable locals");
+      std::string exceeded="fnc main():int{";
+      for(int i=0;i<33;++i)
+        exceeded+="int v"+std::to_string(i)+"="+std::to_string(i)+";";
+      exceeded+="return v32;}";
+      reject_diagnostic([&]{calls::parse(exceeded);},"immutable local budget exceeded");
     }
     // The four byte-pinned shared negative cases exercise the *actual*
     // Forge source parser, verified i64 IR and interpreter. An exception
@@ -335,6 +599,19 @@ int main() {
     }, "source contains NUL byte");
     ensure(calls::parse(callable_comment+"caf\xc3\xa9").functions.size()==1,
            "valid UTF-8 callable comment");
+    // A CR-only line terminator must not conceal a following declaration.
+    // The callable parser previously skipped until LF and silently discarded
+    // the broken second declaration, publishing a misleading artifact.
+    for (const std::string ending : {"\r","\r\n","\n"}) {
+      reject_diagnostic([&] {
+        calls::parse("fnc main():int{return 42;} // discarded"+ending+
+                     "fnc bad():int{return unresolved;}");
+      }, "unknown parameter");
+      ensure(calls::interpret(calls::parse(
+        "fnc main():int{return 42;} // ignore"+ending+
+        "fnc spare():int{return 3;}"),{})==42,
+        "callable line comments cannot swallow another definition");
+    }
     // Opt-in callable program has its own fully verified representation.
     // Unlike the scalar profile, these helpers compile to real native calls.
     auto fact=calls::parse(

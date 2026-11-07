@@ -34,7 +34,7 @@ struct Token { Kind kind; std::string_view text; std::size_t offset; };
 // semantically equivalent to invoking such a function, but NOT native ABI
 // calls, stack frames, mutable locals, recursion, or dynamic dispatch.
 struct Expr {
-  enum class Tag { Constant, Parameter, Negative, Add, Sub, Mul, Call };
+  enum class Tag { Constant, Parameter, Negative, Add, Sub, Mul, Call, Let };
   Tag tag;
   std::int64_t value = 0;
   std::string name;
@@ -152,6 +152,11 @@ class Parser {
       // Reject with a stable diagnostic rather than emitting an unrelated
       // scalar result from a source that depends on external modules.
       if (tok_.text=="import") error("source imports require verified module graph lowering");
+      // Forge has no typed syntax/macro artifact expansion or runtime
+      // fallback. Reject even unused macro declarations at token admission,
+      // instead of a generic fnc parse error that can mask missing lowering.
+      if (tok_.text=="macro")
+        error("FORGE_MACRO_EXPANDER_REQUIRED: typed compile-time macro lowering unavailable; runtime fallback forbidden");
       // Scalar bootstrap lacks nominal enum declarations and compiler-owned
       // prebound virtual method slots. Never attempt arity-only fallback.
       if (tok_.text=="enum") error("nominal enum overloads require compiler-bound dispatch");
@@ -214,22 +219,25 @@ class Parser {
     if (c=='|')
       throw std::runtime_error("lexical captures require checked closure lowering at byte "+
                                std::to_string(start));
+    // Any bang invocation is unsupported in this scalar bootstrap. Never
+    // treat the callee as an ordinary i64 function or emit partial scalar IR.
+    if (c=='!')
+      throw std::runtime_error(
+        "FORGE_MACRO_EXPANDER_REQUIRED: macro invocation requires checked compile-time AST and ownership lowering at byte "+
+        std::to_string(start));
     if (source_[at_]=='-' && at_+1<source_.size() && source_[at_+1]=='>') {
       at_+=2; tok_={Kind::Punct,source_.substr(start,2),start}; return;
     }
     if (source_.substr(at_,3)=="...")
       error("tuple-v2 explicit spread requires single-evaluation checked lowering");
-    // Canonical AttoLang exposes named Integer.rem/mod/pow/bitXor APIs,
-    // never the legacy percent or caret operators. Report the actual byte
-    // offset before generic punctuation handling, including unreachable
-    // helper definitions: these characters cannot become silent aliases.
+    // Removed modulo and caret operators cannot silently alias host operations.
     if (c=='%')
       throw std::runtime_error("legacy % operator is removed; use Integer.rem/mod at byte "+
                                std::to_string(start));
     if (c=='^')
       throw std::runtime_error("legacy ^/^^ operators are removed; use Integer.pow/bitXor at byte "+
                                std::to_string(start));
-    if (std::string_view("()+-*/{};:,?").find(static_cast<char>(c)) ==
+    if (std::string_view("()+-*/{};:,?=").find(static_cast<char>(c)) ==
         std::string_view::npos) error("invalid character");
     ++at_;
     tok_={Kind::Punct,source_.substr(start,1),start};
@@ -296,11 +304,15 @@ class Parser {
       do {
         if (tok_.text=="tuple" || tok_.text=="structural" || tok_.text=="(")
           error("tuple-v2 parameter requires typed ownership/ABI lowering");
+        // Canonical AttoLang spells parameters "int x"; preserve the
+        // older "x:int" form for source compatibility during migration.
+        // Both normalize to the same ordered, readonly i64 parameter.
+        const bool type_first=take("int");
         const std::string parameter=identifier();
         if (parameter=="int" || parameter=="fnc" || parameter=="return" ||
             std::find(fn.parameters.begin(),fn.parameters.end(),parameter)!=fn.parameters.end())
           error("invalid or duplicate parameter");
-        expect(":"); expect("int");
+        if (!type_first) { expect(":"); expect("int"); }
         fn.parameters.push_back(parameter);
         if (fn.parameters.size()>64) error("too many parameters");
         if (!take(",")) break;
@@ -313,9 +325,41 @@ class Parser {
     expect("int"); expect("{");
     if (tok_.text=="guard")
       error("GUARD_BACKEND_UNSUPPORTED: early-exit CFG and ownership lowering required");
+    // Bounded, scalar-only, immutable-by-default locals. An initializer
+    // observes earlier bindings, never itself or a future declaration.
+    // Lowering keeps them as SSA values: no mutable storage or heap/GC.
+    std::vector<std::pair<std::string,ExprPtr>> locals;
+    std::unordered_set<std::string> bound(fn.parameters.begin(),fn.parameters.end());
+    while (tok_.text=="int" || tok_.text=="const") {
+      const bool explicit_const=take("const");
+      // This frontend's expression type is always checked i64. Thus
+      // "const x = ..." safely infers int without a conversion rule.
+      if (!explicit_const || tok_.text=="int") expect("int");
+      const std::string local=identifier();
+      if (local=="int" || local=="fnc" || local=="return" ||
+          local=="const" ||
+          !bound.insert(local).second)
+        error("invalid or duplicate immutable local");
+      expect("=");
+      auto initializer=expression(0);
+      expect(";");
+      locals.emplace_back(local,std::move(initializer));
+      if (locals.size()>32) error("immutable local budget exceeded");
+    }
+    if (tok_.kind==Kind::Word && bound.contains(std::string(tok_.text)) &&
+        tok_.text!="return")
+      error("immutable local reassignment is forbidden");
     expect("return");
     fn.body=expression(0);
-    expect(";"); expect("}");
+    expect(";");
+    // Nest from the end so lexical evaluation flows left-to-right.
+    for (auto it=locals.rbegin();it!=locals.rend();++it) {
+      std::vector<ExprPtr> children;
+      children.push_back(std::move(it->second));
+      children.push_back(std::move(fn.body));
+      fn.body=node(Expr::Tag::Let,std::move(children),0,it->first);
+    }
+    expect("}");
     if (functions_.contains(name)) error("duplicate function");
     functions_.emplace(name,std::move(fn));
   }
@@ -394,9 +438,6 @@ class Parser {
       if (tok_.text=="match" || tok_.text=="switch")
         error("expected integer");
       const std::string name=identifier();
-      // The Forge scalar interpreter/JIT has no ETS table authority or pg
-      // ActorGroup/mailbox integration. Reject explicit namespace access
-      // instead of accepting it as an unbound scalar variable.
       if ((name=="ets" || name=="pg") && tok_.text==".")
         error("Forge ETS/pg guest APIs require authenticated isolate, table and mailbox lowering");
       if (!take("(")) return node(Expr::Tag::Parameter,{},0,name,offset);
@@ -419,12 +460,19 @@ class Parser {
     const int idx=static_cast<int>(program_.instructions.size());
     program_.instructions.push_back({op,value,a,b}); return idx;
   }
-  void walk_calls(const Expr& e,const Function& owner,
+  void walk_calls(const Expr& e,
                   std::vector<std::string>& active,
-                  std::unordered_set<std::string>& complete) const {
-    if (e.tag==Expr::Tag::Parameter &&
-        std::find(owner.parameters.begin(),owner.parameters.end(),e.name)==
-        owner.parameters.end())
+                  std::unordered_set<std::string>& complete,
+                  const std::unordered_set<std::string>& bound) const {
+    if (e.tag==Expr::Tag::Let) {
+      // The initializer must not see this binding, preventing self-reference.
+      walk_calls(*e.children.at(0),active,complete,bound);
+      auto nested=bound;
+      nested.insert(e.name);
+      walk_calls(*e.children.at(1),active,complete,nested);
+      return;
+    }
+    if (e.tag==Expr::Tag::Parameter && !bound.contains(e.name))
       throw std::runtime_error("expected integer at byte "+std::to_string(e.offset));
     if (e.tag==Expr::Tag::Call) {
       auto found=functions_.find(e.name);
@@ -435,7 +483,7 @@ class Parser {
       validate_calls(e.name,active,complete);
     }
     for (const auto& child:e.children)
-      walk_calls(*child,owner,active,complete);
+      walk_calls(*child,active,complete,bound);
   }
   void validate_calls(const std::string& name,
                       std::vector<std::string>& active,
@@ -447,7 +495,8 @@ class Parser {
       throw std::runtime_error("function call depth exceeded");
     active.push_back(name);
     const auto& fn=functions_.at(name);
-    walk_calls(*fn.body,fn,active,complete);
+    walk_calls(*fn.body,active,complete,
+               std::unordered_set<std::string>(fn.parameters.begin(),fn.parameters.end()));
     active.pop_back();
     complete.insert(name);
   }
@@ -457,6 +506,13 @@ class Parser {
       throw std::runtime_error("function call depth exceeded");
     switch (e.tag) {
       case Expr::Tag::Constant: return add(Op::Constant,e.value);
+      case Expr::Tag::Let: {
+        const int initializer=lower(*e.children.at(0),env,active,call_depth);
+        auto nested=env;
+        if (!nested.emplace(e.name,initializer).second)
+          throw std::runtime_error("duplicate immutable local");
+        return lower(*e.children.at(1),nested,active,call_depth);
+      }
       case Expr::Tag::Parameter: {
         auto found=env.find(e.name);
         if (found==env.end()) error("expected integer");

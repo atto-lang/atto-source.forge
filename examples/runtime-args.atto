@@ -1,0 +1,2 @@
+// AttoLang experimental runtime-argument stage-0 profile.
+fnc main(x:int,y:int):int { return x*3+y; }

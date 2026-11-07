@@ -16,6 +16,9 @@ import sys
 import tempfile
 
 PROGRAMS = (
+    ("immutable-runtime-local",
+     "fnc main(n:int):int{int x=n+2;const y=x*3;return y;}",
+     ((4,18),(0,6),(-2,0),(10,36))),
     ("two-args",
      "fnc helper(x:int,y:int):int{return x*3-y;} "
      "fnc main(a:int,b:int):int{return helper(a,b)+b*2;}",
@@ -71,7 +74,7 @@ def check(condition,message):
     if not condition: raise RuntimeError(message)
 
 def assemble(compiler,cc,arch,root,source_text,parameter_count):
-    source=root/"source.ores"
+    source=root/"source.atto"
     source.write_text(source_text+"\n",encoding="utf-8")
     proc=execute([compiler,"emit-runtime-asm",arch,str(source)],root)
     check(proc.returncode==0 and not proc.stderr,

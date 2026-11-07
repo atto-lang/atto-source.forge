@@ -1,0 +1,3 @@
+// AttoLang stage-0 native-call subset: recursion is supported only in run-calls.
+fnc fact(n:int):int { return if n<=1 then 1 else n*fact(n-1); }
+fnc main(n:int):int { return fact(n); }

@@ -3,8 +3,10 @@
 #include <algorithm>
 #include <charconv>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <map>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -20,8 +22,14 @@ constexpr std::size_t kMaxNodesPerFunction = 256;
 constexpr std::size_t kMaxDepth = 128;
 constexpr std::size_t kMaxStackDepth = 128;
 constexpr std::size_t kMaxEvalSteps = 200000;
+constexpr std::size_t kMaxLocals = 32;
 bool letter(char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_'; }
 bool digit(char c) { return c >= '0' && c <= '9'; }
+bool valid_identifier(std::string_view name) {
+  if(name.empty() || !letter(name.front()))return false;
+  for(const char c:name) if(!letter(c) && !digit(c))return false;
+  return true;
+}
 bool space(char c) { return c == ' ' || c == '\r' || c == '\n' || c == '\t' || c == '\v' || c == '\f'; }
 struct Token { std::string_view text; std::size_t offset=0; };
 
@@ -56,6 +64,7 @@ class Parser {
   std::map<std::string,int> names_;
   std::size_t node_count_=0;
   Function* current_=nullptr;
+  std::set<std::string> local_names_;
 
   [[noreturn]] void fail(const char* message) const {
     throw std::runtime_error(std::string(message)+" at byte "+std::to_string(token_.offset));
@@ -66,7 +75,7 @@ class Parser {
       if (space(c)) {++at_; continue;}
       if (c=='/' && at_+1<text_.size() && text_[at_+1]=='/') {
         at_+=2;
-        while (at_<text_.size() && text_[at_]!='\n') ++at_;
+        while (at_<text_.size() && text_[at_]!='\n' && text_[at_]!='\r') ++at_;
         continue;
       }
       break;
@@ -76,6 +85,14 @@ class Parser {
     const char c=text_[at_++];
     if (letter(c)) {
       while (at_<text_.size() && (letter(text_[at_])||digit(text_[at_]))) ++at_;
+      if (text_.substr(begin,at_-begin)=="macro")
+        throw std::runtime_error(
+          "FORGE_MACRO_EXPANDER_REQUIRED: typed macro declaration requires checked compile-time lowering at byte "+
+          std::to_string(begin));
+    } else if (c=='!' && (at_==text_.size() || text_[at_]!='=')) {
+      throw std::runtime_error(
+        "FORGE_MACRO_EXPANDER_REQUIRED: typed macro invocation requires checked compile-time lowering at byte "+
+        std::to_string(begin));
     } else if (digit(c)) {
       while (at_<text_.size() && digit(text_[at_])) ++at_;
     } else if ((c=='<'||c=='>'||c=='='||c=='!') &&
@@ -115,7 +132,7 @@ class Parser {
     }
     expect("fnc");
     const std::string name=identifier();
-    if (name=="int"||name=="return"||name=="if"||name=="else"||name=="then")
+    if (name=="int"||name=="const"||name=="return"||name=="if"||name=="else"||name=="then")
       fail("reserved function name");
     if (names_.contains(name))fail("duplicate function");
     if (module_.functions.size()>=kMaxFunctions)fail("function count budget exceeded");
@@ -123,11 +140,12 @@ class Parser {
     names_[name]=index;
     module_.functions.push_back({name,{},{}});
     current_=&module_.functions.back();
+    local_names_.clear();
     expect("(");
     if (token_.text!=")") {
       do {
         const std::string param=identifier();
-        if (param=="int"||param=="if"||param=="then"||param=="else"||
+        if (param=="int"||param=="const"||param=="if"||param=="then"||param=="else"||
             param=="return"||param=="fnc"||
             std::find(current_->parameters.begin(),current_->parameters.end(),param)
             !=current_->parameters.end())fail("invalid or duplicate parameter");
@@ -139,9 +157,37 @@ class Parser {
     }
     expect(")");
     if(!take(":"))expect("->");
-    expect("int");expect("{");expect("return");
+    expect("int");expect("{");
+    // The callable subset has only checked i64; unqualified and const
+    // declarations are immutable, and the initializer cannot see itself.
+    std::vector<std::pair<std::string,int>> bindings;
+    while(token_.text=="int" || token_.text=="const") {
+      const bool inferred=take("const");
+      if(!inferred || token_.text=="int")expect("int");
+      const std::string local=identifier();
+      if(local=="int"||local=="const"||local=="return"||local=="fnc"||
+         local=="if"||local=="then"||local=="else"||
+         local_names_.contains(local) ||
+         std::find(current_->parameters.begin(),current_->parameters.end(),local)
+            !=current_->parameters.end())
+        fail("invalid or duplicate immutable local");
+      expect("=");
+      const int initializer=expr(0);
+      expect(";");
+      local_names_.insert(local);
+      bindings.emplace_back(local,initializer);
+      if(bindings.size()>kMaxLocals)fail("immutable local budget exceeded");
+    }
+    if(local_names_.contains(std::string(token_.text)))
+      fail("immutable local reassignment is forbidden");
+    expect("return");
     current_->result=expr(0);
-    expect(";");expect("}");
+    expect(";");
+    // Postfix tree remains owned: local occurrences are new Local nodes,
+    // and the Let initializer + body have distinct reachable parents.
+    for(auto it=bindings.rbegin();it!=bindings.rend();++it)
+      current_->result=add(Kind::Let,0,it->first,{it->second,current_->result});
+    expect("}");
   }
   void depth(std::size_t n) {if(n>kMaxDepth)fail("callable expression nesting too deep");}
   int expr(std::size_t d) {
@@ -225,8 +271,10 @@ class Parser {
       if (!take("(")) {
         auto& params=current_->parameters;
         auto found=std::find(params.begin(),params.end(),name);
-        if(found==params.end())fail("unknown parameter");
-        return add(Kind::Parameter,static_cast<std::int64_t>(found-params.begin()));
+        if(found!=params.end())
+          return add(Kind::Parameter,static_cast<std::int64_t>(found-params.begin()));
+        if(local_names_.contains(name))return add(Kind::Local,0,name);
+        fail("unknown parameter");
       }
       std::vector<int> args;
       if (token_.text!=")") {
@@ -271,25 +319,33 @@ struct Evaluator {
     if (depth>=kMaxStackDepth)throw std::runtime_error("call depth exceeded");
     const auto& f=m.functions.at(id);
     if(args.size()!=f.parameters.size())throw std::runtime_error("runtime argument count mismatch");
-    return visit(f,f.result,args,depth);
+    return visit(f,f.result,args,depth,{});
   }
   std::int64_t visit(const Function& fn,int id,std::span<const std::int64_t> args,
-                     std::size_t depth) {
+                     std::size_t depth,const std::map<std::string,std::int64_t>& locals) {
     if (remaining--==0)throw std::runtime_error("callable execution budget exceeded");
     const auto& n=fn.nodes.at(static_cast<std::size_t>(id));
     if(n.kind==Kind::Constant)return n.value;
     if(n.kind==Kind::Parameter)return args[static_cast<std::size_t>(n.value)];
+    if(n.kind==Kind::Local)return locals.at(n.name);
+    if(n.kind==Kind::Let) {
+      const auto initializer=visit(fn,n.children[0],args,depth,locals);
+      auto nested=locals;
+      if(!nested.emplace(n.name,initializer).second)
+        throw std::runtime_error("duplicate immutable local");
+      return visit(fn,n.children[1],args,depth,nested);
+    }
     if(n.kind==Kind::If) {
-      const auto pred=visit(fn,n.children[0],args,depth);
-      return visit(fn,n.children[pred ? 1u:2u],args,depth);
+      const auto pred=visit(fn,n.children[0],args,depth,locals);
+      return visit(fn,n.children[pred ? 1u:2u],args,depth,locals);
     }
     if(n.kind==Kind::Call) {
       std::vector<std::int64_t> vals;
-      for (int arg:n.children) vals.push_back(visit(fn,arg,args,depth));
+      for (int arg:n.children) vals.push_back(visit(fn,arg,args,depth,locals));
       return evaluate(static_cast<std::size_t>(n.callee),vals,depth+1);
     }
-    const auto a=visit(fn,n.children.at(0),args,depth);
-    const auto b=visit(fn,n.children.at(1),args,depth);
+    const auto a=visit(fn,n.children.at(0),args,depth,locals);
+    const auto b=visit(fn,n.children.at(1),args,depth,locals);
     return checked(n.kind,a,b);
   }
 };
@@ -300,6 +356,7 @@ const char* argument_reg(std::size_t i) {
 }
 struct Native {
   const Module& program;
+  explicit Native(const Module& p) : program(p) {}
   std::ostringstream out;
   std::size_t label=0;
   std::string value_slot(int id) const {
@@ -308,31 +365,42 @@ struct Native {
   std::string parameter_slot(int id) const {
     return "-"+std::to_string(8u*(static_cast<std::size_t>(id)+1u))+"(%rbp)";
   }
-  void emit_node(const Function& fn,int index) {
+  void emit_node(const Function& fn,int index,
+                 const std::map<std::string,int>& locals) {
     const auto& n=fn.nodes.at(static_cast<std::size_t>(index));
     if(n.kind==Kind::Constant) {
       out<<"  movabsq $"<<n.value<<", %rax\n";
     } else if(n.kind==Kind::Parameter) {
       out<<"  movq "<<parameter_slot(static_cast<int>(n.value))<<", %rax\n";
+    } else if(n.kind==Kind::Local) {
+      out<<"  movq "<<value_slot(locals.at(n.name))<<", %rax\n";
+    } else if(n.kind==Kind::Let) {
+      // The initializer retains its own frame slot; the binding is
+      // immutable, and no heap allocation or global state is required.
+      emit_node(fn,n.children[0],locals);
+      auto nested=locals;
+      if(!nested.emplace(n.name,n.children[0]).second)
+        throw std::runtime_error("duplicate immutable local");
+      emit_node(fn,n.children[1],nested);
     } else if(n.kind==Kind::If) {
       const auto tag=label++;
-      emit_node(fn,n.children[0]);
+      emit_node(fn,n.children[0],locals);
       out<<"  cmpq $0, %rax\n  je .Lores_else_"<<tag<<"\n";
-      emit_node(fn,n.children[1]);
+      emit_node(fn,n.children[1],locals);
       out<<"  jmp .Lores_end_"<<tag<<"\n"
          <<".Lores_else_"<<tag<<":\n";
-      emit_node(fn,n.children[2]);
+      emit_node(fn,n.children[2],locals);
       out<<".Lores_end_"<<tag<<":\n";
     } else if(n.kind==Kind::Call) {
-      for (int child:n.children)emit_node(fn,child);
+      for (int child:n.children)emit_node(fn,child,locals);
       for (std::size_t i=0;i<n.children.size();++i)
         out<<"  movq "<<value_slot(n.children[i])<<", "<<argument_reg(i)<<"\n";
       out<<"  movq -40(%rbp), %r8\n"
          <<"  addq $1, %r8\n"
          <<"  call .Lores_fn_"<<n.callee<<"\n";
     } else {
-      emit_node(fn,n.children[0]);
-      emit_node(fn,n.children[1]);
+      emit_node(fn,n.children[0],locals);
+      emit_node(fn,n.children[1],locals);
       out<<"  movq "<<value_slot(n.children[0])<<", %rax\n";
       switch(n.kind) {
         case Kind::Add: out<<"  addq ";break;
@@ -375,7 +443,7 @@ struct Native {
       for (std::size_t arg=0;arg<4;++arg)
         out<<"  movq "<<argument_reg(arg)<<", "<<parameter_slot(static_cast<int>(arg))<<"\n";
       out<<"  movq %r8, -40(%rbp)\n";
-      emit_node(fn,fn.result);
+      emit_node(fn,fn.result,{});
       out<<"  leave\n  ret\n";
     }
     out<<".Lores_depth:\n  ud2\n"
@@ -399,9 +467,25 @@ void verify(const Module& m) {
   std::size_t total=0;
   for (std::size_t fi=0;fi<m.functions.size();++fi) {
     const auto& fn=m.functions[fi];
-    if(fn.name.empty() || !names.emplace(fn.name,fi).second)
+    // Public Module clients bypass Parser; uphold the source keyword ban
+    // even for helper functions that the entry never calls.
+    if(!valid_identifier(fn.name) ||
+       fn.name=="int" || fn.name=="const" || fn.name=="return" ||
+       fn.name=="if" || fn.name=="else" || fn.name=="then" ||
+       !names.emplace(fn.name,fi).second)
       throw std::runtime_error("duplicate or invalid function");
     if(fn.parameters.size()>4)throw std::runtime_error("function parameter budget exceeded");
+    // Public Module values may be constructed or mutated without Parser.
+    // Unlike the native emitter's stack slots, a Local must never alias a
+    // Parameter, and duplicate parameter names must not collapse a scope.
+    std::set<std::string> parameters;
+    for(const auto& param:fn.parameters) {
+      if(!valid_identifier(param) ||
+         param=="int" || param=="const" || param=="if" ||
+         param=="then" || param=="else" || param=="return" ||
+         param=="fnc" || !parameters.insert(param).second)
+        throw std::runtime_error("invalid or duplicate callable parameter");
+    }
     if(fn.nodes.empty() || fn.nodes.size()>kMaxNodesPerFunction)
       throw std::runtime_error("invalid callable function body");
     total+=fn.nodes.size();
@@ -418,11 +502,25 @@ void verify(const Module& m) {
         case Kind::Constant: case Kind::Parameter: case Kind::Add:
         case Kind::Sub: case Kind::Mul: case Kind::Less: case Kind::LessEqual:
         case Kind::Greater: case Kind::GreaterEqual: case Kind::Equal:
-        case Kind::NotEqual: case Kind::If: case Kind::Call: break;
+        case Kind::NotEqual: case Kind::If: case Kind::Call:
+        case Kind::Local: case Kind::Let: break;
         default: throw std::runtime_error("unknown callable opcode");
       }
-      if(n.kind!=Kind::Call && !n.name.empty())
+      if(n.kind!=Kind::Call && n.kind!=Kind::Local && n.kind!=Kind::Let &&
+         !n.name.empty())
         throw std::runtime_error("unexpected callable symbol payload");
+      // Every opcode except constants and parameter indexes must carry
+      // its data solely in owned child edges, not an ignored i64 payload.
+      // Forged Module objects may bypass Parser and must be fail-closed.
+      if(n.kind!=Kind::Constant && n.kind!=Kind::Parameter && n.value!=0)
+        throw std::runtime_error("unexpected callable numeric payload");
+      if((n.kind==Kind::Let || n.kind==Kind::Local) &&
+         (!valid_identifier(n.name) || n.value!=0 || n.callee!=-1))
+        throw std::runtime_error("invalid callable local payload");
+      if(n.kind==Kind::Let &&
+         (n.name=="int"||n.name=="const"||n.name=="return"||n.name=="fnc"||
+          n.name=="if"||n.name=="then"||n.name=="else"))
+        throw std::runtime_error("invalid callable local name");
       for(int arg:n.children) {
         if(arg<0 || static_cast<std::size_t>(arg)>=i)
           throw std::runtime_error("callable use before definition");
@@ -430,7 +528,7 @@ void verify(const Module& m) {
           throw std::runtime_error("callable AST shared node");
       }
       std::size_t size=2;
-      if(n.kind==Kind::Constant||n.kind==Kind::Parameter)size=0;
+      if(n.kind==Kind::Constant||n.kind==Kind::Parameter||n.kind==Kind::Local)size=0;
       else if(n.kind==Kind::If)size=3;
       else if(n.kind==Kind::Call)size=n.children.size();
       if(n.children.size()!=size)throw std::runtime_error("callable operand arity mismatch");
@@ -446,6 +544,33 @@ void verify(const Module& m) {
           throw std::runtime_error("callable target/name mismatch");
       } else if(n.callee!=-1)throw std::runtime_error("unexpected callable target");
     }
+    // Independently validate lexical scope on the owned expression tree.
+    // Verification must reject a tampered local before emitting any native
+    // load; the parser's declaration checks are insufficient for public IR.
+    std::function<void(int,const std::set<std::string>&,std::size_t)> lexical =
+      [&](int id,const std::set<std::string>& scope,std::size_t count) {
+        const auto& n=fn.nodes[static_cast<std::size_t>(id)];
+        if(n.kind==Kind::Local) {
+          // The native emitter resolves locals to initializer frame slots,
+          // not ABI parameter slots. Never accept a spoofed parameter name.
+          if(parameters.contains(n.name) || !scope.contains(n.name))
+            throw std::runtime_error("callable local out of scope");
+          return;
+        }
+        if(n.kind==Kind::Let) {
+          if(parameters.contains(n.name) || scope.contains(n.name))
+            throw std::runtime_error("duplicate immutable local");
+          if(count>=kMaxLocals)
+            throw std::runtime_error("immutable local budget exceeded");
+          lexical(n.children[0],scope,count);
+          auto nested=scope;
+          nested.insert(n.name);
+          lexical(n.children[1],nested,count+1);
+          return;
+        }
+        for(int child:n.children)lexical(child,scope,count);
+      };
+    lexical(fn.result,{},0);
     for(std::size_t i=0;i<fn.nodes.size();++i) {
       const unsigned expected=(i==static_cast<std::size_t>(fn.result))?0u:1u;
       if(incoming[i]!=expected)

@@ -80,6 +80,11 @@ if(BUILD_TESTING)
     COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.atto")
   set_tests_properties(oresforge_cli_atto_guest PROPERTIES
     PASS_REGULAR_EXPRESSION "^14\n?$" TIMEOUT 10)
+  # Canonical byte-identical shared .atto guest. Real Forge parser + checked IR.
+  add_test(NAME oresforge_atto_canonical_interpreter_42
+    COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/contracts/atto-parity-v1/add.atto")
+  set_tests_properties(oresforge_atto_canonical_interpreter_42 PROPERTIES
+    PASS_REGULAR_EXPRESSION "^42\n?$" TIMEOUT 10)
   add_test(NAME oresforge_cli_legacy_ores_guest
     COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.ores")
   set_tests_properties(oresforge_cli_legacy_ores_guest PROPERTIES
@@ -131,6 +136,12 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/verification/cli_source_budget.py"
       "$<TARGET_FILE:oresforge>")
   set_tests_properties(oresforge_cli_source_budget PROPERTIES TIMEOUT 20)
+  # Actual source parser and emission denial for unsupported macro syntax.
+  add_test(NAME forge_macro_compiler_negative_gate
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/forge_macro_denial.py"
+      --compiler "$<TARGET_FILE:oresforge>")
+  set_tests_properties(forge_macro_compiler_negative_gate PROPERTIES TIMEOUT 60)
   # Explicit bootstrap denial of ETS/pg before scalar interpreter/JIT/IR
   # publication. These are compiler negative tests, not guest feature proof.
   add_test(NAME oresforge_ets_pg_fail_closed_source
@@ -215,6 +226,22 @@ endif()
 if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
    CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|aarch64|arm64)$")
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  # Exact-source Forge emitter -> assembler/linker -> native binary execution.
+  # Codegen remains stage-0 constant-folded i64; not actor or full AOT parity.
+  # 19 byte-identical .atto scalar programs from common-source PR #217.
+  # Exercises the real Forge parser, IR and assembled native guest; it is NOT
+  # five-backend parity or an implementation of unsupported actor features.
+  add_test(NAME oresforge_atto_scalar_19_native
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/atto_scalar_corpus_v1.py"
+      --compiler "$<TARGET_FILE:oresforge>")
+  set_tests_properties(oresforge_atto_scalar_19_native PROPERTIES TIMEOUT 240)
+  add_test(NAME oresforge_atto_canonical_native_42
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/atto_canonical_native_executable.py"
+      --compiler "$<TARGET_FILE:oresforge>"
+      --source "${CMAKE_CURRENT_SOURCE_DIR}/contracts/atto-parity-v1/add.atto")
+  set_tests_properties(oresforge_atto_canonical_native_42 PROPERTIES TIMEOUT 90)
   add_test(NAME oresforge_native_asm_executable
     COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/verification/native_asm_executable.py"
