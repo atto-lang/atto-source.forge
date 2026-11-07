@@ -4,6 +4,9 @@ set -euo pipefail
 test "$#" -eq 3 || { echo 'usage: COMPILER REPO_ROOT CXX' >&2; exit 2; }
 compiler="$(realpath -- "$1")"; root="$(realpath -- "$2")"; cxx="$3"
 test -x "$compiler"
+# Before and after proof: guest tests must execute a stable compiler image.
+# A hash printed only after execution does not identify the bytes that ran.
+compiler_sha_before="$(sha256sum "$compiler" | cut -d' ' -f1)"
 command -v "$cxx" >/dev/null
 command -v readelf >/dev/null
 tmp="$(mktemp -d)"
@@ -45,5 +48,9 @@ for spec in atto.core/missing atto.core/numeric/ atto.core/../numeric \
   test ! -s "$tmp/reject.s"
   grep -F 'unknown compiler-owned atto.core module' "$tmp/reject.err" >/dev/null
 done
+test "$(sha256sum "$compiler" | cut -d' ' -f1)" = "$compiler_sha_before" || {
+  echo 'Forge executable changed during stage-2 numeric guest test' >&2; exit 1
+}
+printf 'ATTO_FORGE_STAGE2_COMPILER_SHA256=%s\n' "$compiler_sha_before"
 printf 'ATTO_FORGE_STAGE2_NUMERIC_EXECUTED|result=42|mutation_result=43|canonical_resource=YES|native_harness=HOSTED|guest_imports=NOT_VERIFIED|pie=YES|exec_stack=NO\n'
 printf 'ATTO_FORGE_STAGE2_NATIVE_BINARY_SHA256=%s\n' "$(sha256sum "$tmp/42" | cut -d' ' -f1)"

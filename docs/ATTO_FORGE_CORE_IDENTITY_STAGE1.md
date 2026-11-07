@@ -100,3 +100,14 @@ that source **before** generating a header. A CTest host-only
 gate verifies the two real canonical inputs are accepted and both
 malicious closing-delimiter variants are rejected with the intended
 diagnostic. This does not replace compiler-backed guest evidence.
+
+## Compiler binary pre/post identity
+
+Both native guest test scripts now pin the SHA-256 of the actual Forge
+executable **before** invoking its parser and native emitter, then
+recheck it after running positive, mutation and negative cases.
+An executable replaced during the tests causes a hard failure.
+The pinned `ATTO_FORGE_STAGE{1,2}_COMPILER_SHA256` is printed
+alongside the guest artifact digest. This supplies a more defensible
+compiler binary witness but does not prove the compiler source
+itself or provide independent native guest parity review.

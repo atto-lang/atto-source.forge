@@ -5,6 +5,9 @@ set -euo pipefail
 test "$#" -eq 3 || { echo 'usage: ... COMPILER REPO_ROOT CXX' >&2; exit 2; }
 compiler="$(realpath -- "$1")"; root="$(realpath -- "$2")"; cxx="$3"
 test -x "$compiler"
+# Before and after proof: guest tests must execute a stable compiler image.
+# A hash printed only after execution does not identify the bytes that ran.
+compiler_sha_before="$(sha256sum "$compiler" | cut -d' ' -f1)"
 test -f "$root/examples/atto-core-identity.atto"
 command -v "$cxx" >/dev/null
 command -v readelf >/dev/null
@@ -55,5 +58,9 @@ for spec in atto.core/missing atto.alloc/identity atto.std/identity \
   test ! -s "$tmp/deny.s"
   grep -F 'unknown compiler-owned atto.core module' "$tmp/deny.err" >/dev/null
 done
+test "$(sha256sum "$compiler" | cut -d' ' -f1)" = "$compiler_sha_before" || {
+  echo 'Forge executable changed during stage-1 native test' >&2; exit 1
+}
+printf 'ATTO_FORGE_STAGE1_COMPILER_SHA256=%s\n' "$compiler_sha_before"
 printf 'ATTO_FORGE_STAGE1_CORE_IDENTITY_EXECUTED|result=42|mutation_result=43|compiler_owned=YES|native_harness=HOSTED|guest_host_imports=NOT_VERIFIED|pie=YES|exec_stack=NO\n'
 printf 'ATTO_FORGE_STAGE1_NATIVE_BINARY_SHA256=%s\n' "$(sha256sum "$tmp/guest42" | cut -d' ' -f1)"

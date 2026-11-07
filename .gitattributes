@@ -1,0 +1,5 @@
+# Canonical portable .atto Core sources and test fixtures must retain
+# byte-for-byte LF identities across platforms and checkouts.
+*.atto text eol=lf
+*.ores text eol=lf
+contracts/** text eol=lf

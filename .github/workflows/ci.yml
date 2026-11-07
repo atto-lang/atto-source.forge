@@ -82,6 +82,7 @@ jobs:
           bash scripts/check_atto_core_identity_guest.sh ./build/oresforge "$PWD" "${{ matrix.compiler }}" | tee build/atto-core-identity-stage1.log
           grep -F 'ATTO_FORGE_STAGE1_CORE_IDENTITY_EXECUTED|result=42|mutation_result=43|compiler_owned=YES|native_harness=HOSTED|guest_host_imports=NOT_VERIFIED|pie=YES|exec_stack=NO' build/atto-core-identity-stage1.log
           grep -E '^ATTO_FORGE_STAGE1_NATIVE_BINARY_SHA256=[0-9a-f]{64}$' build/atto-core-identity-stage1.log
+          grep -E '^ATTO_FORGE_STAGE1_COMPILER_SHA256=[0-9a-f]{64}$' build/atto-core-identity-stage1.log
           {
             echo "head=$(git rev-parse HEAD)"
             echo "tree=$(git rev-parse 'HEAD^{tree}')"
@@ -106,6 +107,7 @@ jobs:
           bash scripts/check_atto_core_numeric_guest.sh ./build/oresforge "$PWD" "${{ matrix.compiler }}" | tee build/atto-core-numeric-stage2.log
           grep -F 'ATTO_FORGE_STAGE2_NUMERIC_EXECUTED|result=42|mutation_result=43|canonical_resource=YES|native_harness=HOSTED|guest_imports=NOT_VERIFIED|pie=YES|exec_stack=NO' build/atto-core-numeric-stage2.log
           grep -E '^ATTO_FORGE_STAGE2_NATIVE_BINARY_SHA256=[0-9a-f]{64}$' build/atto-core-numeric-stage2.log
+          grep -E '^ATTO_FORGE_STAGE2_COMPILER_SHA256=[0-9a-f]{64}$' build/atto-core-numeric-stage2.log
           {
             echo "head=$(git rev-parse HEAD)"
             echo "tree=$(git rev-parse 'HEAD^{tree}')"
