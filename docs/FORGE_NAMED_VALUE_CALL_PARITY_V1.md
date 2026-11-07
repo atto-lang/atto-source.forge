@@ -33,3 +33,7 @@ Native-call source admission now accepts bounded nested block comments (maximum 
 ## Native-call IR provenance hardening
 
 All nonzero-arity `Kind::Call` nodes must include a source-order label vector (empty strings denote positional arguments) and a signature-validated slot permutation. Public `verify` rejects calls with erased inventories instead of silently treating originally named arguments as positional. Interpreter and x86-64 emitter exclusively use verified slot indices; true zero-argument calls legitimately retain empty inventories. Mutations test erased named and positional metadata, removed slots, and zero-argument acceptance. Hosted execution evidence remains pending.
+
+## Public Module entry identity gate — November 7, 2026
+
+`Module.entry` is mutable through the embedding API. Previously `verify` only checked its numeric bounds, permitting a caller to redirect native execution to an arbitrary helper function, even when the source program declared a distinct `main`. Verification now requires `functions[entry].name == "main"`; both `interpret` and `emit_asm` remain gated by verification. Added four fail-closed forged-IR assertions (wrong entry under verifier, interpreter and native emitter; renamed `main`) plus a genuine-main positive. This is authored source/test hardening, not evidence that hosted CTests executed.

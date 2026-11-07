@@ -719,6 +719,25 @@ int main() {
       non_call_slot.functions.back().nodes.front().argument_slots={0};
       reject_diagnostic([&]{calls::verify(non_call_slot);},
                         "unexpected non-call argument bindings");
+      // Both interpreter and native emitter accept public Module objects.
+      // A valid in-range entry index must not redirect to another function.
+      auto forged_entry=valid;
+      forged_entry.entry=0; // pair is a helper, not main.
+      reject_diagnostic([&]{calls::verify(forged_entry);},
+                        "callable entry must name main");
+      reject_diagnostic([&]{(void)calls::interpret(
+        forged_entry,std::array<std::int64_t,1>{4});},
+                        "callable entry must name main");
+      reject_diagnostic([&]{(void)calls::emit_asm(
+        forged_entry,Arch::X86_64);},
+                        "callable entry must name main");
+      auto forged_missing_main=valid;
+      forged_missing_main.functions.back().name="renamed_main";
+      reject_diagnostic([&]{calls::verify(forged_missing_main);},
+                        "callable entry must name main");
+      // Confirm the legitimate source entry, not just its numeric index.
+      ensure(valid.functions[static_cast<std::size_t>(valid.entry)].name=="main",
+             "source entry must name main");
       auto renamed_formal=valid;
       renamed_formal.functions.front().parameters[0]="changed";
       reject_diagnostic([&]{calls::verify(renamed_formal);},

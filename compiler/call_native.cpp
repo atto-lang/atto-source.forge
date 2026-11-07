@@ -564,6 +564,11 @@ Module parse(std::string_view source) {
 void verify(const Module& m) {
   if(m.entry<0 || static_cast<std::size_t>(m.entry)>=m.functions.size())
     throw std::runtime_error("invalid callable main");
+  // Public Module clients may mutate entry after source parsing. Never run
+  // an arbitrary helper as the program entry by redirecting an in-range ID.
+  // The source compiler chooses main by name; the public verifier must agree.
+  if(m.functions[static_cast<std::size_t>(m.entry)].name!="main")
+    throw std::runtime_error("callable entry must name main");
   if (m.functions.size()>kMaxFunctions)throw std::runtime_error("function count budget exceeded");
   std::map<std::string,std::size_t> names;
   std::size_t total=0;
