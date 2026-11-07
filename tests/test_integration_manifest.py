@@ -113,6 +113,23 @@ class IntegrationManifestGateTests(unittest.TestCase):
         self.assertEqual(module.main(['--repository-root',
                                       '/' + REPO_NAME + '\x00outside']), 1)
 
+    @unittest.skipUnless(os.name == 'posix', 'POSIX descriptor instrumentation')
+    def test_cli_accepts_regular_manifest_with_instrumented_open(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / REPO_NAME
+            (root / '.oreslang').mkdir(parents=True)
+            (root / '.oreslang/integration.json').write_bytes(encode(valid_manifest()))
+            native_open = os.open
+            opened = []
+
+            def trace_open(path, flags, *args, **kwargs):
+                opened.append(str(path))
+                return native_open(path, flags, *args, **kwargs)
+
+            with mock.patch.object(module.os, 'open', side_effect=trace_open):
+                self.assertEqual(module.main(['--repository-root', str(root)]), 0)
+            self.assertIn('integration.json', opened)
+
     @unittest.skipUnless(os.name == 'posix', 'POSIX dir_fd support gate')
     def test_cli_denies_missing_descriptor_relative_open_support(self):
         with tempfile.TemporaryDirectory() as temp:
