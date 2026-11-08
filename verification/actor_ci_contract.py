@@ -51,9 +51,14 @@ def check(root: pathlib.Path, workflow: pathlib.Path) -> None:
     uses = re.findall(r'^      - uses: ([^\s#]+)\s*$', source, re.MULTILINE)
     require(uses == ['actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683'],
             'unexpected or unpinned third-party action')
-    require(len(re.findall(r'^      - ', source, re.MULTILINE)) == 3 and
-            source.count('      - name: ') == 2,
-            'unexpected workflow step outside the three reviewed steps')
+    steps_section = source.split('    steps:\n')
+    require(len(steps_section) == 2, 'unexpected workflow steps section')
+    step_headers = re.findall(r'^      - [^\n]+$', steps_section[1], re.MULTILINE)
+    require(step_headers == [
+        '      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683',
+        '      - name: Read back exact immutable source identity',
+        '      - name: Compile and execute actor lifecycle host CTest',
+    ], 'unexpected workflow step outside the three reviewed steps')
     require(source.count('\npermissions:\n  contents: read\njobs:\n') == 1 and
             len(re.findall(r'^\s*permissions:', source, re.MULTILINE)) == 1,
             'unexpected workflow or job token permissions')
