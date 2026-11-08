@@ -39,14 +39,19 @@ public:
                 case Op::BranchIfZero:
                 case Op::Call:
                 case Op::Jump:
-                    if (instruction.target >= code.size())
-                        throw std::invalid_argument("actor VM branch outside code");
+                    if (instruction.target >= code.size() || instruction.literal != 0)
+                        throw std::invalid_argument("actor VM invalid branch operand");
+                    break;
+                case Op::ReturnLiteral:
+                    if (instruction.target != 0)
+                        throw std::invalid_argument("actor VM unexpected return target");
                     break;
                 case Op::DecrementArg:
                 case Op::IncrementChild:
                 case Op::ReturnChild:
-                case Op::ReturnLiteral:
                 case Op::ReturnArg:
+                    if (instruction.target != 0 || instruction.literal != 0)
+                        throw std::invalid_argument("actor VM unexpected instruction operand");
                     break;
                 default:
                     throw std::invalid_argument("actor VM invalid opcode");
@@ -56,7 +61,7 @@ public:
         std::array<ActorFrameStack::Frame, ActorFrameStack::max_frames> handles{};
         std::size_t depth = 1;
         handles[0] = arena.push(token, sizeof(State));
-        store(arena, token, handles[0], {0, input, 0});
+        store(arena, token, handles[0], {0, input, 0, 0});
         for (std::size_t executed = 0; executed < instruction_budget; ++executed) {
             const auto frame = handles[depth - 1];
             auto state = load(arena, token, frame);
@@ -80,15 +85,20 @@ public:
                     // Charge the new frame before publishing its handle.
                     // Excess depth/bytes poisons this actor, not the carrier.
                     state.pc++;
+                    // A previous call result must never satisfy this call's
+                    // return-value use. Clear the readiness bit before push.
+                    state.child_ready = 0;
                     store(arena, token, frame, state);
                     const auto child = arena.push(token, sizeof(State));
                     handles[depth++] = child;
                     store(arena, token, child,
                           {static_cast<std::uint64_t>(instruction.target),
-                           state.arg, 0});
+                           state.arg, 0, 0});
                     break;
                 }
                 case Op::IncrementChild:
+                    if (state.child_ready != 1)
+                        poison(arena, token);
                     if (state.child == std::numeric_limits<std::int64_t>::max())
                         poison(arena, token);
                     ++state.child;
@@ -100,6 +110,8 @@ public:
                     store(arena, token, frame, state);
                     break;
                 case Op::ReturnChild:
+                    if (state.child_ready != 1)
+                        poison(arena, token);
                     if (const auto value = return_value(arena, token, handles,
                                                          depth, state.child))
                         return *value;
@@ -127,9 +139,12 @@ private:
         std::uint64_t pc;
         std::int64_t arg;
         std::int64_t child;
+        // Zero until an actual nested call returns on this frame.
+        // Explicit-width field avoids reading uninitialized padding.
+        std::uint64_t child_ready;
     };
     static_assert(std::is_trivially_copyable_v<State>);
-    static_assert(sizeof(State) == 24);
+    static_assert(sizeof(State) == 32);
     using Token = ActorFrameStack::Token;
     using Frame = ActorFrameStack::Frame;
 
@@ -156,6 +171,7 @@ private:
         if (depth == 0) return value;
         auto parent = load(arena, token, handles[depth - 1]);
         parent.child = value;
+        parent.child_ready = 1;
         store(arena, token, handles[depth - 1], parent);
         return std::nullopt;
     }
