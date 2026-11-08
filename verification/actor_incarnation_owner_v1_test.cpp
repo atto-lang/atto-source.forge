@@ -180,6 +180,42 @@ int main() {
           ActorMemoryAggregateBudgetV1::process().reserved() == initial,
           "STOP and restart leaked native reservations");
 
+  // A failed successor allocation cannot leave a half-admitted
+  // incarnation, steal another actor's quota, or revive prior references.
+  ActorMemoryAggregateBudgetV1 restartBudget(320);
+  ActorIncarnationOwnerV1 restarting(8403, restartBudget, 256, 64, 4, 2);
+  const auto beforeRestart = restarting.ref();
+  restarting.stop();
+  require(restartBudget.reserved() == 0,
+          "stopped actor did not release its native reservation");
+  ActorIncarnationOwnerV1 budgetHolder(8404, restartBudget, 256, 64, 4, 2);
+  denied([&] { restarting.restart(); },
+         "restart succeeded despite aggregate native-memory exhaustion");
+  require(restarting.stopped() && restartBudget.reserved() == 320,
+          "failed successor allocation left a partially active actor or leaked credit");
+  denied([&] { (void)restarting.ref(); },
+         "failed restart exposed a live actor reference");
+  budgetHolder.stop();
+  const auto recovered = restarting.restart();
+  require(recovered.generation >= beforeRestart.generation + 2 &&
+          restartBudget.reserved() == 320,
+          "successor recovery reused denied generation or lost native budget");
+  denied([&] { restarting.send(beforeRestart,
+                            std::array<std::uint8_t,1>{9}); },
+         "old actor reference was revived after quota-denied restart");
+
+  // A thrown native host handler must scrub its message, stop only its
+  // incarnation and refund its bytes, even without a frame protocol fault.
+  restarting.send(recovered, std::array<std::uint8_t,1>{7});
+  denied([&] {
+    restarting.dispatch_one(recovered, [](auto&, auto) {
+      throw std::runtime_error("synthetic trusted handler exception");
+    });
+  }, "trusted handler error escaped without actor-local containment");
+  require(restarting.stopped() && restartBudget.reserved() == 0 &&
+          ActorMemoryAggregateBudgetV1::process().reserved() == initial,
+          "handler failure leaked native credits or corrupted process reservation");
+
   std::cout << "FORGE_ACTOR_OWNER_HOST_PASS"
             << "|turn=1|stop_restart=1|sibling=42|guest_atto=0|physical_stack=0\n";
 }
