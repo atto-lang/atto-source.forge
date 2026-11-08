@@ -60,3 +60,11 @@ Existing Forge #207 records local GCC, Clang and ASan+UBSan execution of its sta
 The actor VM host suite now executes two independent actors simultaneously on different carriers, each processing 64 iterative calls (128 total), while checking actor-specific heap field results, mailbox draining, separate frame retirement, and carrier-local callback context. The suite also denies a child-return increment at the i64 maximum and validates previously detected uninitialized-return and byte-budget errors.
 
 The exact-head native test workflow pins and records the source blobs for the actor frame, stackless VM, heap C implementation, CMake composition, native test, and compiler-admission test. A second native negative-controls receipt marker must be produced by an actually executed test. Neither receipts nor the test labels imply compiled `.atto` actor parity; do not count workflow registration as an executed run.
+
+## Reconciliation with the evolving Forge mainline (2026-11-07)
+
+Forge main advanced 67 commits from this integration's original base, including `runtime/ActorIncarnationMemoryV1.hpp` (mailbox-incarnation-fenced, process-budgeted native heap and logical frames), `runtime/ActorStackDomain.hpp` (guarded Linux x86-64 `ucontext` host callback stack), and `runtime/actor_arena.hpp` (C++ scoped arena). These **already have their own host tests** and are preserved, not replaced by the new C scalar/stackless path.
+
+The C arena test target was renamed to `oresforge_actor_c_arena_tests` to avoid colliding with the mainline `oresforge_actor_arena_tests`; the CTest names stay distinct. The exact-head workflow additionally builds/tests the mainline C++ actor arena and mailbox-incarnation-memory target, and executes the guarded-stack host test only on GCC/Clang non-sanitizer lanes.
+
+**Architecture gap:** `ScalarActor` and `ActorStacklessI64` still use their own host-private frame and scalar heap domain rather than `ActorIncarnationMemoryV1`'s process/tenant budget ledger and mailbox-generation lock. Do not describe these as a unified memory/runtime ABI or substitute the `ucontext` stack (which cannot migrate) for stackless suspension. A typed compiler-produced actor adapter with one authoritative identity, budget and STOP/continuation fence is required before source guest parity.

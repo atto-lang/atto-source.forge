@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 project(OresForge VERSION 0.1.0 LANGUAGES C CXX)
 option(ORESFORGE_FUZZ "Build Clang libFuzzer target" OFF)
-add_library(oresforge_core STATIC compiler/frontend.cpp compiler/ir.cpp compiler/call_native.cpp codegen/native.cpp runtime/actor.cpp jit/tiered.cpp)
+add_library(oresforge_core STATIC compiler/frontend.cpp compiler/ir.cpp compiler/call_native.cpp codegen/native.cpp runtime/actor.cpp runtime/generator_frame.cpp jit/tiered.cpp)
 target_include_directories(oresforge_core PUBLIC .)
 target_compile_features(oresforge_core PUBLIC cxx_std_20)
 # Actor-private native heap and logical frame stack from Forge #101 + #207.
@@ -27,10 +27,10 @@ include(CTest)
 if(BUILD_TESTING)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   # Native HOST-ONLY actor-private heaps + per-incarnation logical frames.
-  add_executable(oresforge_actor_arena_tests verification/actor_arena.cpp)
-  target_link_libraries(oresforge_actor_arena_tests PRIVATE oresforge_actor_arena Threads::Threads)
-  target_compile_features(oresforge_actor_arena_tests PRIVATE cxx_std_20)
-  add_test(NAME oresforge_actor_arena_persistent_scratch COMMAND oresforge_actor_arena_tests)
+  add_executable(oresforge_actor_c_arena_tests verification/actor_arena.cpp)
+  target_link_libraries(oresforge_actor_c_arena_tests PRIVATE oresforge_actor_arena Threads::Threads)
+  target_compile_features(oresforge_actor_c_arena_tests PRIVATE cxx_std_20)
+  add_test(NAME oresforge_actor_arena_persistent_scratch COMMAND oresforge_actor_c_arena_tests)
   add_executable(oresforge_scalar_actor_tests verification/scalar_actor.cpp)
   target_link_libraries(oresforge_scalar_actor_tests PRIVATE oresforge_scalar_actor)
   add_test(NAME oresforge_scalar_actor_heap_and_turns COMMAND oresforge_scalar_actor_tests)
@@ -69,7 +69,7 @@ if(BUILD_TESTING)
   # Preserve #101's zero-allocation turn instrumentation on supported linkers.
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     foreach(actor_test IN ITEMS
-        oresforge_actor_arena_tests oresforge_scalar_actor_tests
+        oresforge_actor_c_arena_tests oresforge_scalar_actor_tests
         oresforge_scalar_heap_safety_tests)
       target_compile_definitions(${actor_test} PRIVATE ORES_ARENA_TEST_ALLOCATIONS=1)
       target_link_options(${actor_test} PRIVATE
@@ -152,6 +152,26 @@ if(BUILD_TESTING)
     COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.ores")
   set_tests_properties(oresforge_cli_legacy_ores_guest PROPERTIES
     PASS_REGULAR_EXPRESSION "^14\n?$" TIMEOUT 10)
+  add_executable(oresforge_generator_frame_v1 verification/generator_frame_v1_test.cpp)
+  target_link_libraries(oresforge_generator_frame_v1 PRIVATE oresforge_core)
+  target_compile_features(oresforge_generator_frame_v1 PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_generator_frame_v1 PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME oresforge_generator_frame_v1 COMMAND oresforge_generator_frame_v1)
+  set_tests_properties(oresforge_generator_frame_v1 PROPERTIES TIMEOUT 20)
+  add_executable(oresforge_state_region_provenance
+    verification/state_region_provenance.cpp)
+  target_include_directories(oresforge_state_region_provenance PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_state_region_provenance PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_state_region_provenance PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME oresforge_state_region_provenance_v1
+    COMMAND oresforge_state_region_provenance)
+  set_tests_properties(oresforge_state_region_provenance_v1 PROPERTIES TIMEOUT 15)
   # Host-only positive filesystem resolution substrate, not guest import linking.
   add_executable(oresforge_root_resolver_test verification/project_root_resolver_test.cpp)
   target_include_directories(oresforge_root_resolver_test PRIVATE .)
@@ -189,10 +209,28 @@ if(BUILD_TESTING)
   add_test(NAME oresforge_actor_mailbox_mpmc COMMAND oresforge_mailbox_mpmc)
   set_tests_properties(oresforge_actor_mailbox_mpmc PROPERTIES TIMEOUT 60)
   set_tests_properties(oresforge_actor_mailbox_limits PROPERTIES TIMEOUT 20)
+  # Independent native heap and logical frame stack per authenticated
+  # mailbox incarnation. This is real C++ host execution, not .atto lowering.
+  add_executable(oresforge_actor_incarnation_memory_v1
+    verification/actor_incarnation_memory_v1_test.cpp)
+  target_link_libraries(oresforge_actor_incarnation_memory_v1
+    PRIVATE oresforge_core Threads::Threads)
+  target_compile_features(oresforge_actor_incarnation_memory_v1 PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_actor_incarnation_memory_v1 PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME oresforge_actor_incarnation_memory_v1_host
+    COMMAND oresforge_actor_incarnation_memory_v1)
+  set_tests_properties(oresforge_actor_incarnation_memory_v1_host
+    PROPERTIES TIMEOUT 30)
   add_executable(oresforge_mailbox_model verification/actor_mailbox_model.cpp)
   target_link_libraries(oresforge_mailbox_model PRIVATE oresforge_core)
   add_test(NAME oresforge_actor_mailbox_model COMMAND oresforge_mailbox_model)
   set_tests_properties(oresforge_actor_mailbox_model PROPERTIES TIMEOUT 30)
+  add_executable(oresforge_actor_arena_tests verification/actor_arena_test.cpp)
+  target_link_libraries(oresforge_actor_arena_tests PRIVATE oresforge_core)
+  add_test(NAME oresforge_actor_arena COMMAND oresforge_actor_arena_tests)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   add_test(NAME oresforge_cli_source_budget
     COMMAND "${Python3_EXECUTABLE}"
@@ -365,4 +403,24 @@ if(BUILD_TESTING)
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic -Werror>)
   add_test(NAME forge_wrapper_option_host_conformance COMMAND oresforge_wrapper_flatten_option_host)
   set_tests_properties(forge_wrapper_option_host_conformance PROPERTIES TIMEOUT 20)
+endif()
+
+# Linux x86-64 native actor stack/heap substrate. HOST CALLBACKS ONLY:
+# this is not `define actor` guest compilation or a tenant sandbox.
+if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+   CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64)$")
+  add_executable(oresforge_actor_stack_domain
+    verification/actor_stack_domain_test.cpp)
+  target_include_directories(oresforge_actor_stack_domain PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_actor_stack_domain PRIVATE cxx_std_20)
+  find_package(Threads REQUIRED)
+  target_link_libraries(oresforge_actor_stack_domain PRIVATE Threads::Threads)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_actor_stack_domain PRIVATE
+      -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+  endif()
+  add_test(NAME forge_actor_stack_domain_host_v1 COMMAND oresforge_actor_stack_domain)
+  set_tests_properties(forge_actor_stack_domain_host_v1 PROPERTIES
+    TIMEOUT 30 LABELS "host-only;native-actor-stack")
 endif()
