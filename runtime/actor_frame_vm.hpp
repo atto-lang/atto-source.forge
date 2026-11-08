@@ -47,8 +47,10 @@ public:
                          std::int64_t argument) const {
         if (entry >= functions_.size()) throw std::invalid_argument("unknown actor function");
         const auto token = frames.current_turn();
-        if (frames.depth(token) != 0)
+        if (frames.depth(token) != 0) {
+            frames.retire();
             throw std::logic_error("scalar frame VM cannot enter a nonempty stack");
+        }
         std::array<ActorFrameStack::Frame, ActorFrameStack::max_frames> handles{};
         std::array<std::size_t, ActorFrameStack::max_frames> function_ids{};
         std::size_t depth = 0;
@@ -70,8 +72,10 @@ public:
             if (++cycles == 128) {
                 cycles = 0;
                 consumed += 128;
-                if (consumed >= instruction_quota)
+                if (consumed >= instruction_quota) {
+                    frames.retire(); // uncatchable actor-local terminal fault
                     throw std::length_error("actor scalar VM execution quota exceeded");
+                }
             }
             auto& frame = handles[depth - 1];
             auto state = load(frames, token, frame);
@@ -80,6 +84,7 @@ public:
             if (state.pc >= code.size())
                 throw std::logic_error("actor scalar VM invalid program counter");
             const auto& op = code[static_cast<std::size_t>(state.pc)];
+            try {
             switch (op.op) {
             case Op::LoadArgument:
                 state.accumulator = state.argument;
@@ -130,7 +135,14 @@ public:
                 throw std::logic_error("actor scalar VM encountered unknown opcode");
             }
             store(frames, token, frame, state);
+            } catch (...) {
+                // A callback may catch its own exception. Revoking the frame
+                // arena makes the enclosing ScalarActor turn fail closed.
+                frames.retire();
+                throw;
+            }
         }
+        frames.retire();
         throw std::logic_error("actor scalar VM escaped without return");
     }
 
@@ -194,11 +206,16 @@ private:
                 const auto& i = code[pc];
                 switch (i.op) {
                 case Op::LoadArgument:
-                case Op::LoadConstant:
                 case Op::AddArgument:
                 case Op::MultiplyArgument:
                 case Op::SaveTemporary:
                 case Op::AddTemporary:
+                    if (i.immediate != 0 || i.target != 0)
+                        throw std::invalid_argument("actor scalar VM noncanonical opcode");
+                    [[fallthrough]];
+                case Op::LoadConstant:
+                    if (i.op == Op::LoadConstant && i.target != 0)
+                        throw std::invalid_argument("actor scalar VM noncanonical literal");
                     if (pc + 1 >= code.size())
                         throw std::invalid_argument("actor scalar VM fallthrough missing");
                     break;
@@ -212,6 +229,8 @@ private:
                         throw std::invalid_argument("actor scalar VM invalid call");
                     break;
                 case Op::Return:
+                    if (i.immediate != 0 || i.target != 0)
+                        throw std::invalid_argument("actor scalar VM noncanonical return");
                     has_return = true;
                     break;
                 default:
