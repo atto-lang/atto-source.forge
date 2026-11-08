@@ -258,6 +258,38 @@ int main() {
   require(parked.poisoned(),
           "heap access while suspended must revoke logical stack authority");
 
+  // Every heap entry point must deny a parked actor, not just heap_read.
+  // Give each denial a fresh incarnation because a violation is terminal.
+  for (int operation = 0; operation < 3; ++operation) {
+    Mailbox fencedMailbox(9200 + operation);
+    const auto fencedRef = fencedMailbox.ref();
+    ActorIncarnationMemoryV1 fenced(fencedMailbox, fencedRef, 128, 64, 2, 2);
+    const auto fencedHeap = fenced.alloc(fencedRef, 8);
+    const auto fencedExecution = fenced.begin(fencedRef);
+    [[maybe_unused]] auto fencedFrame = fenced.push(
+        fencedRef, fencedExecution, 8);
+    const auto fencedContinuation = fenced.suspend(
+        fencedRef, fencedExecution);
+    const std::array<std::uint8_t, 1> fencedByte{42};
+    if (operation == 0) {
+      denied([&]{ fenced.alloc(fencedRef, 1); },
+             "suspended actor allocated heap memory");
+    } else if (operation == 1) {
+      denied([&]{ fenced.heap_write(fencedRef, fencedHeap, 0, fencedByte); },
+             "suspended actor wrote heap memory");
+    } else {
+      denied([&]{ fenced.drop(fencedRef, fencedHeap); },
+             "suspended actor dropped heap memory");
+    }
+    require(fenced.poisoned(),
+            "suspended heap mutation must permanently poison actor frames");
+    denied([&]{ fenced.resume(
+        fencedRef, fencedExecution, fencedContinuation); },
+        "poisoned actor continuation recovered after suspended heap mutation");
+  }
+  require(!peer.poisoned(),
+          "suspended heap denials must not fault another actor");
+
   // STOP and restart reject stale construction before charging native memory.
   Mailbox stoppedMailbox(9113);
   const auto stoppedRef = stoppedMailbox.ref();
