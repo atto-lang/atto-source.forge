@@ -74,6 +74,27 @@ int main() {
     std::puts("COMPILED_ATTO_ACTOR_PASS");
 }
 """
+# The mutation witness must exit 0 with an *observably wrong value*.
+# An unrelated crash, sanitizer failure, or uncaught CHECK exception is never
+# accepted as proof that the mutated actor's semantic behavior was detected.
+PROBE = r"""
+#include "runtime/scalar_actor.hpp"
+#include <cstdint>
+#include <cstdio>
+using oresforge::runtime::ScalarActor;
+using oresforge::runtime::ActorFrameStack;
+extern "C" void oresforge_actor_init(OresActorI64Heap*, std::uint64_t, std::uint64_t, ActorFrameStack&);
+extern "C" std::int64_t oresforge_actor_handle(OresActorI64Heap*, std::uint64_t, std::uint64_t, std::int64_t, ActorFrameStack&);
+int main() {
+  ScalarActor actor(7001, 1, 2, oresforge_actor_init, oresforge_actor_handle);
+  if (actor.try_send(actor.ref(), 5) != ScalarActor::Send::Accepted) return 2;
+  const auto result = actor.run_one();
+  if (result.status != ScalarActor::Turn::Executed) return 3;
+  if (std::printf("%lld\\n", static_cast<long long>(result.value)) <= 0) return 4;
+  actor.stop();
+  return actor.done() ? 0 : 5;
+}
+"""
 
 def run(command, cwd, timeout=60):
     def disable_core_dumps():
@@ -166,22 +187,42 @@ def main():
             require(executed.stdout == b"COMPILED_ATTO_ACTOR_PASS\n",
                     "unexpected compiled native actor output: " + fixture)
             successes += 1
-            # Negative native mutation: invert the actual generated arithmetic
-            # but keep the expected trace; the test driver must catch it.
+            # Compiler-produced semantics must affect a *healthy native
+            # execution*, not merely cause an unrelated sanitizer crash.
+            binary_hash = hashlib.sha256(executable.read_bytes()).hexdigest()
             if results:
                 expected = "old - argument" if subtraction else "old + argument"
                 swapped = "old + argument" if subtraction else "old - argument"
                 require(native.count(expected) == 1, "ambiguous emitted arithmetic")
+                (temp/"probe.cpp").write_text(PROBE, encoding="ascii")
+                def compile_probe(label):
+                    checked([opt.cxx, "-std=c++20", *native_flags,
+                             "-Wall", "-Wextra", "-Wpedantic", "-Werror",
+                             "-pthread", "-I", str(root),
+                             str(generated), str(root/"runtime/scalar_actor.cpp"),
+                             str(temp/"probe.cpp"), str(heap_obj), "-o", str(executable)],
+                            temp, label)
+                compile_probe("link native mutation baseline")
+                baseline = checked([str(executable)], temp, "execute mutation baseline")
+                require(baseline.stdout == (str(results[0]) + "\\n").encode("ascii"),
+                        "mutation baseline result differs from source oracle")
                 generated.write_text(native.replace(expected, swapped), encoding="ascii")
-                checked([opt.cxx, "-std=c++20", *native_flags, "-pthread", "-I", str(root),
-                         str(generated), str(root/"runtime/scalar_actor.cpp"),
-                         str(temp/"driver.cpp"), str(heap_obj), "-o", str(executable)],
-                        temp, "link negative native mutation")
-                changed = run([str(executable)], temp)
-                require(changed.returncode != 0 or
-                        changed.stdout != b"COMPILED_ATTO_ACTOR_PASS\n",
-                        "arithmetic mutation escaped observable actor output")
+                compile_probe("link negative native mutation")
+                changed = checked([str(executable)], temp, "execute negative native mutation")
+                require(changed.stdout != baseline.stdout and changed.stdout.endswith(b"\\n"),
+                        "arithmetic mutation did not change observable i64 result")
                 mutations += 1
+            # The default/legacy compiler modes must not gain actor syntax
+            # by transitive admission from this opt-in source-to-C++ mode.
+            for mode in (("run",), ("ir",), ("run-runtime",),
+                         ("ir-runtime",), ("run-calls",),
+                         ("emit-asm", "x86_64"), ("emit-runtime-asm", "x86_64"),
+                         ("emit-call-asm", "x86_64")):
+                rejected_mode = run([str(compiler), *mode, str(path)], temp)
+                require(rejected_mode.returncode != 0 and rejected_mode.stdout == b"",
+                        "legacy Forge CLI unexpectedly admitted actor declaration: " +
+                        "/".join(mode))
+                denials += 1
             for index, bad in enumerate(mutate_source(source.decode("ascii"))):
                 path.write_bytes(bad.encode("utf-8"))
                 denied = run([str(compiler), "emit-actor-cxx", str(path)], temp)
@@ -194,6 +235,7 @@ def main():
                 "fixture": fixture,
                 "fixture_sha256": hashlib.sha256(source).hexdigest(),
                 "generated_cpp_sha256": hashlib.sha256(native.encode("ascii")).hexdigest(),
+                "native_binary_sha256": binary_hash,
                 "source_checked": True,
                 "compiled_native_executed": True
             })
