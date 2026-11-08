@@ -10,7 +10,8 @@ class CooperationBudget final {
 public:
   static constexpr std::uint32_t kPollInterval = 128;
   static constexpr std::uint64_t kMaxFuel = 100'000'000;
-  static constexpr std::uint64_t kMaxBlockWeight = 512;
+  // Each charge crosses at most one slow-poll boundary.
+  static constexpr std::uint64_t kMaxBlockWeight = 128;
   explicit CooperationBudget(std::uint64_t fuel)
       : remaining_fuel_(fuel) {
     if (fuel == 0 || fuel > kMaxFuel)
