@@ -137,6 +137,9 @@ class Parser {
     const auto start=at_;
     if (at_==source_.size()) { tok_={Kind::End,{},start}; return; }
     auto c=static_cast<unsigned char>(source_[at_]);
+    if (c=='@')
+      throw std::runtime_error("annotations require typed target validation and AOT lowering; unsupported in Forge stage-0 at byte "+
+                               std::to_string(start));
     if (ascii_alpha(c) || c=='_') {
       ++at_;
       while (at_<source_.size()) {
@@ -166,6 +169,8 @@ class Parser {
         error("VIRTUAL_ACTOR_BACKEND_UNSUPPORTED: logical key and activation fencing required");
       if (tok_.text=="class" || tok_.text=="actor")
         error("class/actor methods require typed native lowering");
+      if (tok_.text=="InvertedArray")
+        error("inverted collection requires typed owned SoA columns and generation-checked row lowering");
       if (tok_.text=="lex" || tok_.text=="nlex")
         error("lexical captures require checked closure lowering");
       if (tok_.text=="cpu" || tok_.text=="gpu" || tok_.text=="quantum" || tok_.text=="nb")
@@ -288,6 +293,15 @@ class Parser {
         error("VIRTUAL_ACTOR_BACKEND_UNSUPPORTED: logical key and activation fencing required");
       error("unexpected declaration after virtual");
     }
+    // An explicitly inverted declaration is a nominal row-layout request,
+    // never a scalar function. The Stage-0 frontend must reject it before
+    // parsing a subsequent unrelated function or emitting native code.
+    if (tok_.text=="inverted")
+      error("inverted struct/class requires one-level typed SoA and ownership lowering");
+    // The stage-0 scalar frontend cannot lower nominal ModelGraphs.
+    // `model` remains contextual; `fnc model()` is still valid.
+    if (tok_.text=="model")
+      error("MODEL_LOWERING_UNSUPPORTED: Forge requires typed nominal ModelGraph lowering");
     expect("fnc");
     const std::string name=identifier();
     if (name=="int" || name=="fnc" || name=="return")
