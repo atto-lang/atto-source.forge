@@ -68,7 +68,9 @@ public:
         ActorExecutionContext* owner_ = nullptr;
         runtime::ActorRef incarnation_;
         std::int64_t message_ = 0;
-        bool committed_ = false;
+        std::int64_t reply_ = 0;
+        enum class Phase { Claimed, Executed, Committed };
+        Phase phase_ = Phase::Claimed;
         DispatchTicket(ActorExecutionContext& owner,
                        const runtime::ActorRef& incarnation,
                        std::int64_t message)
@@ -79,11 +81,16 @@ public:
         DispatchTicket(DispatchTicket&& other) noexcept
             : owner_(std::exchange(other.owner_, nullptr)),
               incarnation_(std::move(other.incarnation_)),
-              message_(other.message_), committed_(other.committed_) {}
+              message_(other.message_), reply_(other.reply_),
+              phase_(other.phase_) {}
         DispatchTicket& operator=(DispatchTicket&&) = delete;
         ~DispatchTicket() noexcept;
     };
     std::optional<DispatchTicket> take_next();
+    // Split native handler completion from reply publication so STOP can
+    // deterministically race either phase. Only commit_ticket publishes.
+    void run_ticket(DispatchTicket&& ticket);
+    std::int64_t commit_ticket(DispatchTicket&& ticket);
     std::int64_t execute_ticket(DispatchTicket&& ticket);
     std::optional<std::int64_t> dispatch_next();
 private:

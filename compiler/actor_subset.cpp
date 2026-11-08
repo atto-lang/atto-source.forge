@@ -395,7 +395,7 @@ ActorExecutionContext::DispatchTicket::~DispatchTicket() noexcept {
     if (!owner_) return;
     // A worker that dequeues and abandons a message is terminally faulty.
     // Do not silently consume accepted data or allow a later reply to skip it.
-    if (!committed_) owner_->close_incarnation();
+    if (phase_ != Phase::Committed) owner_->close_incarnation();
     owner_->worker_claimed_.store(false, std::memory_order_release);
 }
 std::optional<ActorExecutionContext::DispatchTicket>
@@ -427,11 +427,12 @@ ActorExecutionContext::take_next() {
         throw;
     }
 }
-std::int64_t ActorExecutionContext::execute_ticket(DispatchTicket&& ticket) {
+void ActorExecutionContext::run_ticket(DispatchTicket&& ticket) {
     claim_mode(TransportMode::Queued);
-    if (ticket.owner_ != this || ticket.committed_ ||
+    if (ticket.owner_ != this ||
+        ticket.phase_ != DispatchTicket::Phase::Claimed ||
         !worker_claimed_.load(std::memory_order_acquire))
-        throw std::logic_error("foreign or consumed actor dispatch ticket");
+        throw std::logic_error("foreign or already-run actor dispatch ticket");
     if (!mailbox_.authorizes(ticket.incarnation_))
         throw std::logic_error("stale actor dispatch ticket");
     Activation lease(*this);
@@ -442,17 +443,31 @@ std::int64_t ActorExecutionContext::execute_ticket(DispatchTicket&& ticket) {
         const auto result = actor_.run_one();
         if (result.status != runtime::ScalarActor::Turn::Executed)
             throw std::logic_error("actor did not execute queued message");
-        // STOP and reply commit are linearized under one lifecycle gate.
-        // No future or callback result is published once STOP wins this lock.
-        std::scoped_lock publication(publication_gate_);
-        if (!mailbox_.authorizes(ticket.incarnation_))
-            throw std::logic_error("actor stopped before reply commit");
-        ticket.committed_ = true;
-        return result.value;
+        ticket.reply_ = result.value;
+        ticket.phase_ = DispatchTicket::Phase::Executed;
+        // A successful handler has not published anything yet. STOP can
+        // still win the generation barrier before commit_ticket().
     } catch (...) {
         close_incarnation();
         throw;
     }
+}
+std::int64_t ActorExecutionContext::commit_ticket(DispatchTicket&& ticket) {
+    if (ticket.owner_ != this ||
+        ticket.phase_ != DispatchTicket::Phase::Executed ||
+        !worker_claimed_.load(std::memory_order_acquire))
+        throw std::logic_error("unexecuted, foreign or consumed actor reply");
+    // This is the linearization point for a successful synchronous reply.
+    // STOP takes the same gate and revokes the mailbox generation.
+    std::scoped_lock publication(publication_gate_);
+    if (!mailbox_.authorizes(ticket.incarnation_))
+        throw std::logic_error("actor stopped before reply commit");
+    ticket.phase_ = DispatchTicket::Phase::Committed;
+    return ticket.reply_;
+}
+std::int64_t ActorExecutionContext::execute_ticket(DispatchTicket&& ticket) {
+    run_ticket(std::move(ticket));
+    return commit_ticket(std::move(ticket));
 }
 std::optional<std::int64_t> ActorExecutionContext::dispatch_next() {
     auto ticket = take_next();
