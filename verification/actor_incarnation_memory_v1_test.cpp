@@ -1,6 +1,7 @@
 #include "runtime/ActorIncarnationMemoryV1.hpp"
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <exception>
 #include <iostream>
@@ -281,6 +282,63 @@ int main() {
   }
   require(processBudget.reserved() == processBeforeStop,
           "fresh incarnation teardown leaked aggregate native budget");
+
+  // Concurrent admission must serialize the aggregate reservation. Do not
+  // allow both actors to reserve the last available native bytes.
+  ActorMemoryAggregateBudgetV1 competingBudget(176);
+  Mailbox contenderMailboxA(9114), contenderMailboxB(9115);
+  const auto contenderRefA = contenderMailboxA.ref();
+  const auto contenderRefB = contenderMailboxB.ref();
+  std::atomic<int> started{0}, outcomes{0}, admitted{0}, rejected{0};
+  std::atomic<bool> releaseContender{false};
+  std::exception_ptr unexpectedA, unexpectedB;
+  const std::size_t concurrentBaseline = processBudget.reserved();
+  auto contender = [&](Mailbox& mailbox, const ActorRef& ref,
+                       std::exception_ptr& unexpected) {
+    started.fetch_add(1, std::memory_order_acq_rel);
+    while (started.load(std::memory_order_acquire) != 2)
+      std::this_thread::yield();
+    try {
+      ActorIncarnationMemoryV1 owned(
+          mailbox, ref, 128, 48, 2, 2, competingBudget);
+      admitted.fetch_add(1, std::memory_order_acq_rel);
+      outcomes.fetch_add(1, std::memory_order_acq_rel);
+      while (!releaseContender.load(std::memory_order_acquire))
+        std::this_thread::yield();
+    } catch (const std::length_error&) {
+      rejected.fetch_add(1, std::memory_order_acq_rel);
+      outcomes.fetch_add(1, std::memory_order_acq_rel);
+    } catch (...) {
+      unexpected = std::current_exception();
+      outcomes.fetch_add(1, std::memory_order_acq_rel);
+    }
+  };
+  std::thread firstContender([&] {
+    contender(contenderMailboxA, contenderRefA, unexpectedA);
+  });
+  std::thread secondContender([&] {
+    contender(contenderMailboxB, contenderRefB, unexpectedB);
+  });
+  const auto deadline = std::chrono::steady_clock::now() +
+                        std::chrono::seconds(5);
+  while (outcomes.load(std::memory_order_acquire) != 2 &&
+         std::chrono::steady_clock::now() < deadline)
+    std::this_thread::yield();
+  const int completedOutcomes = outcomes.load(std::memory_order_acquire);
+  const int activeReservations = admitted.load(std::memory_order_acquire);
+  const int deniedReservations = rejected.load(std::memory_order_acquire);
+  const std::size_t duringCompetition = competingBudget.reserved();
+  releaseContender.store(true, std::memory_order_release);
+  firstContender.join();
+  secondContender.join();
+  if (unexpectedA) std::rethrow_exception(unexpectedA);
+  if (unexpectedB) std::rethrow_exception(unexpectedB);
+  require(completedOutcomes == 2 && activeReservations == 1 &&
+          deniedReservations == 1 && duringCompetition == 176,
+          "concurrent actor creation overcommitted its native memory budget");
+  require(competingBudget.reserved() == 0 &&
+          processBudget.reserved() == concurrentBaseline,
+          "concurrent actor retirement did not refund process and runtime quota");
 
   std::cout << "FORGE_ACTOR_INCAR_MEMORY_HOST_PASS"
             << "|private_heap=1|logical_stack=1|guest_atto=0|physical_stack=0\n";
