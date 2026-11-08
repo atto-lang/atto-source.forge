@@ -67,6 +67,7 @@ jobs:
           fi
           ./build-frame/oresforge_actor_queued_delivery_tests | tee receipts/actor-queued-mailbox.txt
           grep -F 'ATTO_FORGE_ACTOR_QUEUED_MAILBOX|capacity=8|fifo=1|concurrent_publishers=4|fault_fence=1|same_id_restart=1|cross_carrier=1|process_budget_refund=1|async_guest=NOT_EXECUTED|native_aot=NOT_EXECUTED' receipts/actor-queued-mailbox.txt
+          grep -F 'ATTO_FORGE_ACTOR_STOP_COMMIT_RACES|before_handler=1|after_handler=1|stale_reply=1|ticket_cancel=1|single_commit=1|producer_stop=1|guest_async=NOT_EXECUTED' receipts/actor-queued-mailbox.txt
           ./build-frame/oresforge_actor_compiled_source_tests | tee receipts/actor-compiled-source.txt
           grep -F 'ATTO_FORGE_COMPILED_SOURCE_ACTOR_HOST|field=1|recursion=1|sibling_survival=1|carrier_migration=1|restart_fence=1|guest_source=1|general_spawn=NOT_EXECUTED' receipts/actor-compiled-source.txt
           python3 verification/actor_compiler_cli.py ./build-frame/oresforge verification/fixtures/actor_counter.atto verification/fixtures/actor_countdown.atto verification/fixtures/actor_main_two_instances.atto verification/fixtures/actor_main_recursion.atto | tee receipts/actor-compiled-cli.txt
