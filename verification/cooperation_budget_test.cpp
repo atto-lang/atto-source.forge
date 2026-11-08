@@ -81,10 +81,10 @@ int main() {
   CooperationBudget weighted{800};
   require(!weighted.charge_operation(127));
   require(weighted.charge_operation(2));
-  require(weighted.charge_operation(512));
+  for (int i = 0; i < 4; ++i) require(weighted.charge_operation(128));
   require(weighted.remaining_fuel() == 159);
   bool oversized = false;
-  try { (void)weighted.charge_operation(513); }
+  try { (void)weighted.charge_operation(129); }
   catch (const std::invalid_argument&) { oversized = true; }
   require(oversized && weighted.remaining_fuel() == 159);
   bool insufficient = false;
