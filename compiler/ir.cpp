@@ -1,4 +1,5 @@
 #include "compiler/ir.hpp"
+#include "runtime/BatchedCooperation.hpp"
 #include <limits>
 #include <sstream>
 #include <stdexcept>
@@ -66,11 +67,14 @@ void verify(const Program& p) {
   }
   if (p.instructions.back().op != Op::Return) throw std::runtime_error("missing return");
 }
-std::int64_t interpret(const Program& p,std::span<const std::int64_t> args) {
+namespace {
+std::int64_t interpret_impl(const Program& p,std::span<const std::int64_t> args,
+    const std::function<void(std::uint64_t,bool)>* checkpoint) {
   verify(p);
   if (args.size()!=p.parameter_count) throw std::runtime_error("runtime argument count mismatch");
   std::vector<std::int64_t> values;
   values.reserve(p.instructions.size());
+  oresforge::runtime::BatchedCooperation meter;
   for (const auto& ins : p.instructions) {
     if (ins.op == Op::Return) return values.at(static_cast<std::size_t>(ins.a));
     if (ins.op == Op::Constant) values.push_back(ins.value);
@@ -78,8 +82,23 @@ std::int64_t interpret(const Program& p,std::span<const std::int64_t> args) {
       values.push_back(args[static_cast<std::size_t>(ins.value)]);
     else values.push_back(checked(ins.op, values.at(static_cast<std::size_t>(ins.a)),
                                            values.at(static_cast<std::size_t>(ins.b))));
+    // This stage-0 IR is straight-line and bounded; the hook is observational
+    // only. No preemption or captured native continuation is claimed.
+    if (checkpoint)
+      meter.commit_batch(1, [&](std::uint64_t n,bool overdue) {
+        (*checkpoint)(n,overdue);
+      });
   }
   throw std::runtime_error("missing return");
+}
+} // namespace
+std::int64_t interpret(const Program& p,std::span<const std::int64_t> args) {
+  return interpret_impl(p,args,nullptr);
+}
+std::int64_t interpret_metered(const Program& p,std::span<const std::int64_t> args,
+    const std::function<void(std::uint64_t,bool)>& checkpoint) {
+  if (!checkpoint) throw std::invalid_argument("checkpoint callback required");
+  return interpret_impl(p,args,&checkpoint);
 }
 std::int64_t interpret(const Program& p) {
   return interpret(p,std::span<const std::int64_t>{});
