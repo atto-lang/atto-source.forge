@@ -2,6 +2,8 @@
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
+#include <exception>
+#include <future>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -196,5 +198,176 @@ int main() {
     }
     check(ledger.reserved() == initial_reserved,
           "signed-message actor leaked budget");
+    // Deterministic STOP wins after dequeue but before entering the actor:
+    // no scheduler timing guesses, sleepers or eventually-consistent checks.
+    {
+        ActorExecutionContext stopped(p, 451);
+        const auto cap = stopped.incarnation_ref();
+        stopped.enqueue(cap, 7);
+        stopped.enqueue(cap, 9);
+        std::promise<void> claimed, release;
+        auto claim_done = claimed.get_future();
+        auto go = release.get_future();
+        std::atomic<bool> rejected = false;
+        std::thread worker([&] {
+            try {
+                auto ticket = stopped.take_next();
+                check(ticket.has_value(), "dequeued worker ticket missing");
+                claimed.set_value();
+                go.wait();
+                try { (void)stopped.execute_ticket(std::move(*ticket)); }
+                catch (const std::logic_error&) { rejected = true; }
+            } catch (...) {
+                try { claimed.set_exception(std::current_exception()); }
+                catch (...) {}
+            }
+        });
+        try {
+            claim_done.get();
+            stopped.stop();
+            release.set_value();
+        } catch (...) {
+            release.set_value();
+            worker.join();
+            throw;
+        }
+        worker.join();
+        check(rejected, "STOP allowed stale dequeued handler execution");
+        check(stopped.done(), "STOP retained a claimed worker or queued message");
+        reject<std::runtime_error>([&] { stopped.enqueue(cap, 5); });
+    }
+    check(ledger.reserved() == initial_reserved,
+          "STOP-before-handler race leaked actor budget");
+
+    // STOP after native handler completion but BEFORE reply publication:
+    // commit must reject the already-computed answer under the same gate.
+    {
+        ActorExecutionContext stopped(p, 452);
+        stopped.enqueue(stopped.incarnation_ref(), 17);
+        std::promise<void> executed, release;
+        auto executed_done = executed.get_future();
+        auto go = release.get_future();
+        std::atomic<bool> rejected = false;
+        std::thread worker([&] {
+            try {
+                auto ticket = stopped.take_next();
+                check(ticket.has_value(), "post-handler ticket absent");
+                stopped.run_ticket(std::move(*ticket));
+                executed.set_value();
+                go.wait();
+                try { (void)stopped.commit_ticket(std::move(*ticket)); }
+                catch (const std::logic_error&) { rejected = true; }
+            } catch (...) {
+                try { executed.set_exception(std::current_exception()); }
+                catch (...) {}
+            }
+        });
+        try {
+            executed_done.get();
+            stopped.stop();
+            release.set_value();
+        } catch (...) {
+            release.set_value();
+            worker.join();
+            throw;
+        }
+        worker.join();
+        check(rejected, "STOP allowed completed stale actor reply to publish");
+        check(stopped.done(), "completed stale turn retained an execution claim");
+    }
+    check(ledger.reserved() == initial_reserved,
+          "STOP-before-commit race leaked actor budget");
+
+    // A new incarnation with the same numeric actor ID must not redeem a
+    // ticket issued by the previous incarnation, even after its handler ran.
+    {
+        ActorExecutionContext old(p, 453);
+        old.enqueue(old.incarnation_ref(), 4);
+        auto ticket = old.take_next();
+        check(ticket.has_value(), "old incarnation ticket missing");
+        old.run_ticket(std::move(*ticket));
+        old.stop();
+        ActorExecutionContext fresh(p, 453);
+        reject<std::logic_error>([&] {
+            (void)fresh.commit_ticket(std::move(*ticket));
+        });
+        reject<std::logic_error>([&] {
+            (void)old.commit_ticket(std::move(*ticket));
+        });
+        fresh.enqueue(fresh.incarnation_ref(), 5);
+        check(fresh.dispatch_next() == 5, "fresh incarnation reused old state");
+        fresh.stop();
+    }
+    check(ledger.reserved() == initial_reserved,
+          "stale reply fencing leaked actor budget");
+
+    // Dropping a claimed but unexecuted ticket is a terminal cancellation:
+    // neither a pending message nor a replacement can be delivered.
+    {
+        ActorExecutionContext cancelled(p, 454);
+        const auto cap = cancelled.incarnation_ref();
+        cancelled.enqueue(cap, 2);
+        cancelled.enqueue(cap, 3);
+        {
+            auto ticket = cancelled.take_next();
+            check(ticket.has_value(), "cancelled ticket missing");
+            reject<std::logic_error>([&] { (void)cancelled.take_next(); });
+            // Intentional drop, no run_ticket or commit_ticket.
+        }
+        check(cancelled.done(), "abandoned ticket did not fence pending work");
+        reject<std::runtime_error>([&] { cancelled.enqueue(cap, 4); });
+        reject<std::logic_error>([&] { (void)cancelled.dispatch_next(); });
+    }
+    check(ledger.reserved() == initial_reserved,
+          "abandoned worker ticket leaked process budget");
+
+    // A ticket can execute and commit once, never twice or out of order.
+    {
+        ActorExecutionContext single(p, 455);
+        single.enqueue(single.incarnation_ref(), 6);
+        auto ticket = single.take_next();
+        check(ticket.has_value(), "one-shot ticket missing");
+        reject<std::logic_error>([&] {
+            (void)single.commit_ticket(std::move(*ticket));
+        });
+        single.run_ticket(std::move(*ticket));
+        reject<std::logic_error>([&] { single.run_ticket(std::move(*ticket)); });
+        check(single.commit_ticket(std::move(*ticket)) == 6,
+              "first one-shot reply not published");
+        reject<std::logic_error>([&] {
+            (void)single.commit_ticket(std::move(*ticket));
+        });
+        ticket.reset(); // release worker claim only after successful commit
+        check(!single.dispatch_next(), "double commit delivered another message");
+        single.stop();
+    }
+    check(ledger.reserved() == initial_reserved,
+          "one-shot dispatch leaked process budget");
+
+    // STOP versus a producer waiting at a deterministic admission barrier.
+    // The old generation cannot enqueue once STOP has completed.
+    {
+        ActorExecutionContext actor(p, 456);
+        const auto cap = actor.incarnation_ref();
+        std::promise<void> ready, release;
+        auto on_ready = ready.get_future();
+        auto proceed = release.get_future();
+        std::atomic<bool> rejected = false;
+        std::thread producer([&] {
+            ready.set_value();
+            proceed.wait();
+            try { actor.enqueue(cap, 77); }
+            catch (const std::runtime_error&) { rejected = true; }
+        });
+        on_ready.get();
+        actor.stop();
+        release.set_value();
+        producer.join();
+        check(rejected, "STOP admitted producer into closed generation");
+        check(actor.done(), "cancelled producer left actor queued data");
+    }
+    check(ledger.reserved() == initial_reserved,
+          "STOP-versus-producer race leaked actor budget");
+    std::puts("ATTO_FORGE_ACTOR_STOP_COMMIT_RACES|before_handler=1|after_handler=1|stale_reply=1|ticket_cancel=1|single_commit=1|producer_stop=1|guest_async=NOT_EXECUTED");
     std::puts("ATTO_FORGE_ACTOR_QUEUED_MAILBOX|capacity=8|fifo=1|concurrent_publishers=4|fault_fence=1|same_id_restart=1|cross_carrier=1|process_budget_refund=1|async_guest=NOT_EXECUTED|native_aot=NOT_EXECUTED");
 }
