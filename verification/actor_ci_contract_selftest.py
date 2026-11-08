@@ -35,6 +35,13 @@ def main() -> None:
             '          persist-credentials: true'),
         'missing_native_sanitizer': (
             '-fsanitize=address,undefined', '-O0'),
+        'inserted_unreviewed_action': (
+            '      - name: Read back exact immutable source identity',
+            '      - uses: attacker/unreviewed@0123456789012345678901234567890123456789\n'
+            '      - name: Read back exact immutable source identity'),
+        'job_level_write_token': (
+            '    runs-on: ubuntu-24.04',
+            '    permissions:\n      contents: write\n    runs-on: ubuntu-24.04'),
     }
     with TemporaryDirectory(prefix='forge-actor-ci-negative-') as temp:
         for case, (old, replacement) in mutations.items():
@@ -48,7 +55,7 @@ def main() -> None:
                 print('FORGE_ACTOR_CI_NEGATIVE_REJECTED=' + case)
             else:
                 raise AssertionError('CI workflow mutation was admitted: ' + case)
-    print('FORGE_ACTOR_CI_NEGATIVE_MATRIX_PASS=5/5')
+    print('FORGE_ACTOR_CI_NEGATIVE_MATRIX_PASS=7/7')
 
 
 if __name__ == '__main__':
