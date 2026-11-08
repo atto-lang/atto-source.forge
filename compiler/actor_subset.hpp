@@ -1,5 +1,6 @@
 #pragma once
 #include "runtime/scalar_actor.hpp"
+#include "runtime/ActorIncarnationMemoryV1.hpp"
 #include <cstdint>
 #include <optional>
 #include <mutex>
@@ -50,7 +51,17 @@ public:
     runtime::ScalarActorRef ref() const;
     runtime::ScalarActor::Send try_send(const runtime::ScalarActorRef&, std::int64_t);
 private:
+    // Reserve the maximum per-incarnation footprint before constructing
+    // the host scalar actor. Refund only after actor destruction/quiescence.
+    struct BudgetReservation final {
+        static constexpr std::size_t bytes = 128 * 1024;
+        BudgetReservation();
+        ~BudgetReservation() noexcept;
+        BudgetReservation(const BudgetReservation&) = delete;
+        BudgetReservation& operator=(const BudgetReservation&) = delete;
+    };
     Program program_;
+    BudgetReservation budget_;
     runtime::ScalarActor actor_;
     // Admission gate for the synchronous host entry only. Without it a
     // rejected Busy result could leave an extra message in the FIFO.

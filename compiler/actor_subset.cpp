@@ -287,6 +287,12 @@ std::int64_t execute_main(const Program& p) {
     return total;
 }
 
+ActorExecutionContext::BudgetReservation::BudgetReservation() {
+    runtime::ActorMemoryAggregateBudgetV1::process().reserve(bytes);
+}
+ActorExecutionContext::BudgetReservation::~BudgetReservation() noexcept {
+    runtime::ActorMemoryAggregateBudgetV1::process().refund(bytes);
+}
 thread_local ActorExecutionContext* ActorExecutionContext::active_ = nullptr;
 ActorExecutionContext::Activation::Activation(ActorExecutionContext& actor)
     : prior(active_) {
@@ -296,7 +302,8 @@ ActorExecutionContext::Activation::Activation(ActorExecutionContext& actor)
 ActorExecutionContext::Activation::~Activation() { active_ = prior; }
 
 ActorExecutionContext::ActorExecutionContext(Program compiled, std::uint64_t actor_id)
-    : program_(std::move(compiled)), actor_(actor_id, 1, 8, initialize, handle) {
+    : program_(std::move(compiled)), budget_(),
+      actor_(actor_id, 1, 8, initialize, handle) {
     if (program_.actor_name.empty() || program_.parameter_name.empty())
         throw std::invalid_argument("invalid compiled actor program");
 }

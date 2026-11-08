@@ -110,6 +110,20 @@ int main() {
     ActorExecutionContext depth_restart(depth_program, 902);
     check(depth_restart.receive(3) == 3, "fresh recursion incarnation denied");
 
+    // Mainline process ledger must be charged before source actor creation
+    // and refunded exactly once after the native actor is quiesced.
+    auto& process_budget = oresforge::runtime::ActorMemoryAggregateBudgetV1::process();
+    const auto initial_reserved = process_budget.reserved();
+    {
+        ActorExecutionContext metered(p, 920);
+        check(process_budget.reserved() ==
+              initial_reserved + 128 * 1024, "actor budget not admitted");
+        check(metered.receive(2) == 2, "budgeted actor did not run");
+        metered.stop();
+    }
+    check(process_budget.reserved() == initial_reserved,
+          "actor budget was not refunded after teardown");
+
     // The new stage-0 source-main profile actually constructs multiple
     // independent actors from static .atto spawn bindings.
     constexpr const char* program = R"atto(
