@@ -67,6 +67,15 @@ if(BUILD_TESTING)
   target_include_directories(oresforge_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
   target_link_libraries(oresforge_tests PRIVATE oresforge_core)
   add_test(NAME oresforge_unit COMMAND oresforge_tests)
+  # Host-only reduction quantum; untrusted guest backedges remain fail-closed.
+  add_executable(oresforge_amortized_cooperation
+    verification/amortized_cooperation_gate_test.cpp)
+  target_include_directories(oresforge_amortized_cooperation PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_amortized_cooperation PRIVATE cxx_std_20)
+  add_test(NAME oresforge_amortized_cooperation_128
+    COMMAND oresforge_amortized_cooperation)
+  set_tests_properties(oresforge_amortized_cooperation_128 PROPERTIES TIMEOUT 15)
   # This invokes the real Forge frontend on operator-positive and
   # operator-negative sources, including unreachable declarations.
   add_executable(oresforge_legacy_operator_grammar
