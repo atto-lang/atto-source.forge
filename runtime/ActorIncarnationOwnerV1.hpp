@@ -160,7 +160,17 @@ class ActorIncarnationOwnerV1 final {
       try {
         physical = arena_->begin_turn(actor.id, actor.generation);
       } catch (...) {
+        // A dequeued message is no longer retryable after a failed
+        // physical-turn admission. Revoke this incarnation, but never
+        // reclaim memory if the native arena cannot prove quiescence.
         wipe(*message);
+        mailbox_.close();
+        stopping_ = true;
+        try {
+          retire_locked();
+        } catch (...) {
+          quarantined_ = true;
+        }
         throw;
       }
       in_turn_ = true;
@@ -296,9 +306,12 @@ class ActorIncarnationOwnerV1 final {
   }
 
   void retire_locked() {
-    if (in_turn_) std::terminate();
-    if (memory_) memory_->retire();
+    if (in_turn_ || quarantined_) std::terminate();
+    // Native heap/frame credits must not be refunded until the arena has
+    // proven physical-carrier quiescence. An exceptional retire leaves
+    // native storage intact and forces CONTROL quarantine.
     if (arena_) arena_->retire();
+    if (memory_) memory_->retire();
     memory_.reset();
     arena_.reset();
   }
