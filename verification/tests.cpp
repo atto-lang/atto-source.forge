@@ -144,6 +144,28 @@ int main() {
       reject_diagnostic([&] { (void)interpret(source(expression)); },
                         overflow_diagnostics[i]);
     }
+    // Explicit inverted layouts are not scalar IR and must never be
+    // silently lowered as ordinary structs/classes or plain Array<T>.
+    for (const auto& invalid : {
+      "define inverted struct Point as int x; int y; end",
+      "define pub inverted struct Point as int x; end",
+      "pub define inverted class Point as int x; end",
+      "define /* harmless */ inverted /* still a declaration */ struct Point as int x; end"
+    }) {
+      reject_diagnostic([&] { (void)parse_source(invalid); },
+                        "inverted struct/class requires one-level typed SoA");
+    }
+    reject_diagnostic([&] {
+      (void)parse_source(
+        "fnc main():int{return InvertedArray<Point>.with_capacity(1); }");
+    }, "inverted collection requires typed owned SoA columns");
+    ensure(interpret(parse_source(
+              "fnc main():int{return 42;} // define inverted struct ignored"))==42,
+           "inverted declaration text inside comment must be inert");
+    ensure(interpret(parse_source(
+              "fnc main():int{/* define inverted struct Nested */return 42;}"))==42,
+           "nested comment mention must not enable inverted layouts");
+
     // The bootstrap intentionally has NO BigInt, Decimal or binary64 lowering.
     // Fail closed rather than treating those spellings as signed i64.
     reject([] { source("1.25"); });
