@@ -1,6 +1,10 @@
 #pragma once
 #include "runtime/scalar_actor.hpp"
 #include <cstdint>
+#include <optional>
+#include <mutex>
+#include <memory>
+#include <utility>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -17,8 +21,20 @@ struct Program final {
     std::string recursive_method;
     std::int64_t initial = 0;
     Handler handler = Handler::CheckedFieldAdd;
+    // Source main admission is a deliberately restricted stage-0 profile.
+    struct Invoke {
+        std::size_t actor_index = 0;
+        std::int64_t message = 0;
+    };
+    std::vector<std::string> spawn_bindings;
+    std::vector<Invoke> sends;
+    std::optional<std::pair<Invoke, Invoke>> result;
+    bool has_main = false;
 };
 Program compile(std::string_view source);
+// Execute a compiled .atto main with explicit, bounded synchronous actor
+// sends. This is not asynchronous send, source await, or native AOT codegen.
+std::int64_t execute_main(const Program& compiled);
 std::string dump_ir(const Program& program);
 
 // Host-driven test entry for one *compiled source* actor. No guest scheduling,

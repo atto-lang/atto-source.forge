@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -120,6 +121,52 @@ class Parser final {
             reject("actor i64 literal overflow");
         return result;
     }
+    std::size_t actor_binding(const std::string& name,
+                              const Program& program) const {
+        for (std::size_t i = 0; i < program.spawn_bindings.size(); ++i)
+            if (name == program.spawn_bindings[i]) return i;
+        reject("actor name is not a live spawn binding");
+    }
+    Program::Invoke invoke(const Program& program) {
+        const auto binding = ident();
+        need("."); need("on_message"); need("(");
+        const auto value = integer(); need(")");
+        return {actor_binding(binding, program), value};
+    }
+    void parse_main(Program& program) {
+        need("fnc"); need("main"); need("("); need(")");
+        need(":"); need("int"); need("{");
+        program.has_main = true;
+        while (take("const")) {
+            if (program.spawn_bindings.size() == 8)
+                reject("source actor spawn quota exceeded");
+            const auto binding = ident();
+            if (binding == program.actor_name) reject("spawn binding shadows actor type");
+            for (const auto& previous : program.spawn_bindings)
+                if (previous == binding) reject("duplicate actor binding");
+            need("="); need("spawn");
+            same(ident(), program.actor_name);
+            need("("); need(")"); need(";");
+            program.spawn_bindings.push_back(binding);
+        }
+        if (program.spawn_bindings.size() < 2)
+            reject("source actor main requires at least two distinct spawns");
+        while (current().value != "return") {
+            if (current().value == "}" || current().value == "<eof>")
+                reject("source actor main requires return");
+            if (program.sends.size() == 256)
+                reject("source actor send quota exceeded");
+            program.sends.push_back(invoke(program));
+            need(";");
+        }
+        need("return");
+        const auto left = invoke(program);
+        need("+");
+        const auto right = invoke(program);
+        need(";");
+        need("}");
+        program.result = std::make_pair(left, right);
+    }
     static void same(const std::string& a, const std::string& b) {
         if (a != b) throw std::invalid_argument("actor type/name mismatch");
     }
@@ -160,6 +207,7 @@ public:
             need(")"); need(";"); need("fi"); need("}");
         }
         need("end");
+        if (take("pub")) parse_main(out);
         if (current().value != "<eof>") reject("trailing unsupported actor source");
         return out;
     }
@@ -182,14 +230,61 @@ std::int64_t checked_add(std::int64_t a, std::int64_t b) {
 }
 Program compile(std::string_view source) { return Parser(source).parse(); }
 std::string dump_ir(const Program& p) {
+    std::string ir;
     if (p.handler == Program::Handler::CheckedFieldAdd)
-        return "actor " + p.actor_name + " field " + p.field_name +
+        ir = "actor " + p.actor_name + " field " + p.field_name +
             " : i64 initial=" + std::to_string(p.initial) +
             "\nhandler on_message(" + p.parameter_name + ") : checked-add-field\n";
-    return "actor " + p.actor_name + " field none\nhandler on_message(" +
-        p.parameter_name + ") : call " + p.recursive_method +
-        "\nmethod " + p.recursive_method +
-        " : stackless-loop-v1 frames=64 fuel=16384\n";
+    else
+        ir = "actor " + p.actor_name + " field none\nhandler on_message(" +
+            p.parameter_name + ") : call " + p.recursive_method +
+            "\nmethod " + p.recursive_method +
+            " : stackless-loop-v1 frames=64 fuel=16384\n";
+    if (!p.has_main) return ir;
+    ir += "main : synchronous-source-actor-v0\n";
+    for (const auto& name : p.spawn_bindings)
+        ir += "  spawn " + p.actor_name + " as " + name + "\n";
+    for (const auto& call : p.sends)
+        ir += "  send " + p.spawn_bindings.at(call.actor_index) + " " +
+              std::to_string(call.message) + "\n";
+    if (!p.result) throw std::logic_error("compiled actor main missing result");
+    ir += "  return checked_add(two actor replies)\n";
+    return ir;
+}
+
+
+std::int64_t execute_main(const Program& p) {
+    if (!p.has_main || !p.result || p.spawn_bindings.size() < 2 ||
+        p.spawn_bindings.size() > 8 || p.sends.size() > 256)
+        throw std::invalid_argument("invalid compiled actor main program");
+    // No other actor type or dynamic expression is admitted. Every actor
+    // incarnation has a fresh nominal capability and native scalar heap.
+    Program handler = p;
+    handler.has_main = false;
+    handler.spawn_bindings.clear();
+    handler.sends.clear();
+    handler.result.reset();
+    std::vector<std::unique_ptr<ActorExecutionContext>> actors;
+    actors.reserve(p.spawn_bindings.size());
+    for (std::size_t i = 0; i < p.spawn_bindings.size(); ++i)
+        actors.push_back(std::make_unique<ActorExecutionContext>(
+            handler, static_cast<std::uint64_t>(i + 1)));
+    auto send = [&](const Program::Invoke& call) -> std::int64_t {
+        if (call.actor_index >= actors.size())
+            throw std::invalid_argument("actor invocation index not in spawn table");
+        return actors[call.actor_index]->receive(call.message);
+    };
+    for (const auto& call : p.sends) (void)send(call);
+    // Both replies must execute; an actor fault is terminal for the
+    // source program and produces no partially published scalar result.
+    const auto a = send(p.result->first);
+    const auto b = send(p.result->second);
+    const auto total = checked_add(a, b);
+    for (auto& actor : actors) {
+        actor->stop();
+        if (!actor->done()) throw std::logic_error("actor did not quiesce");
+    }
+    return total;
 }
 
 thread_local ActorExecutionContext* ActorExecutionContext::active_ = nullptr;
