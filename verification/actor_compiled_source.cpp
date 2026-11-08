@@ -123,6 +123,33 @@ int main() {
     }
     check(process_budget.reserved() == initial_reserved,
           "actor budget was not refunded after teardown");
+    rejects<std::invalid_argument>([&] {
+        ActorExecutionContext failed(p, 0);
+    });
+    check(process_budget.reserved() == initial_reserved,
+          "actor constructor failure leaked process memory quota");
+    // The source compiler must bound the number of live actor incarnations,
+    // even when each individual actor's own heap/stack quota is available.
+    const auto actor_head = std::string(counter);
+    auto actor_main = [&](int spawns, int sends) {
+        std::string result = actor_head;
+        result += "pub fnc main(): int {\n";
+        for (int i = 0; i < spawns; ++i)
+            result += "const a" + std::to_string(i) +
+                      " = spawn Counter();\n";
+        for (int i = 0; i < sends; ++i)
+            result += "a0.on_message(1);\n";
+        result += "return a0.on_message(2) + a1.on_message(3);\n}\n";
+        return result;
+    };
+    rejects<std::invalid_argument>([&] {
+        (void)compile(actor_main(9, 0));
+    });
+    rejects<std::invalid_argument>([&] {
+        (void)compile(actor_main(2, 257));
+    });
+    check(oresforge::actors::execute_main(compile(actor_main(8, 256))) == 261,
+          "boundary quota of 8 actors and 256 messages rejected");
 
     // The new stage-0 source-main profile actually constructs multiple
     // independent actors from static .atto spawn bindings.
