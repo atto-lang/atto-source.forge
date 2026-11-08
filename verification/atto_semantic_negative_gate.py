@@ -168,6 +168,8 @@ if __name__ == "__main__":
     if args.self_test:
         self_test()
     elif args.compiler is not None:
-        compiler_test(args.compiler.resolve(strict=True))
+        # Preserve the input path for lstat; resolving it first would hide
+        # a symlink supplied as a forged compiler executable.
+        compiler_test(args.compiler.absolute())
     else:
         parser.error("select --self-test or --compiler")
