@@ -76,6 +76,12 @@ if(BUILD_TESTING)
   add_test(NAME oresforge_amortized_cooperation_128
     COMMAND oresforge_amortized_cooperation)
   set_tests_properties(oresforge_amortized_cooperation_128 PROPERTIES TIMEOUT 15)
+  add_executable(oresforge_uninstrumented_guest_rejection
+    verification/uninstrumented_untrusted_source_reject_test.cpp)
+  target_link_libraries(oresforge_uninstrumented_guest_rejection PRIVATE oresforge_core)
+  add_test(NAME oresforge_uninstrumented_guest_rejection
+    COMMAND oresforge_uninstrumented_guest_rejection)
+  set_tests_properties(oresforge_uninstrumented_guest_rejection PROPERTIES TIMEOUT 15)
   # This invokes the real Forge frontend on operator-positive and
   # operator-negative sources, including unreachable declarations.
   add_executable(oresforge_legacy_operator_grammar
