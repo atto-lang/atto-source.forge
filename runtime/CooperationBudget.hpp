@@ -21,8 +21,9 @@ public:
   CooperationBudget(CooperationBudget&&) = delete;
   CooperationBudget& operator=(CooperationBudget&&) = delete;
 
-  // Only a per-dispatch fairness clock resets; no logical budget renewal.
-  void begin_dispatch() noexcept { ticks_ = 0; }
+  // Fairness resets per dispatch, but the 128-step polling phase does not.
+  // Otherwise 127-step resumptions could evade every cold check.
+  void begin_dispatch() noexcept { dispatch_ticks_ = 0; }
 
   // Cheap path: integer arithmetic and a bitmask; no clock, FFI or scheduler.
   // The compiler must call after committing loop-carried guest state.
@@ -30,6 +31,7 @@ public:
   // resumable continuation and no live critical/borrow guard.
   bool charge_backedge(std::uint64_t weight = 1) {
     charge_operation(weight);
+    ++dispatch_ticks_;
     ticks_ = (ticks_ + 1) & (kPollInterval - 1);
     return ticks_ == 0;
   }
@@ -45,10 +47,12 @@ public:
   }
 
   std::uint64_t remaining_fuel() const noexcept { return remaining_fuel_; }
+  std::uint64_t backedges_this_dispatch() const noexcept { return dispatch_ticks_; }
 
 private:
   std::uint64_t remaining_fuel_;
   std::uint32_t ticks_ = 0;
+  std::uint64_t dispatch_ticks_ = 0;
 };
 
 static_assert((CooperationBudget::kPollInterval &
