@@ -62,6 +62,8 @@ if(BUILD_TESTING)
   add_test(NAME native_pinned_tcp_host_boundary COMMAND oresforge_pinned_tcp_tests)
   set_tests_properties(native_pinned_tcp_host_boundary PROPERTIES TIMEOUT 15)
 
+  configure_file("${CMAKE_CURRENT_SOURCE_DIR}/contracts/v1/annotation-admission-v1.tsv"
+    "${CMAKE_CURRENT_BINARY_DIR}/annotation-admission-v1.tsv" COPYONLY)
   add_executable(oresforge_tests verification/tests.cpp)
   add_dependencies(oresforge_tests oresforge_numeric_i64_cases oresforge_numeric_overflow_cases)
   target_include_directories(oresforge_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
