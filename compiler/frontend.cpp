@@ -288,6 +288,21 @@ class Parser {
         error("VIRTUAL_ACTOR_BACKEND_UNSUPPORTED: logical key and activation fencing required");
       error("unexpected declaration after virtual");
     }
+    // Stage-0 has no callable effect ABI. Diagnose invalid combinations
+    // before a generic expected-fnc error. Legal standalone suspends and
+    // critical remain UNSUPPORTED in this particular backend.
+    if (tok_.text=="async")
+      error("E_CALLABLE_MODIFIERS: legacy async modifier forbidden; use suspends");
+    if (tok_.text=="critical" || tok_.text=="suspends") {
+      const std::string first(tok_.text);
+      next();
+      if ((first=="critical" && tok_.text=="suspends") ||
+          (first=="suspends" && tok_.text=="critical"))
+        error("E_CALLABLE_MODIFIERS: critical suspends modifier combination forbidden");
+      if (first=="critical")
+        error("E_CRITICAL_UNSUPPORTED: critical source lowering requires scheduler guard ABI");
+      error("E_SUSPENDS_UNSUPPORTED: suspends source lowering requires continuation ABI");
+    }
     expect("fnc");
     const std::string name=identifier();
     if (name=="int" || name=="fnc" || name=="return")
@@ -313,6 +328,11 @@ class Parser {
     if (tok_.text=="tuple" || tok_.text=="structural" || tok_.text=="(")
       error("tuple-v2 return requires typed ABI lowering");
     expect("int"); expect("{");
+    // No local bindings or reassignment in the scalar bootstrap. This is
+    // UNSUPPORTED source admission, NOT immutability-semantic proof.
+    if (tok_.text=="int" || tok_.text=="const" ||
+        tok_.text=="let" || tok_.text=="mut")
+      error("E_LOCALS_UNSUPPORTED: local binding ownership lowering is not implemented");
     if (tok_.text=="guard")
       error("GUARD_BACKEND_UNSUPPORTED: early-exit CFG and ownership lowering required");
     expect("return");
