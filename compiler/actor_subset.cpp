@@ -345,20 +345,24 @@ std::int64_t ActorExecutionContext::receive(std::int64_t message) {
     std::unique_lock<std::mutex> turn(receive_gate_, std::try_to_lock);
     if (!turn.owns_lock())
         throw std::logic_error("overlapping actor receive denied before enqueue");
-    if (!mailbox_.authorizes(incarnation_))
-        throw std::logic_error("actor incarnation closed");
-    // The legacy raw staging API may already have accepted messages.
-    // A source-level synchronous call must never receive another sender's
-    // reply simply because it was first in the scalar actor's FIFO.
-    if (actor_.queued() != 0) {
-        mailbox_.close();
-        actor_.stop();
-        throw std::logic_error("pending direct actor message has no reply ownership");
+    // Only a short admission section holds the lifecycle gate. A STOP
+    // winning first must prevent any new direct guest turn from entering.
+    {
+        std::scoped_lock publication(publication_gate_);
+        if (!mailbox_.authorizes(incarnation_))
+            throw std::logic_error("actor incarnation closed");
+        // The raw staging API may have accepted an unmatched host message.
+        // Never return its value as the reply to a different source call.
+        if (actor_.queued() != 0) {
+            mailbox_.close();
+            actor_.stop();
+            throw std::logic_error("pending direct actor message has no reply ownership");
+        }
+        if (actor_.try_send(actor_.ref(), message) != runtime::ScalarActor::Send::Accepted)
+            throw std::logic_error("actor message not admitted");
     }
     Activation lease(*this);
     try {
-        if (actor_.try_send(actor_.ref(), message) != runtime::ScalarActor::Send::Accepted)
-            throw std::logic_error("actor message not admitted");
         const auto result = actor_.run_one();
         if (result.status != runtime::ScalarActor::Turn::Executed)
             throw std::logic_error("actor did not execute admitted message");
@@ -433,13 +437,18 @@ void ActorExecutionContext::run_ticket(DispatchTicket&& ticket) {
         ticket.phase_ != DispatchTicket::Phase::Claimed ||
         !worker_claimed_.load(std::memory_order_acquire))
         throw std::logic_error("foreign or already-run actor dispatch ticket");
-    if (!mailbox_.authorizes(ticket.incarnation_))
-        throw std::logic_error("stale actor dispatch ticket");
-    Activation lease(*this);
-    try {
+    // Admission and STOP must share a linearization point. Guest execution
+    // itself runs after releasing the gate and cannot hold up STOP.
+    {
+        std::scoped_lock publication(publication_gate_);
+        if (!mailbox_.authorizes(ticket.incarnation_))
+            throw std::logic_error("stale actor dispatch ticket");
         if (actor_.try_send(actor_.ref(), ticket.message_) !=
                 runtime::ScalarActor::Send::Accepted)
             throw std::logic_error("internal actor stage queue denied");
+    }
+    Activation lease(*this);
+    try {
         const auto result = actor_.run_one();
         if (result.status != runtime::ScalarActor::Turn::Executed)
             throw std::logic_error("actor did not execute queued message");
@@ -486,6 +495,7 @@ runtime::ScalarActor::Send ActorExecutionContext::try_send(
     std::unique_lock<std::mutex> turn(receive_gate_, std::try_to_lock);
     if (!turn.owns_lock())
         throw std::logic_error("concurrent direct actor send denied");
+    std::scoped_lock publication(publication_gate_);
     if (!mailbox_.authorizes(incarnation_))
         return runtime::ScalarActor::Send::Closed;
     return actor_.try_send(ref, message);
