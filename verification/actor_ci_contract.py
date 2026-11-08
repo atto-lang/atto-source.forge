@@ -48,14 +48,14 @@ def check(root: pathlib.Path, workflow: pathlib.Path) -> None:
             'missing GCC/Clang optimized/sanitized test matrix')
     # Keep private source off unreviewed Actions: only one pinned checkout
     # and two audited local shell steps are authorized for this workflow.
-    uses = re.findall(r'^      - uses: ([^\\s#]+)\\s*$', source, re.MULTILINE)
+    uses = re.findall(r'^      - uses: ([^\s#]+)\s*$', source, re.MULTILINE)
     require(uses == ['actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683'],
             'unexpected or unpinned third-party action')
     require(len(re.findall(r'^      - ', source, re.MULTILINE)) == 3 and
             source.count('      - name: ') == 2,
             'unexpected workflow step outside the three reviewed steps')
-    require(source.count('\\npermissions:\\n  contents: read\\njobs:\\n') == 1 and
-            len(re.findall(r'^\\s*permissions:', source, re.MULTILINE)) == 1,
+    require(source.count('\npermissions:\n  contents: read\njobs:\n') == 1 and
+            len(re.findall(r'^\s*permissions:', source, re.MULTILINE)) == 1,
             'unexpected workflow or job token permissions')
     require('          persist-credentials: false' in source,
             'source checkout must not persist GitHub token')
