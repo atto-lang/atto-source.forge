@@ -298,6 +298,10 @@ class Parser {
     // parsing a subsequent unrelated function or emitting native code.
     if (tok_.text=="inverted")
       error("inverted struct/class requires one-level typed SoA and ownership lowering");
+    // The stage-0 scalar frontend cannot lower nominal ModelGraphs.
+    // `model` remains contextual; `fnc model()` is still valid.
+    if (tok_.text=="model")
+      error("MODEL_LOWERING_UNSUPPORTED: Forge requires typed nominal ModelGraph lowering");
     expect("fnc");
     const std::string name=identifier();
     if (name=="int" || name=="fnc" || name=="return")

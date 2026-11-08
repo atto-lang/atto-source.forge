@@ -198,6 +198,25 @@ int main() {
            "CR-only trailing comment must stay a comment");
     ensure(interpret(parse_source("fnc main():int{return 42;} // import ignored"))==42,
            "import in a comment does not trigger module admission");
+    // Both frontends deny ModelGraph before IR, with contextual syntax.
+    for (const auto& declaration : {
+        "define model PriceEstimate() as AddTax(10) end",
+        "define model x as Identity() end",
+        "define pub model PriceEstimate() as AddTax(10) end",
+        "pub define model PriceEstimate() as AddTax(10) end",
+        "define /* comment */ model PriceEstimate() as AddTax(10) end"
+    }) {
+      reject_diagnostic([&] { (void)parse_source(declaration); },
+                        "MODEL_LOWERING_UNSUPPORTED");
+      reject_diagnostic([&] { (void)parse_runtime_source(declaration); },
+                        "MODEL_LOWERING_UNSUPPORTED");
+    }
+    ensure(interpret(parse_source(
+        "fnc model():int{return 41;} fnc main():int{return model()+1;}"))==42,
+        "model remains a contextual function name");
+    ensure(interpret(parse_source(
+        "/* define model Fake as Op() end */ fnc main():int{return 42;}"))==42,
+        "model declarations in comments are inert");
     // Nominal enums and same-arity virtual method dispatch are not part of
     // this scalar frontend. Deny the declaration with a specific diagnostic,
     // rather than claiming parity from a synthetic policy helper.
