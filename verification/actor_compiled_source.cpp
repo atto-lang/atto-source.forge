@@ -110,6 +110,60 @@ int main() {
     ActorExecutionContext depth_restart(depth_program, 902);
     check(depth_restart.receive(3) == 3, "fresh recursion incarnation denied");
 
+    // Renaming every user-defined symbol and changing initial value must
+    // change compiled behavior, not just match a canned fixture pattern.
+    const auto renamed_field = compile(R"atto(
+define actor Ledger as
+  state { total: int = -13; }
+  pub fnc on_message(int amount): int {
+    self.total = self.total + amount;
+    return self.total;
+  }
+end
+)atto");
+    check(renamed_field.actor_name == "Ledger" &&
+          renamed_field.field_name == "total" &&
+          renamed_field.parameter_name == "amount" &&
+          renamed_field.initial == -13, "renamed source AST not preserved");
+    ActorExecutionContext ledger(renamed_field, 910);
+    check(ledger.receive(10) == -3, "source initial state ignored");
+    check(ledger.receive(-7) == -10, "source field update not generalized");
+    ledger.stop();
+
+    const auto renamed_recursive = compile(R"atto(
+define actor Walker as
+  pub fnc on_message(int steps): int { return recur(steps); }
+  pub fnc recur(int remaining): int {
+    if remaining == 0 then return 0; else return recur(remaining - 1); fi
+  }
+end
+)atto");
+    check(renamed_recursive.actor_name == "Walker" &&
+          renamed_recursive.recursive_method == "recur", "method symbol ignored");
+    ActorExecutionContext walker(renamed_recursive, 911);
+    check(walker.receive(9) == 9, "renamed recursive method not executed");
+    walker.stop();
+
+    rejects<std::invalid_argument>([] {
+        (void)compile(R"atto(
+define actor self as
+  state { total: int = 0; }
+  pub fnc on_message(int x): int {
+    self.total = self.total + x; return self.total;
+  }
+end
+)atto");
+    });
+    rejects<std::invalid_argument>([] {
+        (void)compile(R"atto(
+define actor Reserved as
+  state { self: int = 0; }
+  pub fnc on_message(int x): int {
+    self.self = self.self + x; return self.self;
+  }
+end
+)atto");
+    });
     // Arithmetic overflow terminates only the guilty actor.
     const auto p_max = compile(R"atto(
 define actor MaxCounter as

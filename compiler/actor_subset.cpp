@@ -94,8 +94,12 @@ class Parser final {
         const auto& s = current().value;
         if (s.empty() || !alpha(static_cast<unsigned char>(s.front())))
             reject("expected actor identifier");
-        if (s == "any" || s == "unknown" || s == "async")
-            reject("unsupported actor identifier");
+        if (s == "any" || s == "unknown" || s == "async" ||
+            s == "self" || s == "int" || s == "pub" || s == "fnc" ||
+            s == "actor" || s == "state" || s == "define" || s == "as" ||
+            s == "end" || s == "return" || s == "if" || s == "then" ||
+            s == "else" || s == "fi" || s == "on_message")
+            reject("reserved or unsupported actor identifier");
         auto name = s;
         ++at_;
         return name;

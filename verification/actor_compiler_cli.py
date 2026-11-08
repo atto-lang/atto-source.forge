@@ -18,9 +18,9 @@ def deny(result):
         raise AssertionError(f"unsupported actor source was published: {result!r}")
 
 def main() -> None:
-    exe, counter, depth = map(lambda s: Path(s).resolve(strict=True), sys.argv[1:4])
     if len(sys.argv) != 4:
         raise SystemExit("usage: actor_compiler_cli.py <compiler> <counter.atto> <depth.atto>")
+    exe, counter, depth = map(lambda s: Path(s).resolve(strict=True), sys.argv[1:4])
     ok(launch(exe, "run-actor", str(counter), "3", "4", "-1"), b"3\n7\n6\n")
     ok(launch(exe, "run-actor", str(depth), "0", "1", "63"), b"0\n1\n63\n")
     c_ir = launch(exe, "actor-ir", str(counter))
