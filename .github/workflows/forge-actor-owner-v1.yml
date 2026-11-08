@@ -10,6 +10,7 @@ on:
       - 'verification/actor_incarnation_owner_v1_test.cpp'
       - 'verification/actor_incarnation_memory_v1_test.cpp'
       - 'verification/actor_ci_contract.py'
+      - 'verification/actor_ci_contract_selftest.py'
       - 'CMakeLists.txt'
       - '.github/workflows/forge-actor-owner-v1.yml'
   workflow_dispatch:
@@ -46,6 +47,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 verification/actor_ci_contract.py
+          python3 verification/actor_ci_contract_selftest.py
           flags="-O2 -Wall -Wextra -Wpedantic -Werror"
           if [[ "$MODE" == sanitized ]]; then
             flags="-O1 -g -Wall -Wextra -Wpedantic -Werror -fsanitize=address,undefined -fno-omit-frame-pointer"
