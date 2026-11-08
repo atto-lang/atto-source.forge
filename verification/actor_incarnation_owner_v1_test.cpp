@@ -1,0 +1,174 @@
+#include "runtime/ActorIncarnationOwnerV1.hpp"
+#include <array>
+#include <atomic>
+#include <cstdint>
+#include <exception>
+#include <iostream>
+#include <optional>
+#include <stdexcept>
+#include <thread>
+
+using namespace oresforge::runtime;
+
+static void require(bool ok, const char* reason) {
+  if (!ok) throw std::runtime_error(reason);
+}
+template <typename F> static void denied(F&& f, const char* reason) {
+  try { f(); } catch (const std::exception&) { return; }
+  throw std::runtime_error(reason);
+}
+
+int main() {
+  ActorMemoryAggregateBudgetV1 budget(1024);
+  const auto initial = ActorMemoryAggregateBudgetV1::process().reserved();
+  // Each actor reserves exactly 256 heap bytes + 64 frame bytes.
+  ActorIncarnationOwnerV1 actorA(8401, budget, 256, 64, 4, 2);
+  ActorIncarnationOwnerV1 actorB(8402, budget, 256, 64, 4, 2);
+  const auto refA = actorA.ref();
+  const auto refB = actorB.ref();
+  require(budget.reserved() == 640 &&
+          ActorMemoryAggregateBudgetV1::process().reserved() == initial + 640,
+          "independent actor incarnation budgets were not reserved");
+
+  std::optional<ActorMemoryHeapHandle> staleHeap;
+  std::array<std::uint8_t,3> msgA{42, 8, 3};
+  actorA.send(refA, msgA);
+  msgA[0] = 1; // mailbox must own a deep copy
+  require(actorA.queued() == 1, "one bounded actor message expected");
+  require(actorA.dispatch_one(refA, [&](auto& ctx,
+                                      std::span<const std::uint8_t> message) {
+    require(message.size() == 3 && message[0] == 42,
+            "mailbox message was not copied");
+    auto h = ctx.heap_alloc(8);
+    staleHeap = h;
+    ctx.heap_write(h, 0, std::array<std::uint8_t,1>{42});
+    auto e = ctx.begin_frames();
+    auto frame = ctx.frame_push(e, 16);
+    std::array<std::uint8_t,1> result{};
+    ctx.heap_read(h, 0, result);
+    require(result[0] == 42, "actor heap bytes missing");
+    ctx.frame_write(e, frame, 0, result);
+    ctx.frame_read(e, frame, 0, result);
+    require(result[0] == 42, "actor frame bytes missing");
+
+    // All actor memory operations require the original carrier and turn.
+    std::atomic<bool> rejected{false};
+    std::thread outsider([&] {
+      try { ctx.heap_read(h, 0, result); }
+      catch (const std::logic_error&) { rejected = true; }
+    });
+    outsider.join();
+    require(rejected, "foreign carrier read actor heap using retained turn");
+
+    // Nested dispatch may not reenter an actor on the same carrier.
+    denied([&] { actorA.dispatch_one(refA,
+          [](auto&, auto) {}); }, "reentrant actor dispatch was admitted");
+    ctx.frame_pop(e, frame);
+    ctx.finish_frames(e);
+  }), "actor A's message was not dispatched");
+  require(actorA.queued() == 0 && !actorA.stopped(),
+          "healthy message dispatch did not complete");
+
+  actorB.send(refB, std::array<std::uint8_t,1>{9});
+  require(actorB.dispatch_one(refB, [&](auto& ctx, auto) {
+    auto e = ctx.begin_frames();
+    auto frame = ctx.frame_push(e, 8);
+    ctx.frame_write(e, frame, 0, std::array<std::uint8_t,1>{42});
+    std::array<std::uint8_t,1> answer{};
+    ctx.frame_read(e, frame, 0, answer);
+    require(answer[0] == 42, "sibling actor frame corrupted");
+    ctx.frame_pop(e, frame);
+    ctx.finish_frames(e);
+  }), "actor B's message not processed");
+
+  // STOP races an actively executing handler. Mailbox authority is revoked
+  // immediately, but native buffers must remain reserved until the carrier
+  // leaves the physical turn. No UAF, no early quota refund.
+  std::atomic<bool> entered{false}, release{false}, stoppedAccess{false};
+  std::exception_ptr workerError;
+  actorA.send(refA, std::array<std::uint8_t,1>{1});
+  std::thread worker([&] {
+    try {
+      actorA.dispatch_one(refA, [&](auto& ctx, auto) {
+        auto h = ctx.heap_alloc(8);
+        entered.store(true, std::memory_order_release);
+        while (!release.load(std::memory_order_acquire))
+          std::this_thread::yield();
+        try { std::array<std::uint8_t,1> out{};
+              ctx.heap_read(h, 0, out); }
+        catch (const std::logic_error&) {
+          stoppedAccess.store(true, std::memory_order_release);
+        }
+      });
+    } catch (...) { workerError = std::current_exception(); }
+  });
+  while (!entered.load(std::memory_order_acquire))
+    std::this_thread::yield();
+  actorA.stop();
+  require(actorA.stopped() && budget.reserved() == 640,
+          "STOP reclaimed native actor heap during active turn");
+  denied([&] { actorA.send(refA, std::array<std::uint8_t,1>{2}); },
+         "STOP allowed stale message admission");
+  denied([&] { actorA.restart(); },
+         "supervisor restarted before carrier quiescence");
+  release.store(true, std::memory_order_release);
+  worker.join();
+  if (workerError) std::rethrow_exception(workerError);
+  require(stoppedAccess.load(std::memory_order_acquire) &&
+          budget.reserved() == 320,
+          "STOP failed to revoke access and defer reclamation until unwind");
+
+  // Supervisor restart creates a new generation and zeroed native memory.
+  const auto refA2 = actorA.restart();
+  require(refA2.generation == refA.generation + 1 &&
+          budget.reserved() == 640, "restart did not reissue actor memory");
+  denied([&] { actorA.send(refA, std::array<std::uint8_t,1>{1}); },
+         "old generation continued to send after restart");
+  denied([&] { actorA.dispatch_one(refA, [](auto&, auto) {}); },
+         "old generation started a post-restart actor turn");
+  actorA.send(refA2, std::array<std::uint8_t,1>{3});
+  require(actorA.dispatch_one(refA2, [&](auto& ctx, auto) {
+    std::array<std::uint8_t,1> result{};
+    denied([&] { ctx.heap_read(*staleHeap, 0, result); },
+           "restarted actor inherited old-generation allocation handle");
+    auto h = ctx.heap_alloc(8);
+    ctx.heap_read(h, 0, result);
+    require(result[0] == 0, "new incarnation heap was not zero-initialized");
+  }), "restarted actor did not admit a valid new message");
+
+  // A caught terminal frame fault still stops actor A at the dispatch
+  // boundary; B must continue executing independently on the same host.
+  actorA.send(refA2, std::array<std::uint8_t,1>{4});
+  denied([&] {
+    actorA.dispatch_one(refA2, [&](auto& ctx, auto) {
+      auto e = ctx.begin_frames();
+      (void)ctx.frame_push(e, 48);
+      denied([&] { (void)ctx.frame_push(e, 24); },
+             "actor frame quota failed to reject overflow");
+      // Swallow the quota exception; post-handler validation must still
+      // treat this actor as failed and quarantine its memory.
+    });
+  }, "swallowed actor quota exception escaped handler validation");
+  require(actorA.stopped() && budget.reserved() == 320,
+          "terminal stack failure did not reclaim only failed actor");
+
+  actorB.send(refB, std::array<std::uint8_t,1>{5});
+  require(actorB.dispatch_one(refB, [&](auto& ctx, auto) {
+    auto e = ctx.begin_frames();
+    auto frame = ctx.frame_push(e, 8);
+    ctx.frame_write(e, frame, 0, std::array<std::uint8_t,1>{42});
+    std::array<std::uint8_t,1> out{};
+    ctx.frame_read(e, frame, 0, out);
+    require(out[0] == 42, "actor B failed after actor A stack exhaustion");
+    ctx.frame_pop(e, frame);
+    ctx.finish_frames(e);
+  }), "healthy sibling stopped after failing actor");
+  actorB.stop();
+  actorA.stop();
+  require(budget.reserved() == 0 &&
+          ActorMemoryAggregateBudgetV1::process().reserved() == initial,
+          "STOP and restart leaked native reservations");
+
+  std::cout << "FORGE_ACTOR_OWNER_HOST_PASS"
+            << "|turn=1|stop_restart=1|sibling=42|guest_atto=0|physical_stack=0\n";
+}
