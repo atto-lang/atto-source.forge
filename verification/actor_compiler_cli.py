@@ -18,17 +18,30 @@ def deny(result):
         raise AssertionError(f"unsupported actor source was published: {result!r}")
 
 def main() -> None:
-    if len(sys.argv) != 4:
-        raise SystemExit("usage: actor_compiler_cli.py <compiler> <counter.atto> <depth.atto>")
-    exe, counter, depth = map(lambda s: Path(s).resolve(strict=True), sys.argv[1:4])
+    if len(sys.argv) != 6:
+        raise SystemExit(
+            "usage: actor_compiler_cli.py <compiler> <counter.atto> "
+            "<depth.atto> <counter-main.atto> <recursive-main.atto>"
+        )
+    exe, counter, depth, counter_main, recursive_main = map(
+        lambda s: Path(s).resolve(strict=True), sys.argv[1:6]
+    )
     ok(launch(exe, "run-actor", str(counter), "3", "4", "-1"), b"3\n7\n6\n")
     ok(launch(exe, "run-actor", str(depth), "0", "1", "63"), b"0\n1\n63\n")
+    ok(launch(exe, "run-actor-main", str(counter_main)), b"42\n")
+    ok(launch(exe, "run-actor-main", str(recursive_main)), b"5\n")
     c_ir = launch(exe, "actor-ir", str(counter))
     if c_ir.returncode or c_ir.stderr or b"checked-add-field" not in c_ir.stdout:
         raise AssertionError(f"compiled scalar actor IR missing: {c_ir!r}")
     r_ir = launch(exe, "actor-ir", str(depth))
     if r_ir.returncode or r_ir.stderr or b"stackless-loop-v1" not in r_ir.stdout:
         raise AssertionError(f"compiled recursion IR missing: {r_ir!r}")
+    main_ir = launch(exe, "actor-ir", str(counter_main))
+    if (main_ir.returncode or main_ir.stderr or
+            b"main : synchronous-source-actor-v0" not in main_ir.stdout or
+            b"spawn Counter as left" not in main_ir.stdout or
+            b"spawn Counter as right" not in main_ir.stdout):
+        raise AssertionError(f"source actor spawn IR missing: {main_ir!r}")
     negatives = 0
     source = counter.read_text(encoding="utf-8")
     mutations = [
@@ -77,7 +90,56 @@ def main() -> None:
         # Exhausted instruction budget is a terminal actor fault.
         deny(launch(exe, "run-actor", str(depth), "-1"))
         negatives += 1
-    print(f"ATTO_FORGE_COMPILED_ACTOR_CLI|positive=4|negative={negatives}|actor_source=1|general_spawn=NOT_EXECUTED")
+    source_main = counter_main.read_text(encoding="utf-8")
+    source_recursion = recursive_main.read_text(encoding="utf-8")
+    main_mutations = [
+        source_main.replace("const right = spawn", "const left = spawn"),
+        source_main.replace("spawn Counter();", "spawn Worker();", 1),
+        source_main.replace("right.on_message(5);", "unknown.on_message(5);"),
+        source_main.replace("left.on_message(3);", "left.send(3);"),
+        source_main.replace("right.on_message(5);", "right.on_message(5 + 1);"),
+        source_main.replace("return left.on_message(4) +", "return left.on_message(4) -"),
+        source_main.replace("return left.on_message(4) +", "return left.on_message(4) %"),
+        source_main.replace("return left.on_message(4) +", "return left.on_message(4) ^"),
+        source_main.replace("left.on_message(3);", "await left.on_message(3);"),
+        source_main.replace("const left = spawn", "const self = spawn"),
+        source_main.replace("return left.on_message(4) + right.on_message(30);", "return 42;"),
+        source_main.replace("const right = spawn Counter();", ""),
+        source_main + "pub fnc main(): int { return 1; }\n",
+        source_main.replace("left.on_message(3);", "left.on_message(9223372036854775808);"),
+        source_main.replace("const right = spawn Counter();", "const right = spawn Counter(4);"),
+        source_main.replace("right.on_message(5);", "right.on_message(-9223372036854775809);"),
+        source_main.replace("const right = spawn Counter();", "const right = spawn Counter(); const left = spawn Counter();"),
+        source_main.replace("return left.on_message(4) + right.on_message(30);", "return left.on_message(4) + unknown.on_message(30);"),
+        source_recursion.replace("first.on_message(16);", "first.on_message(64);"),
+    ]
+    with tempfile.TemporaryDirectory(prefix="atto-actor-source-main-") as temp:
+        src = Path(temp) / "case.atto"
+        for i, mutant in enumerate(main_mutations):
+            if mutant in (source_main, source_recursion):
+                raise AssertionError(f"actor-main mutation {i} was a no-op")
+            src.write_text(mutant, encoding="utf-8")
+            deny(launch(exe, "run-actor-main", str(src)))
+            # Except the overflow mutant, which is syntactically valid,
+            # all cases must fail static actor source admission.
+            if i + 1 < len(main_mutations):
+                deny(launch(exe, "actor-ir", str(src)))
+            negatives += 1 if i + 1 == len(main_mutations) else 2
+        # The two entrypoints are intentionally disjoint.
+        deny(launch(exe, "run-actor-main", str(counter)))
+        deny(launch(exe, "run-actor", str(counter_main), "3"))
+        negatives += 2
+        # The general scalar and callable pipelines remain closed to actor
+        # syntax even when this new opt-in source main profile is accepted.
+        for mode in (("run",), ("ir",), ("run-runtime",),
+                     ("ir-runtime",), ("run-calls",),
+                     ("emit-asm", "x86_64"), ("emit-runtime-asm", "x86_64"),
+                     ("emit-call-asm", "x86_64")):
+            deny(launch(exe, *mode, str(counter_main)))
+            negatives += 1
+    print(f"ATTO_FORGE_SOURCE_ACTOR_MAIN_CLI|positive=3|negative={negatives-46}|spawn_profile=sync-v0|guest_source=1|native_aot=NOT_EXECUTED")
+    print(f"ATTO_FORGE_COMPILED_ACTOR_CLI|positive=4|negative=46|actor_source=1|general_spawn=NOT_EXECUTED")
+
 
 if __name__ == "__main__":
     main()

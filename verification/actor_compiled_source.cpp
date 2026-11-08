@@ -110,6 +110,51 @@ int main() {
     ActorExecutionContext depth_restart(depth_program, 902);
     check(depth_restart.receive(3) == 3, "fresh recursion incarnation denied");
 
+    // The new stage-0 source-main profile actually constructs multiple
+    // independent actors from static .atto spawn bindings.
+    constexpr const char* program = R"atto(
+define actor Counter as
+  state { count: int = 0; }
+  pub fnc on_message(int delta): int {
+    self.count = self.count + delta; return self.count;
+  }
+end
+pub fnc main(): int {
+  const left = spawn Counter();
+  const right = spawn Counter();
+  left.on_message(3);
+  right.on_message(5);
+  return left.on_message(4) + right.on_message(30);
+}
+)atto";
+    const auto assembled = compile(program);
+    check(assembled.has_main && assembled.spawn_bindings.size() == 2 &&
+          assembled.sends.size() == 2 && assembled.result.has_value(),
+          "main spawn/send/reply did not generate typed plan");
+    check(oresforge::actors::dump_ir(assembled).find("spawn Counter as left") !=
+          std::string::npos, "source main spawn missing from IR");
+    check(oresforge::actors::execute_main(assembled) == 42,
+          "source-level two actor program returned wrong result");
+    rejects<std::invalid_argument>([&] {
+        auto forged = assembled;
+        forged.sends.front().actor_index = 99;
+        (void)oresforge::actors::execute_main(forged);
+    });
+    rejects<std::invalid_argument>([] {
+        (void)compile(R"atto(
+define actor Counter as
+  state { n: int = 0; }
+  pub fnc on_message(int x): int {
+    self.n = self.n + x; return self.n;
+  }
+end
+pub fnc main(): int {
+  const same = spawn Counter();
+  const same = spawn Counter();
+  return same.on_message(1) + same.on_message(2);
+}
+)atto");
+    });
     // Renaming every user-defined symbol and changing initial value must
     // change compiled behavior, not just match a canned fixture pattern.
     const auto renamed_field = compile(R"atto(
