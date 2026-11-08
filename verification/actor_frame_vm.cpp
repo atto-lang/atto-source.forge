@@ -70,6 +70,14 @@ static std::int64_t execute(OresActorI64Heap* heap, std::uint64_t d,
     return next;
 }
 
+static std::int64_t catch_quota(OresActorI64Heap*, std::uint64_t,
+                                std::uint64_t, std::int64_t, Frames& frames) {
+    // A user-level handler cannot make a terminal VM quota fault succeed by
+    // swallowing the exception: the outer ScalarActor turn checks retirement.
+    try { (void)active_vm->execute(frames, 0, 22); }
+    catch (const std::length_error&) {}
+    return 123;
+}
 int main() {
     std::size_t checks = 0;
     auto fact = factorial();
@@ -136,6 +144,23 @@ int main() {
         ++checks;
     }
     quota_frames.retire();
+
+    // Property-based scalar arithmetic sweep over 2,050 fully executed cases.
+    // Each evaluation must leave the same arena at depth zero for reuse.
+    Frames arithmetic_frames(104, 1);
+    {
+        Frames::Turn turn(arithmetic_frames);
+        const auto token = arithmetic_frames.current_turn();
+        VM add({Fn{{I{Op::LoadConstant, 17}, I{Op::AddArgument}, I{Op::Return}}}});
+        VM multiply({Fn{{I{Op::LoadConstant, -7}, I{Op::MultiplyArgument}, I{Op::Return}}}});
+        for (std::int64_t n = -512; n <= 512; ++n) {
+            REQUIRE(add.execute(arithmetic_frames, 0, n) == n + 17);
+            REQUIRE(multiply.execute(arithmetic_frames, 0, n) == n * -7);
+            REQUIRE(arithmetic_frames.depth(token) == 0);
+            checks += 2;
+        }
+    }
+    arithmetic_frames.retire();
 
     // Bytecode admission is closed, including invalid unreachable code.
     expect_invalid([] { (void)VM({}); }); ++checks;
@@ -207,6 +232,21 @@ int main() {
     sibling.stop();
     REQUIRE(sibling.done() && sibling.frame_stack().retired());
     checks += 13;
+
+    // A guest handler that deliberately catches its own VM quota exception
+    // still cannot commit its turn: retired arena is an irrevocable fence.
+    active_vm = &fib;
+    Actor caught_quota(9002, 1, 4, initialize, catch_quota);
+    REQUIRE(caught_quota.try_send(caught_quota.ref(), 99) == Actor::Send::Accepted);
+    expect_fault<std::logic_error>([&] { (void)caught_quota.run_one(); });
+    REQUIRE(caught_quota.done() && caught_quota.frame_stack().retired());
+    REQUIRE(caught_quota.try_send(caught_quota.ref(), 1) == Actor::Send::Closed);
+    Actor surviving(9002, 1, 4, initialize, execute);
+    REQUIRE(surviving.try_send(surviving.ref(), 10) == Actor::Send::Accepted);
+    REQUIRE(surviving.run_one().value == 55);
+    surviving.stop();
+    REQUIRE(surviving.done());
+    checks += 6;
 
     // Arena instance is reentered on a new carrier, never with the old token.
     Frames migrant(200, 1);
