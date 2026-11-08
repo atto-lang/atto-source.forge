@@ -158,6 +158,14 @@ class Parser {
       // Scalar bootstrap lacks nominal enum declarations and compiler-owned
       // prebound virtual method slots. Never attempt arity-only fallback.
       if (tok_.text=="enum") error("nominal enum overloads require compiler-bound dispatch");
+      // The scalar bootstrap cannot materialize tagged sum discriminants,
+      // retain Result.Err payloads, or lower ordinary throw to Option.None.
+      // Reject every canonical sum/trap token before IR, JIT or AOT emission.
+      // Comments have already been skipped lexically; do not search raw text.
+      if (tok_.text=="Option" || tok_.text=="Result" ||
+          tok_.text=="Some" || tok_.text=="None" ||
+          tok_.text=="Ok" || tok_.text=="Err" || tok_.text=="trap")
+        error("Option/Result/trap requires verified tagged-sum lowering and guest failure effects");
       if (tok_.text=="gen" || tok_.text=="generator")
         error("generator declarations require iterator-frame and continuation lowering");
       // Fail closed on named language features before the scalar grammar

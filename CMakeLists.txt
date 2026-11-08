@@ -77,6 +77,14 @@ if(BUILD_TESTING)
   add_test(NAME oresforge_legacy_operator_grammar
     COMMAND oresforge_legacy_operator_grammar)
   set_tests_properties(oresforge_legacy_operator_grammar PROPERTIES TIMEOUT 15)
+  # Negative admission is not guest Option/Result/trap parity proof.
+  # The positive controls ensure the frontend is not simply rejecting all input.
+  add_executable(oresforge_trap_sum_admission verification/trap_sum_admission.cpp)
+  target_link_libraries(oresforge_trap_sum_admission PRIVATE oresforge_core)
+  add_test(NAME oresforge_trap_sum_fail_closed
+    COMMAND oresforge_trap_sum_admission
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/fixtures/trap-sum-v1")
+  set_tests_properties(oresforge_trap_sum_fail_closed PROPERTIES TIMEOUT 15)
   # Stage-0 single-file AttoLang path admission. Imports remain fail-closed in Forge.
   add_test(NAME oresforge_cli_atto_guest
     COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.atto")

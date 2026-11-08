@@ -1,0 +1,5 @@
+// trap Result Ok Err Option Some None must stay inert trivia.
+pub fnc main(): int {
+  /* trap Result<Some> Err Ok Option nested comment only */
+  return 42;
+}

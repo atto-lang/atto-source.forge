@@ -1,0 +1,1 @@
+pub fnc main(): Option<int> { return Some(42); }
