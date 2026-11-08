@@ -73,6 +73,18 @@ if(BUILD_TESTING)
   endif()
   add_test(NAME forge_actor_compiled_source_handler COMMAND oresforge_actor_compiled_source_tests)
   set_tests_properties(forge_actor_compiled_source_handler PROPERTIES TIMEOUT 40 LABELS "source-compiler;actor-handler;no-spawn")
+  add_test(NAME forge_actor_source_spawn_reply
+    COMMAND oresforge run-actor-main
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/fixtures/actor_main_two_instances.atto")
+  set_tests_properties(forge_actor_source_spawn_reply PROPERTIES
+    PASS_REGULAR_EXPRESSION "^42\\n?$" TIMEOUT 20
+    LABELS "source-compiler;actor-spawn-sync-v0")
+  add_test(NAME forge_actor_source_recursive_reply
+    COMMAND oresforge run-actor-main
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/fixtures/actor_main_recursion.atto")
+  set_tests_properties(forge_actor_source_recursive_reply PROPERTIES
+    PASS_REGULAR_EXPRESSION "^5\\n?$" TIMEOUT 20
+    LABELS "source-compiler;actor-spawn-sync-v0")
   add_test(NAME forge_actor_compiler_cli_fail_closed
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/actor_compiler_cli.py"
     "$<TARGET_FILE:oresforge>" "${CMAKE_CURRENT_SOURCE_DIR}/verification/fixtures/actor_counter.atto"

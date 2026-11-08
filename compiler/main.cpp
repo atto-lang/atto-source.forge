@@ -45,8 +45,19 @@ int main(int argc,char** argv) {
       std::cout.flush();
       return 0;
     }
+    // Source-level actor spawn/send/reply bootstrap: bounded synchronous
+    // program profile. Never interpret unsupported actor syntax.
+    if (argc==3 && std::string(argv[1])=="run-actor-main") {
+      const auto program=oresforge::actors::compile(read_file(argv[2]));
+      const auto value=oresforge::actors::execute_main(program);
+      std::cout<<value<<'\n';
+      std::cout.flush();
+      return 0;
+    }
     if (argc>=4 && std::string(argv[1])=="run-actor") {
       const auto program=oresforge::actors::compile(read_file(argv[2]));
+      if (program.has_main)
+        throw std::invalid_argument("use run-actor-main for source-level actor main");
       std::vector<std::int64_t> messages;
       if (argc>1027) throw std::runtime_error("actor message budget exceeded");
       messages.reserve(static_cast<std::size_t>(argc-3));
@@ -127,7 +138,7 @@ int main(int argc,char** argv) {
       std::cout.flush();
       return 0;
     }
-    std::cerr<<"usage: oresforge run|ir <file.atto|file.ores> | emit-asm <arch> <file.atto|file.ores> | run-runtime <file.atto|file.ores> [i64-args...] | ir-runtime <file.atto|file.ores> | emit-runtime-asm <arch> <file.atto|file.ores> | actor-ir <file.atto> | run-actor <file.atto> <i64-message>... | run-calls <file.atto|file.ores> [i64-args...] | emit-call-asm x86_64 <file.atto|file.ores>\n";
+    std::cerr<<"usage: oresforge run|ir <file.atto|file.ores> | emit-asm <arch> <file.atto|file.ores> | run-runtime <file.atto|file.ores> [i64-args...] | ir-runtime <file.atto|file.ores> | emit-runtime-asm <arch> <file.atto|file.ores> | actor-ir <file.atto> | run-actor-main <file.atto> | run-actor <file.atto> <i64-message>... | run-calls <file.atto|file.ores> [i64-args...] | emit-call-asm x86_64 <file.atto|file.ores>\n";
     return 2;
   } catch (const std::exception& e) {
     std::cerr<<"oresforge: "<<e.what()<<'\n';

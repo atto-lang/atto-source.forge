@@ -1,0 +1,14 @@
+// Source-level recursion still charges its own actor frame arena.
+define actor Recurse as
+  pub fnc on_message(int n): int { return countdown(n); }
+  pub fnc countdown(int n): int {
+    if n == 0 then return 0; else return countdown(n - 1); fi
+  }
+end
+pub fnc main(): int {
+  const first = spawn Recurse();
+  const second = spawn Recurse();
+  first.on_message(16);
+  second.on_message(8);
+  return first.on_message(2) + second.on_message(3);
+}

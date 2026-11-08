@@ -1,0 +1,16 @@
+// One lexical actor type; two independently spawned native actor instances.
+// Strict stage-0 synchronous call/reply shape; not general async actor sends.
+define actor Counter as
+  state { count: int = 0; }
+  pub fnc on_message(int delta): int {
+    self.count = self.count + delta;
+    return self.count;
+  }
+end
+pub fnc main(): int {
+  const left = spawn Counter();
+  const right = spawn Counter();
+  left.on_message(3);
+  right.on_message(5);
+  return left.on_message(4) + right.on_message(30);
+}
