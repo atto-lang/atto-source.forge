@@ -59,6 +59,32 @@ public:
     // These methods never expose actor heap/frame tokens to a caller.
     runtime::ActorRef incarnation_ref() const;
     void enqueue(const runtime::ActorRef& destination, std::int64_t message);
+    // Owns one claimed mailbox message and its exclusive worker slot.
+    // It can be moved but not copied; abandoning an uncommitted ticket
+    // terminates this incarnation rather than silently losing accepted data.
+    // The context must outlive any outstanding ticket.
+    class DispatchTicket final {
+        friend class ActorExecutionContext;
+        ActorExecutionContext* owner_ = nullptr;
+        runtime::ActorRef incarnation_;
+        std::int64_t message_ = 0;
+        bool committed_ = false;
+        DispatchTicket(ActorExecutionContext& owner,
+                       const runtime::ActorRef& incarnation,
+                       std::int64_t message)
+            : owner_(&owner), incarnation_(incarnation), message_(message) {}
+    public:
+        DispatchTicket(const DispatchTicket&) = delete;
+        DispatchTicket& operator=(const DispatchTicket&) = delete;
+        DispatchTicket(DispatchTicket&& other) noexcept
+            : owner_(std::exchange(other.owner_, nullptr)),
+              incarnation_(std::move(other.incarnation_)),
+              message_(other.message_), committed_(other.committed_) {}
+        DispatchTicket& operator=(DispatchTicket&&) = delete;
+        ~DispatchTicket() noexcept;
+    };
+    std::optional<DispatchTicket> take_next();
+    std::int64_t execute_ticket(DispatchTicket&& ticket);
     std::optional<std::int64_t> dispatch_next();
 private:
     // Reserve the maximum per-incarnation footprint before constructing
@@ -80,9 +106,14 @@ private:
     runtime::ScalarActor actor_;
     enum class TransportMode : unsigned char { Unset, Direct, Queued };
     std::atomic<TransportMode> mode_{TransportMode::Unset};
+    // Direct source calls serialize separately from queued worker claims.
     std::mutex receive_gate_;
+    std::atomic<bool> worker_claimed_{false};
+    // Serializes STOP closure against successful reply publication. The
+    // handler runs outside this lock; STOP never waits for guest execution.
+    std::mutex publication_gate_;
     void claim_mode(TransportMode desired);
-    std::optional<std::int64_t> dispatch_queued_locked();
+    void close_incarnation() noexcept;
     static thread_local ActorExecutionContext* active_;
     struct Activation final {
         ActorExecutionContext* prior;

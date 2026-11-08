@@ -362,12 +362,12 @@ std::int64_t ActorExecutionContext::receive(std::int64_t message) {
         const auto result = actor_.run_one();
         if (result.status != runtime::ScalarActor::Turn::Executed)
             throw std::logic_error("actor did not execute admitted message");
+        std::scoped_lock publication(publication_gate_);
         if (!mailbox_.authorizes(incarnation_))
             throw std::logic_error("actor incarnation stopped during turn");
         return result.value;
     } catch (...) {
-        mailbox_.close();   // revoke the published incarnation on terminal fault
-        actor_.stop();
+        close_incarnation(); // terminate any faulted direct worker
         throw;
     }
 }
@@ -384,47 +384,85 @@ void ActorExecutionContext::enqueue(const runtime::ActorRef& destination,
         payload[i] = static_cast<std::uint8_t>(bits >> (i * 8));
     mailbox_.send(destination, payload);
 }
-std::optional<std::int64_t> ActorExecutionContext::dispatch_queued_locked() {
-    if (!mailbox_.authorizes(incarnation_))
-        throw std::logic_error("actor incarnation closed");
-    auto payload = mailbox_.receive();
-    if (!payload) return std::nullopt; // no actor callback on an empty mailbox
-    if (payload->size() != sizeof(std::int64_t))
-        throw std::logic_error("malformed scalar actor message");
-    std::uint64_t bits = 0;
-    for (std::size_t i = 0; i < payload->size(); ++i)
-        bits |= std::uint64_t{(*payload)[i]} << (i * 8);
-    const auto value = std::bit_cast<std::int64_t>(bits);
+void ActorExecutionContext::close_incarnation() noexcept {
+    std::scoped_lock publication(publication_gate_);
+    // Closing transport authority before retiring the actor makes all
+    // outstanding dequeued messages and capabilities fail admission.
+    mailbox_.close();
+    actor_.stop();
+}
+ActorExecutionContext::DispatchTicket::~DispatchTicket() noexcept {
+    if (!owner_) return;
+    // A worker that dequeues and abandons a message is terminally faulty.
+    // Do not silently consume accepted data or allow a later reply to skip it.
+    if (!committed_) owner_->close_incarnation();
+    owner_->worker_claimed_.store(false, std::memory_order_release);
+}
+std::optional<ActorExecutionContext::DispatchTicket>
+ActorExecutionContext::take_next() {
+    claim_mode(TransportMode::Queued);
+    bool idle = false;
+    if (!worker_claimed_.compare_exchange_strong(
+            idle, true, std::memory_order_acq_rel))
+        throw std::logic_error("concurrent actor worker claim denied");
+    try {
+        if (!mailbox_.authorizes(incarnation_))
+            throw std::logic_error("actor incarnation closed");
+        auto payload = mailbox_.receive();
+        if (!payload) {
+            worker_claimed_.store(false, std::memory_order_release);
+            return std::nullopt;
+        }
+        if (payload->size() != sizeof(std::int64_t)) {
+            close_incarnation();
+            throw std::logic_error("malformed scalar actor message");
+        }
+        std::uint64_t bits = 0;
+        for (std::size_t i = 0; i < payload->size(); ++i)
+            bits |= std::uint64_t{(*payload)[i]} << (i * 8);
+        const auto value = std::bit_cast<std::int64_t>(bits);
+        return DispatchTicket(*this, incarnation_, value);
+    } catch (...) {
+        worker_claimed_.store(false, std::memory_order_release);
+        throw;
+    }
+}
+std::int64_t ActorExecutionContext::execute_ticket(DispatchTicket&& ticket) {
+    claim_mode(TransportMode::Queued);
+    if (ticket.owner_ != this || ticket.committed_ ||
+        !worker_claimed_.load(std::memory_order_acquire))
+        throw std::logic_error("foreign or consumed actor dispatch ticket");
+    if (!mailbox_.authorizes(ticket.incarnation_))
+        throw std::logic_error("stale actor dispatch ticket");
     Activation lease(*this);
     try {
-        if (actor_.try_send(actor_.ref(), value) != runtime::ScalarActor::Send::Accepted)
+        if (actor_.try_send(actor_.ref(), ticket.message_) !=
+                runtime::ScalarActor::Send::Accepted)
             throw std::logic_error("internal actor stage queue denied");
         const auto result = actor_.run_one();
         if (result.status != runtime::ScalarActor::Turn::Executed)
             throw std::logic_error("actor did not execute queued message");
-        // A concurrent STOP cannot make the terminal turn publish a reply.
-        if (!mailbox_.authorizes(incarnation_))
-            throw std::logic_error("actor stopped during queued execution");
+        // STOP and reply commit are linearized under one lifecycle gate.
+        // No future or callback result is published once STOP wins this lock.
+        std::scoped_lock publication(publication_gate_);
+        if (!mailbox_.authorizes(ticket.incarnation_))
+            throw std::logic_error("actor stopped before reply commit");
+        ticket.committed_ = true;
         return result.value;
     } catch (...) {
-        mailbox_.close(); // drop pending queued payloads; revoke stale refs
-        actor_.stop();
+        close_incarnation();
         throw;
     }
 }
 std::optional<std::int64_t> ActorExecutionContext::dispatch_next() {
-    claim_mode(TransportMode::Queued);
-    std::unique_lock<std::mutex> turn(receive_gate_, std::try_to_lock);
-    if (!turn.owns_lock())
-        throw std::logic_error("concurrent actor worker dispatch denied");
-    return dispatch_queued_locked();
+    auto ticket = take_next();
+    if (!ticket) return std::nullopt;
+    return execute_ticket(std::move(*ticket));
 }
-void ActorExecutionContext::stop() {
-    mailbox_.close(); // revokes/zeroizes pending queued ingress first
-    actor_.stop();
-}
+void ActorExecutionContext::stop() { close_incarnation(); }
 bool ActorExecutionContext::done() const {
-    return actor_.done() && mailbox_.queued() == 0;
+    return actor_.done() && mailbox_.queued() == 0 &&
+           !worker_claimed_.load(std::memory_order_acquire);
 }
 runtime::ScalarActorRef ActorExecutionContext::ref() const { return actor_.ref(); }
 runtime::ScalarActor::Send ActorExecutionContext::try_send(
