@@ -160,7 +160,17 @@ class ActorIncarnationOwnerV1 final {
       try {
         physical = arena_->begin_turn(actor.id, actor.generation);
       } catch (...) {
+        // This message was already dequeued. Failed physical-turn
+        // admission is terminal, not a recoverable message drop.
         wipe(*message);
+        mailbox_.close();
+        stopping_ = true;
+        try {
+          retire_locked();
+        } catch (...) {
+          // Do not release a possibly active arena after admission failed.
+          quarantined_ = true;
+        }
         throw;
       }
       in_turn_ = true;
@@ -278,9 +288,12 @@ class ActorIncarnationOwnerV1 final {
   }
 
   void retire_locked() {
-    if (in_turn_) std::terminate();
-    if (memory_) memory_->retire();
+    if (in_turn_ || quarantined_) std::terminate();
+    // Prove that no physical carrier is active BEFORE scrubbing and
+    // refunding the native heap/frame quota. An arena retirement failure
+    // must retain the native memory and fail closed.
     if (arena_) arena_->retire();
+    if (memory_) memory_->retire();
     memory_.reset();
     arena_.reset();
   }
