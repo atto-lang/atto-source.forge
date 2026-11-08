@@ -65,7 +65,7 @@ jobs:
           ./build-frame/oresforge_actor_frames_tests | tee receipts/actor-frame-marker.txt
           test -s receipts/actor-frame-marker.txt
           python3 verification/actor_frames_source_admission.py ./build-frame/oresforge | tee receipts/actor-source-denial.txt
-          grep -F 'ATTO_FORGE_ACTOR_SOURCE_DENIED|negative=24|controls=2|guest=NOT_EXECUTED' receipts/actor-source-denial.txt
+          grep -F 'ATTO_FORGE_ACTOR_SOURCE_DENIED|negative=80|controls=4|guest=NOT_EXECUTED' receipts/actor-source-denial.txt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
