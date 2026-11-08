@@ -53,14 +53,24 @@ int main() {
     require(result[0] == 42, "actor frame bytes missing");
 
     // All actor memory operations require the original carrier and turn.
-    std::atomic<bool> rejected{false};
+    std::atomic<int> rejected{0};
     std::thread outsider([&] {
       std::array<std::uint8_t,1> foreignResult{};
+      // All three operations must authenticate the carrier before touching
+      // private native state, including allocating fresh heap credits.
       try { ctx.heap_read(h, 0, foreignResult); }
-      catch (const std::logic_error&) { rejected = true; }
+      catch (const std::logic_error&) { ++rejected; }
+      try { (void)ctx.heap_alloc(1); }
+      catch (const std::logic_error&) { ++rejected; }
+      try { ctx.frame_read(e, frame, 0, foreignResult); }
+      catch (const std::logic_error&) { ++rejected; }
     });
     outsider.join();
-    require(rejected, "foreign carrier read actor heap using retained turn");
+    require(rejected == 3,
+            "foreign carrier used heap read/allocation or guest frame access");
+    ctx.frame_read(e, frame, 0, result);
+    require(result[0] == 42,
+            "rejected off-carrier operations corrupted the valid actor frame");
 
     // Nested dispatch may not reenter an actor on the same carrier.
     denied([&] { actorA.dispatch_one(refA,
