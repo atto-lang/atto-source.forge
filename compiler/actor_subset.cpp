@@ -1,0 +1,239 @@
+#include "compiler/actor_subset.hpp"
+#include "runtime/actor_stackless.hpp"
+#include <array>
+#include <charconv>
+#include <cstddef>
+#include <cstdint>
+#include <limits>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+namespace oresforge::actors {
+namespace {
+bool alpha(unsigned char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+}
+bool digit(unsigned char c) { return c >= '0' && c <= '9'; }
+bool space(unsigned char c) {
+    return c == ' ' || c == '\n' || c == '\r' || c == '\t' || c == '\v' || c == '\f';
+}
+struct Token { std::string value; std::size_t offset; };
+std::vector<Token> tokenize(std::string_view text) {
+    if (text.size() > 65536) throw std::invalid_argument("actor source exceeds 64 KiB");
+    std::vector<Token> out;
+    std::size_t i = 0;
+    while (i < text.size()) {
+        const auto c = static_cast<unsigned char>(text[i]);
+        if (space(c)) { ++i; continue; }
+        if (text.substr(i, 2) == "//") {
+            i += 2;
+            while (i < text.size() && text[i] != '\n') ++i;
+            continue;
+        }
+        if (text.substr(i, 2) == "/*") {
+            const auto start = i;
+            i += 2;
+            unsigned depth = 1;
+            while (depth) {
+                if (i == text.size())
+                    throw std::invalid_argument("unterminated actor comment at byte " +
+                                                std::to_string(start));
+                if (text.substr(i, 2) == "/*") {
+                    if (++depth > 128) throw std::invalid_argument("actor comment nesting limit");
+                    i += 2;
+                } else if (text.substr(i, 2) == "*/") {
+                    --depth; i += 2;
+                } else ++i;
+            }
+            continue;
+        }
+        const auto start = i;
+        if (alpha(c)) {
+            ++i;
+            while (i < text.size() &&
+                   (alpha(static_cast<unsigned char>(text[i])) ||
+                    digit(static_cast<unsigned char>(text[i])))) ++i;
+        } else if (digit(c)) {
+            ++i;
+            while (i < text.size() && digit(static_cast<unsigned char>(text[i]))) ++i;
+        } else if (text.substr(i, 2) == "==") {
+            i += 2;
+        } else if (std::string_view("{}();:=.+-").find(static_cast<char>(c))
+                   != std::string_view::npos) {
+            ++i;
+        } else {
+            throw std::invalid_argument("unsupported actor syntax at byte " +
+                                        std::to_string(i));
+        }
+        if (out.size() == 8192) throw std::invalid_argument("actor token budget");
+        out.push_back({std::string(text.substr(start, i - start)), start});
+    }
+    out.push_back({"<eof>", text.size()});
+    return out;
+}
+class Parser final {
+    std::vector<Token> tokens_;
+    std::size_t at_ = 0;
+    const Token& current() const { return tokens_.at(at_); }
+    [[noreturn]] void reject(const char* why) const {
+        throw std::invalid_argument(std::string(why) + " at byte " +
+                                    std::to_string(current().offset));
+    }
+    bool take(std::string_view word) {
+        if (current().value != word) return false;
+        ++at_;
+        return true;
+    }
+    void need(std::string_view word) {
+        if (!take(word)) reject("unsupported actor source form");
+    }
+    std::string ident() {
+        const auto& s = current().value;
+        if (s.empty() || !alpha(static_cast<unsigned char>(s.front())))
+            reject("expected actor identifier");
+        if (s == "any" || s == "unknown" || s == "async")
+            reject("unsupported actor identifier");
+        auto name = s;
+        ++at_;
+        return name;
+    }
+    std::int64_t integer() {
+        std::string text;
+        if (take("-")) text = "-";
+        const auto& s = current().value;
+        if (s.empty() || !digit(static_cast<unsigned char>(s.front())))
+            reject("expected actor i64 literal");
+        text += s;
+        ++at_;
+        std::int64_t result = 0;
+        const auto* first = text.data();
+        const auto* last = first + text.size();
+        const auto parsed = std::from_chars(first, last, result);
+        if (parsed.ec != std::errc{} || parsed.ptr != last)
+            reject("actor i64 literal overflow");
+        return result;
+    }
+    static void same(const std::string& a, const std::string& b) {
+        if (a != b) throw std::invalid_argument("actor type/name mismatch");
+    }
+public:
+    explicit Parser(std::string_view source) : tokens_(tokenize(source)) {}
+    Program parse() {
+        Program out;
+        need("define"); need("actor"); out.actor_name = ident(); need("as");
+        if (take("state")) {
+            out.handler = Program::Handler::CheckedFieldAdd;
+            need("{"); out.field_name = ident(); need(":"); need("int");
+            need("="); out.initial = integer(); need(";"); need("}");
+        } else {
+            out.handler = Program::Handler::RecursiveCountdown;
+        }
+        need("pub"); need("fnc"); need("on_message"); need("(");
+        need("int"); out.parameter_name = ident(); need(")");
+        need(":"); need("int"); need("{");
+        if (out.handler == Program::Handler::CheckedFieldAdd) {
+            need("self"); need("."); same(ident(), out.field_name);
+            need("="); need("self"); need("."); same(ident(), out.field_name);
+            need("+"); same(ident(), out.parameter_name); need(";");
+            need("return"); need("self"); need(".");
+            same(ident(), out.field_name); need(";"); need("}");
+        } else {
+            need("return"); out.recursive_method = ident(); need("(");
+            same(ident(), out.parameter_name); need(")"); need(";"); need("}");
+            if (out.recursive_method == "on_message" || out.recursive_method == "main")
+                reject("invalid recursive method");
+            need("pub"); need("fnc");
+            same(ident(), out.recursive_method);
+            need("("); need("int"); const auto argument = ident();
+            need(")"); need(":"); need("int"); need("{");
+            need("if"); same(ident(), argument); need("=="); need("0");
+            need("then"); need("return"); need("0"); need(";");
+            need("else"); need("return"); same(ident(), out.recursive_method);
+            need("("); same(ident(), argument); need("-"); need("1");
+            need(")"); need(";"); need("fi"); need("}");
+        }
+        need("end");
+        if (current().value != "<eof>") reject("trailing unsupported actor source");
+        return out;
+    }
+};
+using VM = runtime::ActorStacklessI64;
+constexpr std::array<VM::Instruction, 6> countdown{{
+    {VM::Op::BranchIfZero, 5},
+    {VM::Op::DecrementArg},
+    {VM::Op::Call, 0},
+    {VM::Op::IncrementChild},
+    {VM::Op::ReturnChild},
+    {VM::Op::ReturnLiteral, 0, 0},
+}};
+std::int64_t checked_add(std::int64_t a, std::int64_t b) {
+    if ((b > 0 && a > std::numeric_limits<std::int64_t>::max() - b) ||
+        (b < 0 && a < std::numeric_limits<std::int64_t>::min() - b))
+        throw std::overflow_error("compiled actor i64 state overflow");
+    return a + b;
+}
+}
+Program compile(std::string_view source) { return Parser(source).parse(); }
+std::string dump_ir(const Program& p) {
+    if (p.handler == Program::Handler::CheckedFieldAdd)
+        return "actor " + p.actor_name + " field " + p.field_name +
+            " : i64 initial=" + std::to_string(p.initial) +
+            "\nhandler on_message(" + p.parameter_name + ") : checked-add-field\n";
+    return "actor " + p.actor_name + " field none\nhandler on_message(" +
+        p.parameter_name + ") : call " + p.recursive_method +
+        "\nmethod " + p.recursive_method +
+        " : stackless-loop-v1 frames=64 fuel=16384\n";
+}
+
+thread_local ActorExecutionContext* ActorExecutionContext::active_ = nullptr;
+ActorExecutionContext::Activation::Activation(ActorExecutionContext& actor)
+    : prior(active_) {
+    if (prior) throw std::logic_error("nested actor runtime dispatch denied");
+    active_ = &actor;
+}
+ActorExecutionContext::Activation::~Activation() { active_ = prior; }
+
+ActorExecutionContext::ActorExecutionContext(Program compiled, std::uint64_t actor_id)
+    : program_(std::move(compiled)), actor_(actor_id, 1, 8, initialize, handle) {
+    if (program_.actor_name.empty() || program_.parameter_name.empty())
+        throw std::invalid_argument("invalid compiled actor program");
+}
+void ActorExecutionContext::initialize(OresActorI64Heap* heap,
+                                        std::uint64_t domain, std::uint64_t epoch) {
+    if (!active_) throw std::logic_error("actor initialization outside lease");
+    if (active_->program_.handler == Program::Handler::CheckedFieldAdd)
+        ores_actor_i64_heap_field_init_mutable(heap, domain, epoch, 0,
+                                               active_->program_.initial);
+}
+std::int64_t ActorExecutionContext::handle(OresActorI64Heap* heap,
+                                           std::uint64_t domain,
+                                           std::uint64_t epoch,
+                                           std::int64_t message) {
+    if (!active_) throw std::logic_error("actor handler outside lease");
+    if (active_->program_.handler == Program::Handler::RecursiveCountdown)
+        return VM::run(active_->actor_.frame_stack(), countdown, message);
+    const auto old = ores_actor_i64_heap_field_read(heap, domain, epoch, 0);
+    const auto updated = checked_add(old, message);
+    ores_actor_i64_heap_field_write(heap, domain, epoch, 0, updated);
+    return ores_actor_i64_heap_field_read(heap, domain, epoch, 0);
+}
+std::int64_t ActorExecutionContext::receive(std::int64_t message) {
+    Activation lease(*this);
+    if (actor_.try_send(actor_.ref(), message) != runtime::ScalarActor::Send::Accepted)
+        throw std::logic_error("actor message not admitted");
+    const auto result = actor_.run_one();
+    if (result.status != runtime::ScalarActor::Turn::Executed)
+        throw std::logic_error("actor did not execute admitted message");
+    return result.value;
+}
+void ActorExecutionContext::stop() { actor_.stop(); }
+bool ActorExecutionContext::done() const { return actor_.done(); }
+runtime::ScalarActorRef ActorExecutionContext::ref() const { return actor_.ref(); }
+runtime::ScalarActor::Send ActorExecutionContext::try_send(
+    const runtime::ScalarActorRef& ref, std::int64_t message) {
+    return actor_.try_send(ref, message);
+}
+} // namespace oresforge::actors
