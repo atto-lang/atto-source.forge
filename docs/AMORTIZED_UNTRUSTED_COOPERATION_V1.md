@@ -2,7 +2,7 @@
 
 ## Contract
 
-- Default slow-poll interval: **128 completed guest reductions**. The compiler's hot path uses an integer counter/increment and a predictable branch. A clock read, scheduler inspection, cancellation delivery, or runtime FFI is never performed on every iteration.
+- Default slow-poll interval: **128 completed guest reductions**. The instrumented hot path uses a small integer countdown and a predictable branch; 64-bit aggregate accounting occurs only on the 128th reduction. A clock read, scheduler inspection, cancellation delivery, or runtime FFI is never performed on every iteration.
 - A 512-backedge value is a *fairness handoff target*, not the hard tenant execution quota. After 512, slow polls remain at 128-edge boundaries; do not change to a slow poll on every overdue iteration. A separate safe critical-section exit may request one immediate poll.
 - Replenishing a fairness slice must **never replenish hard tenant fuel**. Counter overflow saturates total accounting without disabling the independent window counter.
 - Only committed backedges and compiler-verified call sites count. Untrusted source cannot mutate or bypass compiler-private counter state. Optimizer/codegen must retain checkpoint coverage; uninstrumented loop/cycle admission must fail closed.
@@ -11,9 +11,7 @@
 
 ## Current backend status (2026-11-07)
 
-The Stage-0 Forge native compiler emits only straight-line trusted scalar arithmetic. The new gate is a unit-tested native substrate; it does not make arbitrary native code safe to run.
-
-Relevant files: runtime/AmortizedCooperationGate.hpp; verification/amortized_cooperation_gate_test.cpp.
+The host reduction gate uses a 128-tick countdown and million-tick GCC/Clang-tested regression. An actual Forge source parser/compiler test rejects uninstrumented loops, recursion and `rt cooperate` until compiler-backed checkpoint/continuation lowering exists. Stage-0 native execution remains trusted straight-line scalar only.
 
 ## Missing compiler-backed gate
 
