@@ -36,6 +36,9 @@ public:
 private:
     Program program_;
     runtime::ScalarActor actor_;
+    // Admission gate for the synchronous host entry only. Without it a
+    // rejected Busy result could leave an extra message in the FIFO.
+    std::mutex receive_gate_;
     static thread_local ActorExecutionContext* active_;
     struct Activation final {
         ActorExecutionContext* prior;

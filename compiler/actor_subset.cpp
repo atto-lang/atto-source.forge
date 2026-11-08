@@ -221,6 +221,9 @@ std::int64_t ActorExecutionContext::handle(OresActorI64Heap* heap,
     return ores_actor_i64_heap_field_read(heap, domain, epoch, 0);
 }
 std::int64_t ActorExecutionContext::receive(std::int64_t message) {
+    std::unique_lock<std::mutex> turn(receive_gate_, std::try_to_lock);
+    if (!turn.owns_lock())
+        throw std::logic_error("overlapping actor receive denied before enqueue");
     Activation lease(*this);
     if (actor_.try_send(actor_.ref(), message) != runtime::ScalarActor::Send::Accepted)
         throw std::logic_error("actor message not admitted");
