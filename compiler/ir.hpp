@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <functional>
 #include <span>
 #include <string>
 #include <vector>
@@ -19,5 +20,8 @@ struct Program {
 void verify(const Program&);
 std::int64_t interpret(const Program&);
 std::int64_t interpret(const Program&,std::span<const std::int64_t> args);
+// Host diagnostic hook for bounded straight-line IR (not suspend-safe actor execution).
+std::int64_t interpret_metered(const Program&,std::span<const std::int64_t> args,
+    const std::function<void(std::uint64_t,bool)>& on_checkpoint);
 std::string dump_ir(const Program&);
 }
