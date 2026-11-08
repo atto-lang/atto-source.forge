@@ -347,6 +347,14 @@ std::int64_t ActorExecutionContext::receive(std::int64_t message) {
         throw std::logic_error("overlapping actor receive denied before enqueue");
     if (!mailbox_.authorizes(incarnation_))
         throw std::logic_error("actor incarnation closed");
+    // The legacy raw staging API may already have accepted messages.
+    // A source-level synchronous call must never receive another sender's
+    // reply simply because it was first in the scalar actor's FIFO.
+    if (actor_.queued() != 0) {
+        mailbox_.close();
+        actor_.stop();
+        throw std::logic_error("pending direct actor message has no reply ownership");
+    }
     Activation lease(*this);
     try {
         if (actor_.try_send(actor_.ref(), message) != runtime::ScalarActor::Send::Accepted)
@@ -422,6 +430,9 @@ runtime::ScalarActorRef ActorExecutionContext::ref() const { return actor_.ref()
 runtime::ScalarActor::Send ActorExecutionContext::try_send(
     const runtime::ScalarActorRef& ref, std::int64_t message) {
     claim_mode(TransportMode::Direct);
+    std::unique_lock<std::mutex> turn(receive_gate_, std::try_to_lock);
+    if (!turn.owns_lock())
+        throw std::logic_error("concurrent direct actor send denied");
     if (!mailbox_.authorizes(incarnation_))
         return runtime::ScalarActor::Send::Closed;
     return actor_.try_send(ref, message);

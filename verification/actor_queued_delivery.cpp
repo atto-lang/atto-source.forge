@@ -101,6 +101,38 @@ int main() {
     check(ledger.reserved() == initial_reserved,
           "queued actor memory reservation failed to refund");
 
+    // A source synchronous reply must never accidentally consume an earlier
+    // raw host send from the same native scalar FIFO.
+    {
+        ActorExecutionContext mixed(p, 405);
+        check(mixed.try_send(mixed.ref(), 7) ==
+                  oresforge::runtime::ScalarActor::Send::Accepted,
+              "raw direct staging unavailable");
+        reject<std::logic_error>([&] { (void)mixed.receive(3); });
+        check(mixed.done() == false, "pending raw message was falsely executed");
+        mixed.stop();
+    }
+    check(ledger.reserved() == initial_reserved,
+          "failed direct reply ownership leaked budget");
+
+    // STOP explicitly discards accepted but undelivered queue payloads.
+    {
+        ActorExecutionContext cancelled(p, 406);
+        const auto obsolete = cancelled.incarnation_ref();
+        for (int i = 0; i < 8; ++i) cancelled.enqueue(obsolete, i + 1);
+        cancelled.stop();
+        check(cancelled.done(), "STOP retained pending transport messages");
+        reject<std::runtime_error>([&] { cancelled.enqueue(obsolete, 99); });
+        reject<std::logic_error>([&] { (void)cancelled.dispatch_next(); });
+        ActorExecutionContext next(p, 406);
+        reject<std::runtime_error>([&] { next.enqueue(obsolete, 1); });
+        next.enqueue(next.incarnation_ref(), 4);
+        check(next.dispatch_next() == 4, "new incarnation inherited cancelled messages");
+        next.stop();
+    }
+    check(ledger.reserved() == initial_reserved,
+          "cancelled queued actor leaked budget");
+
     // Concurrent publishers share a bounded FIFO admission domain. Each
     // publisher enqueues two identical messages; aggregate checked state
     // is deterministic even when cross-publisher scheduling order varies.
