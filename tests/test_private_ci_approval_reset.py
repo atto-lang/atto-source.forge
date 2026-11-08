@@ -12,8 +12,8 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-POLICIES = #[".github/private-ci-approved-repositories.txt",".github/private-ci-approved-source-snapshots.txt"]#
-FORMER_CANDIDATES = #["honeypot-r-us-test/hnpt-lib-core","1343209023","46dc99c5261843e64bc1f232a2d3158bf02b71bf"]#
+POLICIES = [".github/private-ci-approved-repositories.txt",".github/private-ci-approved-source-snapshots.txt"]
+FORMER_CANDIDATES = ["honeypot-r-us-test/hnpt-lib-core","1343209023","46dc99c5261843e64bc1f232a2d3158bf02b71bf"]
 PROFILE = 'forge'
 
 
