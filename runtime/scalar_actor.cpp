@@ -108,7 +108,8 @@ ScalarActor::Result ScalarActor::run_one() {
         }
         // Even callbacks that catch their own frame-limit errors cannot
         // commit the turn after the actor's frame arena has been poisoned.
-        if (frames_->poisoned()) throw std::logic_error("actor frame poison");
+        if (frames_->poisoned() || frames_->retired())
+            throw std::logic_error("actor frame poisoned or retired");
     } catch (...) {
         frames_->retire();
         ores_actor_i64_heap_leave(heap_, turn);
