@@ -2,4 +2,5 @@
 # No repositories are approved by default.
 # Changes must be independently reviewed under protected-main CODEOWNERS.
 # Format: exact owner/repo numeric_repository_id
-# CANDIDATE ONLY, NOT AUTHORIZED (PR #128 lacked independent security review): honeypot-r-us-test/hnpt-lib-core 1343209023
+# Unreviewed destination candidate from PR #128 was deactivated.
+# See Git history and PR #128 for candidate details; no live grant.
