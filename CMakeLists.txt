@@ -164,6 +164,19 @@ if(BUILD_TESTING)
   target_link_libraries(oresforge_actor_arena_tests PRIVATE oresforge_core)
   add_test(NAME oresforge_actor_arena COMMAND oresforge_actor_arena_tests)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  # Canonical .atto corpus shared byte-for-byte with the Java/LLVM negative
+  # source tests. Forge only credits six semantic rejects; its two local-binding
+  # denials are explicitly UNSUPPORTED, not ownership semantics proof.
+  add_test(NAME oresforge_atto_semantic_oracle_mutations
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/atto_semantic_negative_gate.py"
+      --self-test)
+  add_test(NAME oresforge_atto_semantic_compiler_gate
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/atto_semantic_negative_gate.py"
+      --compiler "$<TARGET_FILE:oresforge>")
+  set_tests_properties(oresforge_atto_semantic_oracle_mutations
+    oresforge_atto_semantic_compiler_gate PROPERTIES TIMEOUT 45)
   add_test(NAME oresforge_cli_source_budget
     COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/verification/cli_source_budget.py"
