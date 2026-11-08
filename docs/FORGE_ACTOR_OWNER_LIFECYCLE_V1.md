@@ -64,3 +64,30 @@ Do not call a source-only commit or `steps=null` failure a test pass.
 Independent review, exact-head stepful host/sanitizer runs and compiled
 actor A stack exhaustion / actor B survival fixtures across Java/LLVM/.NET/
 Forge/Wasm remain required before promoting to merge-ready.
+
+## Integrated hardening with actor-memory PR #226
+
+This candidate combines the exact original actor-memory hardening files from
+#226 with the lifecycle adapter of #228. The integration matrix now builds and
+executes **both** the native memory CTest and the lifecycle-owner CTest under
+GCC/Clang, optimized and ASan+UBSan configurations on the same immutable
+Git tree. The workflow demands both precise host success markers.
+
+A failed native `end_turn` must **not** cause the owner to mark a potentially
+active arena quiescent and destroy it. The integrated adapter quarantines this
+terminal teardown failure: new send/memory access/restart is denied, native
+buffers are not reclaimed without proven quiescence, and destruction while
+quarantined terminates rather than introducing a use-after-free. It scrubs
+the dequeued message before any teardown that might itself throw. This
+abnormal path still requires an isolated supervisor/process recovery design;
+it is a fail-closed containment boundary, not successful reclamation.
+
+Additional integrated native negative checks cover quota-denied supervisor
+restart, ensuring a failed new generation remains closed and can later be
+reissued with a *newer* generation once capacity returns. A trusted handler
+exception must likewise stop only the offending actor and refund native
+reservation without affecting the other actor's isolation.
+
+These source-authored checks are **NOT_EXECUTED** unless the exact-head job
+has nonzero executed steps and test output. They do not imply guest `.atto`
+execution, physical OS-stack overflow recovery or safe actor suspension.
