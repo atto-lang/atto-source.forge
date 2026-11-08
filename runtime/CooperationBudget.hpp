@@ -10,6 +10,7 @@ class CooperationBudget final {
 public:
   static constexpr std::uint32_t kPollInterval = 128;
   static constexpr std::uint64_t kMaxFuel = 100'000'000;
+  static constexpr std::uint64_t kMaxBlockWeight = 512;
   explicit CooperationBudget(std::uint64_t fuel)
       : remaining_fuel_(fuel) {
     if (fuel == 0 || fuel > kMaxFuel)
@@ -30,20 +31,22 @@ public:
   // True indicates a *possible* slow poll; yielding also requires a proven
   // resumable continuation and no live critical/borrow guard.
   bool charge_backedge(std::uint64_t weight = 1) {
-    charge_operation(weight);
+    const bool due = charge_operation(weight);
     ++dispatch_ticks_;
-    ticks_ = (ticks_ + 1) & (kPollInterval - 1);
-    return ticks_ == 0;
+    return due;
   }
 
-  // Account work at function entry, recursion and expensive basic blocks
-  // without creating a new suspension point.
-  void charge_operation(std::uint64_t weight) {
-    if (weight == 0 || weight > kMaxFuel)
+  // Account recursion and bounded basic blocks without a yield point.
+  // Return true if a cold checkpoint is due. Failure is atomic.
+  bool charge_operation(std::uint64_t weight) {
+    if (weight == 0 || weight > kMaxBlockWeight)
       throw std::invalid_argument("invalid guest work weight");
     if (weight > remaining_fuel_)
       throw std::runtime_error("logical guest fuel exhausted");
     remaining_fuel_ -= weight;
+    const std::uint64_t total = ticks_ + weight;
+    ticks_ = static_cast<std::uint32_t>(total & (kPollInterval - 1));
+    return total >= kPollInterval;
   }
 
   std::uint64_t remaining_fuel() const noexcept { return remaining_fuel_; }
