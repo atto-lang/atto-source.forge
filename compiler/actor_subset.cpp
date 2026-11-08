@@ -1,6 +1,7 @@
 #include "compiler/actor_subset.hpp"
 #include "runtime/actor_stackless.hpp"
 #include <array>
+#include <bit>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
@@ -302,7 +303,8 @@ ActorExecutionContext::Activation::Activation(ActorExecutionContext& actor)
 ActorExecutionContext::Activation::~Activation() { active_ = prior; }
 
 ActorExecutionContext::ActorExecutionContext(Program compiled, std::uint64_t actor_id)
-    : program_(std::move(compiled)), budget_(),
+    : mailbox_(actor_id, 8, 8 * sizeof(std::int64_t)),
+      incarnation_(mailbox_.ref()), program_(std::move(compiled)), budget_(),
       actor_(actor_id, 1, 8, initialize, handle) {
     if (program_.actor_name.empty() || program_.parameter_name.empty())
         throw std::invalid_argument("invalid compiled actor program");
@@ -326,23 +328,95 @@ std::int64_t ActorExecutionContext::handle(OresActorI64Heap* heap,
     ores_actor_i64_heap_field_write(heap, domain, epoch, 0, updated);
     return ores_actor_i64_heap_field_read(heap, domain, epoch, 0);
 }
+void ActorExecutionContext::claim_mode(TransportMode desired) {
+    auto unset = TransportMode::Unset;
+    if (!mode_.compare_exchange_strong(unset, desired) && unset != desired)
+        throw std::logic_error("mixed direct and queued actor dispatch denied");
+}
 std::int64_t ActorExecutionContext::receive(std::int64_t message) {
+    claim_mode(TransportMode::Direct);
     std::unique_lock<std::mutex> turn(receive_gate_, std::try_to_lock);
     if (!turn.owns_lock())
         throw std::logic_error("overlapping actor receive denied before enqueue");
+    if (!mailbox_.authorizes(incarnation_))
+        throw std::logic_error("actor incarnation closed");
     Activation lease(*this);
-    if (actor_.try_send(actor_.ref(), message) != runtime::ScalarActor::Send::Accepted)
-        throw std::logic_error("actor message not admitted");
-    const auto result = actor_.run_one();
-    if (result.status != runtime::ScalarActor::Turn::Executed)
-        throw std::logic_error("actor did not execute admitted message");
-    return result.value;
+    try {
+        if (actor_.try_send(actor_.ref(), message) != runtime::ScalarActor::Send::Accepted)
+            throw std::logic_error("actor message not admitted");
+        const auto result = actor_.run_one();
+        if (result.status != runtime::ScalarActor::Turn::Executed)
+            throw std::logic_error("actor did not execute admitted message");
+        if (!mailbox_.authorizes(incarnation_))
+            throw std::logic_error("actor incarnation stopped during turn");
+        return result.value;
+    } catch (...) {
+        mailbox_.close();   // revoke the published incarnation on terminal fault
+        actor_.stop();
+        throw;
+    }
 }
-void ActorExecutionContext::stop() { actor_.stop(); }
-bool ActorExecutionContext::done() const { return actor_.done(); }
+runtime::ActorRef ActorExecutionContext::incarnation_ref() const {
+    return incarnation_;
+}
+void ActorExecutionContext::enqueue(const runtime::ActorRef& destination,
+                                    std::int64_t message) {
+    claim_mode(TransportMode::Queued);
+    // Bit-preserving conversion avoids signed shifts, including INT64_MIN.
+    const auto bits = std::bit_cast<std::uint64_t>(message);
+    std::array<std::uint8_t, sizeof(bits)> payload{};
+    for (std::size_t i = 0; i < payload.size(); ++i)
+        payload[i] = static_cast<std::uint8_t>(bits >> (i * 8));
+    mailbox_.send(destination, payload);
+}
+std::optional<std::int64_t> ActorExecutionContext::dispatch_queued_locked() {
+    if (!mailbox_.authorizes(incarnation_))
+        throw std::logic_error("actor incarnation closed");
+    auto payload = mailbox_.receive();
+    if (!payload) return std::nullopt; // no actor callback on an empty mailbox
+    if (payload->size() != sizeof(std::int64_t))
+        throw std::logic_error("malformed scalar actor message");
+    std::uint64_t bits = 0;
+    for (std::size_t i = 0; i < payload->size(); ++i)
+        bits |= std::uint64_t{(*payload)[i]} << (i * 8);
+    const auto value = std::bit_cast<std::int64_t>(bits);
+    Activation lease(*this);
+    try {
+        if (actor_.try_send(actor_.ref(), value) != runtime::ScalarActor::Send::Accepted)
+            throw std::logic_error("internal actor stage queue denied");
+        const auto result = actor_.run_one();
+        if (result.status != runtime::ScalarActor::Turn::Executed)
+            throw std::logic_error("actor did not execute queued message");
+        // A concurrent STOP cannot make the terminal turn publish a reply.
+        if (!mailbox_.authorizes(incarnation_))
+            throw std::logic_error("actor stopped during queued execution");
+        return result.value;
+    } catch (...) {
+        mailbox_.close(); // drop pending queued payloads; revoke stale refs
+        actor_.stop();
+        throw;
+    }
+}
+std::optional<std::int64_t> ActorExecutionContext::dispatch_next() {
+    claim_mode(TransportMode::Queued);
+    std::unique_lock<std::mutex> turn(receive_gate_, std::try_to_lock);
+    if (!turn.owns_lock())
+        throw std::logic_error("concurrent actor worker dispatch denied");
+    return dispatch_queued_locked();
+}
+void ActorExecutionContext::stop() {
+    mailbox_.close(); // revokes/zeroizes pending queued ingress first
+    actor_.stop();
+}
+bool ActorExecutionContext::done() const {
+    return actor_.done() && mailbox_.queued() == 0;
+}
 runtime::ScalarActorRef ActorExecutionContext::ref() const { return actor_.ref(); }
 runtime::ScalarActor::Send ActorExecutionContext::try_send(
     const runtime::ScalarActorRef& ref, std::int64_t message) {
+    claim_mode(TransportMode::Direct);
+    if (!mailbox_.authorizes(incarnation_))
+        return runtime::ScalarActor::Send::Closed;
     return actor_.try_send(ref, message);
 }
 } // namespace oresforge::actors

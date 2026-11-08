@@ -2,6 +2,9 @@
 #include "runtime/scalar_actor.hpp"
 #include "runtime/ActorIncarnationMemoryV1.hpp"
 #include <cstdint>
+#include <atomic>
+#include <array>
+#include <span>
 #include <optional>
 #include <mutex>
 #include <memory>
@@ -50,6 +53,13 @@ public:
     bool done() const;
     runtime::ScalarActorRef ref() const;
     runtime::ScalarActor::Send try_send(const runtime::ScalarActorRef&, std::int64_t);
+
+    // Checked queued transport. enqueue only stores a message in mainline
+    // Mailbox; a worker explicitly calls dispatch_next to execute a turn.
+    // These methods never expose actor heap/frame tokens to a caller.
+    runtime::ActorRef incarnation_ref() const;
+    void enqueue(const runtime::ActorRef& destination, std::int64_t message);
+    std::optional<std::int64_t> dispatch_next();
 private:
     // Reserve the maximum per-incarnation footprint before constructing
     // the host scalar actor. Refund only after actor destruction/quiescence.
@@ -60,12 +70,19 @@ private:
         BudgetReservation(const BudgetReservation&) = delete;
         BudgetReservation& operator=(const BudgetReservation&) = delete;
     };
+    // The mailbox owns generation authority and bounded queued ingress.
+    // ScalarActor owns per-turn native heap/frames and stages one dequeued
+    // message at a time. This is NOT yet a single heap/frame ABI.
+    runtime::Mailbox mailbox_;
+    const runtime::ActorRef incarnation_;
     Program program_;
     BudgetReservation budget_;
     runtime::ScalarActor actor_;
-    // Admission gate for the synchronous host entry only. Without it a
-    // rejected Busy result could leave an extra message in the FIFO.
+    enum class TransportMode : unsigned char { Unset, Direct, Queued };
+    std::atomic<TransportMode> mode_{TransportMode::Unset};
     std::mutex receive_gate_;
+    void claim_mode(TransportMode desired);
+    std::optional<std::int64_t> dispatch_queued_locked();
     static thread_local ActorExecutionContext* active_;
     struct Activation final {
         ActorExecutionContext* prior;
