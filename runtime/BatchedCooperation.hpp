@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <limits>
 #include <stdexcept>
+#include <type_traits>
 
 namespace oresforge::runtime {
 // Task-owned bounded reduction accounting. This is NOT a guest continuation,
@@ -30,6 +31,10 @@ public:
     // No scheduler, clock or callback is used between check boundaries.
     template <typename OnCheckpoint>
     bool commit_batch(std::uint32_t work, OnCheckpoint&& on_checkpoint) {
+        // A scheduler continuation must not silently return a future/status
+        // that this synchronous helper would discard.
+        static_assert(std::is_void_v<std::invoke_result_t<OnCheckpoint&, std::uint64_t, bool>>,
+                      "cooperation checkpoint callback must return void");
         if (servicing_checkpoint_)
             throw std::logic_error("reentrant cooperation charge");
         if (work == 0 || work > interval_
