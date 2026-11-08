@@ -165,6 +165,36 @@ int main() {
     sibling.stop();
     CHECK(sibling.done());
 
+    // Concurrent actors on distinct carriers must not share PC, registers,
+    // frame allocation, mailbox state or heap fields even for identical code.
+    Actor left(112, 1, 8, initialize, handle);
+    Actor right(113, 1, 8, initialize, handle);
+    std::atomic<bool> independent_ok = true;
+    std::atomic<bool> start = false;
+    auto work = [&](Actor& actor, std::int64_t stride) {
+        try {
+            while (!start.load(std::memory_order_acquire))
+                std::this_thread::yield();
+            for (std::int64_t i = 0; i <= 63; ++i) {
+                const auto n = (i * stride) % 64;
+                if (invoke(actor, n) != n)
+                    independent_ok.store(false, std::memory_order_relaxed);
+            }
+            actor.stop();
+            if (!actor.done() || !actor.frame_stack().retired())
+                independent_ok.store(false, std::memory_order_relaxed);
+        } catch (...) {
+            independent_ok.store(false, std::memory_order_relaxed);
+        }
+    };
+    std::thread left_carrier([&] { work(left, 3); });
+    std::thread right_carrier([&] { work(right, 5); });
+    start.store(true, std::memory_order_release);
+    left_carrier.join();
+    right_carrier.join();
+    CHECK(independent_ok);
+    CHECK(active_actor == nullptr);
+
     Frames loop(105, 1);
     const std::array<Machine::Instruction, 1> infinite{{
         {Machine::Op::Jump, 0}
@@ -227,6 +257,22 @@ int main() {
         });
     }
     CHECK(bytes.poisoned());
+    // Child result overflow is checked before C++ signed arithmetic executes.
+    const std::array<Machine::Instruction, 4> increment_overflow{{
+        {Machine::Op::Call, 3},
+        {Machine::Op::IncrementChild},
+        {Machine::Op::ReturnChild},
+        {Machine::Op::ReturnLiteral, 0,
+            std::numeric_limits<std::int64_t>::max()}
+    }};
+    Frames arithmetic_actor(114, 1);
+    {
+        Frames::Turn turn(arithmetic_actor);
+        rejects<std::length_error>([&] {
+            (void)Machine::run(arithmetic_actor, increment_overflow, 0);
+        });
+    }
+    CHECK(arithmetic_actor.poisoned());
     Frames still_alive(111, 1);
     {
         Frames::Turn turn(still_alive);
