@@ -107,7 +107,7 @@ int main() {
             ++checks;
         }
         expect_fault<std::overflow_error>([&] { (void)fact.execute(frames, 0, 21); });
-        REQUIRE(frames.depth(token) != 0); // fault retains frames until actor retirement
+        REQUIRE(frames.retired()); // terminal VM fault revokes the entire actor arena
         ++checks;
     }
     frames.retire();
@@ -132,7 +132,7 @@ int main() {
     {
         Frames::Turn turn(quota_frames);
         expect_fault<std::length_error>([&] { (void)fib.execute(quota_frames, 0, 22); });
-        REQUIRE(!quota_frames.poisoned());
+        REQUIRE(!quota_frames.poisoned() && quota_frames.retired());
         ++checks;
     }
     quota_frames.retire();
@@ -142,6 +142,9 @@ int main() {
     expect_invalid([] { (void)VM({Fn{{}}}); }); ++checks;
     expect_invalid([] { (void)VM({Fn{{I{Op::LoadConstant, 1}}}}); }); ++checks;
     expect_invalid([] { (void)VM({Fn{{I{Op::Call, 0, 7}, I{Op::Return}}}}); }); ++checks;
+    expect_invalid([] { (void)VM({Fn{{I{Op::LoadArgument, 3, 0}, I{Op::Return}}}}); }); ++checks;
+    expect_invalid([] { (void)VM({Fn{{I{Op::LoadConstant, 3, 1}, I{Op::Return}}}}); }); ++checks;
+    expect_invalid([] { (void)VM({Fn{{I{Op::Return, 1, 0}}}}); }); ++checks;
     expect_invalid([] { (void)VM({Fn{{I{Op::BranchArgumentLe, 0, 0}, I{Op::Return}}}}); }); ++checks;
     expect_invalid([] { (void)VM({Fn{{I{Op::BranchArgumentLe, 0, 9}, I{Op::Return}}}}); }); ++checks;
     expect_invalid([] { (void)VM({Fn{{I{Op::Return}, I{static_cast<Op>(255)}, I{Op::Return}}}}); }); ++checks;
