@@ -273,7 +273,14 @@ std::int64_t execute_main(const Program& p) {
     auto send = [&](const Program::Invoke& call) -> std::int64_t {
         if (call.actor_index >= actors.size())
             throw std::invalid_argument("actor invocation index not in spawn table");
-        return actors[call.actor_index]->receive(call.message);
+        // Source main still expects a synchronous reply, but its message
+        // takes the very same generation-fenced queue admission path as a
+        // host producer. No callback executes during enqueue().
+        auto& actor = *actors[call.actor_index];
+        actor.enqueue(actor.incarnation_ref(), call.message);
+        const auto reply = actor.dispatch_next();
+        if (!reply) throw std::logic_error("source actor reply missing");
+        return *reply;
     };
     for (const auto& call : p.sends) (void)send(call);
     // Both replies must execute; an actor fault is terminal for the

@@ -90,6 +90,21 @@ if(BUILD_TESTING)
     "$<TARGET_FILE:oresforge>" "${CMAKE_CURRENT_SOURCE_DIR}/verification/fixtures/actor_counter.atto"
     "${CMAKE_CURRENT_SOURCE_DIR}/verification/fixtures/actor_countdown.atto")
   set_tests_properties(forge_actor_compiler_cli_fail_closed PROPERTIES TIMEOUT 60 LABELS "source-compiler;actor-denials;no-native-asm")
+  # Mainline mailbox-generation fenced queued actor transport. Native host
+  # pump only; source-level async Future/suspension is not implemented.
+  add_executable(oresforge_actor_queued_delivery_tests
+    verification/actor_queued_delivery.cpp)
+  target_link_libraries(oresforge_actor_queued_delivery_tests PRIVATE
+    oresforge_actor_compiler Threads::Threads)
+  target_compile_features(oresforge_actor_queued_delivery_tests PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_actor_queued_delivery_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+  endif()
+  add_test(NAME forge_actor_queued_mailbox_incarnation
+    COMMAND oresforge_actor_queued_delivery_tests)
+  set_tests_properties(forge_actor_queued_mailbox_incarnation PROPERTIES
+    TIMEOUT 40 LABELS "source-compiler;actor-mailbox;host-pump;no-async")
   # Iterative, bounded actor call lowering uses actor-owned frames, not C++ recursion.
   add_executable(oresforge_actor_stackless_tests verification/actor_stackless.cpp)
   target_link_libraries(oresforge_actor_stackless_tests PRIVATE oresforge_scalar_actor)
