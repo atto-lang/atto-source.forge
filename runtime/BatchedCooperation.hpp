@@ -37,7 +37,7 @@ public:
                       "cooperation checkpoint callback must return void");
         if (servicing_checkpoint_)
             throw std::logic_error("reentrant cooperation charge");
-        if (work == 0 || work > interval_
+        if (work == 0 || work > interval_)
             throw std::invalid_argument("invalid cooperation batch");
         const std::uint32_t next = phase_ + work; // <= 1024, cannot overflow
         phase_ = next % interval_;
