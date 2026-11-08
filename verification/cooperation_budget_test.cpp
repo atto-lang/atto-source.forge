@@ -70,5 +70,26 @@ int main() {
   require(fail && rejected.remaining_fuel() == 2);
   require(rejected.charge_backedge(2));
   require(rejected.remaining_fuel() == 0);
+  // Pure recursion (no backedges) must still produce 128-step cold polls.
+  CooperationBudget recursion{600};
+  int recursive_polls = 0;
+  for (int i = 0; i < 256; ++i)
+    if (recursion.charge_operation(1)) ++recursive_polls;
+  require(recursive_polls == 2 && recursion.remaining_fuel() == 344);
+  require(recursion.backedges_this_dispatch() == 0);
+  // Weighted blocks must not postpone a cold poll or allow oversized charges.
+  CooperationBudget weighted{800};
+  require(!weighted.charge_operation(127));
+  require(weighted.charge_operation(2));
+  require(weighted.charge_operation(512));
+  require(weighted.remaining_fuel() == 159);
+  bool oversized = false;
+  try { (void)weighted.charge_operation(513); }
+  catch (const std::invalid_argument&) { oversized = true; }
+  require(oversized && weighted.remaining_fuel() == 159);
+  bool insufficient = false;
+  try { (void)weighted.charge_operation(160); }
+  catch (const std::runtime_error&) { insufficient = true; }
+  require(insufficient && weighted.remaining_fuel() == 159);
   std::cout << "forge 128-tick cooperation budget PASS (host-only)\n";
 }
