@@ -68,7 +68,7 @@ int main() {
     }
     // Source identifiers never become interpolated native C++ tokens.
     REQUIRE(oresforge::actor_source::emit_cxx(fixture("Foo","value","delta","7","+")) ==
-            oresforge::actor_source::emit_cxx(fixture("Bar","state","change","7","+")));
+            oresforge::actor_source::emit_cxx(fixture("Bar","balance","change","7","+")));
     ++positive;
     // CRLF and horizontal tabs are ordinary comment formatting, not execution.
     const auto crlf = "//\t Header\r\n" + fixture("Counter","total","amount","2","+");
