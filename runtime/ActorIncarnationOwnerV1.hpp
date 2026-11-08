@@ -116,7 +116,7 @@ class ActorIncarnationOwnerV1 final {
     // Destruction with an outstanding callback is a host lifetime violation.
     // The supervisor must first join the dispatching carrier.
     std::scoped_lock lock(gate_);
-    if (in_turn_) std::terminate();
+    if (in_turn_ || quarantined_) std::terminate();
     mailbox_.close();
     stopping_ = true;
     retire_locked();
@@ -183,23 +183,39 @@ class ActorIncarnationOwnerV1 final {
       }
     }
 
+    // The callback no longer needs its message: scrub it before touching
+    // native turn teardown, even when physical exit or reclaim throws.
+    wipe(*message);
     {
       std::scoped_lock lock(gate_);
+      bool ended = false;
       try {
         arena_->end_turn(physical);
+        ended = true;
       } catch (...) {
         if (!failure) failure = std::current_exception();
+        // Never retire or refund a possibly live native turn. An unhealthy
+        // owner must remain quarantined until process/supervisor isolation.
+        quarantined_ = true;
       }
-      in_turn_ = false;
-      carrier_ = {};
-      physical_ = {};
+      if (ended) {
+        in_turn_ = false;
+        carrier_ = {};
+        physical_ = {};
+      }
       if (failure) {
         mailbox_.close();
         stopping_ = true;
       }
-      if (stopping_) retire_locked();
+      if (stopping_ && ended && !quarantined_) {
+        try {
+          retire_locked();
+        } catch (...) {
+          quarantined_ = true;
+          if (!failure) failure = std::current_exception();
+        }
+      }
     }
-    wipe(*message);
     if (failure) std::rethrow_exception(failure);
     return true;
   }
@@ -210,14 +226,15 @@ class ActorIncarnationOwnerV1 final {
     std::scoped_lock lock(gate_);
     mailbox_.close();
     stopping_ = true;
-    if (!in_turn_) retire_locked();
+    if (!in_turn_ && !quarantined_) retire_locked();
   }
 
   // Only CONTROL may request reincarnation after carrier quiescence.
   // Constructor failure leaves the successor CLOSED, not partially live.
   ActorRef restart() {
     std::scoped_lock lock(gate_);
-    if (in_turn_) throw std::logic_error("active actor blocks supervisor restart");
+    if (in_turn_ || quarantined_)
+      throw std::logic_error("active or quarantined actor blocks supervisor restart");
     mailbox_.close();
     stopping_ = true;
     retire_locked();
@@ -252,11 +269,12 @@ class ActorIncarnationOwnerV1 final {
   std::thread::id carrier_{};
   bool in_turn_ = false;
   bool stopping_ = false;
+  bool quarantined_ = false;
 
   template <typename Operation>
   decltype(auto) with_memory(const Turn& turn, Operation&& op) {
     std::scoped_lock lock(gate_);
-    if (!in_turn_ || stopping_ || !memory_ ||
+    if (!in_turn_ || stopping_ || quarantined_ || !memory_ ||
         carrier_ != std::this_thread::get_id() ||
         turn.physical_.domain != physical_.domain ||
         turn.physical_.epoch != physical_.epoch ||
