@@ -15,6 +15,14 @@ add_library(oresforge_scalar_actor STATIC
 target_include_directories(oresforge_scalar_actor PUBLIC . runtime/arena)
 target_compile_features(oresforge_scalar_actor PRIVATE c_std_11 PUBLIC cxx_std_20)
 target_link_libraries(oresforge_scalar_actor PUBLIC Threads::Threads)
+# Source-compiled scalar actor slice. Legacy actor syntax remains fail-closed.
+add_library(oresforge_actor_compiler STATIC compiler/actor_subset.cpp)
+target_include_directories(oresforge_actor_compiler PUBLIC .)
+target_compile_features(oresforge_actor_compiler PUBLIC cxx_std_20)
+target_link_libraries(oresforge_actor_compiler PUBLIC oresforge_scalar_actor)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(oresforge_actor_compiler PRIVATE -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+endif()
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(oresforge_actor_arena PRIVATE -Wall -Wextra -Wpedantic -Werror)
 endif()
@@ -22,7 +30,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(oresforge_core PRIVATE -Wall -Wextra -Wconversion)
 endif()
 add_executable(oresforge compiler/main.cpp)
-target_link_libraries(oresforge PRIVATE oresforge_core)
+target_link_libraries(oresforge PRIVATE oresforge_core oresforge_actor_compiler)
 include(CTest)
 if(BUILD_TESTING)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
@@ -57,6 +65,19 @@ if(BUILD_TESTING)
   add_test(NAME oresforge_actor_private_frames_host COMMAND oresforge_actor_frames_tests)
   add_test(NAME oresforge_actor_heap_frame_bridge_host
     COMMAND oresforge_scalar_actor_frames_tests)
+  # Source-compiled .atto scalar actor handler, not AOT machine code.
+  add_executable(oresforge_actor_compiled_source_tests verification/actor_compiled_source.cpp)
+  target_link_libraries(oresforge_actor_compiled_source_tests PRIVATE oresforge_actor_compiler Threads::Threads)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_actor_compiled_source_tests PRIVATE -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+  endif()
+  add_test(NAME forge_actor_compiled_source_handler COMMAND oresforge_actor_compiled_source_tests)
+  set_tests_properties(forge_actor_compiled_source_handler PROPERTIES TIMEOUT 40 LABELS "source-compiler;actor-handler;no-spawn")
+  add_test(NAME forge_actor_compiler_cli_fail_closed
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/actor_compiler_cli.py"
+    "$<TARGET_FILE:oresforge>" "${CMAKE_CURRENT_SOURCE_DIR}/verification/fixtures/actor_counter.atto"
+    "${CMAKE_CURRENT_SOURCE_DIR}/verification/fixtures/actor_countdown.atto")
+  set_tests_properties(forge_actor_compiler_cli_fail_closed PROPERTIES TIMEOUT 60 LABELS "source-compiler;actor-denials;no-native-asm")
   # Iterative, bounded actor call lowering uses actor-owned frames, not C++ recursion.
   add_executable(oresforge_actor_stackless_tests verification/actor_stackless.cpp)
   target_link_libraries(oresforge_actor_stackless_tests PRIVATE oresforge_scalar_actor)

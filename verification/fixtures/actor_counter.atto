@@ -1,0 +1,8 @@
+// Restricted source-compiled actor field update; host-injected messages.
+define actor Counter as
+  state { count: int = 0; }
+  pub fnc on_message(int delta): int {
+    self.count = self.count + delta;
+    return self.count;
+  }
+end
