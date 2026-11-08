@@ -1,6 +1,7 @@
 #include "runtime/ActorIncarnationOwnerV1.hpp"
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <exception>
 #include <iostream>
@@ -54,7 +55,8 @@ int main() {
     // All actor memory operations require the original carrier and turn.
     std::atomic<bool> rejected{false};
     std::thread outsider([&] {
-      try { ctx.heap_read(h, 0, result); }
+      std::array<std::uint8_t,1> foreignResult{};
+      try { ctx.heap_read(h, 0, foreignResult); }
       catch (const std::logic_error&) { rejected = true; }
     });
     outsider.join();
@@ -102,8 +104,17 @@ int main() {
       });
     } catch (...) { workerError = std::current_exception(); }
   });
-  while (!entered.load(std::memory_order_acquire))
+  const auto admissionDeadline = std::chrono::steady_clock::now() +
+                                 std::chrono::seconds(5);
+  while (!entered.load(std::memory_order_acquire) &&
+         std::chrono::steady_clock::now() < admissionDeadline)
     std::this_thread::yield();
+  if (!entered.load(std::memory_order_acquire)) {
+    release.store(true, std::memory_order_release);
+    worker.join();
+    if (workerError) std::rethrow_exception(workerError);
+    throw std::runtime_error("actor worker failed to enter dispatch turn");
+  }
   actorA.stop();
   require(actorA.stopped() && budget.reserved() == 640,
           "STOP reclaimed native actor heap during active turn");
