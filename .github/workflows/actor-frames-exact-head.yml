@@ -51,7 +51,7 @@ jobs:
             echo "run_attempt=${{ github.run_attempt }}"
             echo "compiler=$CXX"
             echo "lane=${{ matrix.lane }}"
-            for f in runtime/actor_frames.hpp runtime/actor_stackless.hpp verification/actor_stackless.cpp runtime/scalar_actor.hpp runtime/scalar_actor.cpp verification/actor_frames.cpp verification/scalar_actor_frames.cpp CMakeLists.txt; do
+            for f in runtime/actor_frames.hpp runtime/actor_stackless.hpp verification/actor_stackless.cpp runtime/scalar_actor.hpp runtime/scalar_actor.cpp verification/actor_frames.cpp verification/scalar_actor_frames.cpp CMakeLists.txt verification/actor_frames_source_admission.py runtime/arena/ActorArena.c runtime/arena/ActorOwnedI64Heap.c runtime/arena/ActorOwnedI64Heap.h; do
               test "$(git hash-object --no-filters "$f")" = "$(git rev-parse "HEAD:$f")"
               echo "blob:$f=$(git rev-parse "HEAD:$f")"
             done
@@ -62,6 +62,7 @@ jobs:
           grep -F '100% tests passed' receipts/actor-frame-ctest.txt
           ./build-frame/oresforge_actor_stackless_tests | tee receipts/actor-stackless-marker.txt
           grep -F 'ATTO_FORGE_STACKLESS_HOST_EXECUTED|iterative=1|sibling_survival=1|migration=1|quota=1|budget=1|guest=NOT_EXECUTED' receipts/actor-stackless-marker.txt
+          grep -F 'ATTO_FORGE_STACKLESS_NEGATIVE_CONTROLS|bytecode=7|uninitialized_child=2|budget=2|byte_quota=1|recoverable_sibling=1|guest=NOT_EXECUTED' receipts/actor-stackless-marker.txt
           ./build-frame/oresforge_actor_frames_tests | tee receipts/actor-frame-marker.txt
           test -s receipts/actor-frame-marker.txt
           python3 verification/actor_frames_source_admission.py ./build-frame/oresforge | tee receipts/actor-source-denial.txt

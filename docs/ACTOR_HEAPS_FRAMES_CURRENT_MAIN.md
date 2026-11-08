@@ -18,7 +18,7 @@
 | Suspension | Host arena retains bytes across suspend; resumes on another carrier | ScalarActor callbacks still synchronous; scheduler continuation bridge absent |
 | Cancellation / STOP | Quiesced frame cancellation and retirement zeroize bytes; actor callback failure seals mailbox | No supervisor/compiler STOP lowering |
 | Fault isolation | Host frame overflow poisons its actor and sibling can continue | Does not prove native stack-overflow signal containment |
-| Conformance | Five native host CTests for arena, heap turns, heap safety, frames, callback bridge, plus a source-compiler negative gate | Exact-head hosted steps and compiled guest traces required |
+| Conformance | Six native host CTests for arena, heap turns, heap safety, frames, callback bridge, plus a source-compiler negative gate | Exact-head hosted steps and compiled guest traces required |
 
 ## Parity gates against Java and LLVM
 
@@ -35,7 +35,7 @@ Must-have source/compiler acceptance before claiming a production actor stack:
 
 ## Local / hosted evidence
 
-Existing Forge #207 records local GCC, Clang and ASan+UBSan execution of its standalone frame program at exact source blob identities. Its complete callback bridge and current-main CMake composition have **not** yet produced an exact-head linked native-heap test receipt. The added three-lane workflow builds and executes against the real `ActorOwnedI64Heap.c`; wait for admitted jobs and nonempty step records before assigning a verified status.
+Existing Forge #207 records local GCC, Clang and ASan+UBSan execution of its standalone frame program at exact source blob identities. Its complete callback bridge and current-main CMake composition have **not** yet produced an exact-head linked native-heap test receipt. The expanded three-lane workflow builds and executes against the real `ActorOwnedI64Heap.c`; wait for admitted jobs and nonempty step records before assigning a verified status.
 
 ## Additional compiler admission hardening
 
@@ -54,3 +54,9 @@ Existing Forge #207 records local GCC, Clang and ASan+UBSan execution of its sta
 - Native tests add repeated 64-depth reuse, swallowed quota errors, byte-cap exhaustion with free depth slots, malformed control-flow, null child reads, runaway budget and post-overflow sibling viability.
 - Stage-0 actor source admission has ten feature classes spanning virtual actors, unreachable declarations, state, supervision, pub-sub and critical/suspends. All eight CLI emission/execute modes must deny without publishing code; scalar-only sources with actor-shaped comments must remain accepted.
 - **No new exact-head executed result has yet been recorded.** The GitHub Actions runner-admission failure is separate from these authored tests.
+
+## Concurrent actor stress and exact-source receipts
+
+The actor VM host suite now executes two independent actors simultaneously on different carriers, each processing 64 iterative calls (128 total), while checking actor-specific heap field results, mailbox draining, separate frame retirement, and carrier-local callback context. The suite also denies a child-return increment at the i64 maximum and validates previously detected uninitialized-return and byte-budget errors.
+
+The exact-head native test workflow pins and records the source blobs for the actor frame, stackless VM, heap C implementation, CMake composition, native test, and compiler-admission test. A second native negative-controls receipt marker must be produced by an actually executed test. Neither receipts nor the test labels imply compiled `.atto` actor parity; do not count workflow registration as an executed run.
