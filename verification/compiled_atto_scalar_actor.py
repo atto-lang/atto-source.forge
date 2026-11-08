@@ -90,7 +90,7 @@ int main() {
   if (actor.try_send(actor.ref(), 5) != ScalarActor::Send::Accepted) return 2;
   const auto result = actor.run_one();
   if (result.status != ScalarActor::Turn::Executed) return 3;
-  if (std::printf("%lld\\n", static_cast<long long>(result.value)) <= 0) return 4;
+  if (std::printf("%lld\n", static_cast<long long>(result.value)) <= 0) return 4;
   actor.stop();
   return actor.done() ? 0 : 5;
 }
@@ -204,12 +204,12 @@ def main():
                             temp, label)
                 compile_probe("link native mutation baseline")
                 baseline = checked([str(executable)], temp, "execute mutation baseline")
-                require(baseline.stdout == (str(results[0]) + "\\n").encode("ascii"),
+                require(baseline.stdout == (str(results[0]) + "\n").encode("ascii"),
                         "mutation baseline result differs from source oracle")
                 generated.write_text(native.replace(expected, swapped), encoding="ascii")
                 compile_probe("link negative native mutation")
                 changed = checked([str(executable)], temp, "execute negative native mutation")
-                require(changed.stdout != baseline.stdout and changed.stdout.endswith(b"\\n"),
+                require(changed.stdout != baseline.stdout and changed.stdout.endswith(b"\n"),
                         "arithmetic mutation did not change observable i64 result")
                 mutations += 1
             # The default/legacy compiler modes must not gain actor syntax
