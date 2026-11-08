@@ -1,0 +1,56 @@
+name: Forge actor incarnation lifecycle owner host verification
+on:
+  pull_request:
+    paths:
+      - 'runtime/ActorIncarnationOwnerV1.hpp'
+      - 'runtime/ActorIncarnationMemoryV1.hpp'
+      - 'runtime/actor_arena.hpp'
+      - 'runtime/actor.hpp'
+      - 'runtime/actor.cpp'
+      - 'verification/actor_incarnation_owner_v1_test.cpp'
+      - 'CMakeLists.txt'
+      - '.github/workflows/forge-actor-owner-v1.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  owner-host:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [g++, clang++]
+        mode: [optimized, sanitized]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Read back exact immutable source identity
+        shell: bash
+        env:
+          EXPECTED: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED"
+          git rev-parse 'HEAD^{tree}'
+          test -z "$(git status --porcelain --untracked-files=all)"
+      - name: Compile and execute actor lifecycle host CTest
+        shell: bash
+        env:
+          CXX: ${{ matrix.compiler }}
+          MODE: ${{ matrix.mode }}
+        run: |
+          set -euo pipefail
+          flags="-O2 -Wall -Wextra -Wpedantic -Werror"
+          if [[ "$MODE" == sanitized ]]; then
+            flags="-O1 -g -Wall -Wextra -Wpedantic -Werror -fsanitize=address,undefined -fno-omit-frame-pointer"
+          fi
+          build="$RUNNER_TEMP/actor-owner-$MODE"
+          cmake -S . -B "$build" -DCMAKE_CXX_COMPILER="$CXX" -DCMAKE_CXX_FLAGS="$flags"
+          cmake --build "$build" --target oresforge_actor_incarnation_owner_v1 --parallel 2
+          ASAN_OPTIONS=detect_leaks=1 ctest --test-dir "$build" --output-on-failure -R '^oresforge_actor_incarnation_owner_v1_host$'
+          "$build/oresforge_actor_incarnation_owner_v1" | tee "$RUNNER_TEMP/actor-owner-host.txt"
+          grep -Fx 'FORGE_ACTOR_OWNER_HOST_PASS|turn=1|stop_restart=1|sibling=42|guest_atto=0|physical_stack=0' "$RUNNER_TEMP/actor-owner-host.txt"
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"
