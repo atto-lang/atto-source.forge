@@ -349,3 +349,22 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
   set_tests_properties(forge_actor_stack_domain_host_v1 PROPERTIES
     TIMEOUT 30 LABELS "host-only;native-actor-stack")
 endif()
+
+
+# Host-owned logical metering seam (not a source-guest sandbox or compiler
+# instrumentation). Always include it in the ordinary portable CTest matrix.
+if(BUILD_TESTING)
+  add_executable(oresforge_cooperation_budget_host
+    verification/cooperation_budget_test.cpp)
+  target_include_directories(oresforge_cooperation_budget_host PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_cooperation_budget_host PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_cooperation_budget_host PRIVATE
+      -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+  endif()
+  add_test(NAME forge_cooperation_budget_host_v1
+    COMMAND oresforge_cooperation_budget_host)
+  set_tests_properties(forge_cooperation_budget_host_v1 PROPERTIES
+    TIMEOUT 10 LABELS "host-only;cooperation-budget")
+endif()
