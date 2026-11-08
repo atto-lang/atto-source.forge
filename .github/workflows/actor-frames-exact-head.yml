@@ -51,14 +51,14 @@ jobs:
             echo "run_attempt=${{ github.run_attempt }}"
             echo "compiler=$CXX"
             echo "lane=${{ matrix.lane }}"
-            for f in runtime/actor_frames.hpp runtime/actor_stackless.hpp verification/actor_stackless.cpp runtime/scalar_actor.hpp runtime/scalar_actor.cpp verification/actor_frames.cpp verification/scalar_actor_frames.cpp CMakeLists.txt verification/actor_frames_source_admission.py runtime/arena/ActorArena.c runtime/arena/ActorOwnedI64Heap.c runtime/arena/ActorOwnedI64Heap.h runtime/ActorIncarnationMemoryV1.hpp runtime/ActorStackDomain.hpp runtime/actor_arena.hpp compiler/actor_subset.hpp compiler/actor_subset.cpp compiler/main.cpp verification/actor_compiled_source.cpp verification/actor_compiler_cli.py verification/fixtures/actor_counter.atto verification/fixtures/actor_countdown.atto; do
+            for f in runtime/actor_frames.hpp runtime/actor_stackless.hpp verification/actor_stackless.cpp runtime/scalar_actor.hpp runtime/scalar_actor.cpp verification/actor_frames.cpp verification/scalar_actor_frames.cpp CMakeLists.txt verification/actor_frames_source_admission.py runtime/arena/ActorArena.c runtime/arena/ActorOwnedI64Heap.c runtime/arena/ActorOwnedI64Heap.h runtime/ActorIncarnationMemoryV1.hpp runtime/ActorStackDomain.hpp runtime/actor_arena.hpp compiler/actor_subset.hpp compiler/actor_subset.cpp compiler/main.cpp verification/actor_compiled_source.cpp verification/actor_compiler_cli.py verification/fixtures/actor_counter.atto verification/fixtures/actor_countdown.atto verification/fixtures/actor_main_two_instances.atto verification/fixtures/actor_main_recursion.atto; do
               test "$(git hash-object --no-filters "$f")" = "$(git rev-parse "HEAD:$f")"
               echo "blob:$f=$(git rev-parse "HEAD:$f")"
             done
           } | tee receipts/actor-source-provenance.txt
           cmake -S . -B build-frame -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER="$CC" -DCMAKE_CXX_COMPILER="$CXX"
           cmake --build build-frame --target oresforge_actor_compiled_source_tests oresforge_actor_stackless_tests oresforge_actor_frames_tests oresforge_scalar_actor_frames_tests oresforge_actor_c_arena_tests oresforge_scalar_actor_tests oresforge_scalar_heap_safety_tests oresforge_actor_arena_tests oresforge_actor_incarnation_memory_v1 oresforge --parallel 2
-          ctest --test-dir build-frame --output-on-failure -R '^(forge_actor_compiled_source_handler|forge_actor_compiler_cli_fail_closed|oresforge_actor_stackless_host|oresforge_actor_private_frames_host|oresforge_actor_heap_frame_bridge_host|oresforge_actor_arena_persistent_scratch|oresforge_actor_arena|oresforge_actor_incarnation_memory_v1_host|oresforge_scalar_actor_heap_and_turns|oresforge_scalar_heap_safety|forge_actor_source_admission_fail_closed)$' | tee receipts/actor-ctest.txt
+          ctest --test-dir build-frame --output-on-failure -R '^(forge_actor_compiled_source_handler|forge_actor_compiler_cli_fail_closed|forge_actor_source_spawn_reply|forge_actor_source_recursive_reply|oresforge_actor_stackless_host|oresforge_actor_private_frames_host|oresforge_actor_heap_frame_bridge_host|oresforge_actor_arena_persistent_scratch|oresforge_actor_arena|oresforge_actor_incarnation_memory_v1_host|oresforge_scalar_actor_heap_and_turns|oresforge_scalar_heap_safety|forge_actor_source_admission_fail_closed)$' | tee receipts/actor-ctest.txt
           grep -F '100% tests passed' receipts/actor-ctest.txt
           if [[ '${{ matrix.lane }}' != 'asan-ubsan' ]]; then
             cmake --build build-frame --target oresforge_actor_stack_domain --parallel 2
@@ -67,8 +67,13 @@ jobs:
           fi
           ./build-frame/oresforge_actor_compiled_source_tests | tee receipts/actor-compiled-source.txt
           grep -F 'ATTO_FORGE_COMPILED_SOURCE_ACTOR_HOST|field=1|recursion=1|sibling_survival=1|carrier_migration=1|restart_fence=1|guest_source=1|general_spawn=NOT_EXECUTED' receipts/actor-compiled-source.txt
-          python3 verification/actor_compiler_cli.py ./build-frame/oresforge verification/fixtures/actor_counter.atto verification/fixtures/actor_countdown.atto | tee receipts/actor-compiled-cli.txt
+          python3 verification/actor_compiler_cli.py ./build-frame/oresforge verification/fixtures/actor_counter.atto verification/fixtures/actor_countdown.atto verification/fixtures/actor_main_two_instances.atto verification/fixtures/actor_main_recursion.atto | tee receipts/actor-compiled-cli.txt
           grep -F 'ATTO_FORGE_COMPILED_ACTOR_CLI|positive=4|negative=46|actor_source=1|general_spawn=NOT_EXECUTED' receipts/actor-compiled-cli.txt
+          grep -F 'ATTO_FORGE_SOURCE_ACTOR_MAIN_CLI|positive=3|negative=47|spawn_profile=sync-v0|guest_source=1|native_aot=NOT_EXECUTED' receipts/actor-compiled-cli.txt
+          ./build-frame/oresforge run-actor-main verification/fixtures/actor_main_two_instances.atto | tee receipts/source-actor-main-counter.txt
+          grep -Fx '42' receipts/source-actor-main-counter.txt
+          ./build-frame/oresforge run-actor-main verification/fixtures/actor_main_recursion.atto | tee receipts/source-actor-main-recursion.txt
+          grep -Fx '5' receipts/source-actor-main-recursion.txt
           ./build-frame/oresforge_actor_stackless_tests | tee receipts/actor-stackless.txt
           grep -F 'ATTO_FORGE_STACKLESS_HOST_EXECUTED|iterative=1|sibling_survival=1|migration=1|quota=1|budget=1|guest=NOT_EXECUTED' receipts/actor-stackless.txt
           grep -F 'ATTO_FORGE_STACKLESS_NEGATIVE_CONTROLS|bytecode=7|uninitialized_child=2|budget=2|byte_quota=1|recoverable_sibling=1|guest=NOT_EXECUTED' receipts/actor-stackless.txt
