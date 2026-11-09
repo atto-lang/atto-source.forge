@@ -236,7 +236,7 @@ class Parser {
     if (c=='^')
       throw std::runtime_error("legacy ^/^^ operators are removed; use Integer.pow/bitXor at byte "+
                                std::to_string(start));
-    if (std::string_view("()+-*/{};:,?").find(static_cast<char>(c)) ==
+    if (std::string_view("()+-*/{};:,?~.[]").find(static_cast<char>(c)) ==
         std::string_view::npos) error("invalid character");
     ++at_;
     tok_={Kind::Punct,source_.substr(start,1),start};
@@ -361,6 +361,49 @@ class Parser {
     }
     return a;
   }
+  // Forge stage-0 has no owning tuple layout yet. Admit only an immediate
+  // projection of a bounded, pure i64-literal tuple, which is equivalent for
+  // canonical Tuple.of(...) and ~tuple(...). No Tuple value escapes to IR.
+  ExprPtr tuple_literal_projection(std::size_t depth) {
+    check_depth(depth);
+    expect("(");
+    std::vector<std::int64_t> values;
+    if (tok_.text!=")") {
+      while (true) {
+        if (values.size()>=32) error("E_TUPLE_ARITY: maximum 32 literal elements");
+        std::string literal;
+        if (tok_.text=="-" || tok_.text=="+") {
+          if (tok_.text=="-") literal="-";
+          next();
+        }
+        if (tok_.kind!=Kind::Number)
+          error("E_TUPLE_LITERAL_ONLY: no effects, loans or dynamic operands");
+        literal+=tok_.text;
+        std::int64_t value=0;
+        const auto result=std::from_chars(literal.data(),literal.data()+literal.size(),value);
+        if (result.ec!=std::errc{} || result.ptr!=literal.data()+literal.size())
+          error("E_TUPLE_RANGE: checked signed-i64 literal required");
+        values.push_back(value);
+        next();
+        if (!take(",")) break;
+      }
+    }
+    expect(")");
+    if (!take("["))
+      error("E_TUPLE_ESCAPE_UNSUPPORTED: owning tuple layout not implemented");
+    if (tok_.kind!=Kind::Number)
+      error("E_TUPLE_INDEX: constant nonnegative slot required");
+    unsigned int slot=0;
+    const auto digits=tok_.text;
+    const auto idx=std::from_chars(digits.data(),digits.data()+digits.size(),slot);
+    if (idx.ec!=std::errc{} || idx.ptr!=digits.data()+digits.size())
+      error("E_TUPLE_INDEX: constant bounded slot required");
+    next();
+    expect("]");
+    if (slot>=values.size())
+      error("E_TUPLE_BOUNDS: constant projection outside tuple");
+    return node(Expr::Tag::Constant,{},values[slot]);
+  }
   ExprPtr factor(std::size_t depth) {
     check_depth(depth);
     if (tok_.text=="rt") {
@@ -394,6 +437,11 @@ class Parser {
       return node(Expr::Tag::Negative,std::move(v));
     }
     if (take("+")) return factor(depth+1);
+    if (take("~")) {
+      if (!take("tuple"))
+        error("E_AGGREGATE_FACTORY_UNSUPPORTED: typed ownership and collection IR required");
+      return tuple_literal_projection(depth+1);
+    }
     if (take("(")) {
       auto e=expression(depth+1); expect(")"); return e;
     }
@@ -410,6 +458,16 @@ class Parser {
       if (tok_.text=="match" || tok_.text=="switch")
         error("expected integer");
       const std::string name=identifier();
+      if (name=="Tuple" && take(".")) {
+        if (!take("of"))
+          error("E_AGGREGATE_FACTORY_UNSUPPORTED: only Tuple.of projection available");
+        return tuple_literal_projection(depth+1);
+      }
+      // Do not reinterpret arbitrary member factories as free scalar calls.
+      // In particular, Map/Entry/Pair/Array/Vector/Record/Set.of need distinct
+      // checked representation, type inference and actor-heap ownership.
+      if (tok_.text==".")
+        error("E_AGGREGATE_FACTORY_UNSUPPORTED: typed ownership and collection IR required");
       // The Forge scalar interpreter/JIT has no ETS table authority or pg
       // ActorGroup/mailbox integration. Reject explicit namespace access
       // instead of accepting it as an unbound scalar variable.
