@@ -148,6 +148,11 @@ class Parser {
         ++at_;
       }
       tok_={Kind::Word,source_.substr(start,at_-start),start};
+      // Canonical logical words are reserved. The stage-0 i64 frontend
+      // cannot type bool or preserve lazy AND/OR versus eager XOR effects.
+      // Fail before constructing/publishing scalar IR, including names.
+      if (tok_.text=="and" || tok_.text=="or" || tok_.text=="xor")
+        error("logical word operator requires typed bool/CFG lowering; unsupported in Forge stage-0");
       if (tok_.text=="any" || tok_.text=="unknown" ||
           tok_.text=="Any" || tok_.text=="Unknown")
         error("any/unknown requires tagged opaque-value ABI and runtime type descriptors");

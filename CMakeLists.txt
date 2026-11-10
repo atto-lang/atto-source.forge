@@ -77,6 +77,15 @@ if(BUILD_TESTING)
   add_test(NAME oresforge_legacy_operator_grammar
     COMMAND oresforge_legacy_operator_grammar)
   set_tests_properties(oresforge_legacy_operator_grammar PROPERTIES TIMEOUT 15)
+  # Compiler parser/IR admission + real CLI no-output negatives, not bool guest parity.
+  add_executable(oresforge_logical_word_admission verification/logical_word_admission.cpp)
+  target_link_libraries(oresforge_logical_word_admission PRIVATE oresforge_core)
+  add_test(NAME oresforge_logical_word_admission COMMAND oresforge_logical_word_admission)
+  set_tests_properties(oresforge_logical_word_admission PROPERTIES TIMEOUT 20)
+  add_test(NAME oresforge_logical_word_cli_no_publication
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/logical_word_cli_no_publication.py"
+      "$<TARGET_FILE:oresforge>")
+  set_tests_properties(oresforge_logical_word_cli_no_publication PROPERTIES TIMEOUT 60)
   # Stage-0 single-file AttoLang path admission. Imports remain fail-closed in Forge.
   add_test(NAME oresforge_cli_atto_guest
     COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.atto")

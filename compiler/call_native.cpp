@@ -91,6 +91,10 @@ class Parser {
       fail("invalid character");
     }
     token_={text_.substr(begin,at_-begin),begin};
+    // The callable i64 profile also must reject reserved logical words:
+    // treating them as function/parameter names would silently diverge.
+    if (token_.text=="and" || token_.text=="or" || token_.text=="xor")
+      fail("logical word operator requires typed bool/CFG lowering; unsupported in Forge stage-0");
   }
   bool take(std::string_view s) {
     if (token_.text!=s) return false;

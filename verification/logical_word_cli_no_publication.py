@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+"""Compile real Forge CLI paths; rejected reserved words must publish no stdout."""
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+def run(compiler, mode, source):
+    with tempfile.TemporaryDirectory(prefix="atto-forge-logical-") as d:
+        path = Path(d) / "case.atto"
+        path.write_text(source, encoding="utf-8")
+        args = [compiler, *mode, str(path)]
+        return subprocess.run(args, capture_output=True, timeout=12, check=False)
+
+def main():
+    if len(sys.argv) != 2:
+        raise SystemExit("usage: logical_word_cli_no_publication.py <oresforge>")
+    compiler = str(Path(sys.argv[1]).resolve(strict=True))
+    profiles = [
+        ("run",), ("ir",), ("emit-asm", "x86_64"),
+        ("run-runtime",), ("ir-runtime",), ("emit-runtime-asm", "x86_64"),
+        ("run-calls",), ("emit-call-asm", "x86_64"),
+    ]
+    accepted = "fnc candy(): int { return 5; } pub fnc main(): int { return candy()+2; }"
+    for profile in [("run",), ("run-calls",)]:
+        r = run(compiler, profile, accepted)
+        assert r.returncode == 0 and r.stdout.strip() == b"7", (
+            profile, r.returncode, r.stdout, r.stderr)
+    negatives = []
+    for word in ("and","or","xor"):
+        negatives.extend([
+            "fnc " + word + "(): int { return 1; } pub fnc main(): int { return 7; }",
+            "fnc helper(" + word + ": int): int { return 7; } pub fnc main(): int { return helper(2); }",
+            "pub fnc main(): int { return 1 " + word + " 2; }",
+            "fnc hidden(): int { return 1 " + word + " 2; } pub fnc main(): int { return 7; }",
+        ])
+    executions = 0
+    for profile in profiles:
+        for source in negatives:
+            r = run(compiler, profile, source)
+            assert r.returncode != 0, (profile, source, "unexpected acceptance", r.stdout)
+            assert r.stdout == b"", (profile, source, "partial IR/ASM/result publication", r.stdout)
+            assert b"logical word operator requires typed bool/CFG lowering" in r.stderr, (
+                profile, source, r.returncode, r.stderr)
+            executions += 1
+    print("FORGE_LOGICAL_WORD_CLI_REJECTION_PASS negative_invocations=" + str(executions))
+if __name__ == "__main__":
+    main()
