@@ -16,9 +16,40 @@
 namespace oresforge::runtime {
 class ActorArena final {
  public:
-  struct Turn { std::uint64_t domain, epoch; };
-  struct Handle { std::uint64_t domain, generation; std::size_t slot; };
-  struct Scratch { std::uint64_t domain, epoch; std::size_t offset, length; };
+  // Type-level admission: these are issued authority tickets, not
+  // forgeable public aggregates. Trusted host callers may copy an issued
+  // ticket, but cannot construct an arbitrary (domain,slot,generation) to
+  // probe other live allocations or synthesize a turn/scratch authority.
+  // This is only C++ API hardening, NOT guest ref32 or cryptographic handles.
+  struct Turn {
+    Turn(const Turn&) = default;
+    Turn& operator=(const Turn&) = default;
+   private:
+    friend class ActorArena;
+    Turn(std::uint64_t d, std::uint64_t e) : domain(d), epoch(e) {}
+    std::uint64_t domain, epoch;
+  };
+  struct Handle {
+    Handle(const Handle&) = default;
+    Handle& operator=(const Handle&) = default;
+   private:
+    friend class ActorArena;
+    Handle(std::uint64_t d, std::uint64_t g, std::size_t s)
+        : domain(d), generation(g), slot(s) {}
+    std::uint64_t domain, generation;
+    std::size_t slot;
+  };
+  struct Scratch {
+    Scratch(const Scratch&) = default;
+    Scratch& operator=(const Scratch&) = default;
+   private:
+    friend class ActorArena;
+    Scratch(std::uint64_t d, std::uint64_t e,
+            std::size_t o, std::size_t n)
+        : domain(d), epoch(e), offset(o), length(n) {}
+    std::uint64_t domain, epoch;
+    std::size_t offset, length;
+  };
   static constexpr std::size_t Slots = 64;
   static constexpr std::size_t SlotBytes = 256;
   static constexpr std::size_t ScratchBytes = 16 * 1024;
