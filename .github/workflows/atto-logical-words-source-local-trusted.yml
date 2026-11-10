@@ -34,16 +34,16 @@ jobs:
       - name: Bind requested SHA to live same-repo PR #241 before checkout
         shell: bash
         env:
-          EXPECTED_HEAD: \${{ inputs.expected_head_sha }}
-          EXPECTED_TREE: \${{ inputs.expected_tree_sha }}
-          READ_ONLY_GITHUB_TOKEN: \${{ github.token }}
+          EXPECTED_HEAD: ${{ inputs.expected_head_sha }}
+          EXPECTED_TREE: ${{ inputs.expected_tree_sha }}
+          READ_ONLY_GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]] || exit 2
           [[ "$EXPECTED_TREE" =~ ^[0-9a-f]{40}$ ]] || exit 2
           test "$GITHUB_REPOSITORY" = 'ores-truffle-oreslang/oreslang-source.forge'
           test "$GITHUB_REF" = 'refs/heads/main'
-          test -n "\${RUNNER_NAME:-}"
+          test -n "${RUNNER_NAME:-}"
           python3 - <<'PY'
           import json, os, urllib.request
           url = 'https://api.github.com/repos/ores-truffle-oreslang/oreslang-source.forge/pulls/241'
@@ -65,15 +65,15 @@ jobs:
 
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          ref: \${{ inputs.expected_head_sha }}
+          ref: ${{ inputs.expected_head_sha }}
           persist-credentials: false
           clean: true
 
       - name: Verify exact checked-out commit/tree and clean source
         shell: bash
         env:
-          EXPECTED_HEAD: \${{ inputs.expected_head_sha }}
-          EXPECTED_TREE: \${{ inputs.expected_tree_sha }}
+          EXPECTED_HEAD: ${{ inputs.expected_head_sha }}
+          EXPECTED_TREE: ${{ inputs.expected_tree_sha }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
@@ -92,7 +92,7 @@ jobs:
           cmake --build build-logical-gcc --parallel 2
           count="$(ctest --test-dir build-logical-gcc -N -R '^oresforge_logical_word' |
             awk '/^Total Tests:/ {print $3}')"
-          test "\${count:-0}" -ge 3
+          test "${count:-0}" -ge 3
           ctest --test-dir build-logical-gcc --output-on-failure \
             -R '^oresforge_logical_word'
           sha256sum build-logical-gcc/oresforge
@@ -107,7 +107,7 @@ jobs:
           cmake --build build-logical-clang --parallel 2
           count="$(ctest --test-dir build-logical-clang -N -R '^oresforge_logical_word' |
             awk '/^Total Tests:/ {print $3}')"
-          test "\${count:-0}" -ge 3
+          test "${count:-0}" -ge 3
           ctest --test-dir build-logical-clang --output-on-failure \
             -R '^oresforge_logical_word'
           sha256sum build-logical-clang/oresforge
@@ -127,7 +127,7 @@ jobs:
           cmake --build build-logical-sanitized --parallel 2
           count="$(ctest --test-dir build-logical-sanitized -N -R '^oresforge_logical_word' |
             awk '/^Total Tests:/ {print $3}')"
-          test "\${count:-0}" -ge 3
+          test "${count:-0}" -ge 3
           ctest --test-dir build-logical-sanitized --output-on-failure \
             -R '^oresforge_logical_word'
           echo "ATTO_FORGE_ASAN_UBSAN_TESTS=EXECUTED_NOT_GUEST_PARITY"
