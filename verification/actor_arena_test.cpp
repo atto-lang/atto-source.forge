@@ -6,8 +6,26 @@
 #include <stdexcept>
 #include <thread>
 #include <atomic>
-#include <thread>
+#include <type_traits>
 using oresforge::runtime::ActorArena;
+// Public POD tickets were previously forgeable with known actor domain,
+// generation and slot indices. Only the arena may now mint a new ticket.
+// Copying an already issued ticket is intentional and remains supported.
+static_assert(!std::is_aggregate_v<ActorArena::Turn>);
+static_assert(!std::is_default_constructible_v<ActorArena::Turn>);
+static_assert(!std::is_constructible_v<ActorArena::Turn, std::uint64_t, std::uint64_t>);
+static_assert(std::is_copy_constructible_v<ActorArena::Turn>);
+static_assert(!std::is_aggregate_v<ActorArena::Handle>);
+static_assert(!std::is_default_constructible_v<ActorArena::Handle>);
+static_assert(!std::is_constructible_v<ActorArena::Handle,
+                                     std::uint64_t, std::uint64_t, std::size_t>);
+static_assert(std::is_copy_constructible_v<ActorArena::Handle>);
+static_assert(!std::is_aggregate_v<ActorArena::Scratch>);
+static_assert(!std::is_default_constructible_v<ActorArena::Scratch>);
+static_assert(!std::is_constructible_v<ActorArena::Scratch,
+                                     std::uint64_t, std::uint64_t, std::size_t,
+                                     std::size_t>);
+static_assert(std::is_copy_constructible_v<ActorArena::Scratch>);
 static void ensure(bool ok) { if (!ok) throw std::runtime_error("actor arena invariant failed"); }
 template <typename F> static void rejects(F&& f) {
   bool caught = false;
@@ -19,13 +37,15 @@ int main() {
   auto ta = a.begin_turn(10, 1);
   auto tb = b.begin_turn(11, 1);
   auto h = a.allocate(ta, 2);
+  const auto copiedTurn = ta;
+  const auto copiedHandle = h;
   std::array<std::byte, 2> value{std::byte{42}, std::byte{9}}, output{};
   a.write(ta, h, value);
   rejects([&] { b.read(tb, h, output); });
   rejects([&] { a.read(tb, h, output); });
   std::thread foreign([&] { rejects([&] { a.read(ta, h, output); }); });
   foreign.join();
-  a.read(ta, h, output);
+  a.read(copiedTurn, copiedHandle, output);
   ensure(output == value);
   ensure(a.try_read_byte(ta,h,0).has_value());
   ensure(a.try_read_byte(ta,h,0).value() == std::byte{42});
