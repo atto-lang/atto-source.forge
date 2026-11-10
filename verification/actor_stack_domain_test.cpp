@@ -35,6 +35,14 @@ void verify_guard_page_fault() {
   if (child == 0) {
     struct rlimit no_core{0,0};
     ::setrlimit(RLIMIT_CORE, &no_core);
+    // Two actors share this native process. A real guard page hit currently
+    // kills the process, NOT just the failing actor. Do not report this as
+    // an actor-only stack overflow containment test.
+    ActorStackDomain sibling(778, ActorStackDomain::kMinStackBytes, 4096);
+    sibling.run_turn([](auto& a) {
+      int local=13;
+      assert(a.contains_stack_address(&local));
+    });
     ActorStackDomain tiny(777, ActorStackDomain::kMinStackBytes, 4096);
     tiny.run_turn([](auto&){exhaust_actor_stack(100);});
     ::_exit(0);
@@ -42,6 +50,14 @@ void verify_guard_page_fault() {
   int status = 0;
   assert(::waitpid(child, &status, 0) == child);
   assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGSEGV);
+  // Parent survives only because the overflow ran in a child PROCESS.
+  // This does not establish sibling survival in a single runtime process.
+  ActorStackDomain parent_survivor(779, ActorStackDomain::kMinStackBytes, 4096);
+  parent_survivor.run_turn([](auto& a) {
+    int local=17;
+    assert(a.contains_stack_address(&local));
+  });
+  parent_survivor.stop();
 }
 #endif
 int main() {
@@ -81,6 +97,14 @@ int main() {
     must_fail([&]{ actor.allocate(5000); });
   });
   must_fail([&]{ a.run_turn([](auto&){throw std::runtime_error("actor failure");}); });
+  // A language-level ordinary throw does not corrupt the sibling's stack or
+  // heap: unlike an actual guard page overflow, this unwinds normally.
+  b.run_turn([&](ActorStackDomain& actor) {
+    int local=0;
+    assert(actor.contains_stack_address(&local));
+    actor.read(b_handle, 0, &local, sizeof(local));
+    assert(local==13);
+  });
   // An exception unwinds on the actor's own stack; later turns still work.
   a.run_turn([&](ActorStackDomain& actor){int n=1;assert(actor.contains_stack_address(&n));});
   std::thread outsider([&]{must_fail([&]{a.run_turn([](auto&){});});});
