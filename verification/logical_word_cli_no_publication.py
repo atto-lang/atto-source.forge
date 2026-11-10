@@ -24,8 +24,10 @@ def main():
     accepted = "fnc candy(): int { return 5; } pub fnc main(): int { return candy()+2; }"
     for profile in [("run",), ("run-calls",)]:
         r = run(compiler, profile, accepted)
-        assert r.returncode == 0 and r.stdout.strip() == b"7", (
-            profile, r.returncode, r.stdout, r.stderr)
+        if r.returncode != 0 or r.stdout.strip() != b"7":
+            raise RuntimeError(
+                f"positive control failed: {profile}: "
+                f"exit={r.returncode} stdout={r.stdout!r} stderr={r.stderr!r}")
     negatives = []
     for word in ("and","or","xor"):
         negatives.extend([
@@ -33,15 +35,21 @@ def main():
             "fnc helper(" + word + ": int): int { return 7; } pub fnc main(): int { return helper(2); }",
             "pub fnc main(): int { return 1 " + word + " 2; }",
             "fnc hidden(): int { return 1 " + word + " 2; } pub fnc main(): int { return 7; }",
+            "pub fnc main(): int { return " + word + "; }",
+            "pub fnc main(): int { return " + word + "(); }",
         ])
     executions = 0
     for profile in profiles:
         for source in negatives:
             r = run(compiler, profile, source)
-            assert r.returncode != 0, (profile, source, "unexpected acceptance", r.stdout)
-            assert r.stdout == b"", (profile, source, "partial IR/ASM/result publication", r.stdout)
-            assert b"logical word operator requires typed bool/CFG lowering" in r.stderr, (
-                profile, source, r.returncode, r.stderr)
+            if r.returncode == 0:
+                raise RuntimeError(f"unexpected acceptance: {profile}: {source}: {r.stdout!r}")
+            if r.stdout != b"":
+                raise RuntimeError(f"partial IR/ASM/result publication: {profile}: "
+                                   f"{source}: {r.stdout!r}")
+            if b"logical word operator requires typed bool/CFG lowering" not in r.stderr:
+                raise RuntimeError(f"unexpected compiler rejection: {profile}: "
+                                   f"{source}: exit={r.returncode} stderr={r.stderr!r}")
             executions += 1
     print("FORGE_LOGICAL_WORD_CLI_REJECTION_PASS negative_invocations=" + str(executions))
 if __name__ == "__main__":

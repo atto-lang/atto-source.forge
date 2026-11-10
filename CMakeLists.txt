@@ -86,6 +86,12 @@ if(BUILD_TESTING)
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/logical_word_cli_no_publication.py"
       "$<TARGET_FILE:oresforge>")
   set_tests_properties(oresforge_logical_word_cli_no_publication PROPERTIES TIMEOUT 60)
+  # This check must remain active even if PYTHONOPTIMIZE disables asserts.
+  add_test(NAME oresforge_logical_word_cli_no_publication_optimized
+    COMMAND "${Python3_EXECUTABLE}" -O
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/logical_word_cli_no_publication.py"
+      "$<TARGET_FILE:oresforge>")
+  set_tests_properties(oresforge_logical_word_cli_no_publication_optimized PROPERTIES TIMEOUT 60)
   # Stage-0 single-file AttoLang path admission. Imports remain fail-closed in Forge.
   add_test(NAME oresforge_cli_atto_guest
     COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.atto")

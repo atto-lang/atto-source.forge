@@ -406,8 +406,15 @@ void verify(const Module& m) {
   std::size_t total=0;
   for (std::size_t fi=0;fi<m.functions.size();++fi) {
     const auto& fn=m.functions[fi];
+    // The public Module API is a second entry point; lexing a source file is
+    // not sufficient to reserve logical words for caller-constructed IR.
+    if(fn.name=="and" || fn.name=="or" || fn.name=="xor")
+      throw std::runtime_error("reserved logical word as callable function name");
     if(fn.name.empty() || !names.emplace(fn.name,fi).second)
       throw std::runtime_error("duplicate or invalid function");
+    for(const auto& parameter:fn.parameters)
+      if(parameter=="and" || parameter=="or" || parameter=="xor")
+        throw std::runtime_error("reserved logical word as callable parameter name");
     if(fn.parameters.size()>4)throw std::runtime_error("function parameter budget exceeded");
     if(fn.nodes.empty() || fn.nodes.size()>kMaxNodesPerFunction)
       throw std::runtime_error("invalid callable function body");
