@@ -28,6 +28,10 @@ int main() {
     ActorIncarnationOwnerV1 sibling(991001 + trial * 2, budget, 256, 64, 4, 2);
     const auto old = actor.ref();
     const auto healthy = sibling.ref();
+    // Every trial must include work admitted before the terminal fence;
+    // abortive STOP must scrub it without leaking heap/frame quota.
+    actor.send(old, std::array<std::uint8_t,1>{99});
+    require(actor.queued() == 1, "pre-STOP mailbox DATA not admitted");
     std::atomic<unsigned> barrier{0};
     std::atomic<bool> stop_returned{false};
     unsigned committed = 0, denied = 0;
