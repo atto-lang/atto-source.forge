@@ -1,0 +1,2 @@
+// Stage-0 Forge must reject typed equality until native bool lowering exists.
+pub fnc main(): int { return 7 eq 7; }
