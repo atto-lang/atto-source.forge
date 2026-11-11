@@ -140,6 +140,53 @@ void concurrent_first_access_uses_compiled_plan() {
     registry.close();
     check(*values[0] == 42,
           "immutable singleton reader lease invalidated by registry close");
+
+    // A failed initializer has the same one-attempt semantics at each
+    // contention level. This remains a host-injected failure, not a
+    // source-language throw/raise/panic guest lowering test.
+    oresforge::shared::SingletonRegistry<std::int64_t, 4> failed_registry{domain};
+    std::barrier fail_start(workers);
+    std::atomic<int> failed_initializers{0};
+    std::vector<int> failures(static_cast<std::size_t>(workers), 0);
+    std::vector<std::thread> failing_threads;
+    failing_threads.reserve(static_cast<std::size_t>(workers));
+    for (int i = 0; i < workers; ++i) {
+      const auto actor = (i % 2 == 0) ? first_actor : second_actor;
+      failing_threads.emplace_back([&, i, actor] {
+        fail_start.arrive_and_wait();
+        try {
+          (void)failed_registry.get(actor, plan.declaration_id,
+              [&]() -> std::int64_t {
+                ++failed_initializers;
+                throw std::runtime_error("forced stage0 singleton initializer failure");
+              });
+        } catch (const std::runtime_error& error) {
+          failures[static_cast<std::size_t>(i)] =
+              std::string_view(error.what()) ==
+                  "forced stage0 singleton initializer failure" ? 1 : 0;
+        }
+      });
+    }
+    for (auto& thread : failing_threads) thread.join();
+    check(failed_initializers == 1,
+          "3/7/15 failed initializer was run more than once");
+    for (const int observed : failures)
+      check(observed == 1, "3/7/15 callers did not receive sticky failure");
+    try {
+      (void)failed_registry.get(first_actor, plan.declaration_id,
+          [&]() -> std::int64_t {
+            ++failed_initializers;
+            return 21;
+          });
+      check(false, "failed singleton was unexpectedly retried");
+    } catch (const std::runtime_error& error) {
+      check(std::string_view(error.what()) ==
+                "forced stage0 singleton initializer failure",
+            "sticky singleton failure was replaced");
+    }
+    check(failed_initializers == 1,
+          "post-failure lookup retried the initializer");
+    failed_registry.close();
   }
 }
 
