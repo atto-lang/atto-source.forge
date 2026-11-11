@@ -77,6 +77,15 @@ if(BUILD_TESTING)
   add_test(NAME oresforge_legacy_operator_grammar
     COMMAND oresforge_legacy_operator_grammar)
   set_tests_properties(oresforge_legacy_operator_grammar PROPERTIES TIMEOUT 15)
+  # The i64-only bootstrap must reject Boolean equality syntax before
+  # emitting any native assembly. This is a compiler-negative AOT gate, not
+  # a claim that Forge already implements eq/neq.
+  add_test(NAME oresforge_atto_equality_aot_fail_closed
+    COMMAND "${CMAKE_COMMAND}"
+      "-DROOT=${CMAKE_CURRENT_SOURCE_DIR}"
+      "-DFORGE=$<TARGET_FILE:oresforge>"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/verification/atto_equality_fail_closed.cmake")
+  set_tests_properties(oresforge_atto_equality_aot_fail_closed PROPERTIES TIMEOUT 20)
   # Stage-0 single-file AttoLang path admission. Imports remain fail-closed in Forge.
   add_test(NAME oresforge_cli_atto_guest
     COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.atto")
