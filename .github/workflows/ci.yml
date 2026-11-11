@@ -55,6 +55,17 @@ jobs:
           if-no-files-found: ignore
       - name: Run regression tests
         run: ctest --test-dir build --output-on-failure
+      - name: Forge stage-0 real x86-64 native direct-call dispatch witness
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          ORESFORGE: ${{ github.workspace }}/build/oresforge
+        run: |
+          set -euo pipefail
+          bash -n scripts/test-dispatch-native-v1.sh
+          bash scripts/test-dispatch-native-v1.sh | tee "$RUNNER_TEMP/forge-dispatch-v1.txt"
+          grep -Fqx 'FORGE_CANONICAL_DISPATCH_CORPUS=NOT_EXECUTED' "$RUNNER_TEMP/forge-dispatch-v1.txt"
+          grep -Eq '^FORGE_STAGE0_NATIVE_DIRECT_PASS[|]' "$RUNNER_TEMP/forge-dispatch-v1.txt"
       - name: Execute documented source fixture
         run: test "$(./build/oresforge run examples/hello.ores)" = "14"
 
