@@ -33,20 +33,48 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import json, re, stat
+          import json, os, re, stat
           from pathlib import Path
 
           owner="@ORESoftware"
 
           def read_regular(path, max_bytes=64 * 1024):
               target=Path(path)
-              if (not target.is_file()
-                      or any(component.is_symlink() for component in (target, *target.parents))):
-                  raise SystemExit("private CI policy input must be a regular non-symlink file: " + path)
-              info=target.lstat()
-              if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-                  raise SystemExit("private CI policy input must have exactly one regular-file link: " + path)
-              raw=target.read_bytes()
+              parts=target.parts
+              if (target.is_absolute() or len(parts)<2
+                      or any(part in ("", ".", "..") for part in parts)
+                      or not all(hasattr(os, flag)
+                                 for flag in ("O_NOFOLLOW", "O_DIRECTORY", "O_NONBLOCK"))):
+                  raise SystemExit("private CI policy path or OS cannot be read safely: " + path)
+              directory_flags=os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+              file_flags=os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+              opened=[]
+              try:
+                  directory=os.open(".", directory_flags)
+                  opened.append(directory)
+                  for part in parts[:-1]:
+                      directory=os.open(part, directory_flags, dir_fd=directory)
+                      opened.append(directory)
+                  file_fd=os.open(parts[-1], file_flags, dir_fd=directory)
+                  opened.append(file_fd)
+                  info=os.fstat(file_fd)
+                  if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                          or info.st_size>max_bytes):
+                      raise SystemExit("private CI policy must be a regular single-link bounded file: " + path)
+                  chunks=[]
+                  remaining=max_bytes+1
+                  while remaining:
+                      block=os.read(file_fd, remaining)
+                      if not block:
+                          break
+                      chunks.append(block)
+                      remaining-=len(block)
+                  raw=b"".join(chunks)
+              except OSError as exc:
+                  raise SystemExit("private CI policy cannot be opened safely: " + path) from exc
+              finally:
+                  for fd in reversed(opened):
+                      os.close(fd)
               if (not raw or len(raw)>max_bytes or raw.startswith(b"\xef\xbb\xbf")
                       or b"\x00" in raw or b"\r" in raw or not raw.endswith(b"\n")):
                   raise SystemExit("private CI policy input bytes invalid: " + path)
