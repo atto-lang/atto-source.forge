@@ -139,25 +139,48 @@ std::optional<std::vector<std::uint8_t>> Mailbox::receive() {
   return value;
 }
 void Mailbox::close() {
-  std::scoped_lock lock(mutex_);
-  closed_=true;
-  authority_->invalidate();
-  discard_queued(queue_);
-  queued_bytes_=0;
+  std::scoped_lock lifecycle(lifecycle_mutex_);
+  std::shared_ptr<CapabilityToken> retiring;
+  {
+    std::scoped_lock lock(mutex_);
+    closed_=true;
+    retiring=authority_;
+    // Fence the old capability while holding the mailbox state lock, before
+    // any observer may attempt re-entrant mailbox inspection.
+    retiring->active.store(false, std::memory_order_release);
+    discard_queued(queue_);
+    queued_bytes_=0;
+  }
+  // Never call arbitrary lifecycle hooks with either mailbox mutex_ or
+  // token resource_mutex_ held. Restart is serialized by lifecycle_mutex_.
+  retiring->invalidate();
 }
 ActorRef Mailbox::restart() {
-  std::scoped_lock lock(mutex_);
-  if (generation_==std::numeric_limits<std::uint64_t>::max())
-    throw std::overflow_error("generation exhausted");
-  // Allocate first: allocation failure leaves the old incarnation untouched.
-  auto fresh=std::make_shared<CapabilityToken>();
-  authority_->invalidate();
-  ++generation_;
-  authority_=std::move(fresh);
-  closed_=false;
-  discard_queued(queue_);
-  queued_bytes_=0;
-  return ActorRef{id_,generation_,authority_};
+  std::scoped_lock lifecycle(lifecycle_mutex_);
+  std::shared_ptr<CapabilityToken> retiring;
+  std::shared_ptr<CapabilityToken> fresh;
+  {
+    std::scoped_lock lock(mutex_);
+    if (generation_==std::numeric_limits<std::uint64_t>::max())
+      throw std::overflow_error("generation exhausted");
+    // Allocate before mutation: failure cannot destroy a live incarnation.
+    fresh=std::make_shared<CapabilityToken>();
+    retiring=authority_;
+    retiring->active.store(false, std::memory_order_release);
+    closed_=true;
+    discard_queued(queue_);
+    queued_bytes_=0;
+  }
+  // Complete old-owner notifications without holding mailbox mutex_. The
+  // new generation is not visible until old lifecycle callbacks finish.
+  retiring->invalidate();
+  {
+    std::scoped_lock lock(mutex_);
+    ++generation_;
+    authority_=std::move(fresh);
+    closed_=false;
+    return ActorRef{id_,generation_,authority_};
+  }
 }
 std::size_t Mailbox::queued() const {
   std::scoped_lock lock(mutex_);
