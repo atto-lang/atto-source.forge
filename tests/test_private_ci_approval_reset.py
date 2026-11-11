@@ -119,6 +119,109 @@ class PrivateCiApprovalResetTest(unittest.TestCase):
                 require_zero_authorizations(b"# bootstrap disabled\n" + row)
 
 
+    def test_real_workflow_validator_denies_synthetic_policy_mutations(self):
+        """Execute the workflow's real validator on policy-only temporary fixtures.
+
+        This is NOT approval to publish source, nor hosted CI evidence.
+        """
+        import shutil
+        import sys
+        import textwrap
+        workflow_path = ROOT / ".github/workflows/private-ci-policy.yml"
+        workflow = workflow_path.read_text(encoding="utf-8")
+        marker = "          python3 - <<'PY'\n"
+        self.assertEqual(workflow.count(marker), 1)
+        start = workflow.index(marker) + len(marker)
+        end = workflow.index("\n          PY", start)
+        validator = textwrap.dedent(workflow[start:end]) + "\n"
+        self.assertIn("approvals require enabled independent reviewer", validator)
+        self.assertNotIn("git push", validator)
+        self.assertNotIn("gh api", validator)
+
+        policy_files = (
+            ".github/CODEOWNERS",
+            ".github/private-ci-approved-repositories.txt",
+            ".github/private-ci-approved-source-snapshots.txt",
+            ".github/private-ci-independent-reviewer.json",
+            ".github/private-ci-required-checks.json",
+            ".github/workflows/private-ci-policy.yml",
+        )
+        destinations = ".github/private-ci-approved-repositories.txt"
+        snapshots = ".github/private-ci-approved-source-snapshots.txt"
+        reviewer_path = ".github/private-ci-independent-reviewer.json"
+        required_path = ".github/private-ci-required-checks.json"
+
+        cases = (
+            "baseline", "destination", "snapshot", "paired_while_disabled",
+            "duplicate_reviewer_json", "crlf_comment", "missing_newline",
+            "oversized_policy", "missing_policy", "symlinked_file",
+            "symlinked_parent", "hardlinked_file", "invalid_required_check",
+        )
+        for case in cases:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                workspace = Path(tmp)
+                for relative in policy_files:
+                    destination = workspace / relative
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(ROOT / relative, destination)
+
+                approval = workspace / destinations
+                snapshot = workspace / snapshots
+                reviewer = workspace / reviewer_path
+                if case in ("destination", "paired_while_disabled"):
+                    approval.write_bytes(b"carrier/private 123456\n")
+                if case in ("snapshot", "paired_while_disabled"):
+                    snapshot.write_bytes(b"0" * 40 + b" " + b"1" * 40 + b" 123456\n")
+                if case == "duplicate_reviewer_json":
+                    data = json.loads(reviewer.read_text(encoding="utf-8"))
+                    payload = json.dumps(data)
+                    self.assertIn('"enabled": false', payload)
+                    reviewer.write_text(payload.replace(
+                        '"enabled": false', '"enabled": false, "enabled": true', 1
+                    ) + "\n", encoding="utf-8")
+                if case == "crlf_comment":
+                    approval.write_bytes(b"# disabled\r\n")
+                if case == "missing_newline":
+                    approval.write_bytes(b"# disabled")
+                if case == "oversized_policy":
+                    approval.write_bytes(b"# disabled\n" + b"A" * 70000)
+                if case == "missing_policy":
+                    approval.unlink()
+                if case == "symlinked_file":
+                    backing = workspace / "approval-backing"
+                    approval.replace(backing)
+                    approval.symlink_to(backing)
+                if case == "hardlinked_file":
+                    backing = workspace / "approval-backing"
+                    approval.replace(backing)
+                    os.link(backing, approval)
+                if case == "symlinked_parent":
+                    real_directory = workspace / "actual-github"
+                    (workspace / ".github").rename(real_directory)
+                    (workspace / ".github").symlink_to(
+                        real_directory, target_is_directory=True)
+                if case == "invalid_required_check":
+                    required = workspace / required_path
+                    data = json.loads(required.read_text(encoding="utf-8"))
+                    data["checks"][0]["context"] = "untrusted-check"
+                    required.write_text(json.dumps(data) + "\n", encoding="utf-8")
+
+                result = subprocess.run(
+                    [sys.executable, "-I", "-c", validator],
+                    cwd=workspace, stdin=subprocess.DEVNULL,
+                    capture_output=True, text=True, timeout=10,
+                    env={"HOME": str(workspace), "LC_ALL": "C", "PATH": "/usr/bin:/bin"},
+                    check=False,
+                )
+                if case == "baseline":
+                    self.assertEqual(result.returncode, 0,
+                                     result.stdout + result.stderr)
+                    self.assertIn("private CI export policy: PASS", result.stdout)
+                else:
+                    self.assertNotEqual(result.returncode, 0,
+                                        "policy mutation was wrongly accepted: " + case)
+
+
 
 if __name__ == "__main__":
     unittest.main()
