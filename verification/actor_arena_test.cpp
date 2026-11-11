@@ -1,6 +1,9 @@
 #include "runtime/actor_arena.hpp"
 #include <array>
 #include <cstddef>
+#include <cstdint>
+#include <limits>
+#include <span>
 #include <stdexcept>
 #include <thread>
 #include <atomic>
@@ -19,6 +22,26 @@ int main() {
   auto h = a.allocate(ta, 2);
   std::array<std::byte, 2> value{std::byte{42}, std::byte{9}}, output{};
   a.write(ta, h, value);
+  // This is a trusted host boundary, not guest pointer escape. A buggy host
+  // adapter must never use the actor control object as a memcpy target/source.
+  auto* private_memory = reinterpret_cast<std::byte*>(&a);
+  std::span<std::byte> private_output(private_memory, 2);
+  std::span<const std::byte> private_input(private_memory, 2);
+  rejects([&] { a.read(ta, h, private_output); });
+  rejects([&] { a.write(ta, h, private_input); });
+  auto* crossing = private_memory + sizeof(a) - 1;
+  rejects([&] { a.read(ta, h, std::span<std::byte>(crossing, 2)); });
+  auto* wrapped = reinterpret_cast<std::byte*>(
+      std::numeric_limits<std::uintptr_t>::max() - 1);
+  rejects([&] { a.read(ta, h, std::span<std::byte>(wrapped, 2)); });
+  rejects([&] { a.write(ta, h, std::span<const std::byte>(wrapped, 2)); });
+  auto scratch_guarded = a.scratch_alloc(ta, 2);
+  rejects([&] { a.scratch_read(ta, scratch_guarded, private_output); });
+  rejects([&] { a.scratch_write(ta, scratch_guarded, private_input); });
+  rejects([&] { a.scratch_read(ta, scratch_guarded, std::span<std::byte>(wrapped, 2)); });
+  rejects([&] { a.scratch_write(ta, scratch_guarded, std::span<const std::byte>(wrapped, 2)); });
+  a.read(ta, h, output);
+  ensure(output == value);
   rejects([&] { b.read(tb, h, output); });
   rejects([&] { a.read(tb, h, output); });
   std::thread foreign([&] { rejects([&] { a.read(ta, h, output); }); });
