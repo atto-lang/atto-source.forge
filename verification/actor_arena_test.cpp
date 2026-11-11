@@ -7,6 +7,7 @@
 #include <thread>
 #include <atomic>
 #include <optional>
+#include <memory>
 #include <type_traits>
 using oresforge::runtime::ActorArena;
 // Public POD tickets were previously forgeable with known actor domain,
@@ -52,6 +53,38 @@ int main() {
     previous = issued;
     freshArena.end_turn(turn);
     freshArena.retire();
+  }
+  // Concurrent issuers sharing even the same logical actor identity must
+  // never issue interchangeable live tickets. The domain, not just actor ID,
+  // forms the physical arena identity for host-only allocation handles.
+  constexpr std::size_t ConcurrentArenas = 16;
+  std::array<std::unique_ptr<ActorArena>, ConcurrentArenas> concurrent{};
+  std::array<std::optional<ActorArena::Handle>, ConcurrentArenas> tickets{};
+  std::array<std::thread, ConcurrentArenas> issuers{};
+  for (std::size_t i = 0; i < ConcurrentArenas; ++i) {
+    issuers[i] = std::thread([&, i] {
+      concurrent[i] = std::make_unique<ActorArena>(900, 1);
+      auto turn = concurrent[i]->begin_turn(900, 1);
+      const auto ticket = concurrent[i]->allocate(turn, 1);
+      std::array<std::byte, 1> value{std::byte{static_cast<unsigned char>(i + 1)}};
+      concurrent[i]->write(turn, ticket, value);
+      tickets[i] = ticket;
+      concurrent[i]->end_turn(turn);
+    });
+  }
+  for (auto& thread : issuers) thread.join();
+  for (std::size_t i = 0; i < ConcurrentArenas; ++i) {
+    auto turn = concurrent[i]->begin_turn(900, 1);
+    std::array<std::byte, 1> output{};
+    for (std::size_t j = 0; j < ConcurrentArenas; ++j) {
+      if (i != j) {
+        rejects([&] { concurrent[i]->read(turn, *tickets[j], output); });
+      }
+    }
+    concurrent[i]->read(turn, *tickets[i], output);
+    ensure(output[0] == std::byte{static_cast<unsigned char>(i + 1)});
+    concurrent[i]->end_turn(turn);
+    concurrent[i]->retire();
   }
   ActorArena a(10, 1), b(11, 1);
   auto ta = a.begin_turn(10, 1);
