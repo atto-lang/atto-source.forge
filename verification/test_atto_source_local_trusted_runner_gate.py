@@ -32,13 +32,13 @@ class HttpResult:
 
 def workflow_gates():
     source = PATH.read_text(encoding="utf-8")
-    matches = re.findall(r"(?m)^          python3 - <<'PY'\\n(.*?)\\n          PY$", source, re.S)
+    matches = re.findall(r"(?m)^          python3 - <<'PY'\n(.*?)\n          PY$", source, re.S)
     if len(matches) != 2:
         raise AssertionError("exactly two protected-main pre/post admission gates required")
-    scripts = ["\\n".join(line[10:] for line in block.splitlines()) for block in matches]
+    scripts = ["\n".join(line[10:] for line in block.splitlines()) for block in matches]
     if scripts[0] != scripts[1]:
         raise AssertionError("pre-test and post-test authorization diverged")
-    if not re.search(r"(?m)^on:\\s*\\n  workflow_dispatch:", source):
+    if not re.search(r"(?m)^on:\s*\n  workflow_dispatch:", source):
         raise AssertionError("only manual dispatch is permitted")
     if re.search(r"(?m)^  (?:pull_request|push|pull_request_target):", source):
         raise AssertionError("untrusted auto-dispatch is prohibited")
@@ -96,8 +96,8 @@ class TrustedRunnerAdmissionTest(unittest.TestCase):
         raise AssertionError("unexpected GitHub endpoint: " + request.full_url)
 
     def run_gate(self, index=0):
-        with patch.dict(os.environ, self.env, clear=True), \\
-                patch("urllib.request.urlopen", self.urlopen), \\
+        with patch.dict(os.environ, self.env, clear=True), \
+                patch("urllib.request.urlopen", self.urlopen), \
                 contextlib.redirect_stdout(io.StringIO()) as output:
             exec(self.gates[index], {})
             return output.getvalue()
@@ -167,8 +167,8 @@ class TrustedRunnerAdmissionTest(unittest.TestCase):
             if "/reviews?" in request.full_url:
                 return HttpResult({"not": "an array"})
             return original(request, timeout)
-        with patch.dict(os.environ, self.env, clear=True), \\
-                patch("urllib.request.urlopen", bad), \\
+        with patch.dict(os.environ, self.env, clear=True), \
+                patch("urllib.request.urlopen", bad), \
                 contextlib.redirect_stdout(io.StringIO()):
             with self.assertRaisesRegex(SystemExit, "invalid GitHub review response"):
                 exec(self.gates[0], {})
