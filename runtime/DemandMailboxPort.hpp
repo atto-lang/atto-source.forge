@@ -77,7 +77,9 @@ class DemandMailboxPort final {
     mailbox_.send(owner_, std::span<const std::uint8_t>(payload));
     retained_bytes_ += payload.size();
     --credit_;
-    payload.clear(); // sender relinquishes its logical payload on success
+    // Underlying mailbox copied the admitted bytes. Release the sender's
+    // old backing allocation now, not just its logical length.
+    std::vector<std::uint8_t>{}.swap(payload);
     return Offer::Accepted;
   }
 
