@@ -172,6 +172,10 @@ class TrustedRunnerAdmissionTest(unittest.TestCase):
         self.permission = "read"
         self.rejected("no independent")
 
+    def test_maintain_role_has_write_authority(self):
+        self.permission = "maintain"
+        self.assertIn("ATTO_SOURCE_LOCAL_REVIEWED_HEAD=", self.run_gate())
+
     def test_repository_permission_identity_must_match_reviewer(self):
         self.permission_user_id = 500
         self.rejected("no independent")
