@@ -1,12 +1,16 @@
 #include "runtime/actor.hpp"
 #include "runtime/shared_i64_table.hpp"
+#include <atomic>
 #include <cstdint>
+#include <memory>
 #include <iostream>
 #include <stdexcept>
 #include <type_traits>
 
 using oresforge::runtime::Mailbox;
 using oresforge::runtime::ActorDispatchLease;
+using oresforge::runtime::ActorContext;
+using oresforge::runtime::ActorLifetimeResource;
 using oresforge::runtime::kMaxMessageBytes;
 using oresforge::shared::DispatchI64Table;
 using oresforge::shared::SharedI64Table;
@@ -37,6 +41,52 @@ template<class F> void closed(F&& fn) {
   }
   throw std::runtime_error("retired table was still accessible");
 }
+// Host resource callbacks must never run with the actor capability's
+// registration mutex or Mailbox::mutex_ held. These probes re-enter both
+// through existing public, non-lifecycle operations during STOP/restart.
+struct NoopResource final : ActorLifetimeResource {
+  void actor_owner_stopped() noexcept override {}
+};
+struct ReentrantObserver final : ActorLifetimeResource {
+  Mailbox& mailbox;
+  ActorContext owner;
+  std::shared_ptr<ActorLifetimeResource> attempted;
+  std::atomic<int> callbacks{0};
+  std::atomic<bool> safe{false};
+  ReentrantObserver(Mailbox& box, ActorContext bound,
+                    std::shared_ptr<ActorLifetimeResource> next)
+      : mailbox(box), owner(std::move(bound)), attempted(std::move(next)) {}
+  void actor_owner_stopped() noexcept override {
+    try {
+      safe.store(mailbox.queued() == 0 && !owner.valid() &&
+                 !owner.attach_owned_resource(attempted));
+    } catch (...) { safe.store(false); }
+    callbacks.fetch_add(1);
+  }
+};
+void lifecycle_callbacks_do_not_hold_registration_or_mailbox_locks() {
+  Mailbox box{8001};
+  auto original = box.context();
+  auto target = std::make_shared<NoopResource>();
+  auto first = std::make_shared<ReentrantObserver>(box, original, target);
+  check(original.attach_owned_resource(first),
+        "cannot register first lifecycle probe");
+  box.close();
+  check(first->callbacks.load() == 1 && first->safe.load(),
+        "STOP callback ran under token or mailbox lock");
+  check(!original.valid(), "STOP retained an old actor authority");
+
+  (void)box.restart();
+  auto current = box.context();
+  auto second = std::make_shared<ReentrantObserver>(box, current, target);
+  check(current.attach_owned_resource(second),
+        "cannot register restarted lifecycle probe");
+  (void)box.restart();
+  check(second->callbacks.load() == 1 && second->safe.load(),
+        "restart callback ran under token or mailbox lock");
+  check(!current.valid(), "restart retained an old actor authority");
+}
+
 void dispatch_contract() {
   Mailbox owner_box{701}, reader_box{702};
   Mailbox foreign_box{703, 1024, 4 * kMaxMessageBytes, 2};
@@ -90,6 +140,7 @@ void dispatch_contract() {
 int main() {
   try {
     dispatch_contract();
+    lifecycle_callbacks_do_not_hold_registration_or_mailbox_locks();
     std::cout << "PASS: scheduler-bound actor identity, no caller spoofing, "
                  "nested dispatch isolation, restart and owner retirement\n";
     return 0;
