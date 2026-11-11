@@ -29,17 +29,26 @@ int main() {
   std::span<const std::byte> private_input(private_memory, 2);
   rejects([&] { a.read(ta, h, private_output); });
   rejects([&] { a.write(ta, h, private_input); });
-  auto* crossing = private_memory + sizeof(a) - 1;
-  rejects([&] { a.read(ta, h, std::span<std::byte>(crossing, 2)); });
-  auto* wrapped = reinterpret_cast<std::byte*>(
-      std::numeric_limits<std::uintptr_t>::max() - 1);
-  rejects([&] { a.read(ta, h, std::span<std::byte>(wrapped, 2)); });
-  rejects([&] { a.write(ta, h, std::span<const std::byte>(wrapped, 2)); });
+  // A C++ span over a wrapped/nonexistent pointer range violates its
+  // constructor preconditions. Test the exact integer oracle without
+  // constructing undefined pointer ranges or weakening the runtime guard.
+  const auto arena_address = reinterpret_cast<std::uintptr_t>(&a);
+  const auto output_address = reinterpret_cast<std::uintptr_t>(output.data());
+  using oresforge::runtime::detail::external_copy_span_disjoint;
+  ensure(!external_copy_span_disjoint(arena_address, 2,
+                                      arena_address, sizeof(a)));
+  ensure(!external_copy_span_disjoint(arena_address + sizeof(a) - 1, 2,
+                                      arena_address, sizeof(a)));
+  ensure(!external_copy_span_disjoint(
+      std::numeric_limits<std::uintptr_t>::max() - 1, 2,
+      arena_address, sizeof(a)));
+  ensure(!external_copy_span_disjoint(0, 2, arena_address, sizeof(a)));
+  ensure(external_copy_span_disjoint(output_address, output.size(),
+                                     arena_address, sizeof(a)));
+  ensure(external_copy_span_disjoint(0, 0, arena_address, sizeof(a)));
   auto scratch_guarded = a.scratch_alloc(ta, 2);
   rejects([&] { a.scratch_read(ta, scratch_guarded, private_output); });
   rejects([&] { a.scratch_write(ta, scratch_guarded, private_input); });
-  rejects([&] { a.scratch_read(ta, scratch_guarded, std::span<std::byte>(wrapped, 2)); });
-  rejects([&] { a.scratch_write(ta, scratch_guarded, std::span<const std::byte>(wrapped, 2)); });
   a.read(ta, h, output);
   ensure(output == value);
   rejects([&] { b.read(tb, h, output); });
