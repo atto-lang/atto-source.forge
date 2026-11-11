@@ -94,7 +94,8 @@ void verify_direct_aot(const std::string& source) {
   {
     Module bad=admitted;
     auto& call=inc_call(bad);
-    call.children.push_back(call.children.front()); // shared AST node + invalid arity
+    const int shared=call.children.front();
+    call.children.push_back(shared); // shared AST node + invalid arity
     reject([&]{oresforge::calls::verify(bad);},"callable AST shared node");
   }
   reject([]{(void)oresforge::calls::parse("fnc main():int{return unknown();}");},
