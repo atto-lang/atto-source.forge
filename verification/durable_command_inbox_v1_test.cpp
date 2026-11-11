@@ -20,10 +20,32 @@ int main(){
       const auto first=store.commit_command(id,1,"op-42",0,b("Deposit(100)"),
         {{1,b("MoneyDeposited(60)")},{1,b("MoneyDeposited(40)")}},b("Ok(balance=100)"));
       assert(!first.duplicate&&first.first_version==1&&first.last_version==2);
+      // Exact event batch framing must match Java/LLVM/Wasm/.NET:
+      // u32 count; per event u32 schema, u32 payload length, bytes (big endian).
+      sqlite3* inspect=nullptr;
+      if(sqlite3_open(path.c_str(),&inspect)!=SQLITE_OK)
+        throw std::runtime_error("open golden wire inspector failed");
+      sqlite3_stmt* inspect_stmt=nullptr;
+      if(sqlite3_prepare_v2(inspect,
+          "SELECT hex(event_batch) FROM durable_command_inbox WHERE actor='bank-42' AND op='op-42'",
+          -1,&inspect_stmt,nullptr)!=SQLITE_OK)
+        throw std::runtime_error("prepare golden wire inspector failed");
+      assert(sqlite3_step(inspect_stmt)==SQLITE_ROW);
+      const auto* golden_wire=reinterpret_cast<const char*>(sqlite3_column_text(inspect_stmt,0));
+      assert(golden_wire!=nullptr);
+      assert(std::string(golden_wire)==
+          "0000000200000001000000124D6F6E65794465706F736974656428363029"
+          "00000001000000124D6F6E65794465706F736974656428343029");
+      sqlite3_finalize(inspect_stmt);
+      sqlite3_close(inspect);
       const auto duplicate=store.commit_command(id,1,"op-42",0,b("Deposit(100)"),
         {{1,b("do not rerun decide")}},b("WRONG"));
       assert(duplicate.duplicate&&duplicate.last_version==2&&duplicate.reply==first.reply);
       assert(rejects([&]{(void)store.resolve(id,1,"op-42",b("Deposit(200)"));}));
+      assert(rejects([&]{(void)store.commit_command(id,1,"oversized",2,b("cmd"),
+          {{1,std::vector<std::uint8_t>(65537)}},b("ok"));}));
+      assert(rejects([&]{(void)store.commit_command(id,1,"too-many",2,b("cmd"),
+          std::vector<Event>(257,Event{1,b("e")}),b("ok"));}));
       assert(!store.resolve(id,1,"unknown",b("Deposit(100)")));
       store.grant_epoch(id.tenant,id.actor,2);
       assert(rejects([&]{(void)store.resolve(id,1,"op-42",b("Deposit(100)"));}));
