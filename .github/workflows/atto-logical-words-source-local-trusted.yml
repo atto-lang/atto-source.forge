@@ -125,7 +125,7 @@ jobs:
               # through organizations, teams and custom roles; deny 403/404.
               permission = fetch("collaborators/" + reviewer + "/permission")
               if (permission.get("user") or {}).get("id") != rid or \
-                      permission.get("permission") not in ("write", "admin"):
+                      permission.get("permission") not in ("write", "maintain", "admin"):
                   continue
               approved.append(reviewer)
           if not approved:
@@ -303,7 +303,7 @@ jobs:
               # through organizations, teams and custom roles; deny 403/404.
               permission = fetch("collaborators/" + reviewer + "/permission")
               if (permission.get("user") or {}).get("id") != rid or \
-                      permission.get("permission") not in ("write", "admin"):
+                      permission.get("permission") not in ("write", "maintain", "admin"):
                   continue
               approved.append(reviewer)
           if not approved:
