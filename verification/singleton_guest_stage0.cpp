@@ -105,38 +105,42 @@ void concurrent_first_access_uses_compiled_plan() {
   const auto first_actor = first_box.context();
   const auto second_actor = second_box.context();
 
-  oresforge::shared::SingletonRegistry<std::int64_t, 4> registry{domain};
-  constexpr int workers = 8;
-  std::barrier start(workers);
-  std::atomic<int> initializer_runs{0};
-  std::array<std::shared_ptr<const std::int64_t>, workers> values{};
-  std::vector<std::thread> threads;
-  threads.reserve(workers);
+  // Mirror the conformance 3/7/15-carrier admission sizes. These remain
+  // two trusted host actor identities: no claim of 3/7/15 distinct guest heaps.
+  for (const int workers : {3, 7, 15}) {
+    oresforge::shared::SingletonRegistry<std::int64_t, 4> registry{domain};
+    std::barrier start(workers);
+    std::atomic<int> initializer_runs{0};
+    std::vector<std::shared_ptr<const std::int64_t>> values(
+        static_cast<std::size_t>(workers));
+    std::vector<std::thread> threads;
+    threads.reserve(static_cast<std::size_t>(workers));
 
-  for (int i = 0; i < workers; ++i) {
-    const auto actor = (i % 2 == 0) ? first_actor : second_actor;
-    threads.emplace_back([&, i, actor] {
-      start.arrive_and_wait();
-      values[static_cast<std::size_t>(i)] = registry.get(
-          actor, plan.declaration_id, [&] {
-            ++initializer_runs;
-            return oresforge::interpret(plan.initializer_program);
-          });
-    });
+    for (int i = 0; i < workers; ++i) {
+      const auto actor = (i % 2 == 0) ? first_actor : second_actor;
+      threads.emplace_back([&, i, actor] {
+        start.arrive_and_wait();
+        values[static_cast<std::size_t>(i)] = registry.get(
+            actor, plan.declaration_id, [&] {
+              ++initializer_runs;
+              return oresforge::interpret(plan.initializer_program);
+            });
+      });
+    }
+    for (auto& thread : threads) thread.join();
+
+    check(initializer_runs == 1,
+          "3/7/15 compiled singleton initializer executed more than once");
+    for (const auto& value : values) {
+      check(value && *value == 42, "compiled singleton published wrong value");
+      check(value == values[0],
+            "same-domain actors did not observe one singleton identity");
+    }
+
+    registry.close();
+    check(*values[0] == 42,
+          "immutable singleton reader lease invalidated by registry close");
   }
-  for (auto& thread : threads) thread.join();
-
-  check(initializer_runs == 1,
-        "compiled singleton initializer executed more than once");
-  for (const auto& value : values) {
-    check(value && *value == 42, "compiled singleton published wrong value");
-    check(value == values[0],
-          "same-domain actors did not observe one singleton identity");
-  }
-
-  registry.close();
-  check(*values[0] == 42,
-        "immutable singleton reader lease invalidated by registry close");
 }
 
 } // namespace
