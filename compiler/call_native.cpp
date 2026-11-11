@@ -313,6 +313,7 @@ struct Native {
   const Module& program;
   std::ostringstream out;
   std::size_t label=0;
+  explicit Native(const Module& m) : program(m) {}
   std::string value_slot(int id) const {
     return "-"+std::to_string(8u*(static_cast<std::size_t>(id)+6u))+"(%rbp)";
   }
