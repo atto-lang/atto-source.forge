@@ -351,3 +351,27 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
   set_tests_properties(forge_actor_stack_domain_host_v1 PROPERTIES
     TIMEOUT 30 LABELS "host-only;native-actor-stack")
 endif()
+
+
+# Trusted SQLite event-sourced command inbox host substrate (not guest execution).
+if(BUILD_TESTING)
+  find_package(SQLite3 QUIET)
+  if(SQLite3_FOUND)
+    add_executable(oresforge_durable_command_inbox_v1
+      verification/durable_command_inbox_v1_test.cpp)
+    target_include_directories(oresforge_durable_command_inbox_v1 PRIVATE
+      "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_compile_features(oresforge_durable_command_inbox_v1 PRIVATE cxx_std_20)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+      target_compile_options(oresforge_durable_command_inbox_v1 PRIVATE
+        -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+    endif()
+    target_link_libraries(oresforge_durable_command_inbox_v1 PRIVATE SQLite::SQLite3)
+    add_test(NAME oresforge_durable_command_inbox_v1_host
+      COMMAND oresforge_durable_command_inbox_v1)
+    set_tests_properties(oresforge_durable_command_inbox_v1_host
+      PROPERTIES TIMEOUT 45)
+  else()
+    message(STATUS "SQLite3 missing: Forge durable host test NOT EXECUTED")
+  endif()
+endif()

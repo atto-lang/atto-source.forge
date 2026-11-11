@@ -1,0 +1,51 @@
+name: Forge SQLite durable inbox — native HOST (not compiled AttoLang)
+on:
+  pull_request:
+    paths:
+      - 'runtime/durable_command_inbox_v1.hpp'
+      - 'verification/durable_command_inbox_v1_test.cpp'
+      - 'CMakeLists.txt'
+      - '.github/workflows/event-sourced-durable-sqlite-host.yml'
+      - 'docs/EVENT_SOURCING_DURABLE_COMMAND_HOST_V1.md'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  forge-host-sqlite:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [g++, clang++]
+        mode: [release, sanitized]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Exact-head identity and source-tree receipt
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse --verify HEAD)" = "$EXPECTED_HEAD"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          git rev-parse 'HEAD^{tree}'
+          git ls-files -s runtime/durable_command_inbox_v1.hpp verification/durable_command_inbox_v1_test.cpp
+      - name: Compile and execute SQLite command host with strict diagnostics
+        shell: bash
+        env:
+          CXX: ${{ matrix.compiler }}
+          MODE: ${{ matrix.mode }}
+        run: |
+          set -euo pipefail
+          flags="-std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror -pthread"
+          if [[ "$MODE" == sanitized ]]; then
+            flags="-std=c++20 -O1 -g -Wall -Wextra -Wpedantic -Werror -pthread -fsanitize=address,undefined -fno-omit-frame-pointer"
+          fi
+          "$CXX" $flags -I. verification/durable_command_inbox_v1_test.cpp             -lsqlite3 -o "$RUNNER_TEMP/forge-durable-command"
+          ASAN_OPTIONS=detect_leaks=1 "$RUNNER_TEMP/forge-durable-command"             | tee "$RUNNER_TEMP/forge-durable-command.log"
+          grep -Fx 'FORGE_DURABLE_HOST_PASS|atomic_events=2|cross_epoch_reply=1|rollback=1|guest_atto=0'             "$RUNNER_TEMP/forge-durable-command.log"
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"
