@@ -1,0 +1,2 @@
+// Keywords and aliases in comments are not operator expressions.
+pub fnc main(): int { /* outer eq /* inner neq !eq */ still outer */ return 7 + 8; }
