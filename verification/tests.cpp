@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <functional>
 #include <fstream>
+#include <iterator>
 #include <set>
 #include <iostream>
 #include <limits>
@@ -268,6 +269,32 @@ int main() {
       reject_diagnostic([&] { (void)parse_source(program); },
                         "HTTP_ACTOR_BACKEND_UNSUPPORTED");
       reject_diagnostic([&] { (void)calls::parse(program); },
+                        "HTTP_ACTOR_BACKEND_UNSUPPORTED");
+    }
+    // Exercise identical bytes with BOTH independent Forge source compilers.
+    // CMake copies these into the test build working directory, so this
+    // cannot accidentally pass by looking at a mutable relative source path.
+    for (const auto& [name, expected] : std::array<std::pair<const char*,const char*>,3>{{
+      {"serial-1x1.atto",
+       "define pub serial http actor Endpoint as\n"
+       "  receive(ActorMail<int> mail): void { return; }\nend\n"},
+      {"explicit-1x1.atto",
+       "define pub http actor Endpoint as\n"
+       "  int requestConcurrency = 1;\n  int messageConcurrency = 1;\n"
+       "  receive(ActorMail<int> mail): void { return; }\nend\n"},
+      {"unsupported-3x4.atto",
+       "define pub http actor Endpoint as\n"
+       "  int requestConcurrency = 3;\n  int messageConcurrency = 4;\n"
+       "  receive(ActorMail<int> mail): void { return; }\nend\n"}
+    }}) {
+      std::ifstream input(std::string("http-actor-v1/")+name,std::ios::binary);
+      ensure(static_cast<bool>(input),"missing canonical HTTP actor Atto fixture");
+      const std::string data((std::istreambuf_iterator<char>(input)),
+                             std::istreambuf_iterator<char>());
+      ensure(data==expected,"canonical HTTP actor source bytes drifted");
+      reject_diagnostic([&] { (void)parse_source(data); },
+                        "HTTP_ACTOR_BACKEND_UNSUPPORTED");
+      reject_diagnostic([&] { (void)calls::parse(data); },
                         "HTTP_ACTOR_BACKEND_UNSUPPORTED");
     }
     ensure(interpret(parse_source(
