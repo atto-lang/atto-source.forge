@@ -11,6 +11,19 @@ add_executable(oresforge compiler/main.cpp)
 target_link_libraries(oresforge PRIVATE oresforge_core)
 include(CTest)
 if(BUILD_TESTING)
+  add_executable(oresforge_demand_mailbox_port_tests
+    verification/demand_mailbox_port_test.cpp)
+  target_include_directories(oresforge_demand_mailbox_port_tests PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_link_libraries(oresforge_demand_mailbox_port_tests PRIVATE oresforge_core)
+  target_compile_features(oresforge_demand_mailbox_port_tests PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_demand_mailbox_port_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+  endif()
+  add_test(NAME forge_demand_mailbox_port_host
+    COMMAND oresforge_demand_mailbox_port_tests)
+  set_tests_properties(forge_demand_mailbox_port_host PROPERTIES TIMEOUT 20)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   set(ORE_NUMERIC_I64_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated_numeric_i64_cases.hpp")
   add_custom_command(
