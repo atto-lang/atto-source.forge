@@ -12,7 +12,7 @@ for id in with-scalar-reject with-trivia-reject; do
   grep -q 'WITH_BACKEND_UNSUPPORTED:' "$tmp/$id.err"
   test ! -s "$tmp/$id.ir"
 done
-for id in with-inert-comment with-inert-lookalike; do
+for id in with-inert-comment with-inert-lookalike with-call-identifier; do
   "$compiler" ir "$base/tests/with-ownership-v1/$id.atto" >"$tmp/$id.ir" 2>"$tmp/$id.err"
   test -s "$tmp/$id.ir"
 done
