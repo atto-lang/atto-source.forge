@@ -1,0 +1,46 @@
+name: Forge event-sourcing command wire (HOST ONLY)
+on:
+  pull_request:
+    paths:
+      - 'runtime/durable_command_wire_v1.hpp'
+      - 'verification/durable_command_wire_v1_test.cpp'
+      - 'docs/EVENT_SOURCING_COMMAND_WIRE_V1.md'
+      - 'CMakeLists.txt'
+      - '.github/workflows/durable-command-wire-host-v1.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-wire:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        cxx: [g++, clang++]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Prove immutable PR head
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          git rev-parse 'HEAD^{tree}'
+          git ls-files -s runtime/durable_command_wire_v1.hpp verification/durable_command_wire_v1_test.cpp
+      - name: Compile and run C++20 host codec under ASan and UBSan
+        shell: bash
+        env:
+          CXX: ${{ matrix.cxx }}
+        run: |
+          set -euo pipefail
+          "$CXX" -std=c++20 -O1 -g -Wall -Wextra -Wpedantic -Werror \
+            -fsanitize=address,undefined -fno-omit-frame-pointer -UNDEBUG \
+            -I. verification/durable_command_wire_v1_test.cpp \
+            -o "$RUNNER_TEMP/forge-durable-wire"
+          ASAN_OPTIONS=detect_leaks=1 "$RUNNER_TEMP/forge-durable-wire" | tee "$RUNNER_TEMP/proof.log"
+          grep -Fx 'FORGE_HOST_DURABLE_COMMAND_WIRE_V1_PASS|guest=0|durable=0' "$RUNNER_TEMP/proof.log"

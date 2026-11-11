@@ -351,3 +351,19 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
   set_tests_properties(forge_actor_stack_domain_host_v1 PROPERTIES
     TIMEOUT 30 LABELS "host-only;native-actor-stack")
 endif()
+
+# Pure host wire-codec parity for event-sourced commands. Not guest execution.
+if(BUILD_TESTING)
+  add_executable(oresforge_durable_command_wire_v1
+    verification/durable_command_wire_v1_test.cpp)
+  target_include_directories(oresforge_durable_command_wire_v1 PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_durable_command_wire_v1 PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_durable_command_wire_v1 PRIVATE
+      -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+  endif()
+  add_test(NAME oresforge_durable_command_wire_host_v1
+    COMMAND oresforge_durable_command_wire_v1)
+  set_tests_properties(oresforge_durable_command_wire_host_v1 PROPERTIES TIMEOUT 20)
+endif()
