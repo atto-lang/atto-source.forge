@@ -252,7 +252,8 @@ class Parser {
       throw std::runtime_error("legacy ^/^^ operators are removed; use Integer.pow/bitXor at byte "+
                                std::to_string(start));
     if (std::string_view("()+-*/{};:,?").find(static_cast<char>(c)) ==
-        std::string_view::npos) error("invalid character");
+        std::string_view::npos)
+      throw std::runtime_error("invalid character at byte "+std::to_string(start));
     ++at_;
     tok_={Kind::Punct,source_.substr(start,1),start};
   }
