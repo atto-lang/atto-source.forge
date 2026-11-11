@@ -64,6 +64,15 @@ if(BUILD_TESTING)
 
   configure_file("${CMAKE_CURRENT_SOURCE_DIR}/contracts/v1/annotation-admission-v1.tsv"
     "${CMAKE_CURRENT_BINARY_DIR}/annotation-admission-v1.tsv" COPYONLY)
+  # Keep real source frontend fixtures in CTest's build working directory.
+  # These are identical Atto Git blobs to the Java/LLVM/Wasm/.NET contract.
+  file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/http-actor-v1")
+  foreach(atto_http_fixture serial-1x1.atto explicit-1x1.atto unsupported-3x4.atto)
+    configure_file(
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/fixtures/http-actor-v1/${atto_http_fixture}"
+      "${CMAKE_CURRENT_BINARY_DIR}/http-actor-v1/${atto_http_fixture}"
+      COPYONLY)
+  endforeach()
   add_executable(oresforge_tests verification/tests.cpp)
   add_dependencies(oresforge_tests oresforge_numeric_i64_cases oresforge_numeric_overflow_cases)
   target_include_directories(oresforge_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
