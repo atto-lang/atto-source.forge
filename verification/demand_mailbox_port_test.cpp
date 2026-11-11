@@ -75,4 +75,22 @@ static void terminal_race_is_single_winner() {
     assert(port.retained_bytes() == 0);
   }
 }
-int main() {fifo_and_terminal();cancel_scrubs_only_undelivered_payloads();terminal_race_is_single_winner();}
+
+static void oversized_rejection_preserves_payload_and_credit() {
+  DemandMailboxPort<1> port(912,2,2*oresforge::runtime::kMaxMessageBytes,2);
+  assert(port.subscribe());
+  port.request(1);
+  std::vector<std::uint8_t> too_large(oresforge::runtime::kMaxMessageBytes+1, 0x42);
+  assert(port.try_offer(too_large) == decltype(port)::Offer::ByteBudget);
+  assert(too_large.size() == oresforge::runtime::kMaxMessageBytes+1);
+  assert(port.outstanding_demand() == 1);
+  assert(port.queued() == 0);
+  std::vector<std::uint8_t> small{7};
+  assert(port.try_offer(small) == decltype(port)::Offer::Accepted);
+  assert(small.empty());
+  auto item=port.try_next();
+  assert(item.status == decltype(port)::PollStatus::Item && item.value[0]==7);
+  assert(port.ack(item.ticket));
+}
+
+int main() {fifo_and_terminal();cancel_scrubs_only_undelivered_payloads();terminal_race_is_single_winner();oversized_rejection_preserves_payload_and_credit();}
