@@ -1,0 +1,1 @@
+fnc main():int{return 42 with /* nested /* block */ comment */ {x => 1};}

@@ -1,0 +1,2 @@
+fnc main():int{// withered{is only a comment}
+return 42;}

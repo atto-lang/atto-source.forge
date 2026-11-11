@@ -100,6 +100,33 @@ class Parser {
   [[noreturn]] void error(const char* s) const {
     throw std::runtime_error(std::string(s)+" at byte "+std::to_string(tok_.offset));
   }
+  // Contextual 'with { ... }': detect after lexer-trivia, not from raw
+  // substring scanning. Preserve with(x), comments and withered identifiers.
+  // Do not let the stage-0 scalar compiler manufacture an immutable copy.
+  bool with_update_brace_follows() const {
+    std::size_t pos=at_;
+    while (pos<source_.size()) {
+      if (ascii_space(static_cast<unsigned char>(source_[pos]))) { ++pos; continue; }
+      if (source_.substr(pos,2)=="//") {
+        pos+=2;
+        while (pos<source_.size() && source_[pos]!='\n' && source_[pos]!='\r') ++pos;
+        continue;
+      }
+      if (source_.substr(pos,2)=="/*") {
+        pos+=2;
+        std::size_t depth=1;
+        while (depth && pos<source_.size()) {
+          if (source_.substr(pos,2)=="/*") { ++depth; pos+=2; }
+          else if (source_.substr(pos,2)=="*/") { --depth; pos+=2; }
+          else ++pos;
+        }
+        if (depth) return false; // primary lexer diagnoses unterminated comment
+        continue;
+      }
+      break;
+    }
+    return pos<source_.size() && source_[pos]=='{';
+  }
   void next() {
     const auto previousToken = tok_.text;
     while (at_<source_.size()) {
@@ -148,6 +175,8 @@ class Parser {
         ++at_;
       }
       tok_={Kind::Word,source_.substr(start,at_-start),start};
+      if (tok_.text=="with" && with_update_brace_follows())
+        error("WITH_BACKEND_UNSUPPORTED: immutable with requires verified rt copy/take, owned class/record layout, drop-once unwind and native AOT");
       if (tok_.text=="any" || tok_.text=="unknown" ||
           tok_.text=="Any" || tok_.text=="Unknown")
         error("any/unknown requires tagged opaque-value ABI and runtime type descriptors");
