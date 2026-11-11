@@ -1,0 +1,2 @@
+// A split ! eq must not be normalized into !eq by the compiler.
+pub fnc main(): int { return 7 ! eq 8; }
