@@ -351,3 +351,24 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
   set_tests_properties(forge_actor_stack_domain_host_v1 PROPERTIES
     TIMEOUT 30 LABELS "host-only;native-actor-stack")
 endif()
+
+# HOST-ONLY shared-domain arena parity with LLVM. This native C++ substrate
+# does not enable AttoLang guest singleton lowering, rt share, or Forge JIT
+# import of opaque capability handles.
+if(BUILD_TESTING)
+  add_executable(oresforge_singleton_shared_domain_host
+    verification/singleton_shared_domain_host_test.cpp)
+  target_include_directories(oresforge_singleton_shared_domain_host PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_singleton_shared_domain_host PRIVATE cxx_std_20)
+  find_package(Threads REQUIRED)
+  target_link_libraries(oresforge_singleton_shared_domain_host PRIVATE Threads::Threads)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_singleton_shared_domain_host PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME forge_singleton_shared_domain_host
+    COMMAND oresforge_singleton_shared_domain_host)
+  set_tests_properties(forge_singleton_shared_domain_host PROPERTIES
+    TIMEOUT 40 LABELS "host-only;shared-domain;singleton-parity")
+endif()
