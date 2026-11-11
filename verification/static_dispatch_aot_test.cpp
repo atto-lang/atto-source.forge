@@ -79,6 +79,24 @@ void verify_direct_aot(const std::string& source) {
     bad.functions[0].parameters.push_back("n");
     reject([&]{oresforge::calls::verify(bad);},"invalid or duplicate callable parameter");
   }
+  {
+    Module bad=admitted;
+    bad.entry=0; // entry index is not authority to execute an arbitrary function
+    reject([&]{oresforge::calls::verify(bad);},"callable entry is not main");
+    reject([&]{(void)oresforge::calls::emit_asm(bad,oresforge::Arch::X86_64);},
+           "callable entry is not main");
+  }
+  {
+    Module bad=admitted;
+    inc_call(bad).name="twice"; // same valid symbol but wrong compiler-owned slot
+    reject([&]{oresforge::calls::verify(bad);},"callable target/name mismatch");
+  }
+  {
+    Module bad=admitted;
+    auto& call=inc_call(bad);
+    call.children.push_back(call.children.front()); // shared AST node + invalid arity
+    reject([&]{oresforge::calls::verify(bad);},"callable AST shared node");
+  }
   reject([]{(void)oresforge::calls::parse("fnc main():int{return unknown();}");},
          "unknown function");
   reject([]{(void)oresforge::calls::parse(
@@ -88,7 +106,7 @@ void verify_direct_aot(const std::string& source) {
       "fnc main():int{return 42;}fnc main():int{return 1;}");},
          "duplicate function");
   std::cout<<"FORGE_STATIC_DISPATCH_AOT_SOURCE_PROOF|functions=3|direct_calls=2|"
-              "interpreter=42|negative_ir_cases=8\n";
+              "interpreter=42|negative_ir_cases=11\n";
 }
 }
 
