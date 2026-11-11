@@ -67,6 +67,8 @@ class TrustedRunnerAdmissionTest(unittest.TestCase):
         }
         self.commit = {"tree": {"sha": TREE}}
         self.reviews = [self.review()]
+        self.permission = "write"
+        self.permission_user_id = 220
         self.env = {
             "EXPECTED_HEAD": HEAD, "EXPECTED_TREE": TREE,
             "READ_ONLY_GITHUB_TOKEN": "mock-readonly-token",
@@ -96,6 +98,8 @@ class TrustedRunnerAdmissionTest(unittest.TestCase):
         if url.path.endswith("/pulls/" + str(PR_NUMBER) + "/reviews"):
             page = int(parse_qs(url.query)["page"][0])
             return HttpResult(self.reviews[(page - 1) * 100:page * 100])
+        if url.path.endswith("/collaborators/independent-reviewer/permission"):
+            return HttpResult({"permission": self.permission, "user": {"id": self.permission_user_id}})
         raise AssertionError("unexpected GitHub endpoint: " + request.full_url)
 
     def run_gate(self, index=0):
@@ -113,7 +117,7 @@ class TrustedRunnerAdmissionTest(unittest.TestCase):
     def test_pinned_independent_approval_allows_source_local_test_only(self):
         for index in (0, 1):
             self.assertIn("ATTO_SOURCE_LOCAL_SOURCE_EXPORT=NONE", self.run_gate(index))
-        self.assertEqual(len(self.calls), 6)
+        self.assertEqual(len(self.calls), 8)
 
     def test_source_identity_fail_closed(self):
         mutations = [
@@ -162,7 +166,20 @@ class TrustedRunnerAdmissionTest(unittest.TestCase):
     def test_complete_review_pagination(self):
         self.reviews = [self.review(id=i+1) for i in range(250)]
         self.run_gate()
-        self.assertEqual(len(self.calls), 5)
+        self.assertEqual(len(self.calls), 6)
+
+    def test_read_only_org_member_cannot_authorize_runner(self):
+        self.permission = "read"
+        self.rejected("no independent")
+
+    def test_repository_permission_identity_must_match_reviewer(self):
+        self.permission_user_id = 500
+        self.rejected("no independent")
+
+    def test_revoked_permission_denies_even_after_approval(self):
+        self.run_gate()
+        self.permission = "none"
+        self.rejected("no independent", index=1)
 
     def test_review_json_must_be_list(self):
         original = self.urlopen
