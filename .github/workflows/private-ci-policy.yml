@@ -33,18 +33,22 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import json, re
+          import json, re, stat
           from pathlib import Path
 
           owner="@ORESoftware"
 
           def read_regular(path, max_bytes=64 * 1024):
               target=Path(path)
-              if not target.is_file() or target.is_symlink():
+              if (not target.is_file()
+                      or any(component.is_symlink() for component in (target, *target.parents))):
                   raise SystemExit("private CI policy input must be a regular non-symlink file: " + path)
+              info=target.lstat()
+              if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                  raise SystemExit("private CI policy input must have exactly one regular-file link: " + path)
               raw=target.read_bytes()
               if (not raw or len(raw)>max_bytes or raw.startswith(b"\xef\xbb\xbf")
-                      or b"\x00" in raw):
+                      or b"\x00" in raw or b"\r" in raw or not raw.endswith(b"\n")):
                   raise SystemExit("private CI policy input bytes invalid: " + path)
               try:
                   return raw.decode("utf-8")
