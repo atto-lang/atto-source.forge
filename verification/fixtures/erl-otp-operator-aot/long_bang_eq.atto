@@ -1,0 +1,2 @@
+// !equation is not the contiguous !eq operator; reject generic invalid punctuation.
+pub fnc main(): int { return 7 !equation 8; }
