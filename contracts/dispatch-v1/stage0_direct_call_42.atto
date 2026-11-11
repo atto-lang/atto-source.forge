@@ -1,0 +1,3 @@
+// Forge stage-0 parameter syntax only; NOT portable AttoLang corpus parity.
+fnc add_one(value:int):int{return value+1;}
+fnc main():int{return add_one(41);}
