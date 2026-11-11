@@ -82,6 +82,20 @@ if(BUILD_TESTING)
     COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.atto")
   set_tests_properties(oresforge_cli_atto_guest PROPERTIES
     PASS_REGULAR_EXPRESSION "^14\n?$" TIMEOUT 10)
+  # Exact byte-identical AttoLang scalar used by Java, LLVM, Wasm and .NET.
+  # This CTest builds and executes actual Forge-emitted x86-64 machine code.
+  # Forge's stage-0 constant folding is NOT general program/AOT parity.
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$")
+    add_test(NAME oresforge_shared_atto_native_scalar_aot
+      COMMAND "${CMAKE_COMMAND}"
+        "-DFORGE_COMPILER=$<TARGET_FILE:oresforge>"
+        "-DFORGE_CXX=${CMAKE_CXX_COMPILER}"
+        "-DPOSITIVE=${CMAKE_CURRENT_SOURCE_DIR}/contracts/atto-parity-v1/add.atto"
+        "-DNEGATIVE=${CMAKE_CURRENT_SOURCE_DIR}/contracts/atto-parity-v1/reject-unknown.atto"
+        "-DOUTPUT_ROOT=${CMAKE_CURRENT_BINARY_DIR}/atto-shared-scalar-native"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/verification/atto_scalar_native.cmake")
+    set_tests_properties(oresforge_shared_atto_native_scalar_aot PROPERTIES TIMEOUT 90)
+  endif()
   add_test(NAME oresforge_cli_legacy_ores_guest
     COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.ores")
   set_tests_properties(oresforge_cli_legacy_ores_guest PROPERTIES
