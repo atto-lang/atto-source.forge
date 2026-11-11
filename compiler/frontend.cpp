@@ -296,8 +296,13 @@ class Parser {
     // Native Forge has a scalar-only stage-0 source compiler. HTTP actor
     // request/message lifetime policy and physical shutdown cannot be
     // approximated by its host mailbox or generic actor lowering.
-    if (tok_.text=="serial" || tok_.text=="http")
+    if (tok_.text=="http")
       error("HTTP_ACTOR_BACKEND_UNSUPPORTED: Forge lacks source HTTP actor admission and physical-turn shutdown lowering");
+    if (take("serial")) {
+      if (tok_.text=="http")
+        error("HTTP_ACTOR_BACKEND_UNSUPPORTED: Forge lacks source HTTP actor admission and physical-turn shutdown lowering");
+      error("SERIAL_ACTOR_BACKEND_UNSUPPORTED: Forge lacks source serial actor lowering");
+    }
     // An explicitly inverted declaration is a nominal row-layout request,
     // never a scalar function. The Stage-0 frontend must reject it before
     // parsing a subsequent unrelated function or emitting native code.
