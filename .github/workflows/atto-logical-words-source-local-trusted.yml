@@ -52,7 +52,7 @@ jobs:
           test "$GITHUB_REF" = 'refs/heads/main'
           test -n "${RUNNER_NAME:-}"
           python3 - <<'PY'
-          import json, os, urllib.request
+          import json, os, re, urllib.request
           REPO = "ores-truffle-oreslang/oreslang-source.forge"
           REPO_ID = 1419703674
           PR = 241
@@ -113,7 +113,21 @@ jobs:
                   latest[rid] = (serial, state, reviewer)
           if any(row[1] == "CHANGES_REQUESTED" for row in latest.values()):
               raise SystemExit("DENIED: current-head reviewer requested changes")
-          approved = [row[2] for row in latest.values() if row[1] == "APPROVED"]
+          approved = []
+          for rid, row in latest.items():
+              if row[1] != "APPROVED":
+                  continue
+              reviewer = row[2]
+              if not re.fullmatch(r"[A-Za-z0-9-]{1,39}", reviewer):
+                  continue
+              # Org membership alone does not imply repository write permission.
+              # GitHub's metadata-readable collaborator endpoint resolves grants
+              # through organizations, teams and custom roles; deny 403/404.
+              permission = fetch("collaborators/" + reviewer + "/permission")
+              if (permission.get("user") or {}).get("id") != rid or \
+                      permission.get("permission") not in ("write", "admin"):
+                  continue
+              approved.append(reviewer)
           if not approved:
               raise SystemExit("DENIED: no independent privileged approval on exact head")
           print("ATTO_SOURCE_LOCAL_REVIEWED_HEAD=" + SHA)
@@ -216,7 +230,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import json, os, urllib.request
+          import json, os, re, urllib.request
           REPO = "ores-truffle-oreslang/oreslang-source.forge"
           REPO_ID = 1419703674
           PR = 241
@@ -277,7 +291,21 @@ jobs:
                   latest[rid] = (serial, state, reviewer)
           if any(row[1] == "CHANGES_REQUESTED" for row in latest.values()):
               raise SystemExit("DENIED: current-head reviewer requested changes")
-          approved = [row[2] for row in latest.values() if row[1] == "APPROVED"]
+          approved = []
+          for rid, row in latest.items():
+              if row[1] != "APPROVED":
+                  continue
+              reviewer = row[2]
+              if not re.fullmatch(r"[A-Za-z0-9-]{1,39}", reviewer):
+                  continue
+              # Org membership alone does not imply repository write permission.
+              # GitHub's metadata-readable collaborator endpoint resolves grants
+              # through organizations, teams and custom roles; deny 403/404.
+              permission = fetch("collaborators/" + reviewer + "/permission")
+              if (permission.get("user") or {}).get("id") != rid or \
+                      permission.get("permission") not in ("write", "admin"):
+                  continue
+              approved.append(reviewer)
           if not approved:
               raise SystemExit("DENIED: no independent privileged approval on exact head")
           print("ATTO_SOURCE_LOCAL_REVIEWED_HEAD=" + SHA)
