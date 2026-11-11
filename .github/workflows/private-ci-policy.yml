@@ -148,3 +148,8 @@ jobs:
               raise SystemExit("private-ci-policy must be bound to GitHub Actions app 15368")
           print("private CI export policy: PASS")
           PY
+      - name: Bootstrap private-source approval denial regression suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p test_private_ci_approval_reset.py -v
