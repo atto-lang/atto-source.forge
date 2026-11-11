@@ -8,6 +8,7 @@
 #include <sys/wait.h>
 #include <sys/resource.h>
 #include <unistd.h>
+#include <new>
 #include <stdexcept>
 #include <thread>
 #include <vector>
@@ -82,6 +83,22 @@ static void verify_checked_frame_budget() {
   assert(fatal.used_bytes() == 0 && fatal.active_frames() == 0);
   // Even a caught native exception cannot resume an already terminal actor.
   must_fail([&] { fatal.enter_frame(1); });
+
+  // Native placement-new reuses the exact address, but must never
+  // authorize a retired actor's token in a new incarnation.
+  alignas(ActorCheckedFrameBudget) unsigned char storage[
+      sizeof(ActorCheckedFrameBudget)] = {};
+  auto* old_budget = new (storage) ActorCheckedFrameBudget(64, 2);
+  auto stale = old_budget->enter_frame(8);
+  old_budget->leave_frame(stale);
+  old_budget->~ActorCheckedFrameBudget();
+  auto* next_budget = new (storage) ActorCheckedFrameBudget(64, 2);
+  auto current = next_budget->enter_frame(8);
+  must_fail([&] { next_budget->leave_frame(stale); });
+  assert(next_budget->active_frames() == 1 &&
+         next_budget->used_bytes() == 8);
+  next_budget->leave_frame(current);
+  next_budget->~ActorCheckedFrameBudget();
 
   ActorCheckedFrameBudget bytes(48, 4);
   auto owner = bytes.enter_frame(32);
