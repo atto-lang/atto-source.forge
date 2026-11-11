@@ -55,11 +55,7 @@ class ActorArena final {
   static constexpr std::size_t ScratchBytes = 16 * 1024;
   explicit ActorArena(std::uint64_t actor, std::uint64_t incarnation)
       : actor_(actor), incarnation_(incarnation),
-        domain_(next_domain_.fetch_add(1, std::memory_order_relaxed)) {
-    if (!actor || !incarnation || !domain_ ||
-        domain_ == std::numeric_limits<std::uint64_t>::max())
-      throw std::invalid_argument("invalid actor arena identity");
-  }
+        domain_(issue_domain(actor, incarnation)) {}
   ActorArena(const ActorArena&) = delete;
   ActorArena& operator=(const ActorArena&) = delete;
   ~ActorArena() noexcept {
@@ -178,6 +174,24 @@ class ActorArena final {
     bool live = false;
   };
   inline static std::atomic<std::uint64_t> next_domain_{1};
+  // Reserve 0 and UINT64_MAX as permanent exhaustion sentinels. A wrapping
+  // fetch_add could eventually recycle domain 1 and revalidate an old
+  // issuer's stale handle in an unrelated future arena; CAS saturation
+  // makes exhaustion terminal even when callers retry construction.
+  static std::uint64_t issue_domain(std::uint64_t actor,
+                                    std::uint64_t incarnation) {
+    if (!actor || !incarnation)
+      throw std::invalid_argument("invalid actor arena identity");
+    auto candidate = next_domain_.load(std::memory_order_relaxed);
+    while (candidate != 0 &&
+           candidate != std::numeric_limits<std::uint64_t>::max()) {
+      if (next_domain_.compare_exchange_weak(
+              candidate, candidate + 1, std::memory_order_relaxed,
+              std::memory_order_relaxed))
+        return candidate;
+    }
+    throw std::overflow_error("actor arena domain exhausted");
+  }
   std::uint64_t actor_, incarnation_, domain_, epoch_ = 0;
   std::array<Slot, Slots> slots_{};
   std::array<std::byte, ScratchBytes> scratch_{};
