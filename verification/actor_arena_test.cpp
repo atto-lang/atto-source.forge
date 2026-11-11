@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <thread>
 #include <atomic>
+#include <optional>
 #include <type_traits>
 using oresforge::runtime::ActorArena;
 // Public POD tickets were previously forgeable with known actor domain,
@@ -33,6 +34,25 @@ template <typename F> static void rejects(F&& f) {
   ensure(caught);
 }
 int main() {
+  rejects([] { ActorArena invalidActor(0, 1); });
+  rejects([] { ActorArena invalidIncarnation(1, 0); });
+  // Re-created arenas with the same actor identity must never accept an
+  // independently issued handle, even if slot/generation happen to match.
+  // A unique, non-wrapping domain is the boundary.
+  std::optional<ActorArena::Handle> previous;
+  for (std::uint64_t incarnation = 1; incarnation <= 128; ++incarnation) {
+    ActorArena freshArena(300, incarnation);
+    auto turn = freshArena.begin_turn(300, incarnation);
+    auto issued = freshArena.allocate(turn, 1);
+    std::array<std::byte, 1> output{};
+    if (previous) {
+      rejects([&] { freshArena.read(turn, *previous, output); });
+      rejects([&] { (void)freshArena.try_read_byte(turn, *previous, -1); });
+    }
+    previous = issued;
+    freshArena.end_turn(turn);
+    freshArena.retire();
+  }
   ActorArena a(10, 1), b(11, 1);
   auto ta = a.begin_turn(10, 1);
   auto tb = b.begin_turn(11, 1);
