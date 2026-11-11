@@ -116,6 +116,10 @@ class Parser {
       if (take("define")) {if(defining)fail("duplicate define");defining=true;}
       else if (take("pub")) {if(public_)fail("duplicate pub");public_=true;}
     }
+    // This independent native-call frontend must reject the same HTTP actor
+    // forms as the scalar Forge parser, before any callable IR is produced.
+    if (token_.text=="serial" || token_.text=="http")
+      fail("HTTP_ACTOR_BACKEND_UNSUPPORTED: Forge native-call source has no HTTP actor scheduling or physical shutdown lowering");
     expect("fnc");
     const std::string name=identifier();
     if (name=="int"||name=="return"||name=="if"||name=="else"||name=="then")
