@@ -256,6 +256,17 @@ int main() {
                    "private abstract receive(int x): int; end");
     }, "private abstract hooks require typed native vtables");
 
+    // Generic serial actors are distinct from source HTTP actors and must
+    // fail with their OWN compiler-owned unsupported capability marker.
+    for (const char* program : {
+      "define serial actor Worker as end",
+      "pub define serial actor Worker as end"
+    }) {
+      reject_diagnostic([&] { (void)parse_source(program); },
+                        "SERIAL_ACTOR_BACKEND_UNSUPPORTED");
+      reject_diagnostic([&] { (void)calls::parse(program); },
+                        "SERIAL_ACTOR_BACKEND_UNSUPPORTED");
+    }
     // A source HTTP actor must never downgrade to a scalar callable just
     // because the host has mailbox primitives. Verify the actual stage-0
     // parser's typed rejection for both equivalent serial spellings and 3x4.
