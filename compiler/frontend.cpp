@@ -223,7 +223,9 @@ class Parser {
         (at_+3==source_.size() ||
          (source_[at_+3]!='_' &&
           !ascii_alnum(static_cast<unsigned char>(source_[at_+3])))))
-      error("ATTO_EQ_BOOL_AOT_UNSUPPORTED: typed bool comparison and native lowering required");
+      throw std::runtime_error(
+        "ATTO_EQ_BOOL_AOT_UNSUPPORTED: typed bool comparison and native lowering required at byte "+
+        std::to_string(start));
     // Recognize the contiguous operator, but defer execution until named
     // callable and tagged value lowering are actually implemented.
     if (source_[at_]=='|' && at_+1<source_.size() && source_[at_+1]=='>') {
