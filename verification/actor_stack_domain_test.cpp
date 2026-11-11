@@ -1,4 +1,5 @@
 #include "runtime/ActorStackDomain.hpp"
+#include "runtime/ActorCheckedFrameBudget.hpp"
 #include <array>
 #include <cassert>
 #include <cstdint>
@@ -60,7 +61,65 @@ void verify_guard_page_fault() {
   parent_survivor.stop();
 }
 #endif
+
+static void verify_checked_frame_budget() {
+  using oresforge::runtime::ActorCheckedFrameBudget;
+  using oresforge::runtime::ActorFrameOverflowLimit;
+  ActorCheckedFrameBudget fatal(64, 2);
+  auto first = fatal.enter_frame(24);
+  auto second = fatal.enter_frame(32);
+  assert(fatal.active_frames() == 2 && fatal.used_bytes() == 56);
+  must_fail([&] { fatal.leave_frame(first); });
+  bool depth_exhausted = false;
+  try { fatal.enter_frame(1); }
+  catch (const ActorCheckedFrameBudget::Overflow& overflow) {
+    depth_exhausted = overflow.limit() == ActorFrameOverflowLimit::FrameCount;
+  }
+  assert(depth_exhausted && fatal.terminal_overflow() ==
+      ActorFrameOverflowLimit::FrameCount);
+  fatal.leave_frame(second);
+  fatal.leave_frame(first);
+  assert(fatal.used_bytes() == 0 && fatal.active_frames() == 0);
+  // Even a caught native exception cannot resume an already terminal actor.
+  must_fail([&] { fatal.enter_frame(1); });
+
+  ActorCheckedFrameBudget bytes(48, 4);
+  auto owner = bytes.enter_frame(32);
+  bool exceeded = false;
+  try { bytes.enter_frame(17); }
+  catch (const ActorCheckedFrameBudget::Overflow& overflow) {
+    exceeded = overflow.limit() == ActorFrameOverflowLimit::ByteCapacity;
+  }
+  assert(exceeded && bytes.terminal_overflow() ==
+      ActorFrameOverflowLimit::ByteCapacity);
+  bytes.leave_frame(owner);
+  ActorCheckedFrameBudget sibling(48, 2);
+  auto token = sibling.enter_frame(16);
+  must_fail([&] { bytes.leave_frame(token); });
+  sibling.leave_frame(token);
+  must_fail([&] { sibling.leave_frame(token); });
+  auto refreshed = sibling.enter_frame(16);
+  must_fail([&] { sibling.leave_frame(token); });
+  sibling.leave_frame(refreshed);
+  assert(!sibling.terminal_overflow());
+  must_fail([] { ActorCheckedFrameBudget invalid(0, 1); });
+
+  // A real actor on an independent native stack survives a sibling's
+  // logical checked-frame terminal overflow. Physical SIGSEGV isolation is
+  // still process-only and tested separately below.
+  ActorStackDomain healthy(801, 128 * 1024, 4096);
+  healthy.run_turn([&](ActorStackDomain& actor) {
+    int local = 3;
+    assert(actor.contains_stack_address(&local));
+    auto frame = sibling.enter_frame(16);
+    sibling.leave_frame(frame);
+    assert(!sibling.terminal_overflow());
+  });
+  healthy.stop();
+}
+
 int main() {
+  verify_checked_frame_budget();
   ActorStackDomain a(1, 128*1024, 4096), b(2, 128*1024, 4096);
   int host_local = 0;
   ActorHeapHandle a_handle, b_handle;
