@@ -40,7 +40,7 @@ int main() {
         ++checked;
     }
     auto safe = oresforge::parse_source(
-        "pub fnc main(): int { /* match<int> x over */ // ~map()\\n return 40 + 2; }");
+        "pub fnc main(): int { /* match<int> x over */ // ~map()\n return 40 + 2; }");
     if(oresforge::interpret(safe)!=42)
         throw std::runtime_error("baseline scalar execution was changed");
     ++checked;
