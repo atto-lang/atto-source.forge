@@ -66,6 +66,8 @@ class DemandMailboxPort final {
     if (finished_ || cancelled_) return Offer::Closed;
     if (!subscribed_) return Offer::NoSubscriber;
     if (!credit_) return Offer::NoDemand;
+    if (payload.size() > kMaxMessageBytes)
+      return Offer::ByteBudget; // hard per-envelope bound; no exception/fake move
     if (payload.size() > max_bytes_ - retained_bytes_)
       return Offer::ByteBudget;
     if (mailbox_.queued() == capacity_) return Offer::Full;
