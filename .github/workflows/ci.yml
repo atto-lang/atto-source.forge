@@ -64,8 +64,9 @@ jobs:
           set -euo pipefail
           bash -n scripts/test-dispatch-native-v1.sh
           bash scripts/test-dispatch-native-v1.sh | tee "$RUNNER_TEMP/forge-dispatch-v1.txt"
-          grep -Fqx 'FORGE_CANONICAL_DISPATCH_CORPUS=NOT_EXECUTED' "$RUNNER_TEMP/forge-dispatch-v1.txt"
-          grep -Eq '^FORGE_STAGE0_NATIVE_DIRECT_PASS[|]' "$RUNNER_TEMP/forge-dispatch-v1.txt"
+          grep -Fqx 'FORGE_CANONICAL_DISPATCH_CORPUS=DIRECT_AND_ARITY_ONLY;INSTANCE_STATIC_VIRTUAL=NOT_IMPLEMENTED' "$RUNNER_TEMP/forge-dispatch-v1.txt"
+          grep -Eq '^FORGE_CANONICAL_NATIVE_DIRECT_PASS[|]' "$RUNNER_TEMP/forge-dispatch-v1.txt"
+          grep -Eq '^FORGE_CANONICAL_ARITY_REJECT[|]' "$RUNNER_TEMP/forge-dispatch-v1.txt"
       - name: Execute documented source fixture
         run: test "$(./build/oresforge run examples/hello.ores)" = "14"
 
