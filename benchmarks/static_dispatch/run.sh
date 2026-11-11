@@ -14,9 +14,9 @@ test -f "$fixture"
 test -f "$driver"
 # Pin the executable actually responsible for generating this benchmark image.
 # These hashes are audit metadata, not a claim of equal host performance.
-printf 'FORGE_STAGE0_BENCH_PROVENANCE|host=%s|verifier_sha256=%s|driver_sha256=%s\\n' \\
-  "$(uname -sm | tr ' ' '_')" \\
-  "$(sha256sum "$verifier" | cut -d ' ' -f 1)" \\
+printf 'FORGE_STAGE0_BENCH_PROVENANCE|host=%s|verifier_sha256=%s|driver_sha256=%s\n' \
+  "$(uname -sm | tr ' ' '_')" \
+  "$(sha256sum "$verifier" | cut -d ' ' -f 1)" \
   "$(sha256sum "$driver" | cut -d ' ' -f 1)"
 work="$(mktemp -d)"
 trap 'rm -rf -- "$work"' EXIT
