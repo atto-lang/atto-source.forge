@@ -11,6 +11,22 @@ add_executable(oresforge compiler/main.cpp)
 target_link_libraries(oresforge PRIVATE oresforge_core)
 include(CTest)
 if(BUILD_TESTING)
+  # Real source -> verified Forge callable IR -> direct native x86_64 call
+  # admission. Separate from arbitrary nominal/trait/actor dispatch.
+  add_executable(oresforge_static_dispatch_aot_verifier
+    verification/static_dispatch_aot_test.cpp)
+  target_link_libraries(oresforge_static_dispatch_aot_verifier PRIVATE oresforge_core)
+  target_compile_features(oresforge_static_dispatch_aot_verifier PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_static_dispatch_aot_verifier PRIVATE
+      -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+  endif()
+  add_test(NAME oresforge_static_dispatch_aot_source_and_ir
+    COMMAND oresforge_static_dispatch_aot_verifier
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/static-dispatch/direct-42.atto")
+  set_tests_properties(oresforge_static_dispatch_aot_source_and_ir
+    PROPERTIES TIMEOUT 20)
+
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   set(ORE_NUMERIC_I64_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated_numeric_i64_cases.hpp")
   add_custom_command(
