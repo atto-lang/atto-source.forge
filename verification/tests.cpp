@@ -267,6 +267,8 @@ int main() {
     }) {
       reject_diagnostic([&] { (void)parse_source(program); },
                         "HTTP_ACTOR_BACKEND_UNSUPPORTED");
+      reject_diagnostic([&] { (void)calls::parse(program); },
+                        "HTTP_ACTOR_BACKEND_UNSUPPORTED");
     }
     ensure(interpret(parse_source(
       "fnc main():int{return 42;} // define serial http actor NotReal as end"))==42,
