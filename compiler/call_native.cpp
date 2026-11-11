@@ -118,8 +118,13 @@ class Parser {
     }
     // This independent native-call frontend must reject the same HTTP actor
     // forms as the scalar Forge parser, before any callable IR is produced.
-    if (token_.text=="serial" || token_.text=="http")
+    if (token_.text=="http")
       fail("HTTP_ACTOR_BACKEND_UNSUPPORTED: Forge native-call source has no HTTP actor scheduling or physical shutdown lowering");
+    if (take("serial")) {
+      if (token_.text=="http")
+        fail("HTTP_ACTOR_BACKEND_UNSUPPORTED: Forge native-call source has no HTTP actor scheduling or physical shutdown lowering");
+      fail("SERIAL_ACTOR_BACKEND_UNSUPPORTED: Forge native-call compiler has no source serial actor lowering");
+    }
     expect("fnc");
     const std::string name=identifier();
     if (name=="int"||name=="return"||name=="if"||name=="else"||name=="then")
