@@ -255,6 +255,22 @@ int main() {
                    "private abstract receive(int x): int; end");
     }, "private abstract hooks require typed native vtables");
 
+    // A source HTTP actor must never downgrade to a scalar callable just
+    // because the host has mailbox primitives. Verify the actual stage-0
+    // parser's typed rejection for both equivalent serial spellings and 3x4.
+    for (const char* program : {
+      "define serial http actor Endpoint as end",
+      "define http actor Endpoint as int requestConcurrency = 1; int messageConcurrency = 1; end",
+      "define http actor Endpoint as int requestConcurrency = 3; int messageConcurrency = 4; end",
+      "pub define serial http actor Endpoint as end",
+      "define pub http actor Endpoint as end"
+    }) {
+      reject_diagnostic([&] { (void)parse_source(program); },
+                        "HTTP_ACTOR_BACKEND_UNSUPPORTED");
+    }
+    ensure(interpret(parse_source(
+      "fnc main():int{return 42;} // define serial http actor NotReal as end"))==42,
+      "HTTP actor comment must remain lexical trivia");
     // The scalar bootstrap has no class vtable, receiver loan, or closure
     // representation. New language constructs must fail closed until their
     // actual native codegen and ownership checking are present.
