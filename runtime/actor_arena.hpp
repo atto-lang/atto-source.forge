@@ -13,6 +13,19 @@
 #include <stdexcept>
 #include <thread>
 namespace oresforge::runtime {
+namespace detail {
+// Pure address arithmetic, so overflow regressions never need an invalid
+// std::span or undefined pointer arithmetic merely to exercise this oracle.
+inline bool external_copy_span_disjoint(std::uintptr_t source, std::size_t length,
+                                        std::uintptr_t owner, std::size_t owner_bytes) noexcept {
+  if (length == 0) return true;
+  constexpr auto max = std::numeric_limits<std::uintptr_t>::max();
+  if (source == 0 || owner == 0 || length > max - source ||
+      owner_bytes > max - owner) return false;
+  return source >= owner + owner_bytes || owner >= source + length;
+}
+} // namespace detail
+
 class ActorArena final {
  public:
   struct Turn { std::uint64_t domain, epoch; };
@@ -137,12 +150,9 @@ class ActorArena final {
   // Integer-range checks deny wrapping fake pointers without dereferencing.
   void require_external_buffer(const void* buffer, std::size_t bytes) const {
     if (bytes == 0) return;
-    if (!buffer) throw std::invalid_argument("null actor arena copy buffer");
-    const auto addr = reinterpret_cast<std::uintptr_t>(buffer);
-    const auto begin = reinterpret_cast<std::uintptr_t>(this);
-    constexpr auto max = std::numeric_limits<std::uintptr_t>::max();
-    if (bytes > max - addr || sizeof(*this) > max - begin ||
-        (addr < begin + sizeof(*this) && begin < addr + bytes))
+    if (!detail::external_copy_span_disjoint(
+            reinterpret_cast<std::uintptr_t>(buffer), bytes,
+            reinterpret_cast<std::uintptr_t>(this), sizeof(*this)))
       throw std::invalid_argument("actor arena copy aliases private memory or wraps");
   }
   struct Slot {
