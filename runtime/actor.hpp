@@ -115,6 +115,9 @@ class Mailbox {
   const std::uint64_t domain_;
   const std::size_t capacity_,byte_capacity_;
   mutable std::mutex mutex_;
+  // Serialize lifecycle transitions while callbacks run outside mailbox mutex.
+  // Normal send/receive/ref/context take only mutex_.
+  mutable std::mutex lifecycle_mutex_;
   std::uint64_t generation_=1;
   std::shared_ptr<CapabilityToken> authority_;
   std::size_t queued_bytes_=0;
