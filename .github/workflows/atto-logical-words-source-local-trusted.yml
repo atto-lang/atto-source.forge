@@ -31,7 +31,11 @@ jobs:
   native-logical-word-rejection:
     if: github.repository == 'ores-truffle-oreslang/oreslang-source.forge' && github.ref == 'refs/heads/main'
     name: pinned-source-gcc-clang-asan-ubsan-NOT-bool-guest-parity
-    runs-on: [self-hosted, linux, x64, atto-ci-trusted]
+    # Dedicated org runner group must permit only this reviewed @main workflow.
+    # A label alone is not a security boundary.
+    runs-on:
+      group: atto-forge-source-local-trusted
+      labels: [self-hosted, linux, x64, atto-ci-trusted]
     timeout-minutes: 45
     steps:
       - name: Bind requested SHA to live same-repo PR #241 before checkout
