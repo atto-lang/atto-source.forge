@@ -148,6 +148,11 @@ class Parser {
         ++at_;
       }
       tok_={Kind::Word,source_.substr(start,at_-start),start};
+      // Stage-0 Forge has only i64 expressions, no typed bool comparison IR.
+      // Fail closed on canonical equality keywords rather than accidentally
+      // treating them as identifiers or silently folding a scalar result.
+      if (tok_.text=="eq" || tok_.text=="neq")
+        error("ATTO_EQ_BOOL_AOT_UNSUPPORTED: typed bool comparison and native lowering required");
       if (tok_.text=="any" || tok_.text=="unknown" ||
           tok_.text=="Any" || tok_.text=="Unknown")
         error("any/unknown requires tagged opaque-value ABI and runtime type descriptors");
@@ -211,6 +216,14 @@ class Parser {
                                  "numeric lowering at byte "+std::to_string(start));
       tok_={Kind::Number,source_.substr(start,at_-start),start}; return;
     }
+    // !eq is the contiguous AttoLang inequality alias, but stage-0 Forge
+    // cannot emit a typed Boolean comparison. Reject before any artifact.
+    // A longer identifier such as !equation is not this operator.
+    if (source_.substr(at_,3)=="!eq" &&
+        (at_+3==source_.size() ||
+         (source_[at_+3]!='_' &&
+          !ascii_alnum(static_cast<unsigned char>(source_[at_+3])))))
+      error("ATTO_EQ_BOOL_AOT_UNSUPPORTED: typed bool comparison and native lowering required");
     // Recognize the contiguous operator, but defer execution until named
     // callable and tagged value lowering are actually implemented.
     if (source_[at_]=='|' && at_+1<source_.size() && source_[at_+1]=='>') {
