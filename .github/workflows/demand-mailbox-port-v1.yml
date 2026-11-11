@@ -1,0 +1,39 @@
+name: Forge bounded pull/push host parity (not guest)
+on:
+  pull_request:
+    paths:
+      - runtime/DemandMailboxPort.hpp
+      - verification/demand_mailbox_port_test.cpp
+      - CMakeLists.txt
+      - .github/workflows/demand-mailbox-port-v1.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  demand:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        cxx: [g++, clang++]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Pin and report commit/tree identity
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          git rev-parse 'HEAD^{tree}'
+          git hash-object runtime/DemandMailboxPort.hpp verification/demand_mailbox_port_test.cpp
+      - name: Real Forge mailbox host regression (ASan UBSan)
+        env:
+          CXX: ${{ matrix.cxx }}
+        run: |
+          set -euo pipefail
+          "$CXX" -std=c++20 -O1 -g -pthread -Wall -Wextra -Wpedantic -Werror -UNDEBUG -fsanitize=address,undefined -fno-omit-frame-pointer -I. verification/demand_mailbox_port_test.cpp runtime/actor.cpp -o /tmp/forge-demand-test
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 /tmp/forge-demand-test
