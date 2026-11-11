@@ -42,6 +42,9 @@ def workflow_gates():
         raise AssertionError("only manual dispatch is permitted")
     if re.search(r"(?m)^  (?:pull_request|push|pull_request_target):", source):
         raise AssertionError("untrusted auto-dispatch is prohibited")
+    if "group: atto-forge-source-local-trusted" not in source or \
+            "labels: [self-hosted, linux, x64, atto-ci-trusted]" not in source:
+        raise AssertionError("approved dedicated runner group and label are required")
     if "persist-credentials: false" not in source:
         raise AssertionError("credentials must not be persisted by checkout")
     if "ATTO_SOURCE_LOCAL_REVIEWED_HEAD=" not in source:
