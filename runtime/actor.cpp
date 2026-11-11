@@ -28,17 +28,29 @@ bool CapabilityToken::attach_owned_resource(
 }
 
 void CapabilityToken::invalidate() noexcept {
-  // Fence new operations before waiting for any in-flight table operation.
+  // Revoke authority first. Snapshot and clear the bounded observer ledger
+  // under its mutex, then invoke host callbacks OUTSIDE that mutex. A callback
+  // may probe/re-enter token registration; running it under resource_mutex_
+  // deadlocks and can invert table/actor resource lock ordering.
   active.store(false, std::memory_order_release);
+  std::array<std::shared_ptr<ActorLifetimeResource>, kMaxActorOwnedResources>
+      callbacks{};
+  std::size_t count = 0;
   try {
-    std::scoped_lock lock(resource_mutex_);
-    for (auto& weak : resources_) {
-      if (auto resource = weak.lock()) resource->actor_owner_stopped();
-      weak.reset();
+    {
+      std::scoped_lock lock(resource_mutex_);
+      for (auto& weak : resources_) {
+        if (auto resource = weak.lock()) callbacks[count++] = std::move(resource);
+        weak.reset();
+      }
+    }
+    for (std::size_t i = 0; i < count; ++i) {
+      // The interface is noexcept; retain a defensive runtime boundary.
+      try { callbacks[i]->actor_owner_stopped(); }
+      catch (...) { /* Remain revoked; never restore stale authority. */ }
     }
   } catch (...) {
-    // Actor teardown itself must not throw. The authority remains fenced even
-    // if a host mutex/allocation primitive reports a fatal platform failure.
+    // The token stays revoked even if a host resource primitive fails.
   }
 }
 
