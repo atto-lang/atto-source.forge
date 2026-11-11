@@ -1,0 +1,5 @@
+// Forge stage-0 callable subset only: two statically bound direct callees.
+// This is not a nominal class/trait/actor dispatch fixture.
+fnc inc(n:int):int{return n+1;}
+fnc twice(n:int):int{return n*2;}
+fnc main():int{return inc(twice(20))+1;}
