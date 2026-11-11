@@ -77,6 +77,7 @@ class ActorArena final {
     if (!lock.owns_lock()) throw std::logic_error("actor arena busy");
     auto& s = slot(turn, handle);
     if (bytes.size() != s.length) throw std::out_of_range("write length");
+    require_external_buffer(bytes.data(), bytes.size());
     std::memcpy(s.data.data(), bytes.data(), bytes.size());
   }
   void read(Turn turn, Handle handle, std::span<std::byte> out) {
@@ -84,6 +85,7 @@ class ActorArena final {
     if (!lock.owns_lock()) throw std::logic_error("actor arena busy");
     auto& s = slot(turn, handle);
     if (out.size() != s.length) throw std::out_of_range("read length");
+    require_external_buffer(out.data(), out.size());
     std::memcpy(out.data(), s.data.data(), out.size());
   }
   void drop(Turn turn, Handle handle) {
@@ -110,12 +112,14 @@ class ActorArena final {
     std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
     if (!lock.owns_lock()) throw std::logic_error("actor arena busy");
     require_scratch(turn, h, bytes.size());
+    require_external_buffer(bytes.data(), bytes.size());
     std::memcpy(scratch_.data() + h.offset, bytes.data(), bytes.size());
   }
   void scratch_read(Turn turn, Scratch h, std::span<std::byte> out) {
     std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
     if (!lock.owns_lock()) throw std::logic_error("actor arena busy");
     require_scratch(turn, h, out.size());
+    require_external_buffer(out.data(), out.size());
     std::memcpy(out.data(), scratch_.data() + h.offset, out.size());
   }
   void retire() {
@@ -127,6 +131,20 @@ class ActorArena final {
     scrub();
   }
  private:
+  // A trusted host copy buffer must not alias the actor's private allocator
+  // state, persistent slots or scratch. memcpy has undefined behavior for
+  // overlapping spans; external aliases could also corrupt slot authority.
+  // Integer-range checks deny wrapping fake pointers without dereferencing.
+  void require_external_buffer(const void* buffer, std::size_t bytes) const {
+    if (bytes == 0) return;
+    if (!buffer) throw std::invalid_argument("null actor arena copy buffer");
+    const auto addr = reinterpret_cast<std::uintptr_t>(buffer);
+    const auto begin = reinterpret_cast<std::uintptr_t>(this);
+    constexpr auto max = std::numeric_limits<std::uintptr_t>::max();
+    if (bytes > max - addr || sizeof(*this) > max - begin ||
+        (addr < begin + sizeof(*this) && begin < addr + bytes))
+      throw std::invalid_argument("actor arena copy aliases private memory or wraps");
+  }
   struct Slot {
     std::array<std::byte, SlotBytes> data{};
     std::uint64_t generation = 1;
