@@ -1,0 +1,3 @@
+// Unreachable functions are not exempt from typed comparison admission.
+pub fnc helper(): int { return 7 neq 8; }
+pub fnc main(): int { return 12; }
