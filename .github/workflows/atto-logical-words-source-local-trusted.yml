@@ -119,6 +119,21 @@ jobs:
           PY
           echo "SOURCE_LOCAL_SOURCE_EXPORT=NONE"
 
+      - name: Checkout protected default-branch admission regression tests
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          clean: true
+
+      - name: Execute source-free hostile-input regression tests before PR checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 -m unittest verification/test_atto_source_local_trusted_runner_gate.py -v
+          echo "ATTO_PRECHECK_ADMISSION_MUTATION_TESTS=EXECUTED_SOURCE_FREE_NOT_GUEST"
+
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ inputs.expected_head_sha }}
