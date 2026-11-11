@@ -22,6 +22,14 @@ constexpr std::size_t kMaxStackDepth = 128;
 constexpr std::size_t kMaxEvalSteps = 200000;
 bool letter(char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_'; }
 bool digit(char c) { return c >= '0' && c <= '9'; }
+// The source parser admits only this identifier alphabet. The public verify()
+// entrypoint also accepts compiler-generated Module IR; it must reject forged
+// or rewritten labels before either interpretation or native AOT emission.
+bool valid_identifier(std::string_view name) {
+  return !name.empty() && letter(name.front()) &&
+         std::all_of(name.begin()+1,name.end(),
+                     [](char c) { return letter(c)||digit(c); });
+}
 bool space(char c) { return c == ' ' || c == '\r' || c == '\n' || c == '\t' || c == '\v' || c == '\f'; }
 struct Token { std::string_view text; std::size_t offset=0; };
 
@@ -402,9 +410,15 @@ void verify(const Module& m) {
   std::size_t total=0;
   for (std::size_t fi=0;fi<m.functions.size();++fi) {
     const auto& fn=m.functions[fi];
-    if(fn.name.empty() || !names.emplace(fn.name,fi).second)
+    if(!valid_identifier(fn.name) || !names.emplace(fn.name,fi).second)
       throw std::runtime_error("duplicate or invalid function");
     if(fn.parameters.size()>4)throw std::runtime_error("function parameter budget exceeded");
+    std::map<std::string,bool> source_parameter_slots;
+    for(const auto& parameter : fn.parameters) {
+      if(!valid_identifier(parameter) ||
+         !source_parameter_slots.emplace(parameter,true).second)
+        throw std::runtime_error("invalid or duplicate callable parameter");
+    }
     if(fn.nodes.empty() || fn.nodes.size()>kMaxNodesPerFunction)
       throw std::runtime_error("invalid callable function body");
     total+=fn.nodes.size();
