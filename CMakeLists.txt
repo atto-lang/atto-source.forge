@@ -77,6 +77,12 @@ if(BUILD_TESTING)
   add_test(NAME oresforge_legacy_operator_grammar
     COMMAND oresforge_legacy_operator_grammar)
   set_tests_properties(oresforge_legacy_operator_grammar PROPERTIES TIMEOUT 15)
+  add_executable(oresforge_quoted_template_grammar
+    verification/quoted_template_grammar.cpp)
+  target_link_libraries(oresforge_quoted_template_grammar PRIVATE oresforge_core)
+  add_test(NAME oresforge_quoted_template_grammar
+    COMMAND oresforge_quoted_template_grammar)
+  set_tests_properties(oresforge_quoted_template_grammar PROPERTIES TIMEOUT 15)
   # Stage-0 single-file AttoLang path admission. Imports remain fail-closed in Forge.
   add_test(NAME oresforge_cli_atto_guest
     COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.atto")
