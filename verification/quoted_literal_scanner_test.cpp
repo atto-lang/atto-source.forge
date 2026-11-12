@@ -48,5 +48,42 @@ int main() {
   for(int i=0;i<1025;++i)too_many+="${'x'}";
   too_many+=tick;
   must_reject(too_many);
+  // Verify lexical resource limits at exact positive/negative boundaries.
+  auto must_accept = [](const std::string& literal) {
+    if (oresforge::literals::Scanner(literal).scan(0).end != literal.size())
+      throw std::runtime_error("scanner stopped before literal end");
+  };
+  auto deep_template = [tick](int depth) {
+    std::string v = std::string(1,tick) + "x" + tick;
+    for (int i=2;i<=depth;++i) v = std::string(1,tick) + "outer ${" + v + "}" + tick;
+    return v;
+  };
+  must_accept(deep_template(32));
+  must_reject(deep_template(33));
+  auto nested_comment = [tick](int depth) {
+    std::string v = std::string(1,tick)+"${";
+    for(int i=0;i<depth;++i) v+="/*";
+    v+="ignored";
+    for(int i=0;i<depth;++i) v+="*/";
+    return v+"name}"+tick;
+  };
+  must_accept(nested_comment(128));
+  must_reject(nested_comment(129));
+  auto nested_braces = [tick](int depth) {
+    std::string v = std::string(1,tick)+"${";
+    v.append(static_cast<std::size_t>(depth),'{');
+    v+="name";
+    v.append(static_cast<std::size_t>(depth),'}');
+    return v+"}"+tick;
+  };
+  must_accept(nested_braces(256));
+  must_reject(nested_braces(257));
+  auto substitutions = [tick](int count) {
+    std::string v(1,tick);
+    for(int i=0;i<count;++i) v+="${\'ok\'}";
+    return v+tick;
+  };
+  must_accept(substitutions(1024));
+  must_reject(substitutions(1025));
   return 0;
 }
