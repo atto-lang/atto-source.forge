@@ -59,6 +59,8 @@ int main() {
       R"atto('\x0G')atto",
       R"atto('\uD83D\uDE00')atto",
       R"atto(`escaped \${not_interpolation}`)atto",
+      R"atto(`value ${to_string(42)}`)atto",
+      R"atto(`value ${record.to_string()}`)atto",
       R"atto(`outer ${call({a: "}", b: 1}, /* { */ `inner ${value}`)} end`)atto",
       R"atto(`outer ${fnc({a: "}"} /* nested /* comment */ comment */)} end`)atto"
     }) { accept_lex(s); ++positives; }
@@ -171,12 +173,16 @@ int main() {
                  "STRING_BACKEND_UNSUPPORTED");
     reject_guest(R"atto(pub fnc main(): int { return `value ${x}`; })atto",
                  "STRING_BACKEND_UNSUPPORTED");
+    reject_guest(R"atto(pub fnc main(): int { return `value ${to_string(42)}`; })atto",
+                 "STRING_BACKEND_UNSUPPORTED");
+    reject_guest(R"atto(pub fnc main(): int { return `value ${item.to_string()}`; })atto",
+                 "STRING_BACKEND_UNSUPPORTED");
     reject_guest(R"atto(pub fnc helper(): int { return `unreachable`; }
                        pub fnc main(): int { return 42; })atto",
                  "STRING_BACKEND_UNSUPPORTED");
     std::cout<<"FORGE_QUOTED_TEMPLATE_GRAMMAR_PASS positive="<<positives
              <<" negative="<<negatives
-             <<" guest_positive=2 guest_negative=4 fuzz=24000 unicode_fuzz=30000\n";
+             <<" guest_positive=2 guest_negative=6 fuzz=24000 unicode_fuzz=30000\n";
     return 0;
   }catch(const std::exception& e){
     std::cerr<<"FORGE_QUOTED_TEMPLATE_GRAMMAR_FAIL "<<e.what()<<"\n";
