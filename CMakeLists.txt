@@ -82,6 +82,11 @@ if(BUILD_TESTING)
   target_compile_features(oresforge_quoted_literal_scanner PRIVATE cxx_std_20)
   add_test(NAME oresforge_quoted_literal_scanner COMMAND oresforge_quoted_literal_scanner)
   set_tests_properties(oresforge_quoted_literal_scanner PROPERTIES TIMEOUT 15)
+  add_executable(oresforge_quoted_literal_frontend
+    verification/quoted_literal_frontend_test.cpp)
+  target_link_libraries(oresforge_quoted_literal_frontend PRIVATE oresforge_core)
+  add_test(NAME oresforge_quoted_literal_frontend COMMAND oresforge_quoted_literal_frontend)
+  set_tests_properties(oresforge_quoted_literal_frontend PROPERTIES TIMEOUT 15)
   set_tests_properties(oresforge_legacy_operator_grammar PROPERTIES TIMEOUT 15)
   # Stage-0 single-file AttoLang path admission. Imports remain fail-closed in Forge.
   add_test(NAME oresforge_cli_atto_guest
