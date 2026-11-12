@@ -63,10 +63,14 @@ inline std::size_t quoted(std::string_view s,std::size_t at,
             fail("invalid unicode escape",start);
           ++i;
         } else {
+          std::uint32_t scalar=0;
           for(unsigned n=0;n<4;++n) {
             if(i>=s.size() || !hex(s[i])) fail("invalid unicode escape",start);
+            scalar=scalar*16+digit(s[i]);
             ++i;
           }
+          if(scalar>=0xd800 && scalar<=0xdfff)
+            fail("invalid unicode escape",start);
         }
         continue;
       }
@@ -108,6 +112,7 @@ inline std::size_t interpolation(std::string_view s,std::size_t at,
                                  unsigned depth,unsigned& substitutions) {
   if(depth>64) fail("template nesting limit",at);
   unsigned braces=1;
+  bool has_code=false;
   std::size_t i=at;
   while(i<s.size()) {
     if(i+1<s.size() && s[i]=='/' && s[i+1]=='/') {
@@ -130,9 +135,16 @@ inline std::size_t interpolation(std::string_view s,std::size_t at,
       if(comments) fail("unterminated interpolation comment",start);
       continue;
     }
-    if(quote(s[i])) {i=quoted(s,i,depth+1,substitutions);continue;}
-    if(s[i]=='{') {if(++braces>128)fail("interpolation brace limit",i);}
-    else if(s[i]=='}' && --braces==0) return i+1;
+    if(quote(s[i])) {has_code=true;i=quoted(s,i,depth+1,substitutions);continue;}
+    if(s[i]=='{') {has_code=true;if(++braces>128)fail("interpolation brace limit",i);}
+    else if(s[i]=='}') {
+      if(--braces==0) {
+        if(!has_code) fail("empty template interpolation",at-2);
+        return i+1;
+      }
+      has_code=true;
+    } else if(line_bytes(s,i)) {i+=line_bytes(s,i);continue;}
+    else if(s[i]!=' ' && s[i]!='\t' && s[i]!='\v' && s[i]!='\f') has_code=true;
     ++i;
   }
   fail("unterminated template interpolation",at-2);
