@@ -1,5 +1,6 @@
 #include "compiler/source_utf8.hpp"
 #include "compiler/frontend.hpp"
+#include "compiler/quoted_source_syntax.hpp"
 #include <algorithm>
 #include <charconv>
 #include <memory>
@@ -27,7 +28,7 @@ constexpr bool ascii_digit(unsigned char c) { return c>='0' && c<='9'; }
 constexpr bool ascii_alnum(unsigned char c) {
   return ascii_alpha(c) || ascii_digit(c);
 }
-enum class Kind { Word, Number, Punct, End };
+enum class Kind { Word, Number, Quoted, Punct, End };
 struct Token { Kind kind; std::string_view text; std::size_t offset; };
 
 // This stage-0 subset has pure i64 return expressions only. Inlining is
@@ -137,6 +138,11 @@ class Parser {
     const auto start=at_;
     if (at_==source_.size()) { tok_={Kind::End,{},start}; return; }
     auto c=static_cast<unsigned char>(source_[at_]);
+    if (source_syntax::quote(static_cast<char>(c))) {
+      at_=source_syntax::scan_quoted(source_, start);
+      tok_={Kind::Quoted,source_.substr(start,at_-start),start};
+      return;
+    }
     if (c=='@')
       throw std::runtime_error("annotations require typed target validation and AOT lowering; unsupported in Forge stage-0 at byte "+
                                std::to_string(start));
@@ -363,6 +369,8 @@ class Parser {
   }
   ExprPtr factor(std::size_t depth) {
     check_depth(depth);
+    if (tok_.kind==Kind::Quoted)
+      error("STRING_BACKEND_UNSUPPORTED: quoted strings and template interpolation require typed String IR/native lowering");
     if (tok_.text=="rt") {
       next();
       const std::string operation(tok_.text);
