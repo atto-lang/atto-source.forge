@@ -109,6 +109,14 @@ int main() {
       for(int i=0;i<count;++i) out+="*/";
       return out+"x}"+std::string(1,tick);
     };
+    // Unicode Next Line (NEL) is a line terminator, not guest expression code.
+    for(const auto& body : std::vector<std::string>{
+      "\u0085", "\u0085/* comment */", "\u0085\n", "\u0085\u2028\u2029"
+    }) {
+      reject_lex(std::string("`x ${")+body+"}`","empty template interpolation");
+      ++negatives;
+    }
+    accept_lex("`x ${\u0085x}`");++positives;
     accept_lex(nested_comments(128));++positives;
     reject_lex(nested_comments(129),"interpolation comment nesting limit");++negatives;
     accept_lex("'raw\nnewline'");++positives;
