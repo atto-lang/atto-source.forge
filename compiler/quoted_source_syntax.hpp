@@ -39,7 +39,7 @@ inline std::size_t interpolation(std::string_view s,std::size_t at,
                                  unsigned depth,unsigned& substitutions);
 inline std::size_t quoted(std::string_view s,std::size_t at,
                           unsigned depth,unsigned& substitutions) {
-  if (depth>64) fail("string/template nesting limit",at);
+  if (depth>32) fail("string/template nesting limit",at);
   if (at>=s.size() || !quote(s[at])) fail("expected quote",at);
   const auto opener=s[at];
   std::size_t i=at+1;
@@ -83,7 +83,7 @@ inline std::size_t quoted(std::string_view s,std::size_t at,
     // Java/Graal ordinary strings preserve raw multiline content.
     if(opener==static_cast<char>(0x60) && s[i]=='$' &&
        i+1<s.size() && s[i+1]=='{') {
-      if(++substitutions>128) fail("template substitution limit",i);
+      if(++substitutions>1024) fail("template substitution limit",i);
       const auto body=i+2;
       const auto end=interpolation(s,body,depth+1,substitutions);
       bool populated=false;
@@ -101,7 +101,7 @@ inline std::size_t quoted(std::string_view s,std::size_t at,
 }
 inline std::size_t interpolation(std::string_view s,std::size_t at,
                                  unsigned depth,unsigned& substitutions) {
-  if(depth>64) fail("template nesting limit",at);
+  if(depth>32) fail("template nesting limit",at);
   unsigned braces=1;
   bool has_code=false;
   std::size_t i=at;
@@ -127,7 +127,7 @@ inline std::size_t interpolation(std::string_view s,std::size_t at,
       continue;
     }
     if(quote(s[i])) {has_code=true;i=quoted(s,i,depth+1,substitutions);continue;}
-    if(s[i]=='{') {has_code=true;if(++braces>128)fail("interpolation brace limit",i);}
+    if(s[i]=='{') {has_code=true;if(++braces>256)fail("interpolation brace limit",i);}
     else if(s[i]=='}') {
       if(--braces==0) {
         if(!has_code) fail("empty template interpolation",at-2);
