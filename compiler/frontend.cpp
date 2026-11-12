@@ -1,5 +1,6 @@
 #include "compiler/source_utf8.hpp"
 #include "compiler/frontend.hpp"
+#include "compiler/quoted_literal_scanner.hpp"
 #include <algorithm>
 #include <charconv>
 #include <memory>
@@ -27,7 +28,7 @@ constexpr bool ascii_digit(unsigned char c) { return c>='0' && c<='9'; }
 constexpr bool ascii_alnum(unsigned char c) {
   return ascii_alpha(c) || ascii_digit(c);
 }
-enum class Kind { Word, Number, Punct, End };
+enum class Kind { Word, Number, Quoted, Template, Punct, End };
 struct Token { Kind kind; std::string_view text; std::size_t offset; };
 
 // This stage-0 subset has pure i64 return expressions only. Inlining is
@@ -140,6 +141,13 @@ class Parser {
     if (c=='@')
       throw std::runtime_error("annotations require typed target validation and AOT lowering; unsupported in Forge stage-0 at byte "+
                                std::to_string(start));
+    if (c == 39 || c == 34 || c == 96) {
+      const auto result = literals::Scanner(source_).scan(start);
+      at_ = result.end;
+      tok_ = {result.kind == literals::Kind::Template ? Kind::Template : Kind::Quoted,
+              source_.substr(start, at_-start), start};
+      return;
+    }
     if (ascii_alpha(c) || c=='_') {
       ++at_;
       while (at_<source_.size()) {
@@ -363,6 +371,8 @@ class Parser {
   }
   ExprPtr factor(std::size_t depth) {
     check_depth(depth);
+    if (tok_.kind == Kind::Quoted || tok_.kind == Kind::Template)
+      error("STRING_BACKEND_UNSUPPORTED: Forge i64-only frontend lacks typed String ownership and lowering");
     if (tok_.text=="rt") {
       next();
       const std::string operation(tok_.text);
