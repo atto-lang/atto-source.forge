@@ -102,6 +102,17 @@ int main() {
     };
     accept_lex(many(1024));++positives;
     reject_lex(many(1025),"template substitution limit");++negatives;
+    auto nested_comments=[&](int count) {
+      std::string out=std::string(1,tick)+"${";
+      for(int i=0;i<count;++i) out+="/*";
+      out+="ignore";
+      for(int i=0;i<count;++i) out+="*/";
+      return out+"x}"+std::string(1,tick);
+    };
+    accept_lex(nested_comments(128));++positives;
+    reject_lex(nested_comments(129),"interpolation comment nesting limit");++negatives;
+    accept_lex("'raw\nnewline'");++positives;
+    accept_lex(R"atto('legacy \q')atto");++positives;
     accept_lex(braces(255));++positives;
     reject_lex(braces(256),"interpolation brace limit");++negatives;
     accept_lex(nested(16));++positives;
