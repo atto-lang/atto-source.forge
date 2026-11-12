@@ -48,48 +48,39 @@ inline std::size_t quoted(std::string_view s,std::size_t at,
       const auto start=i++;
       if(i>=s.size()) fail("unterminated string escape",start);
       const auto newline=line_bytes(s,i);
-      if(newline) { i+=newline;continue; }
+      if(newline && opener!=static_cast<char>(0x60)) {i+=newline;continue;}
       if(s[i]=='u') {
         ++i;
-        if(i<s.size() && s[i]=='{') {
-          const auto digits=++i;
-          std::uint32_t scalar=0;
-          while(i<s.size() && hex(s[i]) && i-digits<7) {
-            scalar=scalar*16+digit(s[i]);
-            ++i;
-          }
-          if(digits==i || i-digits>6 || i>=s.size() || s[i]!='}' ||
-             scalar>0x10ffff || (scalar>=0xd800 && scalar<=0xdfff))
-            fail("invalid unicode escape",start);
-          ++i;
-        } else {
-          std::uint32_t scalar=0;
+        auto decode4 = [&](std::size_t at)->std::uint32_t {
+          if(at+4>s.size()) fail("invalid unicode escape",start);
+          std::uint32_t v=0;
           for(unsigned n=0;n<4;++n) {
-            if(i>=s.size() || !hex(s[i])) fail("invalid unicode escape",start);
-            scalar=scalar*16+digit(s[i]);
-            ++i;
+            if(!hex(s[at+n])) fail("invalid unicode escape",start);
+            v=v*16+digit(s[at+n]);
           }
-          if(scalar>=0xd800 && scalar<=0xdfff)
+          return v;
+        };
+        const auto scalar=decode4(i);
+        i+=4;
+        if(scalar>=0xd800 && scalar<=0xdbff) {
+          if(i+6>s.size() || s[i]!='\\' || s[i+1]!='u')
             fail("invalid unicode escape",start);
-        }
+          const auto tail=decode4(i+2);
+          if(tail<0xdc00 || tail>0xdfff) fail("invalid unicode escape",start);
+          i+=6;
+        } else if(scalar>=0xdc00 && scalar<=0xdfff)
+          fail("invalid unicode escape",start);
         continue;
       }
-      if(s[i]=='x') {
-        ++i;
-        for(unsigned n=0;n<2;++n) {
-          if(i>=s.size() || !hex(s[i])) fail("invalid hex escape",start);
-          ++i;
-        }
-        continue;
-      }
-      if(std::string_view("\\'\"$0bfnrtv").find(s[i])==std::string_view::npos &&
-         s[i]!=static_cast<char>(0x60)) fail("invalid string escape",start);
+      if(opener==static_cast<char>(0x60) &&
+         (newline || (std::string_view("\\'\"$nrt").find(s[i])==std::string_view::npos &&
+          s[i]!=static_cast<char>(0x60))))
+        fail("invalid template escape",start);
       ++i;
       continue;
     }
     if(s[i]==opener) return i+1;
-    if(opener!=static_cast<char>(0x60) && line_bytes(s,i))
-      fail("newline in quoted string",i);
+    // Java/Graal ordinary strings preserve raw multiline content.
     if(opener==static_cast<char>(0x60) && s[i]=='$' &&
        i+1<s.size() && s[i+1]=='{') {
       if(++substitutions>128) fail("template substitution limit",i);
