@@ -117,7 +117,7 @@ inline std::size_t interpolation(std::string_view s,std::size_t at,
       unsigned comments=1;
       while(i<s.size() && comments) {
         if(i+1<s.size() && s[i]=='/' && s[i+1]=='*') {
-          if(++comments>64) fail("interpolation comment nesting limit",i);
+          if(++comments>128) fail("interpolation comment nesting limit",i);
           i+=2;
         } else if(i+1<s.size() && s[i]=='*' && s[i+1]=='/') {
           --comments;i+=2;
