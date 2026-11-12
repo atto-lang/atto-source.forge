@@ -53,14 +53,16 @@ int main() {
     if (oresforge::literals::Scanner(literal).scan(0).end != literal.size())
       throw std::runtime_error("scanner stopped before literal end");
   };
-  auto deep_template = [tick](int depth) {
+  auto deep_template = [](int depth) {
+    const char tick=static_cast<char>(96);
     std::string v = std::string(1,tick) + "x" + tick;
     for (int i=2;i<=depth;++i) v = std::string(1,tick) + "outer ${" + v + "}" + tick;
     return v;
   };
   must_accept(deep_template(32));
   must_reject(deep_template(33));
-  auto nested_comment = [tick](int depth) {
+  auto nested_comment = [](int depth) {
+    const char tick=static_cast<char>(96);
     std::string v = std::string(1,tick)+"${";
     for(int i=0;i<depth;++i) v+="/*";
     v+="ignored";
@@ -69,7 +71,8 @@ int main() {
   };
   must_accept(nested_comment(128));
   must_reject(nested_comment(129));
-  auto nested_braces = [tick](int depth) {
+  auto nested_braces = [](int depth) {
+    const char tick=static_cast<char>(96);
     std::string v = std::string(1,tick)+"${";
     v.append(static_cast<std::size_t>(depth),'{');
     v+="name";
@@ -78,7 +81,8 @@ int main() {
   };
   must_accept(nested_braces(256));
   must_reject(nested_braces(257));
-  auto substitutions = [tick](int count) {
+  auto substitutions = [](int count) {
+    const char tick=static_cast<char>(96);
     std::string v(1,tick);
     for(int i=0;i<count;++i) v+="${\'ok\'}";
     return v+tick;
