@@ -76,6 +76,12 @@ if(BUILD_TESTING)
   target_link_libraries(oresforge_legacy_operator_grammar PRIVATE oresforge_core)
   add_test(NAME oresforge_legacy_operator_grammar
     COMMAND oresforge_legacy_operator_grammar)
+  add_executable(oresforge_quoted_literal_scanner
+    verification/quoted_literal_scanner_test.cpp)
+  target_include_directories(oresforge_quoted_literal_scanner PRIVATE .)
+  target_compile_features(oresforge_quoted_literal_scanner PRIVATE cxx_std_20)
+  add_test(NAME oresforge_quoted_literal_scanner COMMAND oresforge_quoted_literal_scanner)
+  set_tests_properties(oresforge_quoted_literal_scanner PROPERTIES TIMEOUT 15)
   set_tests_properties(oresforge_legacy_operator_grammar PROPERTIES TIMEOUT 15)
   # Stage-0 single-file AttoLang path admission. Imports remain fail-closed in Forge.
   add_test(NAME oresforge_cli_atto_guest
