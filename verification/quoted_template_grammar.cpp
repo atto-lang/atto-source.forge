@@ -60,8 +60,12 @@ int main() {
       {R"atto('unclosed)atto","unterminated string/template"},
       {R"atto('\q')atto","invalid string escape"},
       {R"atto('\u12X4')atto","invalid unicode escape"},
+      {R"atto('\uD800')atto","invalid unicode escape"},
+      {R"atto('\uDFFF')atto","invalid unicode escape"},
       {R"atto('\x0G')atto","invalid hex escape"},
       {R"atto(`bad ${ }`)atto","empty template interpolation"},
+      {R"atto(`bad ${/* only comment */}`)atto","empty template interpolation"},
+      {R"atto(`bad ${// only comment\n}`)atto","empty template interpolation"},
       {R"atto(`bad ${call(1)`)atto","unterminated string/template"},
       {R"atto(`bad ${/* unclosed}`)atto","unterminated interpolation comment"},
       {R"atto(`bad ${'unclosed}`)atto","unterminated string/template"}
