@@ -41,6 +41,7 @@ void reject_guest(std::string_view program,std::string_view needle) {
 }
 int main() {
   try {
+    std::size_t positives=0, negatives=0;
     for(const auto& s : std::vector<std::string> {
       R"atto('single')atto",
       R"atto("double")atto",
@@ -51,25 +52,33 @@ int main() {
       R"atto('unicode \u0041')atto",
       R"atto("hex \x41")atto",
       "`raw\nmultiline`",
+      "'raw\nnewline'",
+      R"atto('\q')atto",
+      R"atto('\x0G')atto",
+      R"atto('\uD83D\uDE00')atto",
       R"atto(`escaped \${not_interpolation}`)atto",
       R"atto(`outer ${call({a: "}", b: 1}, /* { */ `inner ${value}`)} end`)atto",
       R"atto(`outer ${fnc({a: "}"} /* nested /* comment */ comment */)} end`)atto"
-    }) accept_lex(s);
+    }) { accept_lex(s); ++positives; }
     for(const auto& [bad,diagnostic] : std::vector<std::pair<std::string,std::string>> {
-      {"'raw\nnewline'","newline in quoted string"},
+
       {R"atto('unclosed)atto","unterminated string/template"},
-      {R"atto('\q')atto","invalid string escape"},
+
       {R"atto('\u12X4')atto","invalid unicode escape"},
       {R"atto('\uD800')atto","invalid unicode escape"},
       {R"atto('\uDFFF')atto","invalid unicode escape"},
-      {R"atto('\x0G')atto","invalid hex escape"},
+      {R"atto('\u{1f600}')atto","invalid unicode escape"},
+      {R"atto(`invalid \q`)atto","invalid template escape"},
+      {R"atto(`invalid \x41`)atto","invalid template escape"},
+      {R"atto(`invalid \u{1f600}`)atto","invalid unicode escape"},
+
       {R"atto(`bad ${ }`)atto","empty template interpolation"},
       {R"atto(`bad ${/* only comment */}`)atto","empty template interpolation"},
-      {R"atto(`bad ${// only comment\n}`)atto","empty template interpolation"},
+      {"`bad ${// only comment\n}`","empty template interpolation"},
       {R"atto(`bad ${call(1)`)atto","unterminated string/template"},
       {R"atto(`bad ${/* unclosed}`)atto","unterminated interpolation comment"},
       {R"atto(`bad ${'unclosed}`)atto","unterminated string/template"}
-    }) reject_lex(bad,diagnostic);
+    }) { reject_lex(bad,diagnostic); ++negatives; }
     accept_guest("pub fnc main(): int { /* 'template ${safe}' */ return 42; }");
     accept_guest("pub fnc main(): int { // `template ${safe}`\n return 42; }");
     reject_guest(R"atto(pub fnc main(): int { return 'string'; })atto",
@@ -81,8 +90,9 @@ int main() {
     reject_guest(R"atto(pub fnc helper(): int { return `unreachable`; }
                        pub fnc main(): int { return 42; })atto",
                  "STRING_BACKEND_UNSUPPORTED");
-    std::cout<<"FORGE_QUOTED_TEMPLATE_GRAMMAR_PASS positive=12 "
-                "negative=9 guest_positive=2 guest_negative=4\n";
+    std::cout<<"FORGE_QUOTED_TEMPLATE_GRAMMAR_PASS positive="<<positives
+             <<" negative="<<negatives
+             <<" guest_positive=2 guest_negative=4\n";
     return 0;
   }catch(const std::exception& e){
     std::cerr<<"FORGE_QUOTED_TEMPLATE_GRAMMAR_FAIL "<<e.what()<<"\n";
