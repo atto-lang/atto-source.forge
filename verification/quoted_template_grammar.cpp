@@ -1,5 +1,6 @@
 #include "compiler/frontend.hpp"
 #include "compiler/quoted_source_syntax.hpp"
+#include <array>
 #include <cstdint>
 #include <iostream>
 #include <stdexcept>
@@ -122,6 +123,27 @@ int main() {
       if(end==0 || end>source.size())
         throw std::runtime_error("scanner fuzz span out of range");
     }
+    // Seed and alphabet intentionally match JS's UTF-8/UTF-16 corpus.
+    constexpr std::array<std::string_view,22> unicode_alphabet = {
+      "a", "b", "{", "}", "$", "/", "*", "`", "\\", "\"", "'", " ",
+      "\n", "\r", "\u0085", "\u2028", "\u2029", "é", "💻", "中", "\t", "x"
+    };
+    std::uint32_t unicode_state=0x42ff3391u;
+    for(std::size_t k=0;k<30000;++k) {
+      unicode_state=unicode_state*1664525u+1013904223u;
+      std::string source(1,static_cast<char>(k%3==0?39:k%3==1?34:96));
+      const auto count=unicode_state%100u;
+      for(std::uint32_t j=0;j<count;++j) {
+        unicode_state=unicode_state*1664525u+1013904223u;
+        source+=unicode_alphabet[unicode_state%unicode_alphabet.size()];
+      }
+      if((k&1u)==0u) source+=source[0];
+      std::size_t end=0;
+      try {end=oresforge::source_syntax::scan_quoted(source,0);}
+      catch(const std::runtime_error&) {continue;}
+      if(end==0 || end>source.size())
+        throw std::runtime_error("Unicode scanner fuzz span out of range");
+    }
     accept_guest("pub fnc main(): int { /* 'template ${safe}' */ return 42; }");
     accept_guest("pub fnc main(): int { // `template ${safe}`\n return 42; }");
     reject_guest(R"atto(pub fnc main(): int { return 'string'; })atto",
@@ -135,7 +157,7 @@ int main() {
                  "STRING_BACKEND_UNSUPPORTED");
     std::cout<<"FORGE_QUOTED_TEMPLATE_GRAMMAR_PASS positive="<<positives
              <<" negative="<<negatives
-             <<" guest_positive=2 guest_negative=4 fuzz=24000\n";
+             <<" guest_positive=2 guest_negative=4 fuzz=24000 unicode_fuzz=30000\n";
     return 0;
   }catch(const std::exception& e){
     std::cerr<<"FORGE_QUOTED_TEMPLATE_GRAMMAR_FAIL "<<e.what()<<"\n";
