@@ -1,5 +1,6 @@
 #include "compiler/frontend.hpp"
 #include "compiler/quoted_source_syntax.hpp"
+#include <cstdint>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -104,6 +105,23 @@ int main() {
     reject_lex(braces(256),"interpolation brace limit");++negatives;
     accept_lex(nested(16));++positives;
     reject_lex(nested(17),"nesting limit");++negatives;
+    std::uint32_t state=0xc01d1234u;
+    constexpr std::string_view alphabet = "abc01{}$/*'\"`\\\\ \\n\\rux()";
+    for(std::size_t k=0;k<24000;++k) {
+      state=state*1664525u+1013904223u;
+      std::string source(1,static_cast<char>(k%3==0?39:k%3==1?34:96));
+      const auto len=state%120u;
+      for(std::uint32_t j=0;j<len;++j) {
+        state=state*1664525u+1013904223u;
+        source+=alphabet[state%alphabet.size()];
+      }
+      if((k&1u)==0u) source+=source[0];
+      std::size_t end=0;
+      try {end=oresforge::source_syntax::scan_quoted(source,0);}
+      catch(const std::runtime_error&) {continue;}
+      if(end==0 || end>source.size())
+        throw std::runtime_error("scanner fuzz span out of range");
+    }
     accept_guest("pub fnc main(): int { /* 'template ${safe}' */ return 42; }");
     accept_guest("pub fnc main(): int { // `template ${safe}`\n return 42; }");
     reject_guest(R"atto(pub fnc main(): int { return 'string'; })atto",
@@ -117,7 +135,7 @@ int main() {
                  "STRING_BACKEND_UNSUPPORTED");
     std::cout<<"FORGE_QUOTED_TEMPLATE_GRAMMAR_PASS positive="<<positives
              <<" negative="<<negatives
-             <<" guest_positive=2 guest_negative=4\n";
+             <<" guest_positive=2 guest_negative=4 fuzz=24000\n";
     return 0;
   }catch(const std::exception& e){
     std::cerr<<"FORGE_QUOTED_TEMPLATE_GRAMMAR_FAIL "<<e.what()<<"\n";
