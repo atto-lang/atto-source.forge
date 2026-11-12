@@ -79,6 +79,31 @@ int main() {
       {R"atto(`bad ${/* unclosed}`)atto","unterminated interpolation comment"},
       {R"atto(`bad ${'unclosed}`)atto","unterminated string/template"}
     }) { reject_lex(bad,diagnostic); ++negatives; }
+    const char tick=static_cast<char>(96);
+    auto many=[&](int n) {
+      std::string out(1,tick);
+      for(int i=0;i<n;++i) out+="${'x'}";
+      out+=tick;
+      return out;
+    };
+    auto braces=[&](int n) {
+      return std::string(1,tick)+"${"+std::string(n,'{')+"x"+
+             std::string(n,'}')+"}"+std::string(1,tick);
+    };
+    auto nested=[&](int n) {
+      std::string out(1,tick);
+      for(int i=0;i<n;++i) {out+="${";out+=tick;}
+      out+="x";
+      for(int i=0;i<n;++i) {out+=tick;out+="}";}
+      out+=tick;
+      return out;
+    };
+    accept_lex(many(1024));++positives;
+    reject_lex(many(1025),"template substitution limit");++negatives;
+    accept_lex(braces(255));++positives;
+    reject_lex(braces(256),"interpolation brace limit");++negatives;
+    accept_lex(nested(16));++positives;
+    reject_lex(nested(17),"nesting limit");++negatives;
     accept_guest("pub fnc main(): int { /* 'template ${safe}' */ return 42; }");
     accept_guest("pub fnc main(): int { // `template ${safe}`\n return 42; }");
     reject_guest(R"atto(pub fnc main(): int { return 'string'; })atto",
