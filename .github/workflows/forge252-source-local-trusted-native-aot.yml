@@ -77,6 +77,11 @@ jobs:
                            "User-Agent": "atto-ephemeral-runner-admission"})
               with urllib.request.urlopen(request, timeout=20) as response:
                   return json.load(response)
+          main_branch = fetch("branches/main")
+          if (main_branch.get("name") != "main" or
+                  main_branch.get("protected") is not True or
+                  not isinstance((main_branch.get("commit") or {}).get("sha"), str)):
+              raise SystemExit("DENIED: source main branch not protected")
           pull = fetch("pulls/" + str(PR))
           head = pull.get("head") or {}
           source_repo = head.get("repo") or {}
@@ -239,6 +244,11 @@ jobs:
                            "User-Agent": "atto-ephemeral-runner-admission"})
               with urllib.request.urlopen(request, timeout=20) as response:
                   return json.load(response)
+          main_branch = fetch("branches/main")
+          if (main_branch.get("name") != "main" or
+                  main_branch.get("protected") is not True or
+                  not isinstance((main_branch.get("commit") or {}).get("sha"), str)):
+              raise SystemExit("DENIED: source main branch not protected")
           pull = fetch("pulls/" + str(PR))
           head = pull.get("head") or {}
           source_repo = head.get("repo") or {}
