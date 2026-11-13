@@ -106,8 +106,20 @@ void verify_direct_aot(const std::string& source) {
   reject([]{(void)oresforge::calls::parse(
       "fnc main():int{return 42;}fnc main():int{return 1;}");},
          "duplicate function");
+  // The exported C ABI symbol oresforge_entry() has zero parameters.
+  // A parameterized main must be rejected in both parser and forged IR.
+  reject([]{(void)oresforge::calls::parse("fnc main(x:int):int{return x;}");},
+         "callable entry must have zero parameters");
+  {
+    Module bad=admitted;
+    bad.functions[static_cast<std::size_t>(bad.entry)].parameters.push_back("forged");
+    reject([&]{oresforge::calls::verify(bad);},
+           "callable entry must have zero parameters");
+    reject([&]{(void)oresforge::calls::emit_asm(bad,oresforge::Arch::X86_64);},
+           "callable entry must have zero parameters");
+  }
   std::cout<<"FORGE_STATIC_DISPATCH_AOT_SOURCE_PROOF|functions=3|direct_calls=2|"
-              "interpreter=42|negative_ir_cases=11\n";
+              "interpreter=42|negative_ir_cases=13\n";
 }
 }
 
