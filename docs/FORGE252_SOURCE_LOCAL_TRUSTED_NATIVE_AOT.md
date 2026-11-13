@@ -43,3 +43,13 @@ The workflow neither uploads source/artifacts nor mirrors them across organizati
 - Source-local execution **does not** grant permission to transfer this private source into `honeypot-r-us-test` or any other organization. Cross-organization exports remain subject to the independent approved exact snapshot under issue [#274](https://github.com/ores-truffle-oreslang/oreslang-source.forge/issues/274).
 
 Tracking: [Forge #252](https://github.com/ores-truffle-oreslang/oreslang-source.forge/pull/252), [CI admission #108](https://github.com/ores-truffle-oreslang/oreslang-source.forge/issues/108), [private export authorization #274](https://github.com/ores-truffle-oreslang/oreslang-source.forge/issues/274).
+
+## Hard platform prerequisite: GitHub private-branch protection availability
+
+On 2026-11-13 UTC, a read-only `GET /repos/ores-truffle-oreslang/oreslang-source.forge/rulesets?includes_parents=true` query returned HTTP 403 and GitHub's message: "Upgrade to GitHub Pro or make this repository public to enable this feature." `GET /branches/main` returned `protected:false`. The richer branch-protection endpoint separately returned 403 `Resource not accessible by integration`. The current ChatGPT GitHub connector has no branch protection/ruleset or runner administration setter.
+
+**Do not make the private source public.** An organization owner should inspect its actual GitHub plan and private-repository branch-rule eligibility (GitHub Team or Enterprise for organizational private repositories), upgrade if required, and independently verify protections on `main`. Check Actions billing, hosted-runner availability and dedicated runner-group entitlements separately; a ruleset-plan failure does not prove Actions minutes were exhausted.
+
+To prevent an operator from manually executing unreviewed source when branch protection is missing, the **pre- and post-PR-checkout approval gate** reads `GET /repos/ores-truffle-oreslang/oreslang-source.forge/branches/main` using the read-only source-org `GITHUB_TOKEN` and requires name `main`, `protected:true`, and a commit SHA. Missing metadata, false `protected`, or endpoint access denial all fail closed **before source PR checkout**. Four negative mock mutations are included in the authoring branch: unprotected branch, wrong branch name, missing protected key, and missing main commit.
+
+`protected:true` is a necessary, **not sufficient**, condition: the administrator must also validate required app-bound `private-ci-policy` checks, CODEOWNERS review, no bypass, selected-repository and selected-workflow restrictions, ephemeral teardown and GitHub Actions actual runner admission. These settings cannot be inferred merely from a green synthetic security test.
