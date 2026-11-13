@@ -472,6 +472,10 @@ void verify(const Module& m) {
   }
   if(m.functions[static_cast<std::size_t>(m.entry)].name!="main")
     throw std::runtime_error("callable entry is not main");
+  // oresforge_entry is a C ABI zero-argument entrypoint. Accepting a
+  // parameterized main would read arbitrary incoming host register contents.
+  if(!m.functions[static_cast<std::size_t>(m.entry)].parameters.empty())
+    throw std::runtime_error("callable entry must have zero parameters");
 }
 std::int64_t interpret(const Module& m,std::span<const std::int64_t> args) {
   verify(m);
