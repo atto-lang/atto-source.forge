@@ -59,6 +59,7 @@ class TrustedRunnerAdmissionTest(unittest.TestCase):
         cls.gates = workflow_gates()
 
     def setUp(self):
+        self.main_branch = {"name": "main", "protected": True, "commit": {"sha": "c" * 40}}
         self.pull = {
             "state": "open",
             "head": {"sha": HEAD, "repo": {"id": REPO_ID, "full_name": REPO}},
@@ -91,6 +92,8 @@ class TrustedRunnerAdmissionTest(unittest.TestCase):
         self.assertTrue(url.path.startswith("/repos/" + REPO + "/"))
         self.assertIn(timeout, (20,))
         self.calls.append(request.full_url)
+        if url.path.endswith("/branches/main"):
+            return HttpResult(self.main_branch)
         if url.path.endswith("/pulls/" + str(PR_NUMBER)):
             return HttpResult(self.pull)
         if url.path.endswith("/git/commits/" + HEAD):
@@ -117,7 +120,19 @@ class TrustedRunnerAdmissionTest(unittest.TestCase):
     def test_pinned_independent_approval_allows_source_local_test_only(self):
         for index in (0, 1):
             self.assertIn("ATTO_SOURCE_LOCAL_SOURCE_EXPORT=NONE", self.run_gate(index))
-        self.assertEqual(len(self.calls), 8)
+        self.assertEqual(len(self.calls), 10)
+
+    def test_unprotected_main_denied_before_pr_checkout(self):
+        for label, mutate in [
+            ("unprotected branch", lambda: self.main_branch.update(protected=False)),
+            ("wrong branch name", lambda: self.main_branch.update(name="feature")),
+            ("missing protected key", lambda: self.main_branch.pop("protected")),
+            ("missing main commit", lambda: self.main_branch.update(commit={})),
+        ]:
+            with self.subTest(case=label):
+                self.setUp()
+                mutate()
+                self.rejected("source main branch not protected")
 
     def test_source_identity_fail_closed(self):
         mutations = [
@@ -166,7 +181,7 @@ class TrustedRunnerAdmissionTest(unittest.TestCase):
     def test_complete_review_pagination(self):
         self.reviews = [self.review(id=i+1) for i in range(250)]
         self.run_gate()
-        self.assertEqual(len(self.calls), 6)
+        self.assertEqual(len(self.calls), 7)
 
     def test_read_only_org_member_cannot_authorize_runner(self):
         self.permission = "read"
