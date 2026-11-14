@@ -11,6 +11,18 @@ add_executable(oresforge compiler/main.cpp)
 target_link_libraries(oresforge PRIVATE oresforge_core)
 include(CTest)
 if(BUILD_TESTING)
+  foreach(export_positive top bottom package)
+    add_test(NAME oresforge_declarative_export_${export_positive}
+      COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/declarative-exports/${export_positive}.atto")
+    set_tests_properties(oresforge_declarative_export_${export_positive} PROPERTIES
+      PASS_REGULAR_EXPRESSION "42" TIMEOUT 10)
+  endforeach()
+  foreach(export_negative missing duplicate visibility-conflict pkg-entry)
+    add_test(NAME oresforge_declarative_export_reject_${export_negative}
+      COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/declarative-exports/${export_negative}.atto")
+    set_tests_properties(oresforge_declarative_export_reject_${export_negative} PROPERTIES
+      WILL_FAIL TRUE TIMEOUT 10)
+  endforeach()
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   set(ORE_NUMERIC_I64_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated_numeric_i64_cases.hpp")
   add_custom_command(
