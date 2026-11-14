@@ -17,11 +17,25 @@ if(BUILD_TESTING)
     set_tests_properties(oresforge_declarative_export_${export_positive} PROPERTIES
       PASS_REGULAR_EXPRESSION "42" TIMEOUT 10)
   endforeach()
-  foreach(export_negative missing duplicate visibility-conflict pkg-entry)
+  # Nonzero status alone is insufficient: a crash, missing compiler, or unrelated
+  # parser error must never satisfy the negative export-admission tests.
+  set(export_rejection_cases
+    "missing|EXPORT_UNBOUND"
+    "duplicate|EXPORT_DUPLICATE"
+    "visibility-conflict|EXPORT_VISIBILITY_CONFLICT"
+    "pkg-entry|EXPORT_PACKAGE_ENTRY_UNSUPPORTED")
+  foreach(export_rejection_case IN LISTS export_rejection_cases)
+    string(REPLACE "|" ";" export_parts "${export_rejection_case}")
+    list(GET export_parts 0 export_negative)
+    list(GET export_parts 1 export_expected)
     add_test(NAME oresforge_declarative_export_reject_${export_negative}
-      COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/declarative-exports/${export_negative}.atto")
-    set_tests_properties(oresforge_declarative_export_reject_${export_negative} PROPERTIES
-      WILL_FAIL TRUE TIMEOUT 10)
+      COMMAND "${CMAKE_COMMAND}"
+        "-DCOMPILER=$<TARGET_FILE:oresforge>"
+        "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/declarative-exports/${export_negative}.atto"
+        "-DEXPECT=${export_expected}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/verification/assert-export-rejection.cmake")
+    set_tests_properties(oresforge_declarative_export_reject_${export_negative}
+      PROPERTIES TIMEOUT 15)
   endforeach()
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   set(ORE_NUMERIC_I64_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated_numeric_i64_cases.hpp")
