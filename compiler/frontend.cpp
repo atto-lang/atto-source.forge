@@ -52,7 +52,21 @@ class Parser {
  public:
   explicit Parser(std::string_view text,bool runtime_entry=false): source_(text),runtime_entry_(runtime_entry) { next(); }
   Program parse() {
-    while (tok_.kind != Kind::End) definition();
+    while (tok_.kind != Kind::End) {
+      if (tok_.text=="export") export_declaration();
+      else definition();
+    }
+    std::unordered_set<std::string> exported_names;
+    for (const auto& entry : program_.file_exports) {
+      if (!exported_names.insert(entry.name).second)
+        throw std::runtime_error("EXPORT_DUPLICATE: "+entry.name);
+      if (!functions_.contains(entry.name))
+        throw std::runtime_error("EXPORT_UNBOUND: "+entry.name);
+      if (entry.package_only && public_definitions_.contains(entry.name))
+        throw std::runtime_error("EXPORT_VISIBILITY_CONFLICT: "+entry.name);
+      if (entry.package_only && entry.name=="main")
+        throw std::runtime_error("EXPORT_PACKAGE_ENTRY_UNSUPPORTED: native main is process entry");
+    }
     if (!functions_.contains("main")) error("missing main function");
     if (!runtime_entry_ && !functions_.at("main").parameters.empty())
       error("main must have zero parameters");
@@ -89,6 +103,7 @@ class Parser {
   Token tok_{Kind::End,{},0};
   Program program_;
   std::unordered_map<std::string,Function> functions_;
+  std::unordered_set<std::string> public_definitions_;
   std::size_t node_count_=0;
   static constexpr std::size_t kMaxExpressionDepth=128;
   static constexpr std::size_t kMaxCallDepth=64;
@@ -236,7 +251,7 @@ class Parser {
     if (c=='^')
       throw std::runtime_error("legacy ^/^^ operators are removed; use Integer.pow/bitXor at byte "+
                                std::to_string(start));
-    if (std::string_view("()+-*/{};:,?").find(static_cast<char>(c)) ==
+    if (std::string_view("()+-*/{}[];:,?").find(static_cast<char>(c)) ==
         std::string_view::npos) error("invalid character");
     ++at_;
     tok_={Kind::Punct,source_.substr(start,1),start};
@@ -274,6 +289,18 @@ class Parser {
     v.push_back(std::move(a));
     v.push_back(std::move(b));
     return node(op,std::move(v));
+  }
+  void export_declaration() {
+    expect("export");expect("pub");
+    bool package_only=false;
+    if (take("[")) {expect("pkg");expect("]");package_only=true;}
+    // Only scalar fnc is lowered by Forge stage-0. Class targets still
+    // fail in the lexer because native class/actor ownership is absent.
+    take("fnc");
+    const auto name=identifier();
+    expect(";");
+    if (program_.file_exports.size()>=1024) error("EXPORT_SOURCE_LIMIT");
+    program_.file_exports.push_back(FileExport{name,package_only});
   }
   void definition() {
     bool defined=false, public_=false;
@@ -334,6 +361,7 @@ class Parser {
     expect(";"); expect("}");
     if (functions_.contains(name)) error("duplicate function");
     functions_.emplace(name,std::move(fn));
+    if (public_) public_definitions_.insert(name);
   }
   ExprPtr expression(std::size_t depth) {
     check_depth(depth);
