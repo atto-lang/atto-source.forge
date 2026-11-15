@@ -6,15 +6,21 @@
 #include <string_view>
 #include <iostream>
 
-static void denied(std::string source) {
+template<class F> static void expect_denial(F&& parse) {
   try {
-    oresforge::source::validate_utf8(source);
+    parse();
   } catch (const std::runtime_error& error) {
     if (std::string_view(error.what()).find("terminal control") != std::string_view::npos)
       return;
     throw;
   }
   throw std::runtime_error("terminal-control source admitted");
+}
+static void denied(const std::string& source) {
+  expect_denial([&] { oresforge::source::validate_utf8(source); });
+  expect_denial([&] { (void)oresforge::parse_source(source); });
+  expect_denial([&] { (void)oresforge::parse_runtime_source(source); });
+  expect_denial([&] { (void)oresforge::calls::parse(source); });
 }
 
 int main() {
