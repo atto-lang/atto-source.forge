@@ -13,9 +13,13 @@ include(CTest)
 if(BUILD_TESTING)
   foreach(export_positive top bottom package)
     add_test(NAME oresforge_declarative_export_${export_positive}
-      COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/declarative-exports/${export_positive}.atto")
-    set_tests_properties(oresforge_declarative_export_${export_positive} PROPERTIES
-      PASS_REGULAR_EXPRESSION "42" TIMEOUT 10)
+      COMMAND "${CMAKE_COMMAND}"
+        "-DCOMPILER=$<TARGET_FILE:oresforge>"
+        "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/declarative-exports/${export_positive}.atto"
+        "-DEXPECT=42"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/verification/assert-export-acceptance.cmake")
+    set_tests_properties(oresforge_declarative_export_${export_positive}
+      PROPERTIES TIMEOUT 15)
   endforeach()
   # Nonzero status alone is insufficient: a crash, missing compiler, or unrelated
   # parser error must never satisfy the negative export-admission tests.
