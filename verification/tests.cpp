@@ -754,9 +754,13 @@ int main() {
     reject([] { parse_source("fnc main():int {return 1;} garbage"); });
     reject([] { parse_source("fnc main():int {return x;}"); });
     reject([] { parse_source("pub pub fnc main():int {return 1;}"); });
-    Program broken{{{Op::Add,0,0,0},{Op::Return,0,0,-1}}};
+    // Program now begins with file_exports; initialize instructions by name
+    // rather than accidentally trying to construct FileExport objects.
+    Program broken;
+    broken.instructions={{Op::Add,0,0,0},{Op::Return,0,0,-1}};
     reject([&] { verify(broken); });
-    Program missing{{{Op::Constant,3}}};
+    Program missing;
+    missing.instructions={{Op::Constant,3}};
     reject([&] { verify(missing); });
     ensure(dump_ir(source("2+3*4")).find("mul.i64.checked")!=std::string::npos,"IR dump");
     ensure(emit_asm(source("2+3*4"),Arch::X86_64).find("movabs $14")!=std::string::npos,"x86_64 asm");
