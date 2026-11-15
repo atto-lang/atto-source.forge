@@ -40,6 +40,17 @@ int main() {
     reject("pub fnc main(): int { return (2 + 3) % 2; }","legacy % operator is removed");
     reject("pub fnc hidden(): int { return 4 ^ 3; } pub fnc main(): int { return 7; }",
            "legacy ^/^^ operators are removed");
+    // Nested comments must not expose ownership-looking text to the
+    // stage-0 lexer; both parsing and rejection remain depth-bounded.
+    accept("pub fnc main(): int { /* outer /* borrow! mut item */ tail */ return 7; }");
+    {
+      std::string deep="pub fnc main(): int { ";
+      for (int i=0;i<129;++i) deep+="/*";
+      deep+="copy!42";
+      for (int i=0;i<129;++i) deep+="*/";
+      deep+=" return 7; }";
+      reject(deep,"block comment nesting too deep");
+    }
     // Ownership bang aliases are recognized, but the scalar bootstrap must
     // reject them deliberately until it has checked move/borrow/share IR.
     accept("pub fnc main(): int { /* copy! 42 */ return 7; }");
@@ -66,7 +77,7 @@ int main() {
            "runtime ownership operation requires typed lowering in Forge");
     reject("pub fnc main(): int { return rt mut borrow foo; }",
            "runtime ownership operation requires typed lowering in Forge");
-    std::cout<<"FORGE_LEGACY_OPERATOR_GRAMMAR_PASS positive=4 negative=17 atomic-neq=1\n";
+    std::cout<<"FORGE_LEGACY_OPERATOR_GRAMMAR_PASS positive=5 negative=18 atomic-neq=1\n";
     return 0;
   }catch(const std::exception& e){
     std::cerr<<"FORGE_LEGACY_OPERATOR_GRAMMAR_FAIL "<<e.what()<<"\n";
