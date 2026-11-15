@@ -51,6 +51,10 @@ int main() {
            "OWNERSHIP_BANG_BACKEND_UNSUPPORTED");
     reject("pub fnc main(): int { return borrow! foo; }",
            "OWNERSHIP_BANG_BACKEND_UNSUPPORTED");
+    reject("pub fnc main(): int { return borrow! mut foo; }",
+           "OWNERSHIP_BANG_BACKEND_UNSUPPORTED");
+    reject("pub fnc main(): int { return borrow!mut foo; }",
+           "OWNERSHIP_BANG_BACKEND_UNSUPPORTED");
     reject("pub fnc main(): int { return mut borrow!foo; }",
            "OWNERSHIP_BANG_BACKEND_UNSUPPORTED");
     reject("pub fnc main(): int { return share! foo; }",
@@ -62,7 +66,7 @@ int main() {
            "runtime ownership operation requires typed lowering in Forge");
     reject("pub fnc main(): int { return rt mut borrow foo; }",
            "runtime ownership operation requires typed lowering in Forge");
-    std::cout<<"FORGE_LEGACY_OPERATOR_GRAMMAR_PASS positive=4 negative=15 atomic-neq=1\n";
+    std::cout<<"FORGE_LEGACY_OPERATOR_GRAMMAR_PASS positive=4 negative=17 atomic-neq=1\n";
     return 0;
   }catch(const std::exception& e){
     std::cerr<<"FORGE_LEGACY_OPERATOR_GRAMMAR_FAIL "<<e.what()<<"\n";
