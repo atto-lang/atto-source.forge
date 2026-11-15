@@ -33,7 +33,22 @@ int main() {
     reject("pub fnc main(): int { return (2 + 3) % 2; }","legacy % operator is removed");
     reject("pub fnc hidden(): int { return 4 ^ 3; } pub fnc main(): int { return 7; }",
            "legacy ^/^^ operators are removed");
-    std::cout<<"FORGE_LEGACY_OPERATOR_GRAMMAR_PASS positive=3 negative=6\n";
+    // Ownership bang aliases are recognized, but the scalar bootstrap must
+    // reject them deliberately until it has checked move/borrow/share IR.
+    accept("pub fnc main(): int { /* copy! 42 */ return 7; }");
+    reject("pub fnc main(): int { return copy!42; }",
+           "OWNERSHIP_BANG_BACKEND_UNSUPPORTED");
+    reject("pub fnc main(): int { return copy! 42; }",
+           "OWNERSHIP_BANG_BACKEND_UNSUPPORTED");
+    reject("pub fnc main(): int { return take!42; }",
+           "OWNERSHIP_BANG_BACKEND_UNSUPPORTED");
+    reject("pub fnc main(): int { return borrow! foo; }",
+           "OWNERSHIP_BANG_BACKEND_UNSUPPORTED");
+    reject("pub fnc main(): int { return mut borrow!foo; }",
+           "OWNERSHIP_BANG_BACKEND_UNSUPPORTED");
+    reject("pub fnc main(): int { return share! foo; }",
+           "OWNERSHIP_BANG_BACKEND_UNSUPPORTED");
+    std::cout<<"FORGE_LEGACY_OPERATOR_GRAMMAR_PASS positive=4 negative=12\n";
     return 0;
   }catch(const std::exception& e){
     std::cerr<<"FORGE_LEGACY_OPERATOR_GRAMMAR_FAIL "<<e.what()<<"\n";
