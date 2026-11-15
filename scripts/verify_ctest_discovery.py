@@ -81,7 +81,8 @@ def verify_inventory(payload: object, *, linux_x86: bool) -> tuple[int, int]:
     # CTest's JSON inventory can include a test with NO executable when its
     # target was never built. It also lists tests marked disabled or configured
     # to skip or invert failure. Counting those as executed gates is unsafe.
-    disallowed = {"DISABLED", "SKIP_RETURN_CODE", "SKIP_REGULAR_EXPRESSION", "WILL_FAIL"}
+    disallowed = {"DISABLED", "SKIP_RETURN_CODE", "SKIP_REGULAR_EXPRESSION",
+                  "WILL_FAIL", "PASS_REGULAR_EXPRESSION"}
     for item in tests:
         name = item["name"]
         command = item.get("command")
