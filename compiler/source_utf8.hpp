@@ -11,6 +11,8 @@ inline void validate_utf8(std::string_view text) {
   for (std::size_t i=0; i<text.size();) {
     const auto lead=static_cast<unsigned char>(text[i]);
     if (lead==0) throw std::runtime_error("source contains NUL byte");
+    if (lead==0x1b || lead==0x7f)
+      throw std::runtime_error("source contains terminal control byte");
     if (lead<=0x7f) { ++i; continue; }
     std::size_t following=0;
     unsigned char low=0x80, high=0xbf;
