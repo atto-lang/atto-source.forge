@@ -298,6 +298,9 @@ class Parser {
     // fail in the lexer because native class/actor ownership is absent.
     take("fnc");
     const auto name=identifier();
+    // Reject noncanonical export names before resolution, inlining or IR
+    // allocation. The atto.exports.v1 manifest field allows 256 bytes.
+    if (name.size()>256) error("EXPORT_NAME_TOO_LONG");
     expect(";");
     if (program_.file_exports.size()>=1024) error("EXPORT_SOURCE_LIMIT");
     program_.file_exports.push_back(FileExport{name,package_only});
