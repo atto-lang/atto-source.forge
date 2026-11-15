@@ -49,6 +49,13 @@ REQUIRED = frozenset({
     "oresforge_static_facts_v0_negative",
     "oresforge_static_facts_v0_real_compiler",
     "forge_wrapper_option_host_conformance",
+    "oresforge_cli_atto_guest",
+    "oresforge_cli_legacy_ores_guest",
+    "oresforge_project_root_resolver_host_only",
+    "value_boundary_admission",
+    "numeric_reference_and_capability_admission",
+    "refinement_admission",
+    "agent_model_dispatch_host_fencing_v1",
 })
 
 LINUX_X86_REQUIRED = frozenset({
