@@ -118,15 +118,23 @@ if(BUILD_TESTING)
   add_test(NAME oresforge_legacy_operator_grammar
     COMMAND oresforge_legacy_operator_grammar)
   set_tests_properties(oresforge_legacy_operator_grammar PROPERTIES TIMEOUT 15)
-  # Stage-0 single-file AttoLang path admission. Imports remain fail-closed in Forge.
+  # Stage-0 single-file AttoLang path admission. Imports remain fail-closed.
+  # PASS_REGULAR_EXPRESSION can mask a nonzero process exit in CTest. Use the
+  # same strict exit/stdout/stderr verifier as the declarative export fixtures.
   add_test(NAME oresforge_cli_atto_guest
-    COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.atto")
-  set_tests_properties(oresforge_cli_atto_guest PROPERTIES
-    PASS_REGULAR_EXPRESSION "^14\n?$" TIMEOUT 10)
+    COMMAND "${CMAKE_COMMAND}"
+      "-DCOMPILER=$<TARGET_FILE:oresforge>"
+      "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.atto"
+      "-DEXPECT=14"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/verification/assert-export-acceptance.cmake")
+  set_tests_properties(oresforge_cli_atto_guest PROPERTIES TIMEOUT 15)
   add_test(NAME oresforge_cli_legacy_ores_guest
-    COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.ores")
-  set_tests_properties(oresforge_cli_legacy_ores_guest PROPERTIES
-    PASS_REGULAR_EXPRESSION "^14\n?$" TIMEOUT 10)
+    COMMAND "${CMAKE_COMMAND}"
+      "-DCOMPILER=$<TARGET_FILE:oresforge>"
+      "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.ores"
+      "-DEXPECT=14"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/verification/assert-export-acceptance.cmake")
+  set_tests_properties(oresforge_cli_legacy_ores_guest PROPERTIES TIMEOUT 15)
   add_executable(oresforge_generator_frame_v1 verification/generator_frame_v1_test.cpp)
   target_link_libraries(oresforge_generator_frame_v1 PRIVATE oresforge_core)
   target_compile_features(oresforge_generator_frame_v1 PRIVATE cxx_std_20)
