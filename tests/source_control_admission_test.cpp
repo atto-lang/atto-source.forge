@@ -1,4 +1,6 @@
 #include "compiler/source_utf8.hpp"
+#include "compiler/frontend.hpp"
+#include "compiler/call_native.hpp"
 #include <stdexcept>
 #include <string>
 #include <string_view>
