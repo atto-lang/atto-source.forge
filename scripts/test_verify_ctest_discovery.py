@@ -15,7 +15,7 @@ SCRIPT = Path(__file__).with_name("verify_ctest_discovery.py")
 
 
 class DiscoveryGateTests(unittest.TestCase):
-    def configure(self, names):
+    def configure(self, names, *, policy=None, missing_executable=None):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         directory = Path(temporary.name)
@@ -24,7 +24,13 @@ class DiscoveryGateTests(unittest.TestCase):
         src.mkdir()
         source = "cmake_minimum_required(VERSION 3.20)\nproject(TestInventory NONE)\nenable_testing()\n"
         for name in sorted(names):
-            source += f"add_test(NAME {name} COMMAND ${{CMAKE_COMMAND}} -E true)\n"
+            if name == missing_executable:
+                source += f"add_test(NAME {name} COMMAND ./never-created-binary)\n"
+            else:
+                source += f"add_test(NAME {name} COMMAND ${{CMAKE_COMMAND}} -E true)\n"
+            if name == "oresforge_unit" and policy is not None:
+                prop, value = policy
+                source += f"set_tests_properties({name} PROPERTIES {prop} {value})\n"
         (src / "CMakeLists.txt").write_text(source, encoding="utf-8")
         proc = subprocess.run(["cmake", "-S", str(src), "-B", str(build)], capture_output=True, text=True)
         self.assertEqual(proc.returncode, 0, proc.stderr)
@@ -55,6 +61,35 @@ class DiscoveryGateTests(unittest.TestCase):
         self.assertEqual(out.returncode, 1)
         self.assertIn("CTEST_DISCOVERY_MISSING", out.stderr)
 
+    def test_real_ctest_skip_and_inverted_result_are_rejected(self):
+        for prop, value in (
+            ("DISABLED", "TRUE"),
+            ("SKIP_RETURN_CODE", "0"),
+            ("SKIP_REGULAR_EXPRESSION", "skip"),
+            ("WILL_FAIL", "TRUE"),
+        ):
+            with self.subTest(property=prop):
+                build = self.configure(REQUIRED | LINUX_X86_REQUIRED, policy=(prop, value))
+                output = self.cli(build)
+                self.assertEqual(output.returncode, 1, output.stdout)
+                self.assertIn("CTEST_DISCOVERY_SKIP_POLICY", output.stderr)
+                self.assertIn(prop, output.stderr)
+
+    def test_real_ctest_registration_with_unbuilt_executable_is_rejected(self):
+        build = self.configure(REQUIRED | LINUX_X86_REQUIRED,
+                               missing_executable="oresforge_unit")
+        # CTest JSON lists names even for missing binaries; the command is
+        # absent, and a name-only check would incorrectly treat it as ready.
+        raw = subprocess.run(["ctest", "--test-dir", str(build), "--show-only=json-v1"],
+                             capture_output=True, text=True)
+        self.assertEqual(raw.returncode, 0)
+        entry = next(item for item in json.loads(raw.stdout)["tests"]
+                     if item["name"] == "oresforge_unit")
+        self.assertNotIn("command", entry)
+        output = self.cli(build)
+        self.assertEqual(output.returncode, 1, output.stdout)
+        self.assertIn("CTEST_DISCOVERY_NO_EXECUTABLE: oresforge_unit", output.stderr)
+
     def test_duplicate_names_are_rejected(self):
         with self.assertRaisesRegex(ValueError, "CTEST_DISCOVERY_DUPLICATE"):
             verify_inventory({"tests": [{"name": "oresforge_unit"}, {"name": "oresforge_unit"}]}, linux_x86=False)
@@ -66,7 +101,7 @@ class DiscoveryGateTests(unittest.TestCase):
                 verify_inventory(data, linux_x86=False)
 
     def test_host_only_critical_set_stays_enforced(self):
-        names = [{"name": n} for n in REQUIRED]
+        names = [{"name": n, "command": ["/usr/bin/true"]} for n in REQUIRED]
         self.assertEqual(verify_inventory({"tests": names}, linux_x86=False), (len(REQUIRED), len(REQUIRED)))
         with self.assertRaisesRegex(ValueError, "CTEST_DISCOVERY_MISSING"):
             verify_inventory({"tests": names}, linux_x86=True)
