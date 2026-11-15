@@ -11,7 +11,7 @@ add_executable(oresforge compiler/main.cpp)
 target_link_libraries(oresforge PRIVATE oresforge_core)
 include(CTest)
 if(BUILD_TESTING)
-  foreach(export_positive top bottom package)
+  foreach(export_positive top bottom package name-256)
     add_test(NAME oresforge_declarative_export_${export_positive}
       COMMAND "${CMAKE_COMMAND}"
         "-DCOMPILER=$<TARGET_FILE:oresforge>"
@@ -42,6 +42,16 @@ if(BUILD_TESTING)
     set_tests_properties(oresforge_declarative_export_reject_${export_negative}
       PROPERTIES TIMEOUT 15)
   endforeach()
+  # The canonical atto.exports.v1 export-name field admits at most 256 bytes.
+  # Keep the exact command-line diagnostic under CTest, not only unit tests.
+  add_test(NAME oresforge_declarative_export_reject_name_257
+    COMMAND "${CMAKE_COMMAND}"
+      "-DCOMPILER=$<TARGET_FILE:oresforge>"
+      "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/declarative-exports/name-257.atto"
+      "-DEXPECT=EXPORT_NAME_TOO_LONG at byte 272"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/verification/assert-export-rejection.cmake")
+  set_tests_properties(oresforge_declarative_export_reject_name_257
+    PROPERTIES TIMEOUT 15)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   set(ORE_NUMERIC_I64_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated_numeric_i64_cases.hpp")
   add_custom_command(
