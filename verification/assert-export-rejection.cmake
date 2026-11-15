@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
-# Rejections are verified by expected diagnostics, not just by nonzero exit.
-# Missing executables, timeouts, crashes, and unexpected success are failures.
+# A compiler rejection must be a single expected error, not an incidental
+# nonzero status, crash, or substring buried in unrelated diagnostic output.
 foreach(required IN ITEMS COMPILER SOURCE EXPECT)
   if(NOT DEFINED ${required} OR "${${required}}" STREQUAL "")
     message(FATAL_ERROR "EXPORT_REJECTION_MISSING_ARGUMENT: ${required}")
@@ -12,12 +12,13 @@ execute_process(
   OUTPUT_VARIABLE stdout
   ERROR_VARIABLE stderr
   TIMEOUT 10)
-if(NOT "${result}" MATCHES "^[0-9]+$" OR result EQUAL 0 OR result GREATER 125)
-  message(FATAL_ERROR "EXPORT_REJECTION_INVALID_EXIT: expected compiler rejection (1..125), received '${result}'\n${stdout}\n${stderr}")
+if(NOT "${result}" STREQUAL "1")
+  message(FATAL_ERROR "EXPORT_REJECTION_INVALID_EXIT: expected exactly 1, received '${result}'\n${stdout}\n${stderr}")
 endif()
-set(output "${stdout}\n${stderr}")
-string(FIND "${output}" "${EXPECT}" expected_position)
-if(expected_position EQUAL -1)
-  message(FATAL_ERROR "EXPORT_REJECTION_WRONG_DIAGNOSTIC: expected ${EXPECT}, exit ${result}\n${output}")
+if(NOT "${stdout}" STREQUAL "")
+  message(FATAL_ERROR "EXPORT_REJECTION_STDOUT: unexpected stdout\n${stdout}")
+endif()
+if(NOT "${stderr}" STREQUAL "oresforge: ${EXPECT}\n")
+  message(FATAL_ERROR "EXPORT_REJECTION_WRONG_DIAGNOSTIC: expected exactly '${EXPECT}'\n${stderr}")
 endif()
 message(STATUS "EXPORT_REJECTION_VERIFIED: ${EXPECT}")
