@@ -19,6 +19,9 @@ inline void validate_utf8(std::string_view text) {
   for (std::size_t i=0; i<text.size();) {
     const auto lead=static_cast<unsigned char>(text[i]);
     if (lead==0) throw invalid_source_byte("source contains NUL byte", i);
+    // Raw terminal controls must never disappear inside ignored comments/literals.
+    if (lead==0x1b || lead==0x7f)
+      throw invalid_source_byte("source contains terminal control", i);
     if (lead<=0x7f) { ++i; continue; }
     std::size_t following=0;
     unsigned char low=0x80, high=0xbf;
