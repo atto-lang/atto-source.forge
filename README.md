@@ -37,7 +37,7 @@ Build the independent primitive tests with `cmake -S . -B build -DATTO_FORGE_SAN
 
 ## Restricted compiled scalar .atto guest (stacked prototype)
 
-`python tools/forge_scalar.py fixtures/scalar-v1/arithmetic.atto -o /tmp/atto-scalar.cpp` parses a restricted single-`main` `.atto` function with a single `return` expression of signed 64-bit decimal literals, parentheses, unary +/- and binary +, -, *. It emits deterministic C++20 that uses Forge's `checked_i64.hpp` helpers, prints the resulting signed value followed by a newline and exits 0. Checked overflow emits `E_OVERFLOW` to stderr and exits 70. Unsupported language syntax fails before emitting code (exit 2).
+`python tools/forge_scalar.py fixtures/scalar-v1/arithmetic.atto -o /tmp/atto-scalar.cpp` parses a restricted single-`main` `.atto` function with a single `return` expression of signed 64-bit decimal literals, parentheses, unary +/- and binary +, -, *. It emits deterministic C++20 that uses Forge's `checked_i64.hpp` helpers, prints the resulting signed value followed by a newline and exits 0. Checked overflow emits `E_OVERFLOW` to stderr and exits 70. Unsupported language syntax fails before emitting code (exit 2). The compiler removes any previous output artifact before parsing, refuses source/output aliases, and atomically publishes complete output to avoid stale or partial generated C++ after failure.
 
 Build a native guest with `c++ -std=c++20 -I include /tmp/atto-scalar.cpp -o /tmp/atto-scalar && /tmp/atto-scalar`. Use `CXX=clang++ python -m unittest discover -s tests -p test_scalar_compiler.py -v` for compiler-produced guest execution with ASan/UBSan; the CI matrix also uses GCC.
 
