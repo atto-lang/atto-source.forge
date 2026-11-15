@@ -42,6 +42,22 @@ if(BUILD_TESTING)
     set_tests_properties(oresforge_declarative_export_reject_${export_negative}
       PROPERTIES TIMEOUT 15)
   endforeach()
+  # Stage-0 does not implement nominal class/actor/enum export ABI.
+  # Assert the exact compiler-owned error, not a generic parser failure,
+  # signal/crash, or unrelated stdout.
+  foreach(unsupported_export_case IN ITEMS "class|16" "actor|11" "enum|11")
+    string(REPLACE "|" ";" unsupported_export_parts "${unsupported_export_case}")
+    list(GET unsupported_export_parts 0 unsupported_kind)
+    list(GET unsupported_export_parts 1 unsupported_offset)
+    add_test(NAME oresforge_declarative_export_reject_unsupported_${unsupported_kind}
+      COMMAND "${CMAKE_COMMAND}"
+        "-DCOMPILER=$<TARGET_FILE:oresforge>"
+        "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/declarative-exports/unsupported-${unsupported_kind}.atto"
+        "-DEXPECT=EXPORT_KIND_UNSUPPORTED: Forge stage-0 supports only fnc export targets at byte ${unsupported_offset}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/verification/assert-export-rejection.cmake")
+    set_tests_properties(oresforge_declarative_export_reject_unsupported_${unsupported_kind}
+      PROPERTIES TIMEOUT 15)
+  endforeach()
   # The canonical atto.exports.v1 export-name field admits at most 256 bytes.
   # Keep the exact command-line diagnostic under CTest, not only unit tests.
   add_test(NAME oresforge_declarative_export_reject_name_257
