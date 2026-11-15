@@ -48,6 +48,10 @@ void verify(const Program& p) {
   if (p.file_exports.size() > 1024) throw std::runtime_error("EXPORT_SOURCE_LIMIT");
   std::unordered_set<std::string> seen_exports;
   for (const auto& item : p.file_exports) {
+    // The atto.exports.v1 wire name limit is 256 bytes. Enforce it for
+    // direct IR callers as well as compiler-produced source metadata.
+    if (item.name.size() > 256)
+      throw std::runtime_error("EXPORT_NAME_TOO_LONG");
     // Keep the IR boundary's identifier grammar locale-independent.
     bool valid = !item.name.empty();
     for (std::size_t i=0; i<item.name.size() && valid; ++i) {
