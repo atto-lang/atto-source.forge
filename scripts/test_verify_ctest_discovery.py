@@ -24,7 +24,7 @@ class DiscoveryGateTests(unittest.TestCase):
         src.mkdir()
         source = "cmake_minimum_required(VERSION 3.20)\nproject(TestInventory NONE)\nenable_testing()\n"
         for name in sorted(names):
-            source += f"add_test(NAME {name} COMMAND ${CMAKE_COMMAND} -E true)\n"
+            source += f"add_test(NAME {name} COMMAND ${{CMAKE_COMMAND}} -E true)\n"
         (src / "CMakeLists.txt").write_text(source, encoding="utf-8")
         proc = subprocess.run(["cmake", "-S", str(src), "-B", str(build)], capture_output=True, text=True)
         self.assertEqual(proc.returncode, 0, proc.stderr)
