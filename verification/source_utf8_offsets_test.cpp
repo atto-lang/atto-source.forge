@@ -20,6 +20,23 @@ int main() {
   validate_utf8("");
   validate_utf8("pub fnc main(): int { return 42; }");
   validate_utf8("/* café 😀 */");
+  // Shared source-input-admission-v1 boundary vectors. Host-only.
+  validate_utf8(std::string("\\xF4\\x8F\\xBF\\xBF", 4)); // U+10FFFF
+  validate_utf8(std::string("e\\xCC\\x81", 3)); // combining mark
+  reject(std::string("\\0", 1), "source contains NUL byte at byte offset 0");
+  reject(std::string("\\"a\\0\\"", 4),
+         "source contains NUL byte at byte offset 2");
+  reject(std::string("/* café */\\0", 13),
+         "source contains NUL byte at byte offset 12");
+  reject(std::string("\\xE0\\x80\\x80", 3),
+         "source is not valid UTF-8 at byte offset 1");
+  reject(std::string("\\xC0\\xAF", 2),
+         "source is not valid UTF-8 at byte offset 0");
+  reject(std::string("a\\x80", 2),
+         "source is not valid UTF-8 at byte offset 1");
+  reject(std::string("x\\xF0\\x90\\x80", 4),
+         "source is not valid UTF-8 at byte offset 1");
+
   reject(std::string("a\n/*\0*/", 7),
          "source contains NUL byte at byte offset 4");
   reject(std::string("\xC0\x80", 2),
