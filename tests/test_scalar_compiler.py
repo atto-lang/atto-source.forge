@@ -105,6 +105,59 @@ class ForgeScalarCompilerTests(unittest.TestCase):
                     self.assertFalse(output_path.exists())
                     self.assertIn("Forge scalar compile error:", completed.stderr)
 
+    def test_failed_compilation_never_leaves_stale_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            source = folder / "input.atto"
+            output = folder / "output.cpp"
+            output.write_text("STALE DANGEROUS OUTPUT", encoding="utf-8")
+            source.write_text("fnc main(): int { return 1 / 0; }", encoding="utf-8")
+            bad = subprocess.run(
+                [sys.executable, str(ROOT / "tools/forge_scalar.py"),
+                 str(source), "-o", str(output)],
+                capture_output=True, text=True, check=False)
+            self.assertEqual(bad.returncode, 2)
+            self.assertFalse(output.exists(), "failed compiler must clear stale artifact")
+            output.write_text("STALE", encoding="utf-8")
+            source.unlink()
+            missing = subprocess.run(
+                [sys.executable, str(ROOT / "tools/forge_scalar.py"),
+                 str(source), "-o", str(output)],
+                capture_output=True, text=True, check=False)
+            self.assertEqual(missing.returncode, 2)
+            self.assertFalse(output.exists(), "missing source must clear stale artifact")
+
+    def test_source_output_alias_is_rejected_without_destroying_input(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "program.atto"
+            original = "fnc main(): int { return 7; }"
+            source.write_text(original, encoding="utf-8")
+            cmd = [sys.executable, str(ROOT / "tools/forge_scalar.py"),
+                   str(source), "-o", str(source)]
+            bad = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            self.assertEqual(bad.returncode, 2)
+            self.assertIn("E_OUTPUT", bad.stderr)
+            self.assertEqual(source.read_text(encoding="utf-8"), original)
+            alias = Path(directory) / "alias.atto"
+            alias.symlink_to(source)
+            bad = subprocess.run(
+                [sys.executable, str(ROOT / "tools/forge_scalar.py"),
+                 str(source), "-o", str(alias)],
+                capture_output=True, text=True, check=False)
+            self.assertEqual(bad.returncode, 2)
+            self.assertEqual(source.read_text(encoding="utf-8"), original)
+
+    def test_checked_in_fixture_files_execute_as_real_guests(self):
+        arithmetic = (ROOT / "fixtures/scalar-v1/arithmetic.atto").read_text()
+        overflow = (ROOT / "fixtures/scalar-v1/overflow.atto").read_text()
+        frontend, guest = run_guest(arithmetic)
+        self.assertEqual(frontend.returncode, 0, frontend.stderr)
+        self.assertEqual((guest.returncode, guest.stdout), (0, "34\n"))
+        frontend, guest = run_guest(overflow)
+        self.assertEqual(frontend.returncode, 0, frontend.stderr)
+        self.assertEqual((guest.returncode, guest.stdout, guest.stderr),
+                         (70, "", "E_OVERFLOW\n"))
+
     def test_generated_cpp_is_deterministic(self):
         source = "fnc main(): int { return 10 * (4 + 2); }"
         first = forge_scalar.compile_source(source)
