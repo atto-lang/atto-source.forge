@@ -20,6 +20,22 @@ int main() {
   validate_utf8("");
   validate_utf8("pub fnc main(): int { return 42; }");
   validate_utf8("/* café 😀 */");
+
+  // Source-terminal-controls-v1 is a raw byte check, including trivia.
+  reject(std::string("/* \x1b */", 7),
+         "source contains terminal control at byte offset 3");
+  reject(std::string("// \x7f\n", 5),
+         "source contains terminal control at byte offset 3");
+  reject(std::string("/* caf\xc3\xa9 */\x7f", 12),
+         "source contains terminal control at byte offset 11");
+  reject(std::string("x\r\n\x1b", 4),
+         "source contains terminal control at byte offset 3");
+  reject(std::string("\x1b\0", 2),
+         "source contains terminal control at byte offset 0");
+  reject(std::string("\0\x7f", 2),
+         "source contains NUL byte at byte offset 0");
+  validate_utf8(std::string("\"\\u001b\"", 8)); // visible ASCII escape
+
   // Shared source-input-admission-v1 boundary vectors. Host-only.
   validate_utf8(std::string("\xF4\x8F\xBF\xBF", 4)); // U+10FFFF
   validate_utf8(std::string("e\xCC\x81", 3)); // combining mark
