@@ -1,0 +1,21 @@
+cmake_minimum_required(VERSION 3.20)
+project(atto_forge_checked_i64 LANGUAGES CXX)
+
+include(CTest)
+option(ATTO_FORGE_SANITIZERS "Use ASan and UBSan for native tests" ON)
+
+add_library(atto_forge_checked_i64 INTERFACE)
+target_include_directories(atto_forge_checked_i64 INTERFACE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_features(atto_forge_checked_i64 INTERFACE cxx_std_20)
+
+add_executable(checked_i64_test tests/checked_i64.cpp)
+target_link_libraries(checked_i64_test PRIVATE atto_forge_checked_i64)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(checked_i64_test PRIVATE -Wall -Wextra -Werror -pedantic)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(checked_i64_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(checked_i64_test PRIVATE -fsanitize=address,undefined)
+  endif()
+endif()
+add_test(NAME checked_i64_test COMMAND checked_i64_test)
