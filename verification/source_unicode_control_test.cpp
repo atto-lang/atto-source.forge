@@ -11,6 +11,7 @@ int main() {
     constexpr std::string_view safe = "pub fnc main(): int { return 42; }";
     oresforge::source::validate_utf8("/* café */ pub fnc main(): int { return 42; }");
     (void)oresforge::parse_source(safe);
+    (void)oresforge::parse_source("/* café */ pub fnc main(): int { return 42; }");
     constexpr std::array<std::string_view,15> forbidden{{
       "\xC2\x85", "\xD8\x9C", "\xE2\x80\x8E",
       "\xE2\x80\x8F", "\xE2\x80\xA8", "\xE2\x80\xA9",
