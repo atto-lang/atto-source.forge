@@ -294,8 +294,11 @@ class Parser {
     expect("export");expect("pub");
     bool package_only=false;
     if (take("[")) {expect("pkg");expect("]");package_only=true;}
-    // Only scalar fnc is lowered by Forge stage-0. Class targets still
-    // fail in the lexer because native class/actor ownership is absent.
+    // Nominal class/actor/enum declarations are not lowered by the stage-0
+    // scalar compiler. Reject their export kind explicitly rather than
+    // interpreting the keyword as an exported function name.
+    if (tok_.text=="class" || tok_.text=="actor" || tok_.text=="enum")
+      error("EXPORT_KIND_UNSUPPORTED: Forge stage-0 supports only fnc export targets");
     take("fnc");
     const auto name=identifier();
     // Reject noncanonical export names before resolution, inlining or IR
