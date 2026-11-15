@@ -170,7 +170,7 @@ def main(argv=None) -> int:
     staged = None
     try:
         # Never truncate an input even if -o aliases it via a relative path or symlink.
-        if args.source.resolve(strict=True) == args.output.resolve():
+        if args.source.resolve() == args.output.resolve():
             raise SourceError("E_OUTPUT: source and destination must differ")
         # Remove a prior artifact *before* parsing. A failed compile must not
         # leave an old executable-looking C++ file available for downstream use.
