@@ -15,7 +15,7 @@ SCRIPT = Path(__file__).with_name("verify_ctest_discovery.py")
 
 
 class DiscoveryGateTests(unittest.TestCase):
-    def configure(self, names, *, policy=None, missing_executable=None):
+    def configure(self, names, *, policy=None, missing_executable=None, exit_nonzero=None):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         directory = Path(temporary.name)
@@ -26,6 +26,8 @@ class DiscoveryGateTests(unittest.TestCase):
         for name in sorted(names):
             if name == missing_executable:
                 source += f"add_test(NAME {name} COMMAND ./never-created-binary)\n"
+            elif name == exit_nonzero:
+                source += f'add_test(NAME {name} COMMAND /bin/sh -c "echo 14; exit 7")\n'
             else:
                 source += f"add_test(NAME {name} COMMAND ${{CMAKE_COMMAND}} -E true)\n"
             if name == "oresforge_unit" and policy is not None:
@@ -67,6 +69,7 @@ class DiscoveryGateTests(unittest.TestCase):
             ("SKIP_RETURN_CODE", "0"),
             ("SKIP_REGULAR_EXPRESSION", "skip"),
             ("WILL_FAIL", "TRUE"),
+            ("PASS_REGULAR_EXPRESSION", "14"),
         ):
             with self.subTest(property=prop):
                 build = self.configure(REQUIRED | LINUX_X86_REQUIRED, policy=(prop, value))
@@ -74,6 +77,21 @@ class DiscoveryGateTests(unittest.TestCase):
                 self.assertEqual(output.returncode, 1, output.stdout)
                 self.assertIn("CTEST_DISCOVERY_SKIP_POLICY", output.stderr)
                 self.assertIn(prop, output.stderr)
+
+    @unittest.skipUnless(sys.platform == "linux", "shell reproduction runs on Linux CI")
+    def test_regex_can_mark_nonzero_exit_success_and_gate_rejects_it(self):
+        build = self.configure(REQUIRED | LINUX_X86_REQUIRED,
+                               policy=("PASS_REGULAR_EXPRESSION", "14"),
+                               exit_nonzero="oresforge_unit")
+        fooled = subprocess.run(
+            ["ctest", "--test-dir", str(build), "-R", "^oresforge_unit$", "--output-on-failure"],
+            capture_output=True, text=True)
+        self.assertEqual(fooled.returncode, 0, fooled.stdout + fooled.stderr)
+        self.assertIn("100% tests passed", fooled.stdout)
+        result = self.cli(build)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("CTEST_DISCOVERY_SKIP_POLICY", result.stderr)
+        self.assertIn("PASS_REGULAR_EXPRESSION", result.stderr)
 
     def test_real_ctest_registration_with_unbuilt_executable_is_rejected(self):
         build = self.configure(REQUIRED | LINUX_X86_REQUIRED,
