@@ -24,19 +24,20 @@ if(BUILD_TESTING)
   # Nonzero status alone is insufficient: a crash, missing compiler, or unrelated
   # parser error must never satisfy the negative export-admission tests.
   set(export_rejection_cases
-    "missing|EXPORT_UNBOUND"
-    "duplicate|EXPORT_DUPLICATE"
-    "visibility-conflict|EXPORT_VISIBILITY_CONFLICT"
-    "pkg-entry|EXPORT_PACKAGE_ENTRY_UNSUPPORTED")
+    "missing|EXPORT_UNBOUND|Missing"
+    "duplicate|EXPORT_DUPLICATE|helper"
+    "visibility-conflict|EXPORT_VISIBILITY_CONFLICT|helper"
+    "pkg-entry|EXPORT_PACKAGE_ENTRY_UNSUPPORTED|main")
   foreach(export_rejection_case IN LISTS export_rejection_cases)
     string(REPLACE "|" ";" export_parts "${export_rejection_case}")
     list(GET export_parts 0 export_negative)
-    list(GET export_parts 1 export_expected)
+    list(GET export_parts 1 export_diagnostic)
+    list(GET export_parts 2 export_symbol)
     add_test(NAME oresforge_declarative_export_reject_${export_negative}
       COMMAND "${CMAKE_COMMAND}"
         "-DCOMPILER=$<TARGET_FILE:oresforge>"
         "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/declarative-exports/${export_negative}.atto"
-        "-DEXPECT=${export_expected}"
+        "-DEXPECT=${export_diagnostic}: ${export_symbol}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/verification/assert-export-rejection.cmake")
     set_tests_properties(oresforge_declarative_export_reject_${export_negative}
       PROPERTIES TIMEOUT 15)
