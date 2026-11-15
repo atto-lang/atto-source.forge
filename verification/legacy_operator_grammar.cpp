@@ -20,6 +20,13 @@ void reject(std::string_view program,std::string_view expected) {
   }
   throw std::runtime_error("legacy operator silently accepted");
 }
+void not_ownership(std::string_view program) {
+  try { (void)oresforge::parse_source(program); }
+  catch(const std::exception& e) {
+    if(std::string(e.what()).find("OWNERSHIP_BANG_BACKEND_UNSUPPORTED")!=std::string::npos)
+      throw std::runtime_error("atomic !eq misclassified as an ownership bang");
+  }
+}
 }
 int main() {
   try {
@@ -48,11 +55,14 @@ int main() {
            "OWNERSHIP_BANG_BACKEND_UNSUPPORTED");
     reject("pub fnc main(): int { return share! foo; }",
            "OWNERSHIP_BANG_BACKEND_UNSUPPORTED");
+    reject("pub fnc main(): int { return copy!eqfoo; }",
+           "OWNERSHIP_BANG_BACKEND_UNSUPPORTED");
+    not_ownership("pub fnc main(): int { return copy!eq foo; }");
     reject("pub fnc main(): int { return rt borrow mut foo; }",
            "runtime ownership operation requires typed lowering in Forge");
     reject("pub fnc main(): int { return rt mut borrow foo; }",
            "runtime ownership operation requires typed lowering in Forge");
-    std::cout<<"FORGE_LEGACY_OPERATOR_GRAMMAR_PASS positive=4 negative=14\n";
+    std::cout<<"FORGE_LEGACY_OPERATOR_GRAMMAR_PASS positive=4 negative=15 atomic-neq=1\n";
     return 0;
   }catch(const std::exception& e){
     std::cerr<<"FORGE_LEGACY_OPERATOR_GRAMMAR_FAIL "<<e.what()<<"\n";
