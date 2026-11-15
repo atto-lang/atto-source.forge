@@ -78,6 +78,26 @@ def verify_inventory(payload: object, *, linux_x86: bool) -> tuple[int, int]:
         names.append(item["name"])
     if len(names) != len(set(names)):
         raise ValueError("CTEST_DISCOVERY_DUPLICATE: test names are not unique")
+    # CTest's JSON inventory can include a test with NO executable when its
+    # target was never built. It also lists tests marked disabled or configured
+    # to skip or invert failure. Counting those as executed gates is unsafe.
+    disallowed = {"DISABLED", "SKIP_RETURN_CODE", "SKIP_REGULAR_EXPRESSION", "WILL_FAIL"}
+    for item in tests:
+        name = item["name"]
+        command = item.get("command")
+        if (not isinstance(command, list) or not command or
+                not all(isinstance(arg, str) for arg in command) or
+                not command[0]):
+            raise ValueError("CTEST_DISCOVERY_NO_EXECUTABLE: " + name)
+        properties = item.get("properties", [])
+        if not isinstance(properties, list):
+            raise ValueError("CTEST_DISCOVERY_MALFORMED: invalid test properties")
+        for prop in properties:
+            if not isinstance(prop, dict) or not isinstance(prop.get("name"), str):
+                raise ValueError("CTEST_DISCOVERY_MALFORMED: invalid test property")
+            if prop["name"] in disallowed:
+                raise ValueError("CTEST_DISCOVERY_SKIP_POLICY: " + name +
+                                 " has " + prop["name"])
     required = REQUIRED | (LINUX_X86_REQUIRED if linux_x86 else frozenset())
     missing = sorted(required - set(names))
     if missing:
