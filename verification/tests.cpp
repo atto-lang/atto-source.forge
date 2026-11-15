@@ -766,6 +766,26 @@ int main() {
     Program missing;
     missing.instructions={{Op::Constant,3}};
     reject([&] { verify(missing); });
+    // IR consumers must not bypass parser-validated export authorities by
+    // manufacturing Program metadata for the JIT or native codegen.
+    Program export_metadata;
+    export_metadata.instructions={{Op::Constant,42},{Op::Return,0,0,-1}};
+    export_metadata.file_exports={{"api",false}};
+    ensure(interpret(export_metadata)==42,"valid direct IR public export");
+    export_metadata.file_exports={{"main",true}};
+    reject_diagnostic([&] { verify(export_metadata); },
+                      "EXPORT_PACKAGE_ENTRY_UNSUPPORTED");
+    export_metadata.file_exports={{"api",false},{"api",true}};
+    reject_diagnostic([&] { verify(export_metadata); },
+                      "EXPORT_DUPLICATE");
+    for (const auto& bad_name : {"", "1api", "bad-name"}) {
+      export_metadata.file_exports={{bad_name,false}};
+      reject_diagnostic([&] { verify(export_metadata); },
+                        "EXPORT_INVALID_NAME");
+    }
+    export_metadata.file_exports.assign(1025,FileExport{"api",false});
+    reject_diagnostic([&] { verify(export_metadata); },
+                      "EXPORT_SOURCE_LIMIT");
     ensure(dump_ir(source("2+3*4")).find("mul.i64.checked")!=std::string::npos,"IR dump");
     ensure(emit_asm(source("2+3*4"),Arch::X86_64).find("movabs $14")!=std::string::npos,"x86_64 asm");
     ensure(emit_asm(source("2+3*4"),Arch::ARM64).find("movz x0, #14")!=std::string::npos,"arm64 asm");
