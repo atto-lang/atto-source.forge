@@ -772,6 +772,25 @@ int main() {
     export_metadata.instructions={{Op::Constant,42},{Op::Return,0,0,-1}};
     export_metadata.file_exports={{"api",false}};
     ensure(interpret(export_metadata)==42,"valid direct IR public export");
+    // Match the 256-byte atto.exports.v1 symbol name limit in parser and IR.
+    const std::string max_export_name(256,'n');
+    const std::string long_export_name(257,'n');
+    export_metadata.file_exports={{max_export_name,false}};
+    ensure(interpret(export_metadata)==42,"maximal canonical IR export name");
+    export_metadata.file_exports={{long_export_name,false}};
+    reject_diagnostic([&] { verify(export_metadata); }, "EXPORT_NAME_TOO_LONG");
+    const auto long_export_source =
+      "export pub fnc "+long_export_name+"; fnc "+long_export_name+
+      "():int{return 42;} fnc main():int{return 42;}";
+    reject_diagnostic([&] { (void)parse_source(long_export_source); },
+                      "EXPORT_NAME_TOO_LONG");
+    reject_diagnostic([&] { (void)parse_runtime_source(long_export_source); },
+                      "EXPORT_NAME_TOO_LONG");
+    const auto max_export_source =
+      "export pub fnc "+max_export_name+"; fnc "+max_export_name+
+      "():int{return 42;} fnc main():int{return "+max_export_name+"();}";
+    ensure(interpret(parse_source(max_export_source))==42,
+           "maximal canonical source export name");
     export_metadata.file_exports={{"main",true}};
     reject_diagnostic([&] { verify(export_metadata); },
                       "EXPORT_PACKAGE_ENTRY_UNSUPPORTED");
