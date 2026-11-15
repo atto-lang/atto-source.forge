@@ -167,14 +167,35 @@ def main(argv=None) -> int:
     parser.add_argument("source", type=Path)
     parser.add_argument("-o", "--output", type=Path, required=True)
     args = parser.parse_args(argv)
+    staged = None
     try:
+        # Never truncate an input even if -o aliases it via a relative path or symlink.
+        if args.source.resolve(strict=True) == args.output.resolve():
+            raise SourceError("E_OUTPUT: source and destination must differ")
+        # Remove a prior artifact *before* parsing. A failed compile must not
+        # leave an old executable-looking C++ file available for downstream use.
+        args.output.unlink(missing_ok=True)
         if args.source.stat().st_size > MAX_SOURCE_BYTES:
             raise SourceError("E_SOURCE_LIMIT: source exceeds 16 KiB")
         code = compile_source(args.source.read_text(encoding="utf-8"))
-        args.output.write_text(code, encoding="utf-8", newline="\n")
+        # Publish only complete output; a failed write cannot leave partial code.
+        import os
+        import tempfile
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", newline="\n",
+            prefix=".atto-forge-", suffix=".tmp",
+            dir=args.output.parent, delete=False
+        ) as stream:
+            staged = Path(stream.name)
+            stream.write(code)
+        os.replace(staged, args.output)
+        staged = None
     except (SourceError, OSError, UnicodeError) as error:
         print(f"Forge scalar compile error: {error}", file=sys.stderr)
         return 2
+    finally:
+        if staged is not None:
+            staged.unlink(missing_ok=True)
     return 0
 
 
