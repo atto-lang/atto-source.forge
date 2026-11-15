@@ -33,16 +33,16 @@ inline void validate_utf8(std::string_view text) {
     }
         // Trojan Source: reject bidi marks/overrides/isolates even in comments.
         // The UTF-8 sequence is already validated above.
-        if ((lead == 0xd8 && static_cast<unsigned char>(source[i + 1]) == 0x9c) ||
+        if ((lead == 0xd8 && static_cast<unsigned char>(text[i + 1]) == 0x9c) ||
             (lead == 0xe2 &&
-              ((static_cast<unsigned char>(source[i + 1]) == 0x80 &&
-                 (static_cast<unsigned char>(source[i + 2]) == 0x8e ||
-                  static_cast<unsigned char>(source[i + 2]) == 0x8f ||
-                  (static_cast<unsigned char>(source[i + 2]) >= 0xaa &&
-                   static_cast<unsigned char>(source[i + 2]) <= 0xae))) ||
-               (static_cast<unsigned char>(source[i + 1]) == 0x81 &&
-                static_cast<unsigned char>(source[i + 2]) >= 0xa6 &&
-                static_cast<unsigned char>(source[i + 2]) <= 0xa9))))
+              ((static_cast<unsigned char>(text[i + 1]) == 0x80 &&
+                 (static_cast<unsigned char>(text[i + 2]) == 0x8e ||
+                  static_cast<unsigned char>(text[i + 2]) == 0x8f ||
+                  (static_cast<unsigned char>(text[i + 2]) >= 0xaa &&
+                   static_cast<unsigned char>(text[i + 2]) <= 0xae))) ||
+               (static_cast<unsigned char>(text[i + 1]) == 0x81 &&
+                static_cast<unsigned char>(text[i + 2]) >= 0xa6 &&
+                static_cast<unsigned char>(text[i + 2]) <= 0xa9))))
             throw std::runtime_error("source contains bidirectional Unicode control");
     i+=following+1;
   }
