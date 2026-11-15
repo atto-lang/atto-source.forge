@@ -1,5 +1,4 @@
 #include "compiler/source_utf8.hpp"
-#include <cassert>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -10,10 +9,11 @@ static void reject(const std::string& bytes, std::string_view expected) {
   try {
     validate_utf8(bytes);
   } catch (const std::runtime_error& error) {
-    assert(std::string_view(error.what()) == expected);
+    if (std::string_view(error.what()) != expected)
+      throw std::runtime_error("unexpected admission error: " + std::string(error.what()));
     return;
   }
-  assert(false && "invalid source was admitted");
+  throw std::runtime_error("invalid source was admitted");
 }
 
 int main() {
