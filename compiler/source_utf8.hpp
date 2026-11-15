@@ -1,5 +1,6 @@
 #pragma once
 #include <cstddef>
+#include <cstdint>
 #include <stdexcept>
 #include <string_view>
 
@@ -26,11 +27,21 @@ inline void validate_utf8(std::string_view text) {
     } else throw std::runtime_error("source is not valid UTF-8");
     if (text.size()-i<=following)
       throw std::runtime_error("source is not valid UTF-8");
+    std::uint32_t codepoint = lead & (following==1 ? 0x1fu : following==2 ? 0x0fu : 0x07u);
     for (std::size_t j=1; j<=following; ++j) {
       const auto b=static_cast<unsigned char>(text[i+j]);
       if (b<(j==1?low:0x80) || b>(j==1?high:0xbf))
         throw std::runtime_error("source is not valid UTF-8");
+      codepoint = (codepoint << 6) | (b & 0x3fu);
     }
+    // Preflight all text, including ignored comments, before parsing tokens.
+    // These controls can reverse apparent token order or disguise line breaks.
+    if (codepoint==0x0085 || codepoint==0x061c ||
+        codepoint==0x200e || codepoint==0x200f ||
+        codepoint==0x2028 || codepoint==0x2029 ||
+        (codepoint>=0x202a && codepoint<=0x202e) ||
+        (codepoint>=0x2066 && codepoint<=0x2069))
+      throw std::runtime_error("source contains forbidden Unicode control");
     i+=following+1;
   }
 }
