@@ -363,7 +363,7 @@ class Parser {
   }
   // Forge stage-0 has no owning tuple layout yet. Admit only an immediate
   // projection of a bounded, pure i64-literal tuple, which is equivalent for
-  // canonical Tuple.of(...) and ~tuple(...). No Tuple value escapes to IR.
+  // Canonical Tuple.of(...) only. Tilde is reserved for structural typing.
   ExprPtr tuple_literal_projection(std::size_t depth) {
     check_depth(depth);
     expect("(");
@@ -437,11 +437,8 @@ class Parser {
       return node(Expr::Tag::Negative,std::move(v));
     }
     if (take("+")) return factor(depth+1);
-    if (take("~")) {
-      if (!take("tuple"))
-        error("E_AGGREGATE_FACTORY_UNSUPPORTED: typed ownership and collection IR required");
-      return tuple_literal_projection(depth+1);
-    }
+    if (take("~"))
+      error("E_COLLECTION_FACTORY_REMOVED: '~' is structural shorthand; use Type.of(...)");
     if (take("(")) {
       auto e=expression(depth+1); expect(")"); return e;
     }
