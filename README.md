@@ -29,6 +29,12 @@ This README describes the repository's intended responsibilities. Feature suppor
 - [Platform conformance](https://github.com/atto-lang/atto-platform-conformance)
 - [Commercial infrastructure](https://github.com/atto-co)
 
+## Checked i64 native primitive (preview)
+
+`include/atto/checked_i64.hpp` provides portable C++20 `checked_add`, `checked_sub`, and `checked_mul` returning `std::optional<int64_t>` on overflow, without signed-overflow UB or heap allocation. The unsigned-magnitude multiplication path handles `INT64_MIN * -1` explicitly.
+
+Build the independent primitive tests with `cmake -S . -B build -DATTO_FORGE_SANITIZERS=ON && cmake --build build && ctest --test-dir build --output-on-failure`. CI exercises GCC and Clang with ASan/UBSan. These are native library tests only: no Forge compiler, actor runtime, AOT code emission, or Atto guest execution has been implemented or verified by this PR.
+
 ## Repository ownership and contribution routing
 
 **Belongs here:** Independent Forge execution backend, native code generation, runtime ABI, actor/scheduler integration, AOT/JIT experiments and backend conformance receipts.
