@@ -50,15 +50,11 @@ int main() {
     // immediate projections only, never an allocated/escaping Tuple value.
     ensure(interpret(source("Tuple.of(19,23)[1]"))==23,
            "Tuple.of scalar projection");
-    ensure(interpret(source("~tuple(19,23)[1]"))==23,
-           "tilde tuple factory equivalence");
-    ensure(interpret(source("~tuple(1,2)[0]+41"))==42,
-           "tilde tuple projection composes with scalar IR");
     ensure(interpret(source("Tuple.of(-9223372036854775808,7)[0]"))==
            std::numeric_limits<std::int64_t>::min(),
            "tuple projection preserves signed i64 minimum");
-    ensure(interpret(source("~tuple(19,-23)[1]"))==-23,
-           "tuple projection preserves signed negative literal");
+    ensure(interpret(source("Tuple.of(19,-23)[1]"))==-23,
+           "canonical tuple projection preserves signed negative literal");
     ensure(interpret(parse_runtime_source(
            "fnc main():int{return Tuple.of(19,23)[1];}"))==23,
            "runtime-entry frontend uses the same checked tuple lowering");
@@ -68,24 +64,23 @@ int main() {
       "fnc Tuple(x:int):int{return x;} fnc main():int{return Tuple(42);}"))==42,
       "unqualified user Tuple function remains callable");
     for (const auto& invalid : {
-      "Tuple.of(11,23)",
-      "~tuple(11,23)"
+      "Tuple.of(11,23)"
     }) {
       reject_diagnostic([&] { (void)source(invalid); },
                         "E_TUPLE_ESCAPE_UNSUPPORTED");
     }
     for (const auto& invalid : {
-      "Tuple.of(11,23)[2]", "~tuple()[0]"
+      "Tuple.of(11,23)[2]", "Tuple.of()[0]"
     }) {
       reject_diagnostic([&] { (void)source(invalid); }, "E_TUPLE_BOUNDS");
     }
     for (const auto& invalid : {
-      "Tuple.of(x,23)[0]", "~tuple(true,2)[0]"
+      "Tuple.of(x,23)[0]", "Tuple.of(true,2)[0]"
     }) {
       reject_diagnostic([&] { (void)source(invalid); }, "E_TUPLE_LITERAL_ONLY");
     }
     for (const auto& invalid : {
-      "Tuple.of(11,23)[i]", "~tuple(11,23)[-1]"
+      "Tuple.of(11,23)[i]", "Tuple.of(11,23)[-1]"
     }) {
       reject_diagnostic([&] { (void)source(invalid); }, "E_TUPLE_INDEX");
     }
@@ -94,12 +89,20 @@ int main() {
     }, "E_TUPLE_RANGE");
     for (const auto& invalid : {
       "Map.of()", "Entry.of(1,2)", "Pair.of(1,2)", "Array.of(1)",
-      "List.of(1)", "Vector.of(1)", "Record.of()", "Set.of(1)",
-      "~map()", "~entry(1,2)", "~pair(1,2)", "~array(1)",
-      "~list(1)", "~vector(1)", "~record()", "~set(1)"
+      "List.of(1)", "Vector.of(1)", "Record.of()", "Set.of(1)"
     }) {
       reject_diagnostic([&] { (void)source(invalid); },
                         "E_AGGREGATE_FACTORY_UNSUPPORTED");
+    }
+    // The removed constructor aliases all fail at the parser boundary,
+    // not with a generic aggregate unsupported diagnostic.
+    for (const auto& removed : {
+      "~tuple(19,23)[1]", "~tuple()", "~tuple(1,2)[0]+41",
+      "~map()", "~entry(1,2)", "~pair(1,2)", "~array(1)",
+      "~list(1)", "~vector(1)", "~record()", "~set(1)"
+    }) {
+      reject_diagnostic([&] { (void)source(removed); },
+                        "E_COLLECTION_FACTORY_REMOVED");
     }
     ensure(interpret(parse_source(
         "fnc main():int{/* ~map() Map.of() */return 42;}"))==42,
