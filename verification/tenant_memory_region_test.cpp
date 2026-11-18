@@ -41,6 +41,19 @@ int main() {
     auto chunk = a.read(root, static_cast<std::uint32_t>(i*8), 8);
     assert(std::all_of(chunk.begin(), chunk.end(), [i](auto c) { return c == 10+i; }));
   }
+  // Deterministic adversarial sweep: malicious offsets and foreign read/write
+  // authorities never touch the neighboring tenant, including under wrap.
+  std::uint32_t seed = 0x9e3779b9u;
+  for (unsigned i = 0; i < 8192; ++i) {
+    seed ^= seed << 13;
+    seed ^= seed >> 17;
+    seed ^= seed << 5;
+    const auto offset = seed;
+    assert(rejected([&] { (void)b.read(aw, offset, 1); }));
+    assert(rejected([&] { b.write(aw, offset, payload); }));
+    assert(rejected([&] { (void)a.read(aw, offset, UINT32_MAX); }));
+  }
+  assert((b.read(b.grant(0, 64, false), 0, 64) == std::vector<std::uint8_t>(64, 0)));
   a.retire();
   assert(rejected([&] { a.read(aw, 0, 1); }));
   assert(rejected([&] { a.grant(0, 1, true); }));
