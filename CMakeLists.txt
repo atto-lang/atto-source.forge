@@ -269,6 +269,11 @@ if(BUILD_TESTING)
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/value_boundaries.py"
       "$<TARGET_FILE:oresforge>")
   set_tests_properties(value_boundary_admission PROPERTIES TIMEOUT 60)
+  # Source admission only: reject unsupported Option/Result/reactive guest forms.
+  add_test(NAME elm_composition_source_admission
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/elm_composition_admission.py"
+      "$<TARGET_FILE:oresforge>")
+  set_tests_properties(elm_composition_source_admission PROPERTIES TIMEOUT 90)
   add_test(NAME numeric_reference_and_capability_admission
     COMMAND "${Python3_EXECUTABLE}" -m unittest discover
       -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_numeric_*.py" -v)
