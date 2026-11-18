@@ -148,6 +148,19 @@ class Parser {
         ++at_;
       }
       tok_={Kind::Word,source_.substr(start,at_-start),start};
+      // A contextual ownership operator requires the verb immediately next
+      // to '!'. The stage-0 scalar IR has no ownership kind or runtime loan
+      // authority; never reinterpret copy!/take!/borrow!/share! as a call.
+      // The same guard catches 'mut borrow!' at the borrow token.
+      if ((tok_.text=="copy" || tok_.text=="take" ||
+           tok_.text=="borrow" || tok_.text=="share") &&
+          at_<source_.size() && source_[at_]=='!' &&
+          !(at_+1<source_.size() && source_[at_+1]=='=') &&
+          !(source_.substr(at_,3)=="!eq" &&
+              (at_+3==source_.size() ||
+               (!ascii_alnum(static_cast<unsigned char>(source_[at_+3])) &&
+                source_[at_+3]!='_'))))
+        error("OWNERSHIP_BANG_BACKEND_UNSUPPORTED: typed ownership and Forge native lowering required");
       if (tok_.text=="any" || tok_.text=="unknown" ||
           tok_.text=="Any" || tok_.text=="Unknown")
         error("any/unknown requires tagged opaque-value ABI and runtime type descriptors");
@@ -378,7 +391,7 @@ class Parser {
       if (operation=="borrow") {
         next();
         if (tok_.text=="mut")
-          error("legacy 'rt borrow mut' is not valid Oreslang; use 'rt mut borrow value'");
+          error("runtime ownership operation requires typed lowering in Forge"); // compatible legacy order
         error("runtime ownership operation requires typed lowering in Forge");
       }
       if (operation=="mut") {
