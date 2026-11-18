@@ -137,6 +137,42 @@ class IntegrationManifestGateTests(unittest.TestCase):
             self.assertEqual(module.main(['--repository-root', str(root)]), 1)
 
 
+    @unittest.skipUnless(os.name == 'posix', 'Unix root traversal gate')
+    def test_cli_rejects_parent_traversal_even_to_existing_valid_repo(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / REPO_NAME
+            (root / '.oreslang').mkdir(parents=True)
+            (root / '.oreslang/integration.json').write_bytes(encode(valid_manifest()))
+            (Path(temp) / 'intermediate').mkdir()
+            noncanonical = Path(temp) / 'intermediate' / '..' / REPO_NAME
+            self.assertEqual(module.main(['--repository-root', str(root)]), 0)
+            self.assertEqual(module.main(['--repository-root', str(noncanonical)]), 1)
+
+    @unittest.skipUnless(os.name == 'posix', 'Unix root traversal gate')
+    def test_cli_rejects_parent_traversal_through_symlink_component(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / REPO_NAME
+            (root / '.oreslang').mkdir(parents=True)
+            (root / '.oreslang/integration.json').write_bytes(encode(valid_manifest()))
+            external = Path(temp) / 'outside'
+            external.mkdir()
+            (Path(temp) / 'alias').symlink_to(external, target_is_directory=True)
+            deceptive = Path(temp) / 'alias' / '..' / REPO_NAME
+            self.assertEqual(module.main(['--repository-root', str(deceptive)]), 1)
+
+    @unittest.skipUnless(os.name == 'posix', 'Unix bounded manifest gate')
+    def test_cli_accepts_exact_4096_bytes_and_rejects_4097(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / REPO_NAME
+            (root / '.oreslang').mkdir(parents=True)
+            leaf = root / '.oreslang/integration.json'
+            raw = encode(valid_manifest())
+            self.assertLess(len(raw), module.MAX_BYTES)
+            leaf.write_bytes(raw + b' ' * (module.MAX_BYTES - len(raw)))
+            self.assertEqual(module.main(['--repository-root', str(root)]), 0)
+            leaf.write_bytes(raw + b' ' * (module.MAX_BYTES + 1 - len(raw)))
+            self.assertEqual(module.main(['--repository-root', str(root)]), 1)
+
     @unittest.skipUnless(os.name == 'posix', 'Unix no-follow ancestor gate')
     def test_cli_rejects_symlinked_root_ancestor_with_valid_external_manifest(self):
         with tempfile.TemporaryDirectory() as temp:
