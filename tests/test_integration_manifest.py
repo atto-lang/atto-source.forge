@@ -112,5 +112,25 @@ class IntegrationManifestGateTests(unittest.TestCase):
             self.assertEqual(module.main(['--repository-root', str(root)]), 1)
 
 
+    def test_cli_rejects_symlinked_manifest_parent(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / REPO_NAME
+            root.mkdir()
+            external = Path(temp) / 'outside'
+            external.mkdir()
+            (external / 'integration.json').write_bytes(encode(valid_manifest()))
+            (root / '.oreslang').symlink_to(external, target_is_directory=True)
+            self.assertEqual(module.main(['--repository-root', str(root)]), 1)
+
+    def test_cli_rejects_hardlinked_manifest_alias(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / REPO_NAME
+            (root / '.oreslang').mkdir(parents=True)
+            external = Path(temp) / 'outside-integration.json'
+            external.write_bytes(encode(valid_manifest()))
+            (root / '.oreslang/integration.json').hardlink_to(external)
+            self.assertEqual(module.main(['--repository-root', str(root)]), 1)
+
+
 if __name__ == '__main__':
     unittest.main()

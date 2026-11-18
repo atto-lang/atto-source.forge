@@ -89,9 +89,16 @@ def main(argv: list[str] | None = None) -> int:
     expected_name = root.name
     manifest = root / '.oreslang' / 'integration.json'
     try:
+        # A regular integration.json reached through a symlinked .oreslang
+        # directory is still an external, unauthenticated manifest.
+        if manifest.parent.is_symlink():
+            raise InvalidManifest('manifest parent directory is symlinked')
         if manifest.is_symlink() or not manifest.is_file():
             raise InvalidManifest('manifest missing or symlinked')
-        if manifest.stat().st_size > MAX_BYTES:
+        info = manifest.stat()
+        if info.st_nlink != 1:
+            raise InvalidManifest('manifest has unexpected hardlink aliases')
+        if info.st_size > MAX_BYTES:
             raise InvalidManifest('manifest exceeds size limit')
         verify_bytes(manifest.read_bytes(), expected_name)
     except (InvalidManifest, OSError) as exc:
