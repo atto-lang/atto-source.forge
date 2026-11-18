@@ -166,3 +166,44 @@ Both targeted test executables passed GCC/Clang C++20 at -O1 and -O2
 with strict warnings, and Clang ASan+UBSan at -O1.
 These are **targeted host tests only**, not full CMake/CTest, untrusted
 native compiler guest execution, or independent CI attestation.
+
+## Audit follow-up: native write-source alias denial (2026-11-18)
+
+The checked host `TenantMemoryRegion::write` API previously copied an
+external `std::span` into its private bytes via `std::copy` after validating
+the *destination* bounds, but without checking that the source span overlaps
+the same private memory region. That is undefined behavior for a copy
+into an overlapping range, and an internal pointer leak/caller bug could
+silently corrupt a tenant's private bytes. **It is not itself evidence
+that untrusted compiled guest code can access the private region.**
+
+Forge now checks address interval overflow and overlap against **the entire
+private byte region**, rejecting source aliasing before the copy.
+The helper deliberately treats native pointer interval overflow or a null
+pointer with nonzero size as unsafe. The check is for trusted native
+x86-64/ARM64 host code using a usable `uintptr_t`; it cannot validate a
+generally invalid external pointer or turn a C++ process into a sandbox.
+The earlier private-region owner/lease/offset checks remain intact.
+
+- New checked interval helper:
+  `runtime/checked_memory_overlap.hpp`, Git blob
+  `8730b44d41797774b72319887ee2d1ae5938c833`.
+- New boundary/overlap/wrap negative cases:
+  `verification/checked_memory_overlap_test.cpp`, Git blob
+  `59494247ac74a27f8654083dbfbe83f9b12df86b`.
+- Updated native arena:
+  `runtime/tenant_memory_region.hpp`, Git blob
+  `6577d894f8bbca56cec7531486046e5255370c8c`.
+- Existing 8,192-case adversarial native arena test:
+  `verification/tenant_memory_region_test.cpp`, Git blob
+  `96d408646f661407b148b103beb6a6db43b45243`.
+
+The **exact matching committed source** was locally compiled and executed
+with GCC and Clang C++20 at O1/O2 and Clang O1 ASan+UBSan; both targeted
+test programs passed all five configurations. A separate
+targeted CMake/CTest harness also passed **2/2** tests for GCC and **2/2**
+for Clang. These are scoped host tests; the complete Forge source
+CMake/CTest, compiler-emitted guest isolation, and source-org Actions were
+**not** executed successfully. All source-org Actions checks inspected
+continue to have zero executed job steps; the private-source alternative
+CI approval remains pending. `ProtectedNative` remains disabled.
