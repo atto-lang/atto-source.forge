@@ -34,6 +34,19 @@ ctest --test-dir build --output-on-failure
 
 Requires CMake >= 3.20, a C++20-capable GCC/Clang, and a POSIX toolchain for native smoke testing. CI builds this experimental bootstrap and executes its CTest suite. The former `verification/smoke.sh` reference was removed because that file does not exist.
 
+## Compile-time scalar checking
+
+Use `oresforge check file.atto` to admit the real, zero-argument stage-0
+scalar source subset without writing a computed value or IR to stdout.
+The command parses and verifies the source and performs checked interpretation
+so constant integer overflows fail with a nonzero exit status. Success emits
+no stdout or stderr; errors use the usual `oresforge:` diagnostic on stderr.
+
+This command does **not** validate the opt-in parameterized `run-runtime`
+or recursive `run-calls` profiles, and it does not prove native AOT, general
+typechecking, actors, imports, or zero-GC guest execution. Its use of the
+host interpreter is safe only for the currently pure zero-argument subset.
+
 ## Self-hosting and native execution evidence
 
 **OresForge is not yet self-hosting.** Its current compiler is C++20, not

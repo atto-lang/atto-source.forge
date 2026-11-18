@@ -82,6 +82,16 @@ if(BUILD_TESTING)
     COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.atto")
   set_tests_properties(oresforge_cli_atto_guest PROPERTIES
     PASS_REGULAR_EXPRESSION "^14\n?$" TIMEOUT 10)
+  # Real compiler check mode: no program result is published on success,
+  # and parser, unsupported semantics, and checked-i64 failures stay closed.
+  add_test(NAME oresforge_cli_scalar_check
+    COMMAND "${CMAKE_COMMAND}"
+      "-DCOMPILER=$<TARGET_FILE:oresforge>"
+      "-DVALID=${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.atto"
+      "-DOVERFLOW=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/scalar-check/overflow.atto"
+      "-DUNSUPPORTED=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/scalar-check/unsupported.atto"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/verification/scalar_check_cli.cmake")
+  set_tests_properties(oresforge_cli_scalar_check PROPERTIES TIMEOUT 45)
   add_test(NAME oresforge_cli_legacy_ores_guest
     COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.ores")
   set_tests_properties(oresforge_cli_legacy_ores_guest PROPERTIES
