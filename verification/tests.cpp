@@ -67,6 +67,8 @@ int main() {
         " main()\nbegin\n  return add(40,2);\nend;\n";
       ensure(interpret(parse_source(helpers))==42,
              "return-first typed helper parameter parity");
+      ensure(interpret(parse_runtime_source(helpers))==42,
+             "return-first typed helper parity through runtime-entry lowering");
     }
     reject([&] { (void)parse_source(
       "fnc int <- add(a, b)\nbegin\nreturn a+b;\nend.\n"
