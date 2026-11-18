@@ -46,6 +46,33 @@ oresforge::Program source(const std::string& expr) {
 int main() {
   try {
     using namespace oresforge;
+    // Return-first spelling is syntactic sugar over the same scalar IR.
+    for (std::string_view header : {
+      "int <- main()", "int• main()", "fnc int <- main()", "fnc int• main()"
+    }) {
+      for (std::string_view end : {"end", "end.", "end;"}) {
+        const std::string code=std::string(header)+"\nbegin\n  return 42;\n"+
+                               std::string(end)+"\n";
+        ensure(interpret(parse_source(code))==42,"return-first source parity");
+        ensure(interpret(parse_runtime_source(code))==42,"return-first runtime-entry parity");
+      }
+    }
+    for (std::string_view malformed : {
+      "int <- main() begin return 42; end",
+      "int <- main()\nbegin return 42;\nend",
+      "int <- main()\nbegin\nreturn 42;",
+      "int <- main()\nbegin\nreturn 42;\nend..",
+      "int <- main()\nbegin\nreturn 42;\nend; garbage",
+      "int < - main()\nbegin\nreturn 42;\nend",
+      "int <- main() -> int\nbegin\nreturn 42;\nend",
+      "define actor Worker as\nint <- receive()\nbegin\nreturn 42;\nend\nend"
+    }) {
+      reject([&] { (void)parse_source(malformed); });
+      reject([&] { (void)parse_runtime_source(malformed); });
+    }
+    ensure(interpret(parse_source(
+      "int <- main()\nbegin // comment\nreturn 42;\nend. // closer"))==42,
+      "return-first comments are inert");
     // Two-word contextual declarations are not executable stage-0 scalar
     // functions; every mode must reject with the correct semantic capability.
     for (std::string_view source_text : {
