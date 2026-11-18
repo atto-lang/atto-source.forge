@@ -8,6 +8,7 @@
 #include <span>
 #include <vector>
 #include <utility>
+#include "runtime/TenantIsolationAdmission.hpp"
 namespace oresforge::runtime {
 inline constexpr std::size_t kMaxMessageBytes=1024*1024;
 inline constexpr std::size_t kMaxMailboxMessages=4096;
@@ -27,10 +28,17 @@ struct ActorRef {
 class Mailbox {
  public:
   Mailbox(std::uint64_t id,std::size_t capacity=1024,
-          std::size_t byte_capacity=4*kMaxMessageBytes);
+          std::size_t byte_capacity=4*kMaxMessageBytes,
+          TenantIsolationMode isolation=TenantIsolationMode::TrustedInProcess,
+          bool untrusted=false);
   // No concurrent calls may outlive mailbox destruction.
   ~Mailbox() noexcept;
   ActorRef ref() const;
+  bool authorizes(const ActorRef& owner) const;
+  // Hold mailbox-generation authority through a trusted native byte operation.
+  // No guest code/callback may run while this lease owns the mailbox mutex.
+  [[nodiscard]] std::unique_lock<std::mutex> lock_authorized(
+      const ActorRef& owner, const ActorRef& caller) const;
   void send(ActorRef,std::span<const std::uint8_t>);
   std::optional<std::vector<std::uint8_t>> receive();
   void close();

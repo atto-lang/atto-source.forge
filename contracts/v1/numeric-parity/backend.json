@@ -12,7 +12,7 @@
     "complex_binary64": "unsupported_explicit",
     "decimal_matrix": "unsupported_explicit",
     "source_division_to_float": "unsupported_explicit",
-    "math_i64_unary": "implemented_unverified",
+    "math_i64_unary": "unsupported_explicit",
     "binary64_unary": "unsupported_explicit",
     "bigint_unary": "unsupported_explicit",
     "decimal_unary": "unsupported_explicit",
@@ -42,7 +42,7 @@
     "decimal_matrix": {},
     "source_division_to_float": {},
     "math_i64_unary": {
-      "scope": "unary-minus checked overflow exists; Math.abs/Math.neg module dispatch not yet lowered"
+      "scope": "Checked unary-minus scalar operation exists in Forge, but Math.abs(int)/Math.neg(int) source module dispatch and typed guest overload lowering are UNSUPPORTED; this source-only contract is not compiled guest evidence."
     },
     "binary64_unary": {},
     "bigint_unary": {},

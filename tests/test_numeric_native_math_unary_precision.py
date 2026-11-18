@@ -56,7 +56,7 @@ class ForgeNativeMathContractTest(unittest.TestCase):
 
     def test_backend_claims_remain_fail_closed(self):
         caps = self.backend["capabilities"]
-        self.assertEqual("implemented_unverified", caps["math_i64_unary"])
+        self.assertEqual("unsupported_explicit", caps["math_i64_unary"])
         self.assertIn("unary-minus", self.backend["evidence"]["math_i64_unary"]["scope"])
         for name in ("binary64_unary", "bigint_unary", "decimal_unary"):
             self.assertEqual("unsupported_explicit", caps[name])

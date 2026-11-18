@@ -1,0 +1,34 @@
+name: Forge structural tuple v2 five-backend contract integrity
+on:
+  pull_request:
+    paths:
+      - 'contracts/structural/v2/cases.json'
+      - 'contracts/structural/v2/check_five_backend_v2_cases.py'
+      - '.github/workflows/structural-v2-five-backend-contract.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  canonical-fixtures:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify exact private Forge checkout identity
+        shell: bash
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PRIVATE: ${{ github.event.repository.private }}
+          REPO_ID: ${{ github.repository_id }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = ores-truffle-oreslang/oreslang-source.forge
+          test "$REPO_ID" = 1419703674
+          test "$PRIVATE" = true
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          test -z "$(git status --porcelain --untracked-files=normal)"
+      - name: Verify 30 source-free tuple fixtures and fail-closed mutations
+        run: python3 -I contracts/structural/v2/check_five_backend_v2_cases.py --self-test
