@@ -11,6 +11,16 @@ add_executable(oresforge compiler/main.cpp)
 target_link_libraries(oresforge PRIVATE oresforge_core)
 include(CTest)
 if(BUILD_TESTING)
+  # All Forge source frontends must deny raw ESC and DEL before lowering.
+  # This adds execution coverage; source admission already resides in main.
+  add_executable(oresforge_source_control_admission_test
+    tests/source_control_admission_test.cpp)
+  target_include_directories(oresforge_source_control_admission_test PRIVATE .)
+  target_link_libraries(oresforge_source_control_admission_test PRIVATE oresforge_core)
+  target_compile_features(oresforge_source_control_admission_test PRIVATE cxx_std_20)
+  add_test(NAME forge_source_terminal_control_admission
+    COMMAND oresforge_source_control_admission_test)
+  set_tests_properties(forge_source_terminal_control_admission PROPERTIES TIMEOUT 15)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   set(ORE_NUMERIC_I64_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated_numeric_i64_cases.hpp")
   add_custom_command(
