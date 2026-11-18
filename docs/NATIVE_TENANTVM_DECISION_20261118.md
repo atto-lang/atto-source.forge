@@ -69,6 +69,36 @@ GCC C++20 O1 and O2 passed; Clang C++20 O2 passed; Clang
 ASan+UBSan O1 passed. This was a standalone exact-source test, not a full
 Forge CMake/CTest or compiler-backed untrusted guest execution test.
 
+### OresVM actor-memory lifecycle integration (2026-11-18)
+
+The `OresVM` trusted host now allocates one independent **4 KiB** bounded
+`TenantMemoryRegion` on actor registration, keyed by the existing
+`IsolateHandle` and generation-fenced `ActorTicket`. Each physical
+registration debits a process-root memory budget (default 16 MiB), with
+atomic rollback on registration allocation failures. Checked host access
+(`read_actor_memory` and `write_actor_memory`) validates both tenant
+and actor authority, denies shutdown/restart use, and holds the root
+registry lock through the bounded memory copy to prevent retirement races.
+`retire_actor` zeroes and releases the actor's physical memory and returns
+its budget. No extra actor-memory owner or second independent actor registry
+is introduced.
+
+The existing `oresforge_tenant_isolate_host_admission` CTest has tests for
+wrong tenant/actor tickets, overrun, quiescence, restart and aggregate
+allocation caps. The existing **real source-to-native scalar guest** CTest
+(`oresforge_compiled_tenant_isolate_native`) also now exercises the same
+host actor-memory lifecycle beside compiler-generated native scalar calls.
+This is not direct guest-language load/store lowering: **the emitted Forge
+machine code still does not receive a memory pointer or call the checked
+host memory API**, and can never be admitted as untrusted code on this basis.
+
+**Verification:** those new runtime integration CTests require exact-head
+execution; their source has been committed but has not been executed locally.
+The *unchanged* standalone `TenantMemoryRegion` header and test at their
+Git blob hashes above did pass local GCC 14/Clang 17 at O2 plus Clang
+ASan/UBSan at O1 in this continuation. Do not transfer that proof to the
+new OresVM lifecycle integration until it is executed independently.
+
 ### Remaining physical enforcement gap
 
 The host-only `TenantMemoryRegion` is not yet connected to compiler-emitted
