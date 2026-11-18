@@ -46,3 +46,31 @@ Build the independent primitive tests with `cmake -S . -B build -DATTO_FORGE_SAN
 AttoLang is the public name; preserve existing Oreslang repository, CLI and `.ores` compatibility while specifying new portable source in `.atto`. Do not duplicate normative semantics from [atto-spec](https://github.com/atto-lang/atto-spec).
 
 **Evidence gate:** record exact compiler/runtime head and tree, target/toolchain, nonzero executed steps, positive and negative guest results, and explicit passed/failed/unsupported/not-executed states. Host-only CI and `steps=[]` do not establish guest support. README scope is not a feature-completeness claim.
+
+## Native ownership host-reference model (PR in progress)
+
+The header-only C++20 include/atto/ownership_v1.hpp provides a native
+ownership model with **concrete** data-structure behavior, not a parsed Atto
+compiler or generated guest bytecode:
+
+- UniqueGraph performs bounded whole-graph validation, iterative cycle
+  traversal, duplicate/missing-node rejection and value-allocated deep copy
+  preserving internal topology while allocating independent nested buffers.
+- Consuming freeze publishes an immutable graph with unique owner authority.
+  Shared readers only obtain const graph views. Weak handles perform atomic
+  shared_ptr lifetime claims plus domain/generation and retirement checks.
+- Pinned<T> keeps its heap pointee at a stable address across handle and
+  thread moves; OwnedResource<T>::drop_now() uses unique ownership and RAII
+  to release exactly once. The source borrow checker still owns loan rules.
+
+The tests/ownership_v1.cpp binary verifies native cycles, copy independence,
+unsafe graph rejection, weak-upgrade/retire races, stale generation, frozen
+owner move replacement, pinned address stability and double-release safety.
+
+The **exact** header and test blob SHAs were locally tested using C++20
+GCC and Clang with -fsanitize=address,undefined, -Wall -Wextra -Werror
+and passed. This establishes only **native host-model behavior**.
+It does not establish Forge guest IR lowering, actor memory isolation or
+AttoLang syntax execution. Related frontend/spec/conformance branches
+are in atto-source.rs#344, atto-borrow-checker.rs#43, atto-spec#92,
+and atto-platform-conformance#76.
