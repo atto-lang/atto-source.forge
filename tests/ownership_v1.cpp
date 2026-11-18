@@ -32,6 +32,52 @@ int main() {
   frozen->retire();
   assert(!weak.upgrade(permit));
   assert(!shared.read(permit, [](const Graph& g) { return g.nodes.size(); }));
+  // A weak observer must never resurrect a retired region, including when
+  // upgrades race on other threads and strong read handles remain in flight.
+  {
+    auto root = std::move(UniqueGraph(31, cycle())).freeze(); assert(root);
+    auto token = root->permit();
+    auto observer = root->weak();
+    std::atomic<bool> begin{false};
+    std::vector<std::thread> readers;
+    for (int i = 0; i < 4; ++i) {
+      readers.emplace_back([observer, token, &begin] {
+        while (!begin.load(std::memory_order_acquire)) std::this_thread::yield();
+        for (int j = 0; j < 1000; ++j) {
+          if (auto strong = observer.upgrade(token)) {
+            auto value = strong->read(token, [](const Graph& g) { return g.nodes.size(); });
+            if (value) assert(*value == 2);
+          }
+        }
+      });
+    }
+    begin.store(true, std::memory_order_release);
+    root->retire();
+    for (auto& t : readers) t.join();
+    assert(!observer.upgrade(token));
+  }
+  // Move-assignment must retire any previously owned region. Otherwise an
+  // unrelated strong handle could continue reading after losing its owner.
+  {
+    auto first = std::move(UniqueGraph(7, cycle())).freeze(); assert(first);
+    auto first_token = first->permit();
+    auto first_weak = first->weak();
+    auto replacement = std::move(UniqueGraph(7, cycle())).freeze(); assert(replacement);
+    *first = std::move(*replacement);
+    assert(!first_weak.upgrade(first_token));
+  }
+  // Cycle-heavy graphs have bounded traversal and independent nested copies.
+  for (std::uint32_t n : {4u, 8u, 32u}) {
+    Graph many{1, {}};
+    for (std::uint32_t i = 1; i <= n; ++i)
+      many.nodes.push_back({i, EdgeKind::plain, {static_cast<std::uint8_t>(i)},
+                            {i == n ? 1u : i + 1}});
+    UniqueGraph root(3, std::move(many));
+    assert(root.valid());
+    auto twin = root.deep_copy(); assert(twin);
+    twin->mutate()->nodes[0].bytes[0] = 77;
+    assert(root.read()->nodes[0].bytes[0] == 1);
+  }
   auto pin = [] {
     Pinned<std::vector<int>> handle(std::vector<int>{42,7});
     auto address = handle.get();
