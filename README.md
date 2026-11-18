@@ -34,6 +34,19 @@ ctest --test-dir build --output-on-failure
 
 Requires CMake >= 3.20, a C++20-capable GCC/Clang, and a POSIX toolchain for native smoke testing. CI builds this experimental bootstrap and executes its CTest suite. The former `verification/smoke.sh` reference was removed because that file does not exist.
 
+## Compile-time scalar checking
+
+Use `oresforge check file.atto` to admit the real, zero-argument stage-0
+scalar source subset without writing a computed value or IR to stdout.
+The command parses and verifies the source and performs checked interpretation
+so constant integer overflows fail with a nonzero exit status. Success emits
+no stdout or stderr; errors use the usual `oresforge:` diagnostic on stderr.
+
+This command does **not** validate the opt-in parameterized `run-runtime`
+or recursive `run-calls` profiles, and it does not prove native AOT, general
+typechecking, actors, imports, or zero-GC guest execution. Its use of the
+host interpreter is safe only for the currently pure zero-argument subset.
+
 ## Self-hosting and native execution evidence
 
 **OresForge is not yet self-hosting.** Its current compiler is C++20, not
@@ -135,3 +148,14 @@ License is not yet selected; maintainers should add an explicit license before e
 
 See [value-boundary audit and admission tests](docs/VALUE_BOUNDARIES.md) for
 aggregate, call, string, conditional and async feature limits.
+
+## Repository ownership and migration (2026-11-08)
+
+**Current home:** `ores-truffle-oreslang/oreslang-source.forge`. **Public language:** AttoLang (formerly Oreslang); retain legacy `oreslang-*` commands, packages, dependencies and existing `.ores` fixtures until each replacement is proven.
+
+- **This repository owns:** Independent Forge-native/C++ compiler backend and its runtime/IR experiments.
+- **Out of scope:** Commercial deployment orchestration or automatically claiming Java reference parity. Place shared language semantics and portable core/std in canonical `.atto` modules; keep only indispensable compiler, ABI and runtime-host primitives in this backend.
+- **Organization boundary:** [`atto-lang`](https://github.com/atto-lang) is for language semantics, compilers, tooling, conformance and ecosystem libraries. [`atto-co`](https://github.com/atto-co) is for independently governed hosted products, deployment control, tenant infrastructure, identity and billing. Existing similarly named `atto-*` projects do not automatically share this repository's Git identity, code or test status.
+- **First-stage migration proposal:** approved GitHub ownership transfer of this existing repo, preserving its name, numeric ID and history, to `atto-lang/oreslang-source.forge`. No direct legacy-org → `atto-co` transfer is authorized; subsequent product carve-outs require new approval.
+
+**Migration instructions (maintainer preflight):** coordinate exact source head and ownership in [issue #26](https://github.com/ores-truffle-oreslang/.github/issues/26), then follow private [runbook draft #25](https://github.com/ores-truffle-oreslang/.github/pull/25). Confirm source/target admins and independent security reviewer, target access and branch/ruleset protection, exact SHA/tree, PRs/releases, Actions, secrets, GitHub Apps, deployments, dependencies and compatibility links before transfer. Do not clone/mirror private source as a shortcut. Verify unchanged numeric ID and code tree after real transfer, restore controls, rerun exact-head CI and capture **nonzero executed steps**. `steps=[]` / `steps=null` is `NOT_EXECUTED`, not test success; host/static checks cannot certify real AttoLang guest execution, AOT or zero-GC. Defer repository/CLI/extension renames to separately reviewed changes.

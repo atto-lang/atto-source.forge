@@ -9,6 +9,8 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <fstream>
+#include <set>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -86,6 +88,44 @@ int main() {
     ensure(interpret(parse_source(
       "fnc main():int{return 42;} // define virtual actor Spoof"))==42,
       "declaration head inside a comment is not executable source");
+    // Shared language admission floor: both Forge source frontends must reject
+    // semantic attributes, while ordinary annotation-looking comments remain legal.
+    std::ifstream annotation_manifest("annotation-admission-v1.tsv");
+    ensure(static_cast<bool>(annotation_manifest), "missing annotation admission corpus");
+    std::set<std::string> annotation_ids;
+    std::string annotation_row;
+    while (std::getline(annotation_manifest, annotation_row)) {
+      if (annotation_row.empty() || annotation_row.front()=='#') continue;
+      const auto first=annotation_row.find('\t');
+      const auto second=first==std::string::npos
+        ? std::string::npos : annotation_row.find('\t',first+1);
+      if (first==std::string::npos || second==std::string::npos ||
+          annotation_row.find('\t',second+1)!=std::string::npos)
+        throw std::runtime_error("malformed annotation admission TSV row");
+      const auto kind=annotation_row.substr(0,first);
+      const auto id=annotation_row.substr(first+1,second-first-1);
+      const auto encoded=annotation_row.substr(second+1);
+      if (id.empty() || encoded.empty() || !annotation_ids.insert(id).second)
+        throw std::runtime_error("empty/duplicate annotation admission ID");
+      std::string program;
+      for (std::size_t i=0; i<encoded.size(); ++i) {
+        if (encoded[i]=='\\' && i+1<encoded.size() && encoded[i+1]=='n') {
+          program.push_back('\n'); ++i;
+        } else {
+          program.push_back(encoded[i]);
+        }
+      }
+      if (kind=="shared-deny" || kind=="bootstrap-deny") {
+        reject_diagnostic([&] { (void)parse_source(program); }, "annotations require");
+        reject_diagnostic([&] { (void)calls::parse(program); }, "annotations require");
+      } else if (kind=="shared-allow") {
+        ensure(interpret(parse_source(program))==42, "Forge annotation scalar positive");
+        (void)calls::parse(program);
+      } else {
+        throw std::runtime_error("unknown annotation admission case kind");
+      }
+    }
+    ensure(annotation_ids.size()>=12, "incomplete annotation admission corpus");
     // Cross-backend i64 positive controls run against the real Forge parser,
     // verified IR and checked interpreter. These are not Python-only data tests.
     for (const auto& [expression, expected] : kPortableNumericalCases) {
@@ -104,6 +144,28 @@ int main() {
       reject_diagnostic([&] { (void)interpret(source(expression)); },
                         overflow_diagnostics[i]);
     }
+    // Explicit inverted layouts are not scalar IR and must never be
+    // silently lowered as ordinary structs/classes or plain Array<T>.
+    for (const auto& invalid : {
+      "define inverted struct Point as int x; int y; end",
+      "define pub inverted struct Point as int x; end",
+      "pub define inverted class Point as int x; end",
+      "define /* harmless */ inverted /* still a declaration */ struct Point as int x; end"
+    }) {
+      reject_diagnostic([&] { (void)parse_source(invalid); },
+                        "inverted struct/class requires one-level typed SoA");
+    }
+    reject_diagnostic([&] {
+      (void)parse_source(
+        "fnc main():int{return InvertedArray<Point>.with_capacity(1); }");
+    }, "inverted collection requires typed owned SoA columns");
+    ensure(interpret(parse_source(
+              "fnc main():int{return 42;} // define inverted struct ignored"))==42,
+           "inverted declaration text inside comment must be inert");
+    ensure(interpret(parse_source(
+              "fnc main():int{/* define inverted struct Nested */return 42;}"))==42,
+           "nested comment mention must not enable inverted layouts");
+
     // The bootstrap intentionally has NO BigInt, Decimal or binary64 lowering.
     // Fail closed rather than treating those spellings as signed i64.
     reject([] { source("1.25"); });
@@ -136,6 +198,25 @@ int main() {
            "CR-only trailing comment must stay a comment");
     ensure(interpret(parse_source("fnc main():int{return 42;} // import ignored"))==42,
            "import in a comment does not trigger module admission");
+    // Both frontends deny ModelGraph before IR, with contextual syntax.
+    for (const auto& declaration : {
+        "define model PriceEstimate() as AddTax(10) end",
+        "define model x as Identity() end",
+        "define pub model PriceEstimate() as AddTax(10) end",
+        "pub define model PriceEstimate() as AddTax(10) end",
+        "define /* comment */ model PriceEstimate() as AddTax(10) end"
+    }) {
+      reject_diagnostic([&] { (void)parse_source(declaration); },
+                        "MODEL_LOWERING_UNSUPPORTED");
+      reject_diagnostic([&] { (void)parse_runtime_source(declaration); },
+                        "MODEL_LOWERING_UNSUPPORTED");
+    }
+    ensure(interpret(parse_source(
+        "fnc model():int{return 41;} fnc main():int{return model()+1;}"))==42,
+        "model remains a contextual function name");
+    ensure(interpret(parse_source(
+        "/* define model Fake as Op() end */ fnc main():int{return 42;}"))==42,
+        "model declarations in comments are inert");
     // Nominal enums and same-arity virtual method dispatch are not part of
     // this scalar frontend. Deny the declaration with a specific diagnostic,
     // rather than claiming parity from a synthetic policy helper.
@@ -300,6 +381,19 @@ int main() {
     reject_diagnostic([] {
       parse_source("pub fnc main():int{return gpu task { 42 };}");
     }, "execution region requires verified CPU/GPU Task lowering");
+    // quantum is reserved with cpu/gpu: every source position, including
+    // function and parameter names, fails before lowering.
+    reject_diagnostic([] {
+      parse_source("pub fnc main():int{return quantum { 42 };}");
+    }, "execution region requires verified CPU/GPU Task lowering");
+    reject_diagnostic([] {
+      parse_source("fnc quantum(a:int):int{return a+1;}\nfnc main():int{return quantum(41);}");
+    }, "execution region requires verified CPU/GPU Task lowering");
+    reject_diagnostic([] {
+      parse_source("fnc f(quantum:int):int{return quantum+1;}\nfnc main():int{return f(41);}");
+    }, "execution region requires verified CPU/GPU Task lowering");
+    ensure(interpret(parse_source("fnc f(quantum_bits:int):int{return quantum_bits+1;}\nfnc main():int{return f(41);}"))==42,
+           "quantum-prefixed identifier stays ordinary");
     reject_diagnostic([] {
       parse_source("pub fnc main():int{return task { 42 };}");
     }, "execution task requires scheduler-aware Future/continuation lowering");
@@ -605,7 +699,19 @@ int main() {
     }
     reject_diagnostic([] {
       (void)parse_source("@structural\nfnc main():int{return 1;}");
-    }, "invalid character");
+    }, "annotations require");
+    for (const auto& attribute : {
+        "@FromJson(\"id\")", "@CallerRole(Admin)", "@CallableBy(Admin)",
+        "@DefaultArgVals(x=1)", "@UnknownPolicy"}) {
+      reject_diagnostic([&] {
+        (void)parse_source(std::string(attribute)+"\nfnc main():int{return 1;}");
+      }, "annotations require");
+      reject_diagnostic([&] {
+        (void)calls::parse(std::string(attribute)+"\nfnc main():int{return 1;}");
+      }, "annotations require");
+    }
+    ensure(interpret(parse_source("fnc main():int{return 42;} // @CallerRole(Admin)"))==42,
+           "annotation-looking text in comments is not source metadata");
     reject_diagnostic([] {
       parse_source("structural fnc main():int{return 1;}");
     }, "expected");

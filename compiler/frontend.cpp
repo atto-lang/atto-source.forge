@@ -137,6 +137,9 @@ class Parser {
     const auto start=at_;
     if (at_==source_.size()) { tok_={Kind::End,{},start}; return; }
     auto c=static_cast<unsigned char>(source_[at_]);
+    if (c=='@')
+      throw std::runtime_error("annotations require typed target validation and AOT lowering; unsupported in Forge stage-0 at byte "+
+                               std::to_string(start));
     if (ascii_alpha(c) || c=='_') {
       ++at_;
       while (at_<source_.size()) {
@@ -145,6 +148,19 @@ class Parser {
         ++at_;
       }
       tok_={Kind::Word,source_.substr(start,at_-start),start};
+      // A contextual ownership operator requires the verb immediately next
+      // to '!'. The stage-0 scalar IR has no ownership kind or runtime loan
+      // authority; never reinterpret copy!/take!/borrow!/share! as a call.
+      // The same guard catches 'mut borrow!' at the borrow token.
+      if ((tok_.text=="copy" || tok_.text=="take" ||
+           tok_.text=="borrow" || tok_.text=="share") &&
+          at_<source_.size() && source_[at_]=='!' &&
+          !(at_+1<source_.size() && source_[at_+1]=='=') &&
+          !(source_.substr(at_,3)=="!eq" &&
+              (at_+3==source_.size() ||
+               (!ascii_alnum(static_cast<unsigned char>(source_[at_+3])) &&
+                source_[at_+3]!='_'))))
+        error("OWNERSHIP_BANG_BACKEND_UNSUPPORTED: typed ownership and Forge native lowering required");
       if (tok_.text=="any" || tok_.text=="unknown" ||
           tok_.text=="Any" || tok_.text=="Unknown")
         error("any/unknown requires tagged opaque-value ABI and runtime type descriptors");
@@ -155,6 +171,8 @@ class Parser {
       // Scalar bootstrap lacks nominal enum declarations and compiler-owned
       // prebound virtual method slots. Never attempt arity-only fallback.
       if (tok_.text=="enum") error("nominal enum overloads require compiler-bound dispatch");
+      if (tok_.text=="gen" || tok_.text=="generator")
+        error("generator declarations require iterator-frame and continuation lowering");
       // Fail closed on named language features before the scalar grammar
       // gives a misleading generic syntax error (or ever learns to skip them).
       // These require typed method dispatch and ownership-checked closure IR.
@@ -164,9 +182,11 @@ class Parser {
         error("VIRTUAL_ACTOR_BACKEND_UNSUPPORTED: logical key and activation fencing required");
       if (tok_.text=="class" || tok_.text=="actor")
         error("class/actor methods require typed native lowering");
+      if (tok_.text=="InvertedArray")
+        error("inverted collection requires typed owned SoA columns and generation-checked row lowering");
       if (tok_.text=="lex" || tok_.text=="nlex")
         error("lexical captures require checked closure lowering");
-      if (tok_.text=="cpu" || tok_.text=="gpu" || tok_.text=="nb")
+      if (tok_.text=="cpu" || tok_.text=="gpu" || tok_.text=="quantum" || tok_.text=="nb")
         error("execution region requires verified CPU/GPU Task lowering; unsupported execution domain: typed effect graph required; no implicit CPU fallback");
       if (tok_.text=="task") {
         auto look=at_;
@@ -219,6 +239,16 @@ class Parser {
     }
     if (source_.substr(at_,3)=="...")
       error("tuple-v2 explicit spread requires single-evaluation checked lowering");
+    // Canonical AttoLang exposes named Integer.rem/mod/pow/bitXor APIs,
+    // never the legacy percent or caret operators. Report the actual byte
+    // offset before generic punctuation handling, including unreachable
+    // helper definitions: these characters cannot become silent aliases.
+    if (c=='%')
+      throw std::runtime_error("legacy % operator is removed; use Integer.rem/mod at byte "+
+                               std::to_string(start));
+    if (c=='^')
+      throw std::runtime_error("legacy ^/^^ operators are removed; use Integer.pow/bitXor at byte "+
+                               std::to_string(start));
     if (std::string_view("()+-*/{};:,?").find(static_cast<char>(c)) ==
         std::string_view::npos) error("invalid character");
     ++at_;
@@ -276,6 +306,15 @@ class Parser {
         error("VIRTUAL_ACTOR_BACKEND_UNSUPPORTED: logical key and activation fencing required");
       error("unexpected declaration after virtual");
     }
+    // An explicitly inverted declaration is a nominal row-layout request,
+    // never a scalar function. The Stage-0 frontend must reject it before
+    // parsing a subsequent unrelated function or emitting native code.
+    if (tok_.text=="inverted")
+      error("inverted struct/class requires one-level typed SoA and ownership lowering");
+    // The stage-0 scalar frontend cannot lower nominal ModelGraphs.
+    // `model` remains contextual; `fnc model()` is still valid.
+    if (tok_.text=="model")
+      error("MODEL_LOWERING_UNSUPPORTED: Forge requires typed nominal ModelGraph lowering");
     expect("fnc");
     const std::string name=identifier();
     if (name=="int" || name=="fnc" || name=="return")
@@ -300,7 +339,14 @@ class Parser {
     if (!take(":")) expect("->");
     if (tok_.text=="tuple" || tok_.text=="structural" || tok_.text=="(")
       error("tuple-v2 return requires typed ABI lowering");
-    expect("int"); expect("{");
+    expect("int");
+    // Forge stage-0 still emits a single expression return. A double-colon
+    // body cannot be interpreted as a braced function or a punctuation typo:
+    // it needs ordered lexical locals, explicit return types and region-safe
+    // closure lowering before any guest execution can be admitted.
+    if (tok_.text==":" && source_.substr(tok_.offset,2)=="::")
+      error("FORGE_COMMA_BODY_UNSUPPORTED: typed comma body requires checked lexical lowering");
+    expect("{");
     if (tok_.text=="guard")
       error("GUARD_BACKEND_UNSUPPORTED: early-exit CFG and ownership lowering required");
     expect("return");
@@ -345,7 +391,7 @@ class Parser {
       if (operation=="borrow") {
         next();
         if (tok_.text=="mut")
-          error("legacy 'rt borrow mut' is not valid Oreslang; use 'rt mut borrow value'");
+          error("runtime ownership operation requires typed lowering in Forge"); // compatible legacy order
         error("runtime ownership operation requires typed lowering in Forge");
       }
       if (operation=="mut") {

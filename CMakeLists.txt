@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 project(OresForge VERSION 0.1.0 LANGUAGES CXX)
 option(ORESFORGE_FUZZ "Build Clang libFuzzer target" OFF)
-add_library(oresforge_core STATIC compiler/frontend.cpp compiler/ir.cpp compiler/call_native.cpp codegen/native.cpp runtime/actor.cpp jit/tiered.cpp)
+add_library(oresforge_core STATIC compiler/frontend.cpp compiler/ir.cpp compiler/call_native.cpp codegen/native.cpp runtime/actor.cpp runtime/generator_frame.cpp jit/tiered.cpp)
 target_include_directories(oresforge_core PUBLIC .)
 target_compile_features(oresforge_core PUBLIC cxx_std_20)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -11,6 +11,16 @@ add_executable(oresforge compiler/main.cpp)
 target_link_libraries(oresforge PRIVATE oresforge_core)
 include(CTest)
 if(BUILD_TESTING)
+  # All Forge source frontends must deny raw ESC and DEL before lowering.
+  # This adds execution coverage; source admission already resides in main.
+  add_executable(oresforge_source_control_admission_test
+    tests/source_control_admission_test.cpp)
+  target_include_directories(oresforge_source_control_admission_test PRIVATE .)
+  target_link_libraries(oresforge_source_control_admission_test PRIVATE oresforge_core)
+  target_compile_features(oresforge_source_control_admission_test PRIVATE cxx_std_20)
+  add_test(NAME forge_source_terminal_control_admission
+    COMMAND oresforge_source_control_admission_test)
+  set_tests_properties(forge_source_terminal_control_admission PROPERTIES TIMEOUT 15)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   set(ORE_NUMERIC_I64_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated_numeric_i64_cases.hpp")
   add_custom_command(
@@ -37,6 +47,19 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/contracts/v1/numeric-parity/source-i64-overflow-cases.json"
     VERBATIM)
   add_custom_target(oresforge_numeric_overflow_cases DEPENDS "${ORE_NUMERIC_OVERFLOW_HEADER}")
+  # Host compiler source-byte admission test: no guest-language execution
+  # or Python tooling is required.
+  add_executable(oresforge_source_utf8_offsets
+    verification/source_utf8_offsets_test.cpp)
+  target_include_directories(oresforge_source_utf8_offsets PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_source_utf8_offsets PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_source_utf8_offsets PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME oresforge_source_utf8_offsets COMMAND oresforge_source_utf8_offsets)
+  set_tests_properties(oresforge_source_utf8_offsets PROPERTIES TIMEOUT 15)
   # Host-policy substrate only; guest syscall interception remains unimplemented.
   add_executable(oresforge_scoped_policy_tests
     contracts/v1/scoped_permission_policy_test.cpp)
@@ -62,20 +85,65 @@ if(BUILD_TESTING)
   add_test(NAME native_pinned_tcp_host_boundary COMMAND oresforge_pinned_tcp_tests)
   set_tests_properties(native_pinned_tcp_host_boundary PROPERTIES TIMEOUT 15)
 
+  configure_file("${CMAKE_CURRENT_SOURCE_DIR}/contracts/v1/annotation-admission-v1.tsv"
+    "${CMAKE_CURRENT_BINARY_DIR}/annotation-admission-v1.tsv" COPYONLY)
   add_executable(oresforge_tests verification/tests.cpp)
   add_dependencies(oresforge_tests oresforge_numeric_i64_cases oresforge_numeric_overflow_cases)
   target_include_directories(oresforge_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
   target_link_libraries(oresforge_tests PRIVATE oresforge_core)
   add_test(NAME oresforge_unit COMMAND oresforge_tests)
+  # This invokes the real Forge frontend on operator-positive and
+  # operator-negative sources, including unreachable declarations.
+  add_executable(oresforge_legacy_operator_grammar
+    verification/legacy_operator_grammar.cpp)
+  target_link_libraries(oresforge_legacy_operator_grammar PRIVATE oresforge_core)
+  add_test(NAME oresforge_legacy_operator_grammar
+    COMMAND oresforge_legacy_operator_grammar)
+  set_tests_properties(oresforge_legacy_operator_grammar PROPERTIES TIMEOUT 15)
+  # Unicode source-preflight regression, including visible parser admission.
+  add_executable(oresforge_source_unicode_control verification/source_unicode_control_test.cpp)
+  target_link_libraries(oresforge_source_unicode_control PRIVATE oresforge_core)
+  add_test(NAME oresforge_source_unicode_control COMMAND oresforge_source_unicode_control)
+  set_tests_properties(oresforge_source_unicode_control PROPERTIES TIMEOUT 15)
   # Stage-0 single-file AttoLang path admission. Imports remain fail-closed in Forge.
   add_test(NAME oresforge_cli_atto_guest
     COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.atto")
   set_tests_properties(oresforge_cli_atto_guest PROPERTIES
     PASS_REGULAR_EXPRESSION "^14\n?$" TIMEOUT 10)
+  # Real compiler check mode: no program result is published on success,
+  # and parser, unsupported semantics, and checked-i64 failures stay closed.
+  add_test(NAME oresforge_cli_scalar_check
+    COMMAND "${CMAKE_COMMAND}"
+      "-DCOMPILER=$<TARGET_FILE:oresforge>"
+      "-DVALID=${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.atto"
+      "-DOVERFLOW=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/scalar-check/overflow.atto"
+      "-DUNSUPPORTED=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/scalar-check/unsupported.atto"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/verification/scalar_check_cli.cmake")
+  set_tests_properties(oresforge_cli_scalar_check PROPERTIES TIMEOUT 45)
   add_test(NAME oresforge_cli_legacy_ores_guest
     COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.ores")
   set_tests_properties(oresforge_cli_legacy_ores_guest PROPERTIES
     PASS_REGULAR_EXPRESSION "^14\n?$" TIMEOUT 10)
+  add_executable(oresforge_generator_frame_v1 verification/generator_frame_v1_test.cpp)
+  target_link_libraries(oresforge_generator_frame_v1 PRIVATE oresforge_core)
+  target_compile_features(oresforge_generator_frame_v1 PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_generator_frame_v1 PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME oresforge_generator_frame_v1 COMMAND oresforge_generator_frame_v1)
+  set_tests_properties(oresforge_generator_frame_v1 PROPERTIES TIMEOUT 20)
+  add_executable(oresforge_state_region_provenance
+    verification/state_region_provenance.cpp)
+  target_include_directories(oresforge_state_region_provenance PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_state_region_provenance PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_state_region_provenance PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME oresforge_state_region_provenance_v1
+    COMMAND oresforge_state_region_provenance)
+  set_tests_properties(oresforge_state_region_provenance_v1 PROPERTIES TIMEOUT 15)
   # Host-only positive filesystem resolution substrate, not guest import linking.
   add_executable(oresforge_root_resolver_test verification/project_root_resolver_test.cpp)
   target_include_directories(oresforge_root_resolver_test PRIVATE .)
@@ -113,10 +181,28 @@ if(BUILD_TESTING)
   add_test(NAME oresforge_actor_mailbox_mpmc COMMAND oresforge_mailbox_mpmc)
   set_tests_properties(oresforge_actor_mailbox_mpmc PROPERTIES TIMEOUT 60)
   set_tests_properties(oresforge_actor_mailbox_limits PROPERTIES TIMEOUT 20)
+  # Independent native heap and logical frame stack per authenticated
+  # mailbox incarnation. This is real C++ host execution, not .atto lowering.
+  add_executable(oresforge_actor_incarnation_memory_v1
+    verification/actor_incarnation_memory_v1_test.cpp)
+  target_link_libraries(oresforge_actor_incarnation_memory_v1
+    PRIVATE oresforge_core Threads::Threads)
+  target_compile_features(oresforge_actor_incarnation_memory_v1 PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_actor_incarnation_memory_v1 PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME oresforge_actor_incarnation_memory_v1_host
+    COMMAND oresforge_actor_incarnation_memory_v1)
+  set_tests_properties(oresforge_actor_incarnation_memory_v1_host
+    PROPERTIES TIMEOUT 30)
   add_executable(oresforge_mailbox_model verification/actor_mailbox_model.cpp)
   target_link_libraries(oresforge_mailbox_model PRIVATE oresforge_core)
   add_test(NAME oresforge_actor_mailbox_model COMMAND oresforge_mailbox_model)
   set_tests_properties(oresforge_actor_mailbox_model PROPERTIES TIMEOUT 30)
+  add_executable(oresforge_actor_arena_tests verification/actor_arena_test.cpp)
+  target_link_libraries(oresforge_actor_arena_tests PRIVATE oresforge_core)
+  add_test(NAME oresforge_actor_arena COMMAND oresforge_actor_arena_tests)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   add_test(NAME oresforge_cli_source_budget
     COMMAND "${Python3_EXECUTABLE}"
@@ -130,6 +216,13 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/verification/ets_pg_source_admission.py"
       "$<TARGET_FILE:oresforge>")
   set_tests_properties(oresforge_ets_pg_fail_closed_source PROPERTIES TIMEOUT 30)
+  # Real compiler reject test: comma :: / typed inline => Type -> lambdas
+  # are still unsupported in Forge stage-0; no false parity receipt.
+  add_test(NAME oresforge_comma_lambda_fail_closed
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/comma_lambda_source_admission.py"
+      "$<TARGET_FILE:oresforge>")
+  set_tests_properties(oresforge_comma_lambda_fail_closed PROPERTIES TIMEOUT 90)
   # Source to IR interpreter (not machine code or native AOT parity).
   add_test(NAME oresforge_source_i64_interpreter
     COMMAND "${Python3_EXECUTABLE}"
@@ -176,6 +269,11 @@ if(BUILD_TESTING)
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/value_boundaries.py"
       "$<TARGET_FILE:oresforge>")
   set_tests_properties(value_boundary_admission PROPERTIES TIMEOUT 60)
+  # Source admission only: reject unsupported Option/Result/reactive guest forms.
+  add_test(NAME elm_composition_source_admission
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/elm_composition_admission.py"
+      "$<TARGET_FILE:oresforge>")
+  set_tests_properties(elm_composition_source_admission PROPERTIES TIMEOUT 90)
   add_test(NAME numeric_reference_and_capability_admission
     COMMAND "${Python3_EXECUTABLE}" -m unittest discover
       -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_numeric_*.py" -v)
@@ -271,4 +369,45 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
       "-DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/tenant_native_entry"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/verification/tenant_native_entry.cmake")
   set_tests_properties(oresforge_compiled_tenant_isolate_native PROPERTIES TIMEOUT 90)
+endif()
+
+# HOST-ONLY Option<T> recursive flatten substrate. Source-language admission,
+# Future<T> scheduler integration, and guest execution remain independent gates.
+if(BUILD_TESTING)
+  add_executable(oresforge_wrapper_flatten_option_host verification/wrapper_flatten_option_host_test.cpp)
+  target_include_directories(oresforge_wrapper_flatten_option_host PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/runtime")
+  target_compile_options(oresforge_wrapper_flatten_option_host PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic -Werror>)
+  add_test(NAME forge_wrapper_option_host_conformance COMMAND oresforge_wrapper_flatten_option_host)
+  set_tests_properties(forge_wrapper_option_host_conformance PROPERTIES TIMEOUT 20)
+endif()
+
+# Linux x86-64 native actor stack/heap substrate. HOST CALLBACKS ONLY:
+# this is not `define actor` guest compilation or a tenant sandbox.
+if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+   CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64)$")
+  add_executable(oresforge_actor_stack_domain
+    verification/actor_stack_domain_test.cpp)
+  target_include_directories(oresforge_actor_stack_domain PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_actor_stack_domain PRIVATE cxx_std_20)
+  find_package(Threads REQUIRED)
+  target_link_libraries(oresforge_actor_stack_domain PRIVATE Threads::Threads)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_actor_stack_domain PRIVATE
+      -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+  endif()
+  add_test(NAME forge_actor_stack_domain_host_v1 COMMAND oresforge_actor_stack_domain)
+  set_tests_properties(forge_actor_stack_domain_host_v1 PROPERTIES
+    TIMEOUT 30 LABELS "host-only;native-actor-stack")
+endif()
+
+
+# Source admission only: no claim of compiled AttoLang guest execution.
+if(BUILD_TESTING)
+  add_executable(oresforge_source_bidi_admission verification/source_bidi_admission_test.cpp)
+  target_include_directories(oresforge_source_bidi_admission PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_source_bidi_admission PRIVATE cxx_std_20)
+  add_test(NAME forge_source_bidi_admission_host COMMAND oresforge_source_bidi_admission)
+  set_tests_properties(forge_source_bidi_admission_host PROPERTIES TIMEOUT 20)
 endif()
