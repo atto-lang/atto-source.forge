@@ -92,12 +92,20 @@ This is not direct guest-language load/store lowering: **the emitted Forge
 machine code still does not receive a memory pointer or call the checked
 host memory API**, and can never be admitted as untrusted code on this basis.
 
-**Verification:** those new runtime integration CTests require exact-head
-execution; their source has been committed but has not been executed locally.
-The *unchanged* standalone `TenantMemoryRegion` header and test at their
-Git blob hashes above did pass local GCC 14/Clang 17 at O2 plus Clang
-ASan/UBSan at O1 in this continuation. Do not transfer that proof to the
-new OresVM lifecycle integration until it is executed independently.
+**Verification (exact committed source):** The checked-in `OresVM`
+header and `isolate_host_test.cpp` were materialized locally with exact Git
+blob identity: `399d8245b3ef324f8a9137e708b7045071e03bc4` and
+`4a33df4c5b33274cec98429bc9c1ad45e7df0478`.
+They compiled and ran successfully under GCC 14.2 O2, Clang 17 O2, and
+Clang 17 O1 ASan+UBSan (`-Wall -Wextra -Wpedantic -Werror -UNDEBUG`).
+The original `TenantMemoryRegion` header/test also passed those profiles
+at blobs `2ac5d3201d463da3b0f3231b1adfe2b98a3488b0` and
+`4331f4c5c403e99a18695bd9689184faf1448d1c`.
+This proves exactly these **standalone host tests**, not the entire CMake
+suite or real compiler-to-native guest isolation. The new
+`native_isolate_scalar_guest.cpp` compiled-guest CTest is still NOT_EXECUTED
+on the exact branch, as are Linux x86-64/ARM64 package/compiler parity gates.
+Source-org GitHub Actions still fail before executing steps.
 
 ### Remaining physical enforcement gap
 
