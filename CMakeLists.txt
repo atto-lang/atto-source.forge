@@ -368,3 +368,13 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
   set_tests_properties(forge_actor_stack_domain_host_v1 PROPERTIES
     TIMEOUT 30 LABELS "host-only;native-actor-stack")
 endif()
+
+
+# Source admission only: no claim of compiled AttoLang guest execution.
+if(BUILD_TESTING)
+  add_executable(oresforge_source_bidi_admission verification/source_bidi_admission_test.cpp)
+  target_include_directories(oresforge_source_bidi_admission PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_source_bidi_admission PRIVATE cxx_std_20)
+  add_test(NAME forge_source_bidi_admission_host COMMAND oresforge_source_bidi_admission)
+  set_tests_properties(forge_source_bidi_admission_host PROPERTIES TIMEOUT 20)
+endif()
