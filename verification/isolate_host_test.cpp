@@ -13,6 +13,16 @@ static std::int64_t blocked_guest(std::int64_t old, std::int64_t delta){
   return old+delta;
 }
 int main(){
+ // No compiler-enforced native memory sandbox is wired here yet.
+ // Admission MUST refuse protected mode, not silently downgrade to trusted.
+ OresVM deny_vm{1};
+ assert(rejected([&]{deny_vm.create_isolate("hostile",1,TenantIsolationMode::ProtectedNative);}));
+ assert(rejected([&]{deny_vm.create_isolate("hostile",1,static_cast<TenantIsolationMode>(255));}));
+ auto admitted=deny_vm.create_isolate("hostile",1,TenantIsolationMode::TrustedNative);
+ deny_vm.start(admitted);
+ deny_vm.begin_shutdown(admitted);
+ deny_vm.complete_shutdown(admitted);
+ deny_vm.destroy(admitted);
  OresVM vm{2};auto a=vm.create_isolate("tenant-a",1),b=vm.create_isolate("tenant-b",1);
  assert(rejected([&]{vm.create_isolate("bad\nnamespace",1);}));
  assert(rejected([&]{vm.create_isolate("bad\ttenant",1);}));
