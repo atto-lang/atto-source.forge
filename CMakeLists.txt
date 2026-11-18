@@ -37,6 +37,19 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/contracts/v1/numeric-parity/source-i64-overflow-cases.json"
     VERBATIM)
   add_custom_target(oresforge_numeric_overflow_cases DEPENDS "${ORE_NUMERIC_OVERFLOW_HEADER}")
+  # Host compiler source-byte admission test: no guest-language execution
+  # or Python tooling is required.
+  add_executable(oresforge_source_utf8_offsets
+    verification/source_utf8_offsets_test.cpp)
+  target_include_directories(oresforge_source_utf8_offsets PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_source_utf8_offsets PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_source_utf8_offsets PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME oresforge_source_utf8_offsets COMMAND oresforge_source_utf8_offsets)
+  set_tests_properties(oresforge_source_utf8_offsets PROPERTIES TIMEOUT 15)
   # Host-policy substrate only; guest syscall interception remains unimplemented.
   add_executable(oresforge_scoped_policy_tests
     contracts/v1/scoped_permission_policy_test.cpp)
