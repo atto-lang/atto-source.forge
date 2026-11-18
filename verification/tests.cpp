@@ -57,6 +57,20 @@ int main() {
         ensure(interpret(parse_runtime_source(code))==42,"return-first runtime-entry parity");
       }
     }
+    // Canonical type-first arguments share the same checked i64 helper
+    // ABI as legacy 'name:int'; both return-first markers are equivalent.
+    for (std::string_view separator : {"<-", "•"}) {
+      const std::string helpers=
+        std::string("fnc int ")+std::string(separator)+
+        " add(int a, int b)\nbegin\n  return a+b;\nend.\n"+
+        "int "+std::string(separator)+
+        " main()\nbegin\n  return add(40,2);\nend;\n";
+      ensure(interpret(parse_source(helpers))==42,
+             "return-first typed helper parameter parity");
+    }
+    reject([&] { (void)parse_source(
+      "fnc int <- add(a, b)\nbegin\nreturn a+b;\nend.\n"
+      "int <- main()\nbegin\nreturn add(40,2);\nend"); });
     for (std::string_view malformed : {
       "int <- main() begin return 42; end",
       "int <- main()\nbegin return 42;\nend",
