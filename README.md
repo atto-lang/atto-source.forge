@@ -12,7 +12,7 @@ to make their names match the public brand.
 
 ## VM isolate execution architecture
 
-A C++20 `OresVM` host registry now tracks IsolateVM lifecycles, actor-incarnation tickets and outstanding operation pins. Forge's native machine code remains **trusted in-process**; it does not depend on Cranelift.
+A C++20 `OresVM` host registry now tracks IsolateVM lifecycles, actor-incarnation tickets and outstanding operation pins. Forge's native machine code remains **trusted in-process**; it does not depend on Cranelift. The new explicit `ProtectedNative` admission mode fails closed until Forge implements LLVM-style checked native memory confinement. Forge will **not** use Wasmtime as its TenantVM engine; see [native TenantVM decision](docs/NATIVE_TENANTVM_DECISION_20261118.md).
 
 See [the shared tenant IsolateVM contract](docs/VM_ISOLATE_CONTRACT.md) for lifecycle, V8 lessons, resource retirement, restrictions and remaining acceptance gates.
 
