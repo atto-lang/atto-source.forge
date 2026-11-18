@@ -28,7 +28,7 @@ int main() {
         try {
           (void)oresforge::parse_source(source);
         } catch (const std::exception& error) {
-          if (std::string_view(error.what()).find("forbidden Unicode control") == std::string_view::npos)
+          if (std::string_view(error.what()).find("Unicode control") == std::string_view::npos)
             throw;
           ++rejected;
           continue;

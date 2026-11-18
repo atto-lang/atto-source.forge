@@ -37,6 +37,19 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/contracts/v1/numeric-parity/source-i64-overflow-cases.json"
     VERBATIM)
   add_custom_target(oresforge_numeric_overflow_cases DEPENDS "${ORE_NUMERIC_OVERFLOW_HEADER}")
+  # Host compiler source-byte admission test: no guest-language execution
+  # or Python tooling is required.
+  add_executable(oresforge_source_utf8_offsets
+    verification/source_utf8_offsets_test.cpp)
+  target_include_directories(oresforge_source_utf8_offsets PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_source_utf8_offsets PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_source_utf8_offsets PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME oresforge_source_utf8_offsets COMMAND oresforge_source_utf8_offsets)
+  set_tests_properties(oresforge_source_utf8_offsets PROPERTIES TIMEOUT 15)
   # Host-policy substrate only; guest syscall interception remains unimplemented.
   add_executable(oresforge_scoped_policy_tests
     contracts/v1/scoped_permission_policy_test.cpp)
@@ -77,6 +90,7 @@ if(BUILD_TESTING)
   add_test(NAME oresforge_legacy_operator_grammar
     COMMAND oresforge_legacy_operator_grammar)
   set_tests_properties(oresforge_legacy_operator_grammar PROPERTIES TIMEOUT 15)
+  # Unicode source-preflight regression, including visible parser admission.
   add_executable(oresforge_source_unicode_control verification/source_unicode_control_test.cpp)
   target_link_libraries(oresforge_source_unicode_control PRIVATE oresforge_core)
   add_test(NAME oresforge_source_unicode_control COMMAND oresforge_source_unicode_control)
@@ -86,6 +100,16 @@ if(BUILD_TESTING)
     COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.atto")
   set_tests_properties(oresforge_cli_atto_guest PROPERTIES
     PASS_REGULAR_EXPRESSION "^14\n?$" TIMEOUT 10)
+  # Real compiler check mode: no program result is published on success,
+  # and parser, unsupported semantics, and checked-i64 failures stay closed.
+  add_test(NAME oresforge_cli_scalar_check
+    COMMAND "${CMAKE_COMMAND}"
+      "-DCOMPILER=$<TARGET_FILE:oresforge>"
+      "-DVALID=${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.atto"
+      "-DOVERFLOW=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/scalar-check/overflow.atto"
+      "-DUNSUPPORTED=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/scalar-check/unsupported.atto"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/verification/scalar_check_cli.cmake")
+  set_tests_properties(oresforge_cli_scalar_check PROPERTIES TIMEOUT 45)
   add_test(NAME oresforge_cli_legacy_ores_guest
     COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.ores")
   set_tests_properties(oresforge_cli_legacy_ores_guest PROPERTIES
@@ -182,6 +206,13 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/verification/ets_pg_source_admission.py"
       "$<TARGET_FILE:oresforge>")
   set_tests_properties(oresforge_ets_pg_fail_closed_source PROPERTIES TIMEOUT 30)
+  # Real compiler reject test: comma :: / typed inline => Type -> lambdas
+  # are still unsupported in Forge stage-0; no false parity receipt.
+  add_test(NAME oresforge_comma_lambda_fail_closed
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/comma_lambda_source_admission.py"
+      "$<TARGET_FILE:oresforge>")
+  set_tests_properties(oresforge_comma_lambda_fail_closed PROPERTIES TIMEOUT 90)
   # Source to IR interpreter (not machine code or native AOT parity).
   add_test(NAME oresforge_source_i64_interpreter
     COMMAND "${Python3_EXECUTABLE}"
@@ -354,4 +385,14 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
   add_test(NAME forge_actor_stack_domain_host_v1 COMMAND oresforge_actor_stack_domain)
   set_tests_properties(forge_actor_stack_domain_host_v1 PROPERTIES
     TIMEOUT 30 LABELS "host-only;native-actor-stack")
+endif()
+
+
+# Source admission only: no claim of compiled AttoLang guest execution.
+if(BUILD_TESTING)
+  add_executable(oresforge_source_bidi_admission verification/source_bidi_admission_test.cpp)
+  target_include_directories(oresforge_source_bidi_admission PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_source_bidi_admission PRIVATE cxx_std_20)
+  add_test(NAME forge_source_bidi_admission_host COMMAND oresforge_source_bidi_admission)
+  set_tests_properties(forge_source_bidi_admission_host PROPERTIES TIMEOUT 20)
 endif()
