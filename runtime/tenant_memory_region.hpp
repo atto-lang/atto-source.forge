@@ -7,6 +7,7 @@
 #include <span>
 #include <stdexcept>
 #include <vector>
+#include "runtime/secure_erase.hpp"
 
 namespace oresforge::runtime {
 // Trusted host-side memory authority, NOT an untrusted native-code sandbox.
@@ -20,7 +21,7 @@ class TenantMemoryRegion final {
     const std::uint64_t generation;
     bool retired = false;
     std::mutex mutex;
-    ~State() { std::fill(bytes.begin(), bytes.end(), std::uint8_t{0}); }
+    ~State() { secure_erase(bytes); }
   };
  public:
   class Lease final {
@@ -79,7 +80,7 @@ class TenantMemoryRegion final {
     std::lock_guard lock(state_->mutex);
     if (state_->retired) throw std::logic_error("tenant region already retired");
     state_->retired = true;
-    std::fill(state_->bytes.begin(), state_->bytes.end(), std::uint8_t{0});
+    secure_erase(state_->bytes);
   }
 
  private:
