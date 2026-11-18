@@ -63,7 +63,8 @@ neighbor survival. CMake registers
 **Local exact-blob evidence, not GH Actions:** the two committed file blobs
 were SHA-verified against a separately compiled local copy:
 - header `2ac5d3201d463da3b0f3231b1adfe2b98a3488b0`;
-- test `4331f4c5c403e99a18695bd9689184faf1448d1c`.
+- test `96d408646f661407b148b103beb6a6db43b45243`
+(updated 8,192-iteration deterministic foreign-lease/overflow-offset sweep).
 
 GCC C++20 O1 and O2 passed; Clang C++20 O2 passed; Clang
 ASan+UBSan O1 passed. This was a standalone exact-source test, not a full
