@@ -371,6 +371,23 @@ if(BUILD_TESTING)
   set_tests_properties(oresforge_secure_erase_host_only PROPERTIES TIMEOUT 15)
 endif()
 
+# Source-span overlap denial: protect the trusted host's std::copy path
+# against accidental aliases into the tenant's private memory allocation.
+if(BUILD_TESTING)
+  add_executable(oresforge_memory_overlap_test
+    verification/checked_memory_overlap_test.cpp)
+  target_include_directories(oresforge_memory_overlap_test PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_memory_overlap_test PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_memory_overlap_test PRIVATE
+      -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+  endif()
+  add_test(NAME oresforge_memory_overlap_host_only
+    COMMAND oresforge_memory_overlap_test)
+  set_tests_properties(oresforge_memory_overlap_host_only PROPERTIES TIMEOUT 15)
+endif()
+
 # Host-only checked tenant memory region. This test exercises the C++ host
 # authority, not compiled untrusted Forge code or a real native sandbox.
 if(BUILD_TESTING)
