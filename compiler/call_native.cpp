@@ -74,6 +74,9 @@ class Parser {
     const std::size_t begin=at_;
     if (at_==text_.size()) {token_={{},begin}; return;}
     const char c=text_[at_++];
+    if (c=='@')
+      throw std::runtime_error("annotations require typed target validation and AOT lowering; unsupported in Forge native-call compiler at byte "+
+                               std::to_string(begin));
     if (letter(c)) {
       while (at_<text_.size() && (letter(text_[at_])||digit(text_[at_]))) ++at_;
     } else if (digit(c)) {

@@ -97,9 +97,11 @@ public:
                 break;
             }
         }
-        if (::fcntl(socket.fd, F_SETFL, flags) < 0)
-            throw std::system_error(errno, std::generic_category(), "TCP connect restore flags");
-        return socket.release();  // Trusted host owns returned fd and MUST close.
+        // Retain O_NONBLOCK across the ownership transfer. Restoring the
+        // original blocking flags here let a later host read/write park an
+        // actor carrier even though connect itself used nonblocking I/O.
+        // The caller owns this nonblocking descriptor and MUST close it.
+        return socket.release();
 #else
         throw std::runtime_error("native pinned TCP is unsupported on this platform");
 #endif
