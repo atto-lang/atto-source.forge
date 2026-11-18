@@ -4,6 +4,7 @@
 #error "ownership_v1 tests must be compiled without NDEBUG"
 #endif
 #include <cassert>
+#include <span>
 #include <atomic>
 #include <thread>
 #include <utility>
@@ -89,8 +90,26 @@ int main() {
     assert(twin->mutate([](Graph& g) { g.nodes[0].bytes[0] = 77; }));
     assert(root.read([](const Graph& g) { return g.nodes[0].bytes[0]; }) == 1);
   }
+  // Direct and nested pointer-bearing callback snapshots must reject.
+  static_assert(owned_snapshot_v<int>);
+  static_assert(owned_snapshot_v<std::vector<std::uint32_t>>);
+  static_assert(owned_snapshot_v<std::pair<int, std::vector<int>>>);
+  static_assert(!owned_snapshot_v<const Node*>);
+  static_assert(!owned_snapshot_v<std::vector<const Node*>>);
+  static_assert(!owned_snapshot_v<std::span<const Node>>);
+  struct Immovable {
+    int value;
+    explicit Immovable(int x) : value(x) {}
+    Immovable(const Immovable&) = delete;
+    Immovable(Immovable&&) = delete;
+  };
+  auto immutable_pin = Pinned<Immovable>(std::in_place, 84);
+  const auto* stable_before = immutable_pin.get();
+  auto moved_immutable_pin = std::move(immutable_pin);
+  assert(moved_immutable_pin.get() == stable_before);
+  assert(moved_immutable_pin.get()->value == 84);
   auto pin = [] {
-    Pinned<std::vector<int>> handle(std::vector<int>{42,7});
+    Pinned<std::vector<int>> handle(std::in_place, std::initializer_list<int>{42,7});
     auto address = handle.get();
     auto moved = std::move(handle);
     assert(address == moved.get());
