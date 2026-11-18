@@ -326,7 +326,14 @@ class Parser {
     if (!take(":")) expect("->");
     if (tok_.text=="tuple" || tok_.text=="structural" || tok_.text=="(")
       error("tuple-v2 return requires typed ABI lowering");
-    expect("int"); expect("{");
+    expect("int");
+    // Forge stage-0 still emits a single expression return. A double-colon
+    // body cannot be interpreted as a braced function or a punctuation typo:
+    // it needs ordered lexical locals, explicit return types and region-safe
+    // closure lowering before any guest execution can be admitted.
+    if (tok_.text==":" && source_.substr(tok_.offset,2)=="::")
+      error("FORGE_COMMA_BODY_UNSUPPORTED: typed comma body requires checked lexical lowering");
+    expect("{");
     if (tok_.text=="guard")
       error("GUARD_BACKEND_UNSUPPORTED: early-exit CFG and ownership lowering required");
     expect("return");

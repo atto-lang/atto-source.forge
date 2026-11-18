@@ -178,6 +178,13 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/verification/ets_pg_source_admission.py"
       "$<TARGET_FILE:oresforge>")
   set_tests_properties(oresforge_ets_pg_fail_closed_source PROPERTIES TIMEOUT 30)
+  # Real compiler reject test: comma :: / typed inline => Type -> lambdas
+  # are still unsupported in Forge stage-0; no false parity receipt.
+  add_test(NAME oresforge_comma_lambda_fail_closed
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/comma_lambda_source_admission.py"
+      "$<TARGET_FILE:oresforge>")
+  set_tests_properties(oresforge_comma_lambda_fail_closed PROPERTIES TIMEOUT 90)
   # Source to IR interpreter (not machine code or native AOT parity).
   add_test(NAME oresforge_source_i64_interpreter
     COMMAND "${Python3_EXECUTABLE}"
