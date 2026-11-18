@@ -90,6 +90,11 @@ if(BUILD_TESTING)
   add_test(NAME oresforge_legacy_operator_grammar
     COMMAND oresforge_legacy_operator_grammar)
   set_tests_properties(oresforge_legacy_operator_grammar PROPERTIES TIMEOUT 15)
+  # Unicode source-preflight regression, including visible parser admission.
+  add_executable(oresforge_source_unicode_control verification/source_unicode_control_test.cpp)
+  target_link_libraries(oresforge_source_unicode_control PRIVATE oresforge_core)
+  add_test(NAME oresforge_source_unicode_control COMMAND oresforge_source_unicode_control)
+  set_tests_properties(oresforge_source_unicode_control PROPERTIES TIMEOUT 15)
   # Stage-0 single-file AttoLang path admission. Imports remain fail-closed in Forge.
   add_test(NAME oresforge_cli_atto_guest
     COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.atto")

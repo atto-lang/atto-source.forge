@@ -42,6 +42,14 @@ inline void validate_utf8(std::string_view text) {
       if (b<(j==1?low:0x80) || b>(j==1?high:0xbf))
         throw invalid_source_byte("source is not valid UTF-8", i + j);
     }
+    // U+0085 (NEL), U+2028 (LS), U+2029 (PS): hidden Unicode
+    // line separators can disguise source structure even inside comments.
+    // Bounds were checked by the UTF-8 validator immediately above.
+    if ((lead == 0xc2 && static_cast<unsigned char>(text[i+1]) == 0x85) ||
+        (lead == 0xe2 && static_cast<unsigned char>(text[i+1]) == 0x80 &&
+         (static_cast<unsigned char>(text[i+2]) == 0xa8 ||
+          static_cast<unsigned char>(text[i+2]) == 0xa9)))
+      throw invalid_source_byte("source contains forbidden Unicode control", i);
         // Trojan Source: reject bidi marks/overrides/isolates even in comments.
         // The UTF-8 sequence is already validated above.
         if ((lead == 0xd8 && static_cast<unsigned char>(text[i + 1]) == 0x9c) ||
