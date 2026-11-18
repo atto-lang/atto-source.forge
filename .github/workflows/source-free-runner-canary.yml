@@ -40,6 +40,20 @@ jobs:
           test "$GITHUB_RUN_ATTEMPT" = "$EXPECTED_RUN_ATTEMPT"
           [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ ]]
           test "$GITHUB_SHA" = "${{ github.sha }}"
+          # Source-free known-answer checks; no checkout, token, or secrets.
+          test "${RUNNER_OS:-}" = Linux
+          test "${GITHUB_ACTIONS:-}" = true
+          valid_id() { [[ "$1" =~ ^[1-9][0-9]*$ ]]; }
+          if valid_id 0 || valid_id bad || valid_id "1/2"; then
+            echo '::error::source-free admission negative cases failed'
+            exit 1
+          fi
+          actual="$(printf '%s' oreslang-source-free-runner-admission-v1 | sha256sum | cut -d ' ' -f1)"
+          test "$actual" = 4a35cbaad4c7ea93615312c3e39ee83cae0405a29bdf9540094fb89524266b1e
+          echo "SOURCE_FREE_RUNNER_ADMISSION=EXECUTED"
+          echo "SOURCE_FREE_RUNNER_CLASSIFICATION=RUNNER_ONLY_NOT_COMPILER_OR_GUEST_PARITY"
+          echo "SOURCE_FREE_RUNNER_SOURCE_CHECKOUT=NONE"
+          echo "SOURCE_FREE_RUNNER_CROSS_ORG_TRANSFER=NONE"
           printf 'SOURCE_FREE_RUNNER_CANARY=EXECUTED repository=%s repository_id=%s run_id=%s attempt=%s runner_name=%s runner_os=%s\n' \
             "$EXPECTED_REPOSITORY" "$EXPECTED_REPOSITORY_ID" "$EXPECTED_RUN_ID" \
             "$EXPECTED_RUN_ATTEMPT" "$RUNNER_NAME" "$RUNNER_OS"
