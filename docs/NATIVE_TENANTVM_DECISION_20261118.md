@@ -137,3 +137,31 @@ and a real two-source-guest survivor test remain mandatory.
 - `.wasm`: produce validated guests; provide a canonical guest ABI and conformance fixtures.
 
 References: `oreslang-source.llvm/docs/ORESVM_VS_ISOLATEVM.md`; `oreslang-source.llvm/docs/TENANT_VM_NAMING_V1.md`; `docs/VM_ISOLATE_CONTRACT.md`.
+
+## Follow-up: deterministic tenant memory erasure and monotonic lease identities
+
+The tenant memory region's previous destructor used ordinary `std::fill`,
+which an optimizing compiler may remove after the buffer's last observed use.
+`runtime/secure_erase.hpp` now performs volatile byte stores with compiler
+signal fences; `TenantMemoryRegion::retire()` and `State::~State()` both
+invoke it. This is defense in depth for host buffer reclamation, not
+guest sandboxing or guaranteed erasure of all caches, allocator metadata
+or copies retained elsewhere.
+
+The previous `fetch_add` lease-generation allocator could wrap after
+`UINT64_MAX`, eventually reissuing an old generation. The current
+compare-exchange allocator refuses issuance at exhaustion *without
+modifying the counter*. This preserves monotonic non-reused generations
+for the lifetime of the host process even on allocation failure.
+
+**Executed local exact-blob tests:** the standalone secure-erasure helper
+and test match Git blobs
+`f1c28781e3ffc42c0fbc833fbb6317c6aa82c087` and
+`df544ea743a8ab2478dc8ac407e25e3814639847`.
+The updated tenant memory-region header matches
+`856bf5ee987e25b91df5c5245792db0554064674`; its regression test is
+`4331f4c5c403e99a18695bd9689184faf1448d1c`.
+Both targeted test executables passed GCC/Clang C++20 at -O1 and -O2
+with strict warnings, and Clang ASan+UBSan at -O1.
+These are **targeted host tests only**, not full CMake/CTest, untrusted
+native compiler guest execution, or independent CI attestation.
