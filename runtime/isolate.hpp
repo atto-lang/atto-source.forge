@@ -13,6 +13,10 @@
 namespace oresforge::runtime {
 // Host-side accounting only. Native Forge machine code is NOT sandboxed.
 enum class IsolatePhase { Created, Running, Quiescing, Stopped };
+// The native executable path is trusted until compiler-verified memory
+// confinement and actual protected TenantVM execution are proven. Never
+// map ProtectedNative to the trusted registry as a fallback.
+enum class TenantIsolationMode { TrustedNative, ProtectedNative };
 class OresVM final {
   struct State final {
     explicit State(std::string t, std::uint64_t g, std::size_t max_actors)
@@ -64,7 +68,10 @@ public:
     if(max_tenants_==0||max_tenants_>1024)throw std::invalid_argument("tenant quota");
   }
   OresVM(const OresVM&)=delete;OresVM& operator=(const OresVM&)=delete;
-  IsolateHandle create_isolate(std::string tenant,std::size_t max_actors){
+  IsolateHandle create_isolate(std::string tenant,std::size_t max_actors,
+                                TenantIsolationMode isolation=TenantIsolationMode::TrustedNative){
+    if (isolation != TenantIsolationMode::TrustedNative)
+      throw std::logic_error("protected native TenantVM not wired; untrusted guest admission denied");
     const bool invalid_tenant = tenant.empty() || tenant.size()>128 ||
       !std::all_of(tenant.begin(),tenant.end(),[](unsigned char c){
         return (c>='a'&&c<='z') || (c>='A'&&c<='Z') ||
