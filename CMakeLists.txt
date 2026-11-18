@@ -356,6 +356,21 @@ if(BUILD_TESTING)
   set_tests_properties(oresforge_tenant_isolate_host_admission PROPERTIES TIMEOUT 30)
 endif()
 
+# Explicit tenant-memory zeroization test: optimizer-resistant erasure under
+# normal retirement and abnormal owning-State destruction, not a sandbox.
+if(BUILD_TESTING)
+  add_executable(oresforge_secure_erase_test verification/secure_erase_test.cpp)
+  target_include_directories(oresforge_secure_erase_test PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/runtime")
+  target_compile_features(oresforge_secure_erase_test PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_secure_erase_test PRIVATE
+      -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+  endif()
+  add_test(NAME oresforge_secure_erase_host_only COMMAND oresforge_secure_erase_test)
+  set_tests_properties(oresforge_secure_erase_host_only PROPERTIES TIMEOUT 15)
+endif()
+
 # Host-only checked tenant memory region. This test exercises the C++ host
 # authority, not compiled untrusted Forge code or a real native sandbox.
 if(BUILD_TESTING)
