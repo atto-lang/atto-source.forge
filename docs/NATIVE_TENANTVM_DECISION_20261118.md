@@ -41,6 +41,44 @@ Memory protection keys (MPK/PKU on supported CPUs), page protections and checked
 
 Do not rename existing versioned `IsolateHandle`, `ActorTicket`, `OresVM` symbols or wire artifacts without separate compatibility coverage; `TenantVM` is canonical architecture vocabulary.
 
+## Implemented host-memory foundation (2026-11-18)
+
+`runtime/tenant_memory_region.hpp` now implements a real, bounded native
+`TenantMemoryRegion` (1 to 16 MiB, zero-initialized) with independent
+memory per region. Host-issued read-only or writable `Lease`s are unforgeable
+through the public C++ constructor API, bind to their original region and
+generation, and only permit overflow-safe range-checked copies under a lock.
+Retirement invalidates all leases, denies new operations and zeroes bytes.
+The API deliberately exposes no guest-visible native `uint8_t*` or
+unchecked memory reference. This is a **trusted host-side authority**:
+untrusted native machine code is NOT sandboxed and protected mode remains
+closed.
+
+`verification/tenant_memory_region_test.cpp` covers denied cross-region
+leases, stale-after-retire use, read-only enforcement, uint32 overflow,
+concurrent disjoint host writes, tenant recreation with fresh zeroes and
+neighbor survival. CMake registers
+`oresforge_tenant_memory_region_host_only` with strict warnings.
+
+**Local exact-blob evidence, not GH Actions:** the two committed file blobs
+were SHA-verified against a separately compiled local copy:
+- header `2ac5d3201d463da3b0f3231b1adfe2b98a3488b0`;
+- test `4331f4c5c403e99a18695bd9689184faf1448d1c`.
+
+GCC C++20 O1 and O2 passed; Clang C++20 O2 passed; Clang
+ASan+UBSan O1 passed. This was a standalone exact-source test, not a full
+Forge CMake/CTest or compiler-backed untrusted guest execution test.
+
+### Remaining physical enforcement gap
+
+The host-only `TenantMemoryRegion` is not yet connected to compiler-emitted
+Forge loads/stores or `OresVM` actor runtime allocation ownership. Before
+enabling `ProtectedNative`, all guest memory references, stack spills,
+indirect calls and native service transitions must be checked in generated
+code against the tenant cage and capability manifest. An arbitrary native
+pointer can bypass this C++ API. True independently terminated tenant faults
+and a real two-source-guest survivor test remain mandatory.
+
 ## Implementation stages and release gates
 
 1. Design/pin guest ABI: guest entry status+result, pointer/offset authority, allocated region ID, generation, ownership permissions and compiler-verified safe indirect call targets.
