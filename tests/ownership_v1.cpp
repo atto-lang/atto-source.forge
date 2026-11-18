@@ -15,13 +15,13 @@ int main() {
   assert(!checked_graph(absent));
   assert(!checked_graph(cycle(), Limits{10,1,10}));
   auto original = UniqueGraph(7, cycle());
-  auto copy = original.deep_copy(); assert(copy && copy->read());
-  assert(copy->read()->nodes[0].edges == original.read()->nodes[0].edges);
-  assert(copy->read()->nodes[0].bytes.data() != original.read()->nodes[0].bytes.data());
-  copy->mutate()->nodes[1].bytes[0] = 99;
-  assert(original.read()->nodes[1].bytes[0] == 2);
+  auto copy = original.deep_copy(); assert(copy && copy->read([](const Graph& g) { return g.nodes.size(); }));
+  assert(copy->read([](const Graph& g) { return g.nodes[0].edges; }) == original.read([](const Graph& g) { return g.nodes[0].edges; }));
+  assert(copy->read([](const Graph& g) { return reinterpret_cast<std::uintptr_t>(g.nodes[0].bytes.data()); }) != original.read([](const Graph& g) { return reinterpret_cast<std::uintptr_t>(g.nodes[0].bytes.data()); }));
+  assert(copy->mutate([](Graph& g) { g.nodes[1].bytes[0] = 99; }));
+  assert(original.read([](const Graph& g) { return g.nodes[1].bytes[0]; }) == 2);
   auto frozen = std::move(original).freeze(); assert(frozen);
-  assert(!original.read());
+  assert(!original.read([](const Graph& g) { return g.nodes.size(); }));
   auto permit = frozen->permit();
   auto shared = frozen->share();
   auto weak = frozen->weak();
@@ -75,8 +75,8 @@ int main() {
     UniqueGraph root(3, std::move(many));
     assert(root.valid());
     auto twin = root.deep_copy(); assert(twin);
-    twin->mutate()->nodes[0].bytes[0] = 77;
-    assert(root.read()->nodes[0].bytes[0] == 1);
+    assert(twin->mutate([](Graph& g) { g.nodes[0].bytes[0] = 77; }));
+    assert(root.read([](const Graph& g) { return g.nodes[0].bytes[0]; }) == 1);
   }
   auto pin = [] {
     Pinned<std::vector<int>> handle(std::vector<int>{42,7});
