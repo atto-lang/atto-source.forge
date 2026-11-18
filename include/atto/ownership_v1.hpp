@@ -7,6 +7,7 @@
 #include <optional>
 #include <set>
 #include <stdexcept>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -83,6 +84,9 @@ public:
   template<class F>
   auto read(const Permit& p, F&& f) const
       -> std::optional<decltype(f(std::declval<const Graph&>()))> {
+    using Result = decltype(f(std::declval<const Graph&>()));
+    static_assert(!std::is_pointer_v<Result> && !std::is_reference_v<Result>,
+        "read callback cannot return an unleased pointer/reference");
     if (!region_ || region_->retired.load(std::memory_order_acquire) ||
         p.domain_ != region_->domain || p.generation_ != region_->generation) return std::nullopt;
     return f(region_->graph);
@@ -148,8 +152,22 @@ public:
     if (!valid(limit)) return std::nullopt;
     return UniqueGraph(domain_, *graph_);
   }
-  const Graph* read() const { return graph_.get(); }
-  Graph* mutate() { return graph_.get(); }
+  // Scoped callbacks prevent accidentally returning a raw guest pointer
+  // that could dangle when the unique owner is frozen or dropped.
+  template<class F>
+  auto read(F&& f) const -> std::optional<decltype(f(std::declval<const Graph&>()))> {
+    using Result = decltype(f(std::declval<const Graph&>()));
+    static_assert(!std::is_pointer_v<Result> && !std::is_reference_v<Result>,
+        "graph read cannot return a pointer/reference");
+    if (!graph_) return std::nullopt;
+    return f(*graph_);
+  }
+  template<class F>
+  bool mutate(F&& f) {
+    if (!graph_) return false;
+    f(*graph_);
+    return true;
+  }
   // Frozen publication consumes unique storage; caller must use std::move.
   std::optional<FrozenOwner> freeze(Limits limit = {}) && {
     if (!valid(limit)) return std::nullopt;
