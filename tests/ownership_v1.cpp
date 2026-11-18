@@ -1,4 +1,8 @@
 #include <atto/ownership_v1.hpp>
+// Tests must remain active even when CMake is run in Release mode.
+#ifdef NDEBUG
+#error "ownership_v1 tests must be compiled without NDEBUG"
+#endif
 #include <cassert>
 #include <atomic>
 #include <thread>
@@ -11,6 +15,13 @@ int main() {
   assert(checked_graph(cycle()));
   auto bad = cycle(); bad.nodes[1].kind = EdgeKind::foreign_pointer;
   assert(!checked_graph(bad));
+  for (auto kind : {EdgeKind::external_mutable, EdgeKind::foreign_pointer,
+                    EdgeKind::dynamic_unknown}) {
+    auto unsafe = cycle(); unsafe.nodes[1].kind = kind;
+    assert(!checked_graph(unsafe));
+  }
+  auto duplicate = cycle(); duplicate.nodes[1].id = 1;
+  assert(!checked_graph(duplicate));
   auto absent = cycle(); absent.nodes[0].edges.push_back(999);
   assert(!checked_graph(absent));
   assert(!checked_graph(cycle(), Limits{10,1,10}));
