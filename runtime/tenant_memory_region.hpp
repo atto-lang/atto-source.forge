@@ -42,9 +42,16 @@ class TenantMemoryRegion final {
   explicit TenantMemoryRegion(std::uint32_t capacity) {
     if (capacity == 0 || capacity > 16u * 1024u * 1024u)
       throw std::invalid_argument("invalid tenant region capacity");
-    auto generation = next_generation_.fetch_add(1, std::memory_order_relaxed);
-    if (generation == 0 || generation == UINT64_MAX)
-      throw std::overflow_error("tenant region generation exhausted");
+    // Never let a failed allocation overflow the global generation counter.
+    // fetch_add(MAX) would wrap to zero, then reissue old generations after
+    // two failures, making stale lease identities conceptually reusable.
+    auto generation = next_generation_.load(std::memory_order_relaxed);
+    for (;;) {
+      if (generation == 0 || generation == UINT64_MAX)
+        throw std::overflow_error("tenant region generation exhausted");
+      if (next_generation_.compare_exchange_weak(generation, generation + 1,
+              std::memory_order_relaxed, std::memory_order_relaxed)) break;
+    }
     state_ = std::make_shared<State>(capacity, generation);
   }
   TenantMemoryRegion(const TenantMemoryRegion&) = delete;
