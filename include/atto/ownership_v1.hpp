@@ -2,6 +2,8 @@
 // Native *host reference* operations, not Forge guest/IR ownership lowering.
 // All dynamically reachable edges are local node IDs, never host pointers.
 #include <atomic>
+#include <string>
+#include <initializer_list>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -13,6 +15,20 @@
 #include <vector>
 
 namespace atto::ownership_v1 {
+// A callback may only export value snapshots known not to contain nested
+// pointers or references. Checking !is_pointer<T> alone permits span<T>,
+// vector<T*> and other accidental lifetime escapes. This only protects
+// trusted host-facing return values; captured pointers need separate review.
+template<class T> struct IsOwnedSnapshot : std::bool_constant<
+    std::is_arithmetic_v<T> || std::is_enum_v<T>> {};
+template<> struct IsOwnedSnapshot<std::string> : std::true_type {};
+template<class T, class Alloc>
+struct IsOwnedSnapshot<std::vector<T, Alloc>> : IsOwnedSnapshot<T> {};
+template<class T> struct IsOwnedSnapshot<std::optional<T>> : IsOwnedSnapshot<T> {};
+template<class A, class B> struct IsOwnedSnapshot<std::pair<A,B>> :
+    std::bool_constant<IsOwnedSnapshot<A>::value && IsOwnedSnapshot<B>::value> {};
+template<class T> inline constexpr bool owned_snapshot_v =
+    IsOwnedSnapshot<std::remove_cvref_t<T>>::value;
 enum class EdgeKind { plain, external_mutable, foreign_pointer, dynamic_unknown };
 struct Node {
   std::uint32_t id;
@@ -85,8 +101,8 @@ public:
   auto read(const Permit& p, F&& f) const
       -> std::optional<decltype(f(std::declval<const Graph&>()))> {
     using Result = decltype(f(std::declval<const Graph&>()));
-    static_assert(!std::is_pointer_v<Result> && !std::is_reference_v<Result>,
-        "read callback cannot return an unleased pointer/reference");
+    static_assert(owned_snapshot_v<Result> && !std::is_reference_v<Result>,
+        "read callbacks must return owned scalar/vector snapshots, not pointer-bearing values");
     if (!region_ || region_->retired.load(std::memory_order_acquire) ||
         p.domain_ != region_->domain || p.generation_ != region_->generation) return std::nullopt;
     return f(region_->graph);
@@ -157,8 +173,8 @@ public:
   template<class F>
   auto read(F&& f) const -> std::optional<decltype(f(std::declval<const Graph&>()))> {
     using Result = decltype(f(std::declval<const Graph&>()));
-    static_assert(!std::is_pointer_v<Result> && !std::is_reference_v<Result>,
-        "graph read cannot return a pointer/reference");
+    static_assert(owned_snapshot_v<Result> && !std::is_reference_v<Result>,
+        "graph read callback must return an independently owned scalar/vector snapshot");
     if (!graph_) return std::nullopt;
     return f(*graph_);
   }
@@ -190,7 +206,11 @@ template<class T>
 class Pinned {
   std::unique_ptr<T> data_;
 public:
-  explicit Pinned(T value) : data_(std::make_unique<T>(std::move(value))) {}
+  // Construct IN PLACE: accepting an existing T by value would move an
+  // already self-referential object before it becomes pinned.
+  template<class... Args>
+  explicit Pinned(std::in_place_t, Args&&... args)
+      : data_(std::make_unique<T>(std::forward<Args>(args)...)) {}
   Pinned(const Pinned&) = delete;
   Pinned& operator=(const Pinned&) = delete;
   Pinned(Pinned&&) noexcept = default;
@@ -204,7 +224,10 @@ template<class T>
 class OwnedResource {
   std::unique_ptr<T> data_;
 public:
-  explicit OwnedResource(T value) : data_(std::make_unique<T>(std::move(value))) {}
+  explicit OwnedResource(T value) : data_(std::make_unique<T>(std::move(value))) {
+    static_assert(std::is_nothrow_destructible_v<T>,
+                  "drop! requires noexcept destruction until unwind ABI is proven");
+  }
   OwnedResource(const OwnedResource&) = delete;
   OwnedResource& operator=(const OwnedResource&) = delete;
   OwnedResource(OwnedResource&&) noexcept = default;
