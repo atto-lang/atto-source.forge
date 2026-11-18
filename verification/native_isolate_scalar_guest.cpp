@@ -4,6 +4,8 @@
 #include <stdexcept>
 #include <limits>
 #include <thread>
+#include <array>
+#include <vector>
 
 // Linked from the ACTUAL Forge emit-runtime-asm output. The callable x86-64
 // guest has exactly two signed i64 params and no mutable process-global data.
@@ -17,6 +19,15 @@ int main() {
   auto a=vm.create_isolate("tenant-a",1);
   auto b=vm.create_isolate("tenant-b",1);
   vm.start(a);vm.start(b);
+  // The same real Forge-compiled scalar code runs in both tenants while the
+  // host OresVM owns disjoint authenticated actor memory, not raw guest ptrs.
+  auto aa=vm.register_actor(a,1);
+  auto ab=vm.register_actor(b,1);
+  const std::array<std::uint8_t,3> bytes{42,7,9};
+  vm.write_actor_memory(a,aa,4,bytes);
+  assert((vm.read_actor_memory(a,aa,4,3)==std::vector<std::uint8_t>{42,7,9}));
+  assert((vm.read_actor_memory(b,ab,4,3)==std::vector<std::uint8_t>{0,0,0}));
+  assert(rejects([&]{vm.read_actor_memory(b,aa,4,3);}));
   assert(vm.invoke_trusted_scalar(a,oresforge_entry,-1)==-1);
   assert(vm.invoke_trusted_scalar(b,oresforge_entry,100)==100);
   assert(vm.invoke_trusted_scalar(a,oresforge_entry,-2)==-3);
@@ -35,14 +46,20 @@ int main() {
   assert(vm.snapshot(a).scalar_state==997);
   assert(vm.snapshot(b).scalar_state==1102);
   vm.begin_shutdown(a);
+  assert(rejects([&]{vm.read_actor_memory(a,aa,4,3);}));
   assert(rejects([&]{vm.invoke_trusted_scalar(a,oresforge_entry,1);}));
   assert(vm.invoke_trusted_scalar(b,oresforge_entry,1)==1103);
+  vm.retire_actor(a,aa);
   vm.complete_shutdown(a);vm.destroy(a);
   assert(rejects([&]{vm.snapshot(a);}));
   auto again=vm.create_isolate("tenant-a",1);
   vm.start(again);
+  auto anew=vm.register_actor(again,1);
+  assert((vm.read_actor_memory(again,anew,4,3)==std::vector<std::uint8_t>{0,0,0}));
+  assert(rejects([&]{vm.read_actor_memory(again,aa,4,3);}));
   assert(vm.invoke_trusted_scalar(again,oresforge_entry,8)==8);
   assert(rejects([&]{vm.snapshot(a);}));
+  vm.retire_actor(again,anew);
   vm.begin_shutdown(again);vm.complete_shutdown(again);vm.destroy(again);
   // Native trap must be rejected before machine-code entry for the
   // admitted old+delta scalar profile, preserving the host process.
@@ -56,5 +73,7 @@ int main() {
   assert(max_vm.snapshot(extreme).scalar_state==std::numeric_limits<std::int64_t>::max());
   assert(max_vm.snapshot(extreme).active_guest_calls==0);
   max_vm.begin_shutdown(extreme);max_vm.complete_shutdown(extreme);max_vm.destroy(extreme);
+  assert((vm.read_actor_memory(b,ab,4,3)==std::vector<std::uint8_t>{0,0,0}));
+  vm.retire_actor(b,ab);
   vm.begin_shutdown(b);vm.complete_shutdown(b);vm.destroy(b);
 }
