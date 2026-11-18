@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <vector>
 #include "runtime/secure_erase.hpp"
+#include "runtime/checked_memory_overlap.hpp"
 
 namespace oresforge::runtime {
 // Trusted host-side memory authority, NOT an untrusted native-code sandbox.
@@ -80,6 +81,12 @@ class TenantMemoryRegion final {
     if (bytes.size() > UINT32_MAX)
       throw std::out_of_range("tenant write too large");
     validate(lease, relative, static_cast<std::uint32_t>(bytes.size()), true);
+    // std::copy is not defined for overlapping source/destination ranges.
+    // Reject aliases of the whole private region, including scratch or
+    // control bytes, rather than relying on the caller's copy direction.
+    if (detail::overlaps_or_invalid(bytes.data(), bytes.size(),
+                                    state_->bytes.data(), state_->bytes.size()))
+      throw std::invalid_argument("source span overlaps private tenant region");
     std::copy(bytes.begin(), bytes.end(), state_->bytes.begin() + lease.offset_ + relative);
   }
 
