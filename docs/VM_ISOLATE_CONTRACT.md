@@ -6,6 +6,11 @@
 complete cross-backend parity, per-tenant physical resource enforcement or
 a security sandbox. No general guest-code tenant isolation is claimed.
 
+**2026-11-18 decision:** Forge builds an independent *native* protected TenantVM
+analogous to LLVM, without Wasmtime. The new `ProtectedNative` admission mode
+fails closed until verified compiler-instrumented memory confinement exists.
+See [Forge native TenantVM decision](NATIVE_TENANTVM_DECISION_20261118.md).
+
 ## Common vocabulary
 
 - **OresVM:** root host, code registry, permission broker, global admission
