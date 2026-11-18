@@ -67,9 +67,31 @@ The tests/ownership_v1.cpp binary verifies native cycles, copy independence,
 unsafe graph rejection, weak-upgrade/retire races, stale generation, frozen
 owner move replacement, pinned address stability and double-release safety.
 
-The **exact** header and test blob SHAs were locally tested using C++20
-GCC and Clang with -fsanitize=address,undefined, -Wall -Wextra -Werror
-and passed. This establishes only **native host-model behavior**.
+The audited native host API now rejects *nested* pointer-bearing read
+snapshots (not just raw pointers), constructs pinned pointees in place rather
+than moving a previously constructed potentially self-referential object,
+and requires noexcept destruction for explicit drop. Host callback bodies
+remain trusted C++ code; this API does not sandbox arbitrary pointer capture.
+
+The tests/ownership_stress_v1.cpp binary adds deterministic cyclic graph
+cases at exact node/edge/byte budget boundaries, independent clone mutation,
+32 rounds of 4-thread weak upgrade/retire races, and compile-time rejection
+checks for unsafe snapshots and movable self-referential pin inputs.
+
+Exact locally executed Git blob identities:
+- include/atto/ownership_v1.hpp: 0050651637e265a6e660af77f302e6a9f955e3e8
+- tests/ownership_v1.cpp: 5b77e09cec211164276cf46c89a1382c7f33465c
+- tests/ownership_stress_v1.cpp: c8bae893835b05f211274e0cb2ecfabb74b77a45
+
+All four native combinations passed locally: GCC and Clang, each running
+both executables under -std=c++20 -O1 -g -Wall -Wextra -Werror -pedantic
+-fsanitize=address,undefined -fno-omit-frame-pointer -pthread;
+ASAN_OPTIONS=detect_leaks=1. Tests are assertions compiled without NDEBUG,
+including Release CMake builds. The GitHub Actions runner failure is separate
+and must not be reported as passing CI.
+
+This establishes only **native host-model behavior**, not production
+Forge IR lowering, actor memory isolation or AttoLang guest execution. This establishes only **native host-model behavior**.
 It does not establish Forge guest IR lowering, actor memory isolation or
 AttoLang syntax execution. Related frontend/spec/conformance branches
 are in atto-source.rs#344, atto-borrow-checker.rs#43, atto-spec#92,
