@@ -2,6 +2,10 @@
 if(NOT DEFINED ROOT OR NOT DEFINED FORGE OR NOT DEFINED CXX OR NOT DEFINED OUT_DIR)
   message(FATAL_ERROR "missing scalar guest integration variables")
 endif()
+set(guest_flags)
+if(SANITIZERS)
+  list(APPEND guest_flags -fsanitize=address,undefined -fno-omit-frame-pointer)
+endif()
 file(MAKE_DIRECTORY "${OUT_DIR}")
 function(verify_guest fixture want_rc want_out want_err)
   set(source "${ROOT}/fixtures/scalar-v1/${fixture}.atto")
@@ -13,7 +17,7 @@ function(verify_guest fixture want_rc want_out want_err)
     message(FATAL_ERROR "${fixture}: frontend failed: ${rc}: ${err}")
   endif()
   execute_process(COMMAND "${CXX}" -std=c++20 -Wall -Wextra -Werror
-    "-I${ROOT}/include" "${cpp}" -o "${binary}"
+    ${guest_flags} "-I${ROOT}/include" "${cpp}" -o "${binary}"
     RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
   if(NOT "${rc}" STREQUAL "0")
     message(FATAL_ERROR "${fixture}: generated C++ build failed: ${err}")
