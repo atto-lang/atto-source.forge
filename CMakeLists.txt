@@ -161,3 +161,13 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   endif()
   add_test(NAME checked_i64_oracle_test COMMAND checked_i64_oracle_test)
 endif()
+
+# Deterministic native emission verified with 48 compiled executable guests.
+add_test(NAME scalar_guest_reproducibility
+  COMMAND "${CMAKE_COMMAND}"
+    "-DROOT=${CMAKE_CURRENT_SOURCE_DIR}"
+    "-DCXX=${CMAKE_CXX_COMPILER}"
+    "-DSANITIZERS=${ATTO_FORGE_SANITIZERS}"
+    "-DFORGE=$<TARGET_FILE:forge_scalar>"
+    "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/scalar-reproducibility"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/scalar_reproducibility.cmake")
