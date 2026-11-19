@@ -127,6 +127,17 @@ add_test(NAME scalar_guest_pipeline
   COMMAND "${CMAKE_COMMAND}"
     "-DROOT=${CMAKE_CURRENT_SOURCE_DIR}"
     "-DCXX=${CMAKE_CXX_COMPILER}"
+    "-DSANITIZERS=${ATTO_FORGE_SANITIZERS}"
     "-DFORGE=$<TARGET_FILE:forge_scalar>"
     "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/scalar-guests"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/scalar_guest.cmake")
+
+# Executed generated-native-guest conformance corpus under GCC and Clang.
+add_test(NAME scalar_guest_conformance
+  COMMAND "${CMAKE_COMMAND}"
+    "-DROOT=${CMAKE_CURRENT_SOURCE_DIR}"
+    "-DCXX=${CMAKE_CXX_COMPILER}"
+    "-DSANITIZERS=${ATTO_FORGE_SANITIZERS}"
+    "-DFORGE=$<TARGET_FILE:forge_scalar>"
+    "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/scalar-conformance"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/scalar_conformance.cmake")

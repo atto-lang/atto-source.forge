@@ -123,3 +123,5 @@ Restricted scalar arithmetic additionally supports signed bitwise `&`, `|`, `^`,
 Restricted scalar shift syntax: `<<<` bitwise left, `>>>` zero-fill right, `ashr` sign-preserving right, with signed shift counts masked to low six bits. `<<` and `>>` are reserved for channel operations. The shift tier is left associative and between addition and bitwise AND.
 
 Restricted decimal scalar literals permit leading zeros in the signed `INT64_MIN` representation (e.g. `-0009223372036854775808`); this passes the same bounded decimal validator as other integers. Out-of-range positive or negative literals are rejected.
+
+The native Forge tests compile and execute an additional 29-case `.atto` scalar conformance corpus, including signed arithmetic, bitwise precedence, masked shifts, INT64_MIN, overflow and division-by-zero exits. When `ATTO_FORGE_SANITIZERS=ON`, **generated guest binaries** themselves are built under ASan/UBSan, as well as the Forge frontend. This validates only the restricted stage-0 compiled scalar subset, not the full Forge JIT/AOT or actor runtime.
