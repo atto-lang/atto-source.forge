@@ -119,3 +119,5 @@ and checked i64 operators. This is not a general Forge JIT/AOT compiler, actor
 runtime, library/package system or cross-backend parity proof.
 
 Restricted scalar arithmetic additionally supports signed bitwise `&`, `|`, `^`, and unary `~`, with precedence `~` > multiplicative > additive > `&` > `^` > `|`. Bit patterns are preserved via C++20 `std::bit_cast` rather than implementation-defined signed casts.
+
+Restricted scalar shift syntax: `<<<` bitwise left, `>>>` zero-fill right, `ashr` sign-preserving right, with signed shift counts masked to low six bits. `<<` and `>>` are reserved for channel operations. The shift tier is left associative and between addition and bitwise AND.

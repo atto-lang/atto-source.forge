@@ -49,6 +49,15 @@ struct Evaluated {
         if (values[node.right] == 0) return {{}, EvalError::divide_by_zero};
         result = checked_div(lhs, values[node.right]);
         break;
+      case Op::shl:
+        result = shl_i64(lhs, values[node.right]);
+        break;
+      case Op::lshr:
+        result = lshr_i64(lhs, values[node.right]);
+        break;
+      case Op::ashr:
+        result = ashr_i64(lhs, values[node.right]);
+        break;
       case Op::band:
         result = bit_and(lhs, values[node.right]);
         break;

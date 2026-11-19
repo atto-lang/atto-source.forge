@@ -10,7 +10,7 @@
 #include <vector>
 
 namespace atto::forge::scalar {
-enum class Op { literal, add, sub, mul, div, rem, neg, band, bor, bxor, bnot };
+enum class Op { literal, add, sub, mul, div, rem, neg, band, bor, bxor, bnot, shl, lshr, ashr };
 struct Node {
   Op op;
   std::size_t left = 0, right = 0;
@@ -93,12 +93,27 @@ class Parser {
     return lhs;
   }
   [[nodiscard]] std::optional<std::size_t> parse_and(int depth) {
-    auto lhs = additive(depth);
+    auto lhs = parse_shift(depth);
     if (!lhs) return std::nullopt;
     while (take(Kind::bit_and)) {
-      auto rhs = additive(depth);
+      auto rhs = parse_shift(depth);
       if (!rhs) return std::nullopt;
       lhs = append(Node{Op::band, *lhs, *rhs, 0});
+      if (!lhs) return std::nullopt;
+    }
+    return lhs;
+  }
+  [[nodiscard]] std::optional<std::size_t> parse_shift(int depth) {
+    auto lhs = additive(depth);
+    if (!lhs) return std::nullopt;
+    while (current().kind == Kind::shl || current().kind == Kind::lshr ||
+           (current().kind == Kind::name && text() == "ashr")) {
+      const auto op = current().kind == Kind::shl ? Op::shl :
+                      current().kind == Kind::lshr ? Op::lshr : Op::ashr;
+      ++pos_;
+      auto rhs = additive(depth);
+      if (!rhs) return std::nullopt;
+      lhs = append(Node{op, *lhs, *rhs, 0});
       if (!lhs) return std::nullopt;
     }
     return lhs;

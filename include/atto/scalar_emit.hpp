@@ -41,6 +41,15 @@ int main() {
         case Op::sub:
           call = "checked_sub(*" + var(n.left) + ", *" + var(n.right) + ")";
           break;
+        case Op::shl:
+          call = "shl_i64(*" + var(n.left) + ", *" + var(n.right) + ")";
+          break;
+        case Op::lshr:
+          call = "lshr_i64(*" + var(n.left) + ", *" + var(n.right) + ")";
+          break;
+        case Op::ashr:
+          call = "ashr_i64(*" + var(n.left) + ", *" + var(n.right) + ")";
+          break;
         case Op::band:
           call = "bit_and(*" + var(n.left) + ", *" + var(n.right) + ")";
           break;

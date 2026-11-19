@@ -5,6 +5,9 @@
 #include <limits>
 #include <optional>
 
+using atto::forge::shl_i64;
+using atto::forge::lshr_i64;
+using atto::forge::ashr_i64;
 using atto::forge::bit_and;
 using atto::forge::bit_or;
 using atto::forge::bit_xor;
@@ -46,6 +49,16 @@ static_assert(bit_and(-1, 42) == std::optional<i64>{42});
 static_assert(bit_or(1, 4) == std::optional<i64>{5});
 static_assert(bit_xor(6, 3) == std::optional<i64>{5});
 static_assert(bit_not(MIN) == std::optional<i64>{MAX});
+
+static_assert(shl_i64(1, 63) == std::optional<i64>{MIN});
+static_assert(shl_i64(1, 64) == std::optional<i64>{1});
+static_assert(shl_i64(1, -1) == std::optional<i64>{MIN});
+static_assert(lshr_i64(-1, 1) == std::optional<i64>{MAX});
+static_assert(lshr_i64(MIN, 63) == std::optional<i64>{1});
+static_assert(ashr_i64(-8, 2) == std::optional<i64>{-2});
+static_assert(ashr_i64(-1, 63) == std::optional<i64>{-1});
+static_assert(ashr_i64(MIN, 63) == std::optional<i64>{-1});
+static_assert(ashr_i64(MIN, 64) == std::optional<i64>{MIN});
 
 void require(bool condition) {
   if (!condition) std::abort();
