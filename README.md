@@ -121,3 +121,5 @@ runtime, library/package system or cross-backend parity proof.
 Restricted scalar arithmetic additionally supports signed bitwise `&`, `|`, `^`, and unary `~`, with precedence `~` > multiplicative > additive > `&` > `^` > `|`. Bit patterns are preserved via C++20 `std::bit_cast` rather than implementation-defined signed casts.
 
 Restricted scalar shift syntax: `<<<` bitwise left, `>>>` zero-fill right, `ashr` sign-preserving right, with signed shift counts masked to low six bits. `<<` and `>>` are reserved for channel operations. The shift tier is left associative and between addition and bitwise AND.
+
+Restricted decimal scalar literals permit leading zeros in the signed `INT64_MIN` representation (e.g. `-0009223372036854775808`); this passes the same bounded decimal validator as other integers. Out-of-range positive or negative literals are rejected.
