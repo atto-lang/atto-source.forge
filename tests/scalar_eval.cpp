@@ -45,4 +45,23 @@ int main() {
   assert(ast.ok());
   ast.nodes[0].op = Op::add; ast.nodes[0].left = 0;
   assert(evaluate(ast).error == EvalError::invalid_ast);
+  auto detached = parse_source(program("5+3"));
+  assert(detached.ok() && validate_ast(detached));
+  detached.root = 0;
+  assert(!validate_ast(detached));
+  assert(evaluate(detached).error == EvalError::invalid_ast);
+  auto stray = parse_source(program("5+3"));
+  stray.nodes.push_back(Node{Op::literal, 0, 0, 12});
+  stray.root = stray.nodes.size()-1;
+  assert(!validate_ast(stray));
+  assert(evaluate(stray).error == EvalError::invalid_ast);
+  auto forged = parse_source(program("5+3"));
+  forged.nodes.back().op = static_cast<Op>(999);
+  assert(!validate_ast(forged));
+  assert(evaluate(forged).error == EvalError::invalid_ast);
+  auto bad_unary = parse_source(program("~7"));
+  assert(bad_unary.ok());
+  bad_unary.nodes.back().right = 1;
+  assert(!validate_ast(bad_unary));
+  assert(evaluate(bad_unary).error == EvalError::invalid_ast);
 }
