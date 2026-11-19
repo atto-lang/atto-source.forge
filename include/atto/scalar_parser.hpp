@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <limits>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -160,9 +161,17 @@ class Parser {
     if (take(Kind::minus)) {
       // Literal INT64_MIN is allowed; negating any evaluated INT64_MIN
       // is a checked overflow in the subsequent evaluator/codegen.
-      if (current().kind == Kind::integer && text() == "9223372036854775808") {
-        ++pos_;
-        return append(Node{Op::literal, 0, 0, std::numeric_limits<i64>::min()});
+      if (current().kind == Kind::integer && text().size() < 32) {
+        // The negative range includes |INT64_MIN|. Reuse the canonical
+        // decimal validator instead of comparing only the unpadded token.
+        // This accepts -0009223372036854775808 consistently with other
+        // decimal leading-zero literals but rejects larger magnitudes.
+        const std::string signed_digits = "-" + std::string(text());
+        const auto minimum = parse_decimal_i64(signed_digits);
+        if (minimum && *minimum == std::numeric_limits<i64>::min()) {
+          ++pos_;
+          return append(Node{Op::literal, 0, 0, *minimum});
+        }
       }
       auto rhs = unary(depth + 1);
       if (!rhs) return std::nullopt;

@@ -12,6 +12,12 @@ int main() {
   assert(ops.ok() && ops.nodes[ops.root].op == Op::bor);
   auto b = parse_source("fnc main(): int {return -9223372036854775808;}");
   assert(b.ok() && b.nodes[b.root].value == std::numeric_limits<i64>::min());
+  auto padded_min = parse_source("fnc main(): int {return -0009223372036854775808;}");
+  assert(padded_min.ok() &&
+         padded_min.nodes[padded_min.root].value == std::numeric_limits<i64>::min());
+  auto padded_over = parse_source("fnc main(): int {return -0009223372036854775809;}");
+  assert(!padded_over.ok() &&
+         padded_over.error == ParseError::literal_out_of_range);
   auto c = parse_source("fnc main(): int {return -(-9223372036854775808);}");
   assert(c.ok() && c.nodes[c.root].op == Op::neg);
   for (const auto* bad : {
