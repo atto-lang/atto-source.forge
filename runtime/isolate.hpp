@@ -37,7 +37,9 @@ public:
     explicit IsolateHandle(std::shared_ptr<State> s) : state_(s), epoch_(s->generation) {}
   public: IsolateHandle()=default;
   };
-  // Canonical opaque per-tenant generation handle. No new trust mode.\n  using TenantVMHandle = IsolateHandle;\n  class ActorTicket final {
+  // Canonical opaque per-tenant generation handle. No new trust mode.
+  using TenantVMHandle = IsolateHandle;
+  class ActorTicket final {
     friend class OresVM;
     std::weak_ptr<State> state_;
     std::uint64_t isolate_epoch_=0, actor_id_=0, actor_epoch_=0;
