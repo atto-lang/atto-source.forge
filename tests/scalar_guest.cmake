@@ -47,3 +47,42 @@ execute_process(COMMAND "${FORGE}" "${OUT_DIR}/huge.atto" -o "${stale}"
 if(NOT "${rc}" STREQUAL "2" OR EXISTS "${stale}")
   message(FATAL_ERROR "source-size budget violated")
 endif()
+
+# Guard output and temp-path direct symlink clobber.
+set(protected_file "${OUT_DIR}/protected.txt")
+file(WRITE "${protected_file}" "do not overwrite")
+set(link_input "${OUT_DIR}/symlink-input.atto")
+file(WRITE "${link_input}" "fnc main(): int {return 7;}")
+set(link_output "${OUT_DIR}/symlink-output.cpp")
+set(link_temp "${OUT_DIR}/symlink-output.cpp.part")
+file(CREATE_LINK "${protected_file}" "${link_temp}" SYMBOLIC RESULT link_result)
+if(NOT "${link_result}" STREQUAL "0")
+  message(FATAL_ERROR "cannot establish temporary symlink regression")
+endif()
+execute_process(COMMAND "${FORGE}" "${link_input}" -o "${link_output}"
+  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+file(READ "${protected_file}" protected_bytes)
+if(NOT "${rc}" STREQUAL "2" OR
+   NOT "${protected_bytes}" STREQUAL "do not overwrite")
+  message(FATAL_ERROR "temporary symlink redirected native source write")
+endif()
+file(REMOVE "${link_temp}")
+file(CREATE_LINK "${OUT_DIR}/does-not-exist" "${link_output}"
+  SYMBOLIC RESULT link_result)
+if(NOT "${link_result}" STREQUAL "0")
+  message(FATAL_ERROR "cannot establish dangling symlink regression")
+endif()
+execute_process(COMMAND "${FORGE}" "${link_input}" -o "${link_output}"
+  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+if(NOT "${rc}" STREQUAL "2" OR NOT IS_SYMLINK "${link_output}")
+  message(FATAL_ERROR "dangling output symlink was not rejected")
+endif()
+file(REMOVE "${link_output}")
+file(WRITE "${link_temp}" "do not overwrite")
+execute_process(COMMAND "${FORGE}" "${link_input}" -o "${link_output}"
+  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+file(READ "${link_temp}" tmp_bytes)
+if(NOT "${rc}" STREQUAL "2" OR NOT "${tmp_bytes}" STREQUAL "do not overwrite")
+  message(FATAL_ERROR "pre-existing temporary file was overwritten")
+endif()
+file(REMOVE "${link_temp}")

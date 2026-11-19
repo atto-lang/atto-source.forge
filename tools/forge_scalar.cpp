@@ -35,23 +35,24 @@ int main(int argc, char** argv) {
   }
   // is_symlink(path, ec) may set ENOENT for a new destination.
   // Only classify an existing path as a symlink; new outputs are valid.
-  ec.clear();
-  const bool output_exists = fs::exists(output, ec);
-  if (ec) return deny("E_PATH: cannot inspect output");
-  if (output_exists) {
-    ec.clear();
-    if (fs::is_symlink(output, ec) || ec)
-      return deny("E_PATH: symlink output rejected");
-  }
+  // exists(path) follows links: dangling links report false and must still
+  // be rejected. symlink_status examines the directory entry itself.
+  auto unsafe_target = [](const fs::path& path, bool temporary) {
+    std::error_code err;
+    const auto status = fs::symlink_status(path, err);
+    if (err == std::errc::no_such_file_or_directory) return false;
+    if (err) return true;
+    if (fs::is_symlink(status)) return true;
+    if (!fs::exists(status)) return false;
+    // Never truncate or overwrite a pre-existing temporary artifact.
+    if (temporary) return true;
+    return !fs::is_regular_file(status);
+  };
+  if (unsafe_target(output, false))
+    return deny("E_PATH: output symlink or unsafe file");
   const fs::path temporary = output.string() + ".part";
-  ec.clear();
-  const bool temporary_exists = fs::exists(temporary, ec);
-  if (ec) return deny("E_PATH: cannot inspect temporary");
-  if (temporary_exists) {
-    ec.clear();
-    if (fs::is_symlink(temporary, ec) || ec)
-      return deny("E_PATH: symlink temp rejected");
-  }
+  if (unsafe_target(temporary, true))
+    return deny("E_PATH: temporary path already exists or is unsafe");
   ec.clear();
   const auto size = fs::file_size(input, ec);
   if (ec || size > max_source_bytes) {
