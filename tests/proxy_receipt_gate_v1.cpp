@@ -3,7 +3,7 @@
 
 using namespace atto::ipc;
 int main() {
-    const receipt_identity id{1, 11, 12, 13, 14, 15, 16, 1};
+    const receipt_identity id{1, 11, 12, 13, 14, 17, 15, 16, 1};
     proxy_receipt_gate gate{id};
     assert(!gate.destination_admitted()); // proxy queue and socket write do not ACK
     assert(!gate.apply_verified(id, receipt_event::started));
@@ -16,6 +16,8 @@ int main() {
     wrong = id; wrong.caller_incarnation++;
     assert(!gate.apply_verified(wrong, receipt_event::admitted));
     wrong = id; wrong.target_incarnation++;
+    assert(!gate.apply_verified(wrong, receipt_event::admitted));
+    wrong = id; wrong.association_generation++;
     assert(!gate.apply_verified(wrong, receipt_event::admitted));
     wrong = id; wrong.placement_epoch++;
     assert(!gate.apply_verified(wrong, receipt_event::admitted));
@@ -48,8 +50,8 @@ int main() {
     assert(failed.apply_verified(id, receipt_event::admitted));
     assert(failed.apply_verified(id, receipt_event::failed));
     assert(!failed.apply_verified(id, receipt_event::processed));
-    proxy_receipt_gate failclosed{{1, 0, 12, 13, 14, 15, 16, 1}};
-    assert(!failclosed.apply_verified({1, 0, 12, 13, 14, 15, 16, 1},
+    proxy_receipt_gate failclosed{{1, 0, 12, 13, 14, 17, 15, 16, 1}};
+    assert(!failclosed.apply_verified({1, 0, 12, 13, 14, 17, 15, 16, 1},
                                      receipt_event::admitted));
     return 0;
 }
