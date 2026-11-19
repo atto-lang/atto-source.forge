@@ -46,4 +46,17 @@ using u64 = std::uint64_t;
   const i64 value = static_cast<i64>(product); // guaranteed <= INT64_MAX
   return negative ? -value : value;
 }
+// Truncation toward zero, matching C++ signed division semantics.
+// Both division by zero and INT64_MIN / -1 are rejected before evaluation.
+[[nodiscard]] constexpr std::optional<i64> checked_div(i64 a, i64 b) noexcept {
+  if (b == 0 || (a == std::numeric_limits<i64>::min() && b == -1))
+    return std::nullopt;
+  return a / b;
+}
+
+[[nodiscard]] constexpr std::optional<i64> checked_rem(i64 a, i64 b) noexcept {
+  if (b == 0 || (a == std::numeric_limits<i64>::min() && b == -1))
+    return std::nullopt;
+  return a % b;
+}
 }  // namespace atto::forge
