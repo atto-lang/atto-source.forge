@@ -27,7 +27,7 @@ int main() {
   assert(unterminated.error == LexError::unterminated_comment);
   assert(unterminated.error_offset == 4);
   assert(tokenize("// trailing comment without newline").ok());
-  assert(tokenize(std::string(max_source_bytes, '/')).error == LexError::none);
+  assert(tokenize("//" + std::string(max_source_bytes - 2, '/')).ok());
   assert(tokenize("/* */").tokens.size() == 1);
   assert(!tokenize("fnc main(){return @;}").ok());
   const std::string nul("1\0" "2", 3);
