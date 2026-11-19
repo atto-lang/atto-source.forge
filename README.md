@@ -129,3 +129,5 @@ The native Forge tests compile and execute an additional 29-case `.atto` scalar 
 The native Forge CLI now reports sanitized parse codes (`E_PARSE_LEXICAL`, `E_PARSE_SYNTAX`, `E_PARSE_RANGE`, `E_PARSE_DEPTH`, `E_PARSE_NODES`) with source byte offsets, without echoing source text. Invalid source removes stale emitted artifacts and exits 2.
 
 Restricted Forge CLI output-path preflight rejects symlinked ancestor directories, symlinked output files, and preexisting staging paths, including dangling symlinks; it also requires destination parent directories to exist. This is not a proof against adversarial concurrent filesystem races: production sandboxing must use OS-level capabilities and descriptor-relative atomic publication.
+
+Native GCC/Clang checked-i64 primitives are additionally validated against independent compiler `__builtin_*_overflow` oracles across boundary pairs and 100,000 reproducible high-entropy signed pairs, plus near-zero divisors and extreme values. This host primitive oracle complements but does not replace actual compiled `.atto` guest testing or cross-backend evidence.
