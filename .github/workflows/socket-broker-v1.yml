@@ -1,0 +1,41 @@
+name: SocketBroker trusted-host v1
+on:
+  pull_request:
+    paths:
+      - 'include/atto/socket_broker_v1.hpp'
+      - 'tests/socket_broker_v1.cpp'
+      - 'CMakeLists.txt'
+      - '.github/workflows/socket-broker-v1.yml'
+  push:
+    paths:
+      - 'include/atto/socket_broker_v1.hpp'
+      - 'tests/socket_broker_v1.cpp'
+      - 'CMakeLists.txt'
+      - '.github/workflows/socket-broker-v1.yml'
+permissions:
+  contents: read
+jobs:
+  host-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [g++, clang++]
+        sanitizer: ['ON', 'OFF']
+    env:
+      CXX: ${{ matrix.compiler }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build exact checked-out tree
+        run: |
+          git rev-parse HEAD
+          git rev-parse HEAD^{tree}
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DATTO_FORGE_SANITIZERS=${{ matrix.sanitizer }}
+          cmake --build build --target socket_broker_v1_test --parallel 2
+      - name: Execute real TCP host tests
+        run: ctest --test-dir build -R '^socket_broker_v1_test$' --output-on-failure
+      - name: Scope
+        run: echo 'HOST_ONLY - NO SEALED ATTO GUEST OR SAME-PID HOSTILE TENANT EXECUTION'
