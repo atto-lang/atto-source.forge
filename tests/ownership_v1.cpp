@@ -5,6 +5,7 @@
 #endif
 #include <cassert>
 #include <span>
+#include <memory_resource>
 #include <atomic>
 #include <thread>
 #include <utility>
@@ -97,6 +98,11 @@ int main() {
   static_assert(!owned_snapshot_v<const Node*>);
   static_assert(!owned_snapshot_v<std::vector<const Node*>>);
   static_assert(!owned_snapshot_v<std::span<const Node>>);
+  // pmr::vector carries external memory_resource lifetime authority: reject.
+  static_assert(!owned_snapshot_v<std::pmr::vector<int>>);
+  static_assert(!owned_snapshot_v<std::pmr::vector<const Node*>>);
+  static_assert(owned_snapshot_v<std::vector<std::vector<int>>>);
+  static_assert(owned_snapshot_v<std::optional<std::vector<int>>>);
   struct Immovable {
     int value;
     explicit Immovable(int x) : value(x) {}
