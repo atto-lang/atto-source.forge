@@ -141,3 +141,5 @@ The restricted native `.atto` scalar frontend accepts equivalent `int` return-si
 For restricted scalar parsing, the 24-level nesting budget measures actual parenthesis and unary nesting, not transparent calls between precedence parsing tiers. Exactly 24 nested parentheses or unary bitwise NOT operations are accepted; 25 are rejected with E_PARSE_DEPTH. Flat arithmetic chains remain limited by the independent 128-node AST budget.
 
 For tooling and CI, `forge_scalar --check path/to/file.atto` performs bounded lexical/AST admission without creating or deleting output files; returns 0 on supported scalar source or 2 with sanitized diagnostics. This is not a full language type checker.
+
+For the restricted integer-only scalar frontend, all expressions have the i64 result type; `infer` return annotations are therefore accepted in the same colon, arrow, block-arrow, and prefix signatures as `int` and lower to the same native i64 implementation. This is not general language-wide type inference: strings, booleans, effects, and noninteger functions remain unsupported.

@@ -117,6 +117,11 @@ class Parser {
     ++pos_;
     return true;
   }
+  // Every expression in this restricted scalar frontend evaluates to i64;
+  // infer therefore resolves to i64 without permitting dynamic values.
+  [[nodiscard]] bool scalar_return_type() {
+    return name("int") || name("infer");
+  }
   [[nodiscard]] std::optional<std::size_t> append(Node n) {
     if (out_.nodes.size() >= max_nodes) {
       fail(ParseError::node_limit);
@@ -265,18 +270,18 @@ public:
     (void)name("pub");
     const bool fnc = name("fnc");
     bool signature_ok = false;
-    if (name("int")) {
-      // Prefix return type, with or without fnc.
+    if (scalar_return_type()) {
+      // Prefix int/infer return type, with or without fnc.
       signature_ok = take(Kind::left_arrow) && name("main") &&
           take(Kind::lparen) && take(Kind::rparen);
     } else if (fnc && name("main") && take(Kind::lparen) &&
                take(Kind::rparen)) {
       // Accept colon return type, arrow return type, or block arrow.
       if (take(Kind::colon)) {
-        signature_ok = name("int");
+        signature_ok = scalar_return_type();
         if (signature_ok) (void)take(Kind::arrow);
       } else if (take(Kind::arrow)) {
-        signature_ok = name("int");
+        signature_ok = scalar_return_type();
       }
     }
     if (!signature_ok || !take(Kind::lbrace) || !name("return")) {
