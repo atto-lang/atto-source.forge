@@ -1,6 +1,7 @@
 // Independent built-in compiler overflow oracles for native i64 primitives.
 // Reproducible seed; GCC and Clang only, ASan/UBSan enabled by CMake.
 #include "atto/checked_i64.hpp"
+#include <array>
 #include <bit>
 #include <cstdint>
 #include <cstdlib>
@@ -46,8 +47,9 @@ static void check(i64 a, i64 b) {
 int main() {
   constexpr i64 min = std::numeric_limits<i64>::min();
   constexpr i64 max = std::numeric_limits<i64>::max();
-  for (const auto a : {min, min + 1, -2LL, -1LL, 0LL, 1LL, 2LL, max - 1, max}) {
-    for (const auto b : {min, min + 1, -2LL, -1LL, 0LL, 1LL, 2LL, max - 1, max}) {
+  constexpr std::array<i64, 9> boundaries{min, min + 1, -2, -1, 0, 1, 2, max - 1, max};
+  for (const auto a : boundaries) {
+    for (const auto b : boundaries) {
       check(static_cast<i64>(a), static_cast<i64>(b));
     }
   }
