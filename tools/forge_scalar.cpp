@@ -26,6 +26,17 @@ int main(int argc, char** argv) {
   const auto out_absolute = fs::absolute(output, ec);
   if (ec || in_absolute.lexically_normal() == out_absolute.lexically_normal())
     return deny("E_PATH: source/output alias");
+  // Disallow symlinked ancestor directories as well as symlink basenames.
+  // This is a fail-closed preflight, not a replacement for OS-level sandboxing
+  // or atomic directory-descriptor-relative file operations.
+  fs::path candidate_parent = out_absolute.lexically_normal().root_path();
+  for (const auto& part : out_absolute.lexically_normal().relative_path().parent_path()) {
+    candidate_parent /= part;
+    ec.clear();
+    const auto status = fs::symlink_status(candidate_parent, ec);
+    if (ec || fs::is_symlink(status) || !fs::is_directory(status))
+      return deny("E_PATH: unsafe output parent");
+  }
   ec.clear();
   if (fs::exists(output, ec)) {
     if (ec) return deny("E_PATH: invalid output");

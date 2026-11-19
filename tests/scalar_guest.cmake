@@ -100,3 +100,24 @@ verify_guest(shift_masked "0" "1\n" "")
 verify_guest(shift_negative_count "0" "-9223372036854775808\n" "")
 
 verify_guest(minimum_padded "0" "-9223372036854775808\n" "")
+
+# Reject symlinked parent directories; the target must not receive generated code.
+set(target_dir "${OUT_DIR}/parent-target")
+set(alias_dir "${OUT_DIR}/alias-parent")
+file(MAKE_DIRECTORY "${target_dir}")
+file(CREATE_LINK "${target_dir}" "${alias_dir}" SYMBOLIC RESULT link_result)
+if(NOT "${link_result}" STREQUAL "0")
+  message(FATAL_ERROR "cannot create symlink-parent regression")
+endif()
+set(alias_output "${alias_dir}/redirected.cpp")
+execute_process(COMMAND "${FORGE}" "${link_input}" -o "${alias_output}"
+  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+if(NOT "${rc}" STREQUAL "2" OR EXISTS "${target_dir}/redirected.cpp")
+  message(FATAL_ERROR "parent-symlink path admitted")
+endif()
+file(REMOVE "${alias_dir}")
+execute_process(COMMAND "${FORGE}" "${link_input}" -o "${OUT_DIR}/missing-parent/file.cpp"
+  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+if(NOT "${rc}" STREQUAL "2")
+  message(FATAL_ERROR "nonexistent output directory was not rejected")
+endif()
