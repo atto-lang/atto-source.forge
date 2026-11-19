@@ -12,6 +12,7 @@ struct receipt_identity {
     std::uint64_t caller_incarnation;
     std::uint64_t target_actor;
     std::uint64_t target_incarnation;
+    std::uint64_t association_generation;
     std::uint64_t placement_epoch;
     std::uint64_t message_id;
     std::uint64_t attempt;
@@ -44,7 +45,7 @@ public:
     bool apply_verified(const receipt_identity& incoming, receipt_event event) noexcept {
         if (!(incoming == expected_) || expected_.protocol_major != 1 ||
             expected_.tenant == 0 || expected_.caller_incarnation == 0 ||
-            expected_.target_actor == 0 || expected_.target_incarnation == 0 ||
+            expected_.target_actor == 0 || expected_.target_incarnation == 0 || expected_.association_generation == 0 ||
             expected_.placement_epoch == 0 || expected_.message_id == 0 ||
             expected_.attempt == 0 || outcome_ != receipt_outcome::pending)
             return false;
