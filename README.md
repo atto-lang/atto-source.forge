@@ -103,3 +103,17 @@ and must not be reported as passing CI.
 This establishes **native host-model behavior only**, not Forge guest IR lowering, actor memory isolation, or executed AttoLang syntax. Related frontend/spec/conformance branches
 are in atto-source.rs#344, atto-borrow-checker.rs#43, atto-spec#92,
 and atto-platform-conformance#76.
+
+## Restricted native scalar compiled guest (stage 0)
+
+Build CMake and invoke `build/forge_scalar fixtures/scalar-v1/arithmetic.atto -o /tmp/atto-scalar.cpp`,
+then compile generated native C++ with `c++ -std=c++20 -I include /tmp/atto-scalar.cpp -o /tmp/atto-scalar`.
+The actual guest binary prints `34`. Signed overflow emits `E_OVERFLOW` and exits 70;
+division by zero emits `E_DIVZERO` and exits 71.
+The C++ frontend and test harness contain no Python. The CMake integration test
+compiles and executes four source fixtures on GCC and Clang and denies malformed
+or over-budget sources while removing a stale output artifact.
+
+Scope: one scalar main function with literals, parentheses, unary arithmetic
+and checked i64 operators. This is not a general Forge JIT/AOT compiler, actor
+runtime, library/package system or cross-backend parity proof.
