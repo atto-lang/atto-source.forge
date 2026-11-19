@@ -131,3 +131,9 @@ verify_guest(return_bare_prefix "0" "42\n" "")
 
 verify_guest(depth_boundary "0" "42\n" "")
 verify_guest(unary_depth_boundary "0" "42\n" "")
+
+verify_guest(infer_colon "0" "42\n" "")
+verify_guest(infer_arrow "0" "42\n" "")
+verify_guest(infer_block "0" "42\n" "")
+verify_guest(infer_prefix "0" "42\n" "")
+verify_guest(infer_bare_prefix "0" "42\n" "")

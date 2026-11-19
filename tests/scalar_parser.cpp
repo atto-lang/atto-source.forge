@@ -19,6 +19,21 @@ int main() {
     "pub fnc int <- main() {return 42;}",
     "pub fnc main() -> int {return 42;}"
   }) assert(parse_source(signature).ok());
+  for (const auto* inferred : {
+    "fnc main(): infer {return 40+2;}",
+    "fnc main() -> infer {return 6*7;}",
+    "fnc main(): infer -> {return 42;}",
+    "fnc infer <- main() {return 42;}",
+    "infer <- main() {return 42;}",
+    "pub fnc main() -> infer {return -1 >>> 1;}"
+  }) assert(parse_source(inferred).ok());
+  for (const auto* bad_inferred : {
+    "fnc main(): infer {return;}",
+    "fnc main() -> infer {return true;}",
+    "fnc main(): infer {return \"hello\";}",
+    "fnc main() -> infer -> {return 42;}",
+    "fnc main() -> bool {return 42;}"
+  }) assert(!parse_source(bad_inferred).ok());
   for (const auto* bad_signature : {
     "fnc main() -> int -> {return 42;}",
     "fnc main() -> {return 42;}",
