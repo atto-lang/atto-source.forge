@@ -64,6 +64,18 @@ int main() {
   deep += std::string(40, ')');
   auto nested = parse_source("fnc main(): int { return " + deep + "; }");
   assert(nested.error == ParseError::depth_limit);
+  const std::string within(max_parse_depth, '(');
+  const std::string close(max_parse_depth, ')');
+  assert(parse_source("fnc main(): int {return " + within + "42" + close + ";}").ok());
+  assert(parse_source("fnc main(): int {return " + within + "(42)" + close + ";}").error == ParseError::depth_limit);
+  const std::string unary_within(max_parse_depth, '~');
+  assert(parse_source("fnc main(): int {return " + unary_within + "42;}").ok());
+  assert(parse_source("fnc main(): int {return " + unary_within + "~42;}").error == ParseError::depth_limit);
+  std::string flat = "fnc main(): int {return 1";
+  for (int i = 0; i < 60; ++i) flat += "+1";
+  flat += ";}";
+  assert(parse_source(flat).ok());
+  assert(nested.error == ParseError::depth_limit);
   std::string many = "fnc main(): int {return 1";
   for (int i = 0; i < 70; ++i) many += "+1";
   many += ";}";

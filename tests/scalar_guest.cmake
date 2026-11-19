@@ -128,3 +128,6 @@ verify_guest(return_arrow "0" "42\n" "")
 verify_guest(return_block_arrow "0" "42\n" "")
 verify_guest(return_prefix "0" "42\n" "")
 verify_guest(return_bare_prefix "0" "42\n" "")
+
+verify_guest(depth_boundary "0" "42\n" "")
+verify_guest(unary_depth_boundary "0" "42\n" "")
