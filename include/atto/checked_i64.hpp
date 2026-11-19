@@ -59,4 +59,14 @@ using u64 = std::uint64_t;
     return std::nullopt;
   return a % b;
 }
+// Both operations must reject INT64_MIN to avoid signed overflow.
+[[nodiscard]] constexpr std::optional<i64> checked_neg(i64 a) noexcept {
+  if (a == std::numeric_limits<i64>::min()) return std::nullopt;
+  return -a;
+}
+
+[[nodiscard]] constexpr std::optional<i64> checked_abs(i64 a) noexcept {
+  if (a == std::numeric_limits<i64>::min()) return std::nullopt;
+  return a < 0 ? -a : a;
+}
 }  // namespace atto::forge
