@@ -8,6 +8,7 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
+#include <memory_resource>
 using namespace atto::ownership_v1;
 
 static std::uint32_t next(std::uint32_t& seed) {
@@ -81,6 +82,8 @@ int main() {
 
   // Nested pointers in value snapshots must be rejected at compile time.
   static_assert(!owned_snapshot_v<std::vector<int*>>);
+  static_assert(!owned_snapshot_v<std::pmr::vector<int>>);
+  static_assert(owned_snapshot_v<std::vector<int>>);
   static_assert(!owned_snapshot_v<std::pair<int, const Node*>>);
   struct Immovable {
     int member;

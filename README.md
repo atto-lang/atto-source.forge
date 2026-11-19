@@ -78,7 +78,9 @@ owner move replacement, pinned address stability and double-release safety.
 The audited native host API now rejects *nested* pointer-bearing read
 snapshots (not just raw pointers), constructs pinned pointees in place rather
 than moving a previously constructed potentially self-referential object,
-and requires noexcept destruction for explicit drop. Host callback bodies
+and requires noexcept destruction for explicit drop. Snapshot callbacks
+are fail-closed for nondefault vector allocators (including pmr vectors)
+because their backing resource lifetime cannot be certified. Host callback bodies
 remain trusted C++ code; this API does not sandbox arbitrary pointer capture.
 
 The tests/ownership_stress_v1.cpp binary adds deterministic cyclic graph

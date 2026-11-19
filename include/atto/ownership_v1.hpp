@@ -17,13 +17,16 @@
 namespace atto::ownership_v1 {
 // A callback may only export value snapshots known not to contain nested
 // pointers or references. Checking !is_pointer<T> alone permits span<T>,
-// vector<T*> and other accidental lifetime escapes. This only protects
+// vector<T*> and other accidental lifetime escapes.
+ // Even a vector<T> with a non-owning polymorphic/custom allocator may
+ // point into a caller-owned arena. Only the default allocator is certified. This only protects
 // trusted host-facing return values; captured pointers need separate review.
 template<class T> struct IsOwnedSnapshot : std::bool_constant<
     std::is_arithmetic_v<T> || std::is_enum_v<T>> {};
 template<> struct IsOwnedSnapshot<std::string> : std::true_type {};
 template<class T, class Alloc>
-struct IsOwnedSnapshot<std::vector<T, Alloc>> : IsOwnedSnapshot<T> {};
+struct IsOwnedSnapshot<std::vector<T, Alloc>> : std::bool_constant<
+    IsOwnedSnapshot<T>::value && std::is_same_v<Alloc, std::allocator<T>>> {};
 template<class T> struct IsOwnedSnapshot<std::optional<T>> : IsOwnedSnapshot<T> {};
 template<class A, class B> struct IsOwnedSnapshot<std::pair<A,B>> :
     std::bool_constant<IsOwnedSnapshot<A>::value && IsOwnedSnapshot<B>::value> {};
