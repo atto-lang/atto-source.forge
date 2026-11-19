@@ -54,3 +54,50 @@ Build the independent primitive tests with `cmake -S . -B build -DATTO_FORGE_SAN
 AttoLang is the canonical project identity. Use `.atto` source, `atto-*` package and repository names, and the active AttoLang CLI contract for current documentation. Do not duplicate normative semantics from [atto-spec](https://github.com/atto-lang/atto-spec).
 
 **Evidence gate:** record exact compiler/runtime head and tree, target/toolchain, nonzero executed steps, positive and negative guest results, and explicit passed/failed/unsupported/not-executed states. Host-only CI and `steps=[]` do not establish guest support. README scope is not a feature-completeness claim.
+
+## Native ownership host-reference model (preview)
+
+The header-only C++20 include/atto/ownership_v1.hpp provides a native
+ownership model with **concrete** data-structure behavior, not a parsed Atto
+compiler or generated guest bytecode:
+
+- UniqueGraph performs bounded whole-graph validation, iterative cycle
+  traversal, duplicate/missing-node rejection and value-allocated deep copy
+  preserving internal topology while allocating independent nested buffers.
+- Consuming freeze publishes an immutable graph with unique owner authority.
+  Shared readers only obtain const graph views. Weak handles perform atomic
+  shared_ptr lifetime claims plus domain/generation and retirement checks.
+- Pinned<T> keeps its heap pointee at a stable address across handle and
+  thread moves; OwnedResource<T>::drop_now() uses unique ownership and RAII
+  to release exactly once. The source borrow checker still owns loan rules.
+
+The tests/ownership_v1.cpp binary verifies native cycles, copy independence,
+unsafe graph rejection, weak-upgrade/retire races, stale generation, frozen
+owner move replacement, pinned address stability and double-release safety.
+
+The audited native host API now rejects *nested* pointer-bearing read
+snapshots (not just raw pointers), constructs pinned pointees in place rather
+than moving a previously constructed potentially self-referential object,
+and requires noexcept destruction for explicit drop. Host callback bodies
+remain trusted C++ code; this API does not sandbox arbitrary pointer capture.
+
+The tests/ownership_stress_v1.cpp binary adds deterministic cyclic graph
+cases at exact node/edge/byte budget boundaries, independent clone mutation,
+32 rounds of 4-thread weak upgrade/retire races, and compile-time rejection
+checks for unsafe snapshots and movable self-referential pin inputs.
+
+Exact locally executed Git blob identities:
+- include/atto/ownership_v1.hpp: 0050651637e265a6e660af77f302e6a9f955e3e8
+- tests/ownership_v1.cpp: 5b77e09cec211164276cf46c89a1382c7f33465c
+- tests/ownership_stress_v1.cpp: c8bae893835b05f211274e0cb2ecfabb74b77a45
+
+All four native combinations passed locally: GCC and Clang, each running
+both executables under -std=c++20 -O1 -g -Wall -Wextra -Werror -pedantic
+-fsanitize=address,undefined -fno-omit-frame-pointer -pthread;
+ASAN_OPTIONS=detect_leaks=1. Tests are assertions compiled without NDEBUG,
+including Release CMake builds. The GitHub Actions runner failure is separate
+and must not be reported as passing CI.
+
+This establishes **native host-model behavior only**, not Forge guest IR lowering, actor memory isolation, or executed AttoLang syntax. Related frontend/spec/conformance branches
+are in atto-source.rs#344, atto-borrow-checker.rs#43, atto-spec#92,
+and atto-platform-conformance#76.
