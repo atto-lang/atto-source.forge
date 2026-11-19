@@ -11,7 +11,7 @@ enum class Kind {
   plus, minus, star, slash, percent, bit_and, bit_or, bit_xor, tilde, shl, lshr, end
 };
 struct Token { Kind kind; std::size_t offset; std::size_t length; };
-enum class LexError { none, source_too_large, token_limit, unsupported_byte };
+enum class LexError { none, source_too_large, token_limit, unsupported_byte, unterminated_comment };
 struct Lexed {
   std::vector<Token> tokens;
   LexError error = LexError::none;
@@ -38,6 +38,32 @@ inline constexpr std::size_t max_tokens = 256;
     const char c = src[i];
     if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
       ++i;
+      continue;
+    }
+    // Skip comments before counting tokens: even a full-size comment-only
+    // file has no tokens beyond the EOF sentinel.
+    if (c == '/' && i + 1 < src.size() && src[i + 1] == '/') {
+      i += 2;
+      while (i < src.size() && src[i] != '\r' && src[i] != '\n') ++i;
+      continue;
+    }
+    if (c == '/' && i + 1 < src.size() && src[i + 1] == '*') {
+      const std::size_t opening = i;
+      i += 2;
+      bool closed = false;
+      while (i + 1 < src.size()) {
+        if (src[i] == '*' && src[i + 1] == '/') {
+          i += 2;
+          closed = true;
+          break;
+        }
+        ++i;
+      }
+      if (!closed) {
+        out.error = LexError::unterminated_comment;
+        out.error_offset = opening;
+        return out;
+      }
       continue;
     }
     if (out.tokens.size() >= max_tokens) {

@@ -121,3 +121,5 @@ execute_process(COMMAND "${FORGE}" "${link_input}" -o "${OUT_DIR}/missing-parent
 if(NOT "${rc}" STREQUAL "2")
   message(FATAL_ERROR "nonexistent output directory was not rejected")
 endif()
+
+verify_guest(comments "0" "14\n" "")

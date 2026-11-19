@@ -5,6 +5,12 @@
 using namespace atto::forge;
 using namespace atto::forge::scalar;
 int main() {
+  auto commented = parse_source(
+      "/* module header */ fnc main(): int { // body\n"
+      " return 8 / /* denominator */ 2; /* tail */ }");
+  assert(commented.ok());
+  auto malformed_comment = parse_source("fnc main(): int {return 1; /*");
+  assert(!malformed_comment.ok() && malformed_comment.error == ParseError::lexical);
   auto a = parse_source("pub fnc main(): int { return 4 + 5 * (6 - 1); }");
   assert(a.ok() && a.nodes[a.root].op == Op::add);
   assert(a.nodes.size() == 7);
