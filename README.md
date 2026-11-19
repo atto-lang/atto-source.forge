@@ -125,3 +125,5 @@ Restricted scalar shift syntax: `<<<` bitwise left, `>>>` zero-fill right, `ashr
 Restricted decimal scalar literals permit leading zeros in the signed `INT64_MIN` representation (e.g. `-0009223372036854775808`); this passes the same bounded decimal validator as other integers. Out-of-range positive or negative literals are rejected.
 
 The native Forge tests compile and execute an additional 29-case `.atto` scalar conformance corpus, including signed arithmetic, bitwise precedence, masked shifts, INT64_MIN, overflow and division-by-zero exits. When `ATTO_FORGE_SANITIZERS=ON`, **generated guest binaries** themselves are built under ASan/UBSan, as well as the Forge frontend. This validates only the restricted stage-0 compiled scalar subset, not the full Forge JIT/AOT or actor runtime.
+
+The native Forge CLI now reports sanitized parse codes (`E_PARSE_LEXICAL`, `E_PARSE_SYNTAX`, `E_PARSE_RANGE`, `E_PARSE_DEPTH`, `E_PARSE_NODES`) with source byte offsets, without echoing source text. Invalid source removes stale emitted artifacts and exits 2.

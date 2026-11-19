@@ -20,6 +20,19 @@ struct Node {
 enum class ParseError {
   none, lexical, syntax, literal_out_of_range, depth_limit, node_limit
 };
+// Stable sanitized diagnostics; never echo user source bytes.
+[[nodiscard]] constexpr std::string_view parse_error_name(ParseError error) noexcept {
+  switch (error) {
+    case ParseError::none: return "NONE";
+    case ParseError::lexical: return "E_PARSE_LEXICAL";
+    case ParseError::syntax: return "E_PARSE_SYNTAX";
+    case ParseError::literal_out_of_range: return "E_PARSE_RANGE";
+    case ParseError::depth_limit: return "E_PARSE_DEPTH";
+    case ParseError::node_limit: return "E_PARSE_NODES";
+  }
+  return "E_PARSE_UNKNOWN";
+}
+
 struct Parsed {
   std::vector<Node> nodes;
   std::size_t root = 0;

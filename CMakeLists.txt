@@ -141,3 +141,10 @@ add_test(NAME scalar_guest_conformance
     "-DFORGE=$<TARGET_FILE:forge_scalar>"
     "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/scalar-conformance"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/scalar_conformance.cmake")
+
+# Failed compiler inputs yield typed bounded diagnostics, no echoed source.
+add_test(NAME scalar_cli_diagnostics
+  COMMAND "${CMAKE_COMMAND}"
+    "-DFORGE=$<TARGET_FILE:forge_scalar>"
+    "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/scalar-diagnostics"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/scalar_cli_diagnostics.cmake")

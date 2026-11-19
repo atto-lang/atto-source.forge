@@ -67,10 +67,17 @@ int main(int argc, char** argv) {
     ec.clear(); fs::remove(output, ec);
     return deny("E_SOURCE: changing or truncated input");
   }
-  const auto generated = emit_cpp_source(source);
+  const auto parsed = atto::forge::scalar::parse_source(source);
+  if (!parsed.ok()) {
+    ec.clear(); fs::remove(output, ec);
+    std::cerr << atto::forge::scalar::parse_error_name(parsed.error)
+              << " byte=" << parsed.error_offset << '\n';
+    return 2;
+  }
+  const auto generated = atto::forge::scalar::emit_cpp(parsed);
   if (!generated) {
     ec.clear(); fs::remove(output, ec);
-    return deny("E_SYNTAX: unsupported .atto scalar source");
+    return deny("E_AST: scalar AST rejected before code emission");
   }
   std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
   if (!out) return deny("E_OUTPUT: open failed");
