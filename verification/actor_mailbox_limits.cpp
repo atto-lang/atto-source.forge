@@ -70,6 +70,38 @@ int main() {
     empty.send(empty_ref, payload);
     if (empty.queued() != 1)
       throw std::runtime_error("empty DATA failed to reclaim capacity");
+    // Admission is atomic and does not consume credits when saturated.
+    // Unlike the throwing compatibility API, try_send is suitable for a
+    // producer that cooperatively suspends/retries under backpressure.
+    Mailbox nonblocking(4, 1, 2);
+    auto owner = nonblocking.ref();
+    const std::uint8_t frame[] = {19, 20};
+    if (!nonblocking.try_send(owner, frame) || nonblocking.queued() != 1)
+      throw std::runtime_error("try_send rejected valid bounded DATA");
+    if (nonblocking.try_send(owner, frame) || nonblocking.queued() != 1)
+      throw std::runtime_error("try_send exceeded record/byte credit");
+    auto first = nonblocking.receive();
+    if (!first || first->size() != 2 || first->at(0) != 19)
+      throw std::runtime_error("try_send failed to preserve owned FIFO");
+    if (!nonblocking.try_send(owner, std::span<const std::uint8_t>{}))
+      throw std::runtime_error("empty try_send must consume a record");
+    if (nonblocking.try_send(owner, std::span<const std::uint8_t>{}))
+      throw std::runtime_error("zero-byte try_send bypassed record budget");
+    auto zero = nonblocking.receive();
+    if (!zero || !zero->empty())
+      throw std::runtime_error("empty try_send record was not delivered");
+    nonblocking.close();
+    bool retired_rejected = false;
+    try { (void)nonblocking.try_send(owner, frame); }
+    catch (const std::runtime_error&) { retired_rejected = true; }
+    if (!retired_rejected)
+      throw std::runtime_error("retired try_send authority was accepted");
+    auto successor = nonblocking.restart();
+    bool stale_rejected = false;
+    try { (void)nonblocking.try_send(owner, frame); }
+    catch (const std::runtime_error&) { stale_rejected = true; }
+    if (!stale_rejected || !nonblocking.try_send(successor, frame))
+      throw std::runtime_error("restart did not revoke stale try_send");
     std::cout << "forge actor mailbox bounds: pass\n";
     return 0;
   } catch (const std::exception& error) {
