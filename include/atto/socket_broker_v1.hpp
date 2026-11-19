@@ -191,6 +191,12 @@ public:
         if (tenant->open_sockets >= tenant->limits.max_sockets)
             return {SocketStatus::quota, {}};
         if (!valid_connected_tcp(fd)) return {SocketStatus::unsupported, {}};
+        // A host bug must not register the same descriptor under two tenants.
+        // Distinct dup() aliases must still be forbidden by host admission.
+        for (const auto& [id, socket] : sockets_) {
+            (void)id;
+            if (socket.fd == fd) return {SocketStatus::denied, {}};
+        }
         if (next_socket_id_ == UINT64_MAX || !configure_fd(fd))
             return {SocketStatus::io_error, {}};
         const std::uint64_t id = next_socket_id_++;
