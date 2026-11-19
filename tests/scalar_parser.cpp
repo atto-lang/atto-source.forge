@@ -7,7 +7,7 @@ using namespace atto::forge::scalar;
 int main() {
   auto a = parse_source("pub fnc main(): int { return 4 + 5 * (6 - 1); }");
   assert(a.ok() && a.nodes[a.root].op == Op::add);
-  assert(a.nodes.size() == 5);
+  assert(a.nodes.size() == 7);
   auto b = parse_source("fnc main(): int {return -9223372036854775808;}");
   assert(b.ok() && b.nodes[b.root].value == std::numeric_limits<i64>::min());
   auto c = parse_source("fnc main(): int {return -(-9223372036854775808);}");
