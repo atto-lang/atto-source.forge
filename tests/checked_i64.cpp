@@ -5,6 +5,10 @@
 #include <limits>
 #include <optional>
 
+using atto::forge::bit_and;
+using atto::forge::bit_or;
+using atto::forge::bit_xor;
+using atto::forge::bit_not;
 using atto::forge::checked_add;
 using atto::forge::checked_sub;
 using atto::forge::checked_mul;
@@ -36,6 +40,12 @@ static_assert(!checked_abs(MIN));
 static_assert(checked_neg(MAX) == std::optional<i64>{-MAX});
 static_assert(checked_abs(-7) == std::optional<i64>{7});
 static_assert(checked_abs(0) == std::optional<i64>{0});
+
+static_assert(bit_not(0) == std::optional<i64>{-1});
+static_assert(bit_and(-1, 42) == std::optional<i64>{42});
+static_assert(bit_or(1, 4) == std::optional<i64>{5});
+static_assert(bit_xor(6, 3) == std::optional<i64>{5});
+static_assert(bit_not(MIN) == std::optional<i64>{MAX});
 
 void require(bool condition) {
   if (!condition) std::abort();

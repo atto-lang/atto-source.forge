@@ -10,7 +10,7 @@
 #include <vector>
 
 namespace atto::forge::scalar {
-enum class Op { literal, add, sub, mul, div, rem, neg };
+enum class Op { literal, add, sub, mul, div, rem, neg, band, bor, bxor, bnot };
 struct Node {
   Op op;
   std::size_t left = 0, right = 0;
@@ -65,7 +65,45 @@ class Parser {
     out_.nodes.push_back(n);
     return out_.nodes.size() - 1;
   }
+  // bit_or < bit_xor < bit_and < addition < multiplication < unary.
+  // Flat precedence tiers do not consume the nesting depth budget.
   [[nodiscard]] std::optional<std::size_t> expr(int depth) {
+    return parse_or(depth);
+  }
+  [[nodiscard]] std::optional<std::size_t> parse_or(int depth) {
+    auto lhs = parse_xor(depth);
+    if (!lhs) return std::nullopt;
+    while (take(Kind::bit_or)) {
+      auto rhs = parse_xor(depth);
+      if (!rhs) return std::nullopt;
+      lhs = append(Node{Op::bor, *lhs, *rhs, 0});
+      if (!lhs) return std::nullopt;
+    }
+    return lhs;
+  }
+  [[nodiscard]] std::optional<std::size_t> parse_xor(int depth) {
+    auto lhs = parse_and(depth);
+    if (!lhs) return std::nullopt;
+    while (take(Kind::bit_xor)) {
+      auto rhs = parse_and(depth);
+      if (!rhs) return std::nullopt;
+      lhs = append(Node{Op::bxor, *lhs, *rhs, 0});
+      if (!lhs) return std::nullopt;
+    }
+    return lhs;
+  }
+  [[nodiscard]] std::optional<std::size_t> parse_and(int depth) {
+    auto lhs = additive(depth);
+    if (!lhs) return std::nullopt;
+    while (take(Kind::bit_and)) {
+      auto rhs = additive(depth);
+      if (!rhs) return std::nullopt;
+      lhs = append(Node{Op::band, *lhs, *rhs, 0});
+      if (!lhs) return std::nullopt;
+    }
+    return lhs;
+  }
+  [[nodiscard]] std::optional<std::size_t> additive(int depth) {
     if (depth > max_parse_depth) { fail(ParseError::depth_limit); return std::nullopt; }
     auto lhs = term(depth + 1);
     if (!lhs) return std::nullopt;
@@ -99,6 +137,11 @@ class Parser {
   [[nodiscard]] std::optional<std::size_t> unary(int depth) {
     if (depth > max_parse_depth) { fail(ParseError::depth_limit); return std::nullopt; }
     if (take(Kind::plus)) return unary(depth + 1);
+    if (take(Kind::tilde)) {
+      auto rhs = unary(depth + 1);
+      if (!rhs) return std::nullopt;
+      return append(Node{Op::bnot, *rhs, 0, 0});
+    }
     if (take(Kind::minus)) {
       // Literal INT64_MIN is allowed; negating any evaluated INT64_MIN
       // is a checked overflow in the subsequent evaluator/codegen.

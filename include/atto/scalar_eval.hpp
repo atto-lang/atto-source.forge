@@ -25,11 +25,14 @@ struct Evaluated {
       values.push_back(node.value);
       continue;
     }
-    if (node.left >= i || (node.op != Op::neg && node.right >= i))
+    if (node.left >= i || (node.op != Op::neg && node.op != Op::bnot && node.right >= i))
       return {{}, EvalError::invalid_ast};
     const i64 lhs = values[node.left];
     std::optional<i64> result;
     switch (node.op) {
+      case Op::bnot:
+        result = bit_not(lhs);
+        break;
       case Op::neg:
         result = checked_neg(lhs);
         break;
@@ -45,6 +48,15 @@ struct Evaluated {
       case Op::div:
         if (values[node.right] == 0) return {{}, EvalError::divide_by_zero};
         result = checked_div(lhs, values[node.right]);
+        break;
+      case Op::band:
+        result = bit_and(lhs, values[node.right]);
+        break;
+      case Op::bor:
+        result = bit_or(lhs, values[node.right]);
+        break;
+      case Op::bxor:
+        result = bit_xor(lhs, values[node.right]);
         break;
       case Op::rem:
         if (values[node.right] == 0) return {{}, EvalError::divide_by_zero};

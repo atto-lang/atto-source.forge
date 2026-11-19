@@ -26,9 +26,12 @@ int main() {
           : std::to_string(n.value);
       code += "  std::optional<atto::forge::i64> " + var(i) + "{" + value + "};\n";
     } else {
-      if (n.left >= i || (n.op != Op::neg && n.right >= i)) return std::nullopt;
+      if (n.left >= i || (n.op != Op::neg && n.op != Op::bnot && n.right >= i)) return std::nullopt;
       std::string call;
       switch (n.op) {
+        case Op::bnot:
+          call = "bit_not(*" + var(n.left) + ")";
+          break;
         case Op::neg:
           call = "checked_neg(*" + var(n.left) + ")";
           break;
@@ -37,6 +40,15 @@ int main() {
           break;
         case Op::sub:
           call = "checked_sub(*" + var(n.left) + ", *" + var(n.right) + ")";
+          break;
+        case Op::band:
+          call = "bit_and(*" + var(n.left) + ", *" + var(n.right) + ")";
+          break;
+        case Op::bor:
+          call = "bit_or(*" + var(n.left) + ", *" + var(n.right) + ")";
+          break;
+        case Op::bxor:
+          call = "bit_xor(*" + var(n.left) + ", *" + var(n.right) + ")";
           break;
         case Op::mul:
           call = "checked_mul(*" + var(n.left) + ", *" + var(n.right) + ")";
