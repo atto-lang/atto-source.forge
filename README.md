@@ -137,3 +137,5 @@ A separate executed native scalar reproducibility suite compiles 48 deterministi
 Restricted scalar `.atto` source accepts `//` line comments and `/* ... */` non-nested block comments between tokens. Unterminated block comments fail lexically at the opening byte offset. Comments do not count against the 256-token limit but the 16 KiB source limit remains enforced. Native guest execution is tested with both kinds of comments.
 
 The restricted native `.atto` scalar frontend accepts equivalent `int` return-signature variants: `fnc main(): int { ... }`, `fnc main() -> int { ... }`, `fnc main(): int -> { ... }`, `fnc int <- main() { ... }`, and `int <- main() { ... }`. Other return types remain outside this scalar slice. All variants compile and execute as native guests.
+
+For restricted scalar parsing, the 24-level nesting budget measures actual parenthesis and unary nesting, not transparent calls between precedence parsing tiers. Exactly 24 nested parentheses or unary bitwise NOT operations are accepted; 25 are rejected with E_PARSE_DEPTH. Flat arithmetic chains remain limited by the independent 128-node AST budget.

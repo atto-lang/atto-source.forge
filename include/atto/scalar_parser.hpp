@@ -127,6 +127,7 @@ class Parser {
   }
   // bit_or < bit_xor < bit_and < addition < multiplication < unary.
   // Flat precedence tiers do not consume the nesting depth budget.
+  // Only actual parenthesized or unary nesting increments depth.
   [[nodiscard]] std::optional<std::size_t> expr(int depth) {
     return parse_or(depth);
   }
@@ -180,12 +181,12 @@ class Parser {
   }
   [[nodiscard]] std::optional<std::size_t> additive(int depth) {
     if (depth > max_parse_depth) { fail(ParseError::depth_limit); return std::nullopt; }
-    auto lhs = term(depth + 1);
+    auto lhs = term(depth);
     if (!lhs) return std::nullopt;
     while (current().kind == Kind::plus || current().kind == Kind::minus) {
       const auto op = current().kind == Kind::plus ? Op::add : Op::sub;
       ++pos_;
-      auto rhs = term(depth + 1);
+      auto rhs = term(depth);
       if (!rhs) return std::nullopt;
       lhs = append(Node{op, *lhs, *rhs, 0});
       if (!lhs) return std::nullopt;
@@ -194,7 +195,7 @@ class Parser {
   }
   [[nodiscard]] std::optional<std::size_t> term(int depth) {
     if (depth > max_parse_depth) { fail(ParseError::depth_limit); return std::nullopt; }
-    auto lhs = unary(depth + 1);
+    auto lhs = unary(depth);
     if (!lhs) return std::nullopt;
     while (current().kind == Kind::star || current().kind == Kind::slash ||
            current().kind == Kind::percent) {
@@ -202,7 +203,7 @@ class Parser {
       if (current().kind == Kind::slash) op = Op::div;
       if (current().kind == Kind::percent) op = Op::rem;
       ++pos_;
-      auto rhs = unary(depth + 1);
+      auto rhs = unary(depth);
       if (!rhs) return std::nullopt;
       lhs = append(Node{op, *lhs, *rhs, 0});
       if (!lhs) return std::nullopt;
