@@ -112,3 +112,21 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   endif()
 endif()
 add_test(NAME scalar_emit_test COMMAND scalar_emit_test)
+
+# Real compiled restricted scalar guests; no Python bootstrap.
+add_executable(forge_scalar tools/forge_scalar.cpp)
+target_link_libraries(forge_scalar PRIVATE atto_forge_checked_i64)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(forge_scalar PRIVATE -Wall -Wextra -Werror -pedantic)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(forge_scalar PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(forge_scalar PRIVATE -fsanitize=address,undefined)
+  endif()
+endif()
+add_test(NAME scalar_guest_pipeline
+  COMMAND "${CMAKE_COMMAND}"
+    "-DROOT=${CMAKE_CURRENT_SOURCE_DIR}"
+    "-DCXX=${CMAKE_CXX_COMPILER}"
+    "-DFORGE=$<TARGET_FILE:forge_scalar>"
+    "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/scalar-guests"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/scalar_guest.cmake")
