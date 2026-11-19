@@ -11,6 +11,33 @@ using atto::forge::scalar::emit_cpp_source;
 static int deny(const char* msg) { std::cerr << msg << '\n'; return 2; }
 
 int main(int argc, char** argv) {
+  // Side-effect-free bounded source admission for editors and CI.
+  if (argc == 3 && std::string(argv[1]) == "--check") {
+    const fs::path input(argv[2]);
+    if (input.extension() != ".atto")
+      return deny("E_PATH: expected .atto input");
+    std::error_code check_error;
+    if (!fs::is_regular_file(input, check_error) || check_error)
+      return deny("E_SOURCE: not a regular input file");
+    const auto size = fs::file_size(input, check_error);
+    if (check_error || size > max_source_bytes)
+      return deny("E_SOURCE_LIMIT");
+    std::ifstream file(input, std::ios::binary);
+    if (!file) return deny("E_SOURCE: read failed");
+    std::string text(static_cast<std::size_t>(size), '\0');
+    if (!text.empty()) file.read(text.data(), static_cast<std::streamsize>(size));
+    if (!file || file.peek() != std::char_traits<char>::eof())
+      return deny("E_SOURCE: changing or truncated input");
+    const auto parsed = atto::forge::scalar::parse_source(text);
+    if (!parsed.ok()) {
+      std::cerr << atto::forge::scalar::parse_error_name(parsed.error)
+                << " byte=" << parsed.error_offset << '\n';
+      return 2;
+    }
+    if (!atto::forge::scalar::validate_ast(parsed))
+      return deny("E_AST: scalar AST rejected");
+    return 0;
+  }
   if (argc != 4 || std::string(argv[2]) != "-o")
     return deny("E_USAGE: forge_scalar input.atto -o output.cpp");
   const fs::path input(argv[1]), output(argv[3]);

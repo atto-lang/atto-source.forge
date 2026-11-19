@@ -139,3 +139,5 @@ Restricted scalar `.atto` source accepts `//` line comments and `/* ... */` non-
 The restricted native `.atto` scalar frontend accepts equivalent `int` return-signature variants: `fnc main(): int { ... }`, `fnc main() -> int { ... }`, `fnc main(): int -> { ... }`, `fnc int <- main() { ... }`, and `int <- main() { ... }`. Other return types remain outside this scalar slice. All variants compile and execute as native guests.
 
 For restricted scalar parsing, the 24-level nesting budget measures actual parenthesis and unary nesting, not transparent calls between precedence parsing tiers. Exactly 24 nested parentheses or unary bitwise NOT operations are accepted; 25 are rejected with E_PARSE_DEPTH. Flat arithmetic chains remain limited by the independent 128-node AST budget.
+
+For tooling and CI, `forge_scalar --check path/to/file.atto` performs bounded lexical/AST admission without creating or deleting output files; returns 0 on supported scalar source or 2 with sanitized diagnostics. This is not a full language type checker.
