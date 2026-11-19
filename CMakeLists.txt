@@ -179,3 +179,19 @@ add_test(NAME scalar_check_only
     "-DFORGE=$<TARGET_FILE:forge_scalar>"
     "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/scalar-check"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/scalar_check.cmake")
+
+
+# Host-only SocketBroker proof: real local TCP sockets, no guest admission.
+# POSIX only; never expose this trusted interface through unverified guest FFI.
+if(UNIX)
+  add_executable(socket_broker_v1_test tests/socket_broker_v1.cpp)
+  target_link_libraries(socket_broker_v1_test PRIVATE atto_forge_checked_i64 Threads::Threads)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(socket_broker_v1_test PRIVATE -Wall -Wextra -Werror -pedantic -UNDEBUG)
+    if(ATTO_FORGE_SANITIZERS)
+      target_compile_options(socket_broker_v1_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+      target_link_options(socket_broker_v1_test PRIVATE -fsanitize=address,undefined)
+    endif()
+  endif()
+  add_test(NAME socket_broker_v1_test COMMAND socket_broker_v1_test)
+endif()
