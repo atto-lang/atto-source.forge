@@ -10,6 +10,8 @@ using atto::forge::checked_sub;
 using atto::forge::checked_mul;
 using atto::forge::checked_div;
 using atto::forge::checked_rem;
+using atto::forge::checked_neg;
+using atto::forge::checked_abs;
 using atto::forge::i64;
 constexpr i64 MIN = std::numeric_limits<i64>::min();
 constexpr i64 MAX = std::numeric_limits<i64>::max();
@@ -28,6 +30,12 @@ static_assert(!checked_div(1, 0));
 static_assert(!checked_rem(1, 0));
 static_assert(!checked_div(MIN, -1));
 static_assert(!checked_rem(MIN, -1));
+
+static_assert(!checked_neg(MIN));
+static_assert(!checked_abs(MIN));
+static_assert(checked_neg(MAX) == std::optional<i64>{-MAX});
+static_assert(checked_abs(-7) == std::optional<i64>{7});
+static_assert(checked_abs(0) == std::optional<i64>{0});
 
 void require(bool condition) {
   if (!condition) std::abort();
@@ -57,8 +65,14 @@ int main() {
   require(!checked_rem(MIN, -1));
   require(!checked_div(0, 0));
   require(!checked_rem(0, 0));
+  require(!checked_neg(MIN));
+  require(!checked_abs(MIN));
+  require(checked_neg(MAX) == std::optional<i64>{-MAX});
+  require(checked_abs(-MAX) == std::optional<i64>{MAX});
   // Exhaustive small-domain arithmetic: oracle operations cannot overflow.
   for (i64 a = -128; a <= 128; ++a) {
+    require(checked_neg(a) == std::optional<i64>{-a});
+    require(checked_abs(a) == std::optional<i64>{a < 0 ? -a : a});
     for (i64 b = -128; b <= 128; ++b) {
       require(checked_add(a, b) == std::optional<i64>{a + b});
       require(checked_sub(a, b) == std::optional<i64>{a - b});
