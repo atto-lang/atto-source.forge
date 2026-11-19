@@ -171,6 +171,10 @@ class Parser {
       // Scalar bootstrap lacks nominal enum declarations and compiler-owned
       // prebound virtual method slots. Never attempt arity-only fallback.
       if (tok_.text=="enum") error("nominal enum overloads require compiler-bound dispatch");
+      // Match must never be interpreted as an ordinary scalar name or
+      // silently ignored by unreachable helper inlining.
+      if (tok_.text=="match")
+        error("MATCH_DEFAULT_BACKEND_UNSUPPORTED: typed match requires pattern CFG, exhaustiveness and checked fallback lowering");
       if (tok_.text=="gen" || tok_.text=="generator")
         error("generator declarations require iterator-frame and continuation lowering");
       // Fail closed on named language features before the scalar grammar
@@ -243,6 +247,9 @@ class Parser {
     // never the legacy percent or caret operators. Report the actual byte
     // offset before generic punctuation handling, including unreachable
     // helper definitions: these characters cannot become silent aliases.
+    if (c=='~')
+      throw std::runtime_error("TILDE_AGGREGATE_BACKEND_UNSUPPORTED: Map/Record needs typed aggregate AST, ownership and atomic constructor lowering at byte "+
+                               std::to_string(start));
     if (c=='%')
       throw std::runtime_error("legacy % operator is removed; use Integer.rem/mod at byte "+
                                std::to_string(start));

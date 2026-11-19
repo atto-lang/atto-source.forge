@@ -92,6 +92,12 @@ if(BUILD_TESTING)
   target_include_directories(oresforge_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
   target_link_libraries(oresforge_tests PRIVATE oresforge_core)
   add_test(NAME oresforge_unit COMMAND oresforge_tests)
+  # Execute the real stage-0 parser/IR rejection and positive-control checks.
+  add_executable(oresforge_match_tilde_failclosed
+    verification/atto_match_tilde_failclosed.cpp)
+  target_link_libraries(oresforge_match_tilde_failclosed PRIVATE oresforge_core)
+  add_test(NAME oresforge_match_tilde_failclosed
+    COMMAND oresforge_match_tilde_failclosed)
   # This invokes the real Forge frontend on operator-positive and
   # operator-negative sources, including unreachable declarations.
   add_executable(oresforge_legacy_operator_grammar
