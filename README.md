@@ -2,6 +2,14 @@
 
 Independent AttoLang execution engine with JIT, AOT, and native runtime infrastructure.
 
+## Naming and specification migration
+
+This is the canonical [AttoLang backend repository](https://github.com/atto-lang/atto-source.forge). Use `.atto` for portable AttoLang source and update local remotes to `https://github.com/atto-lang/atto-source.forge.git`; do not use historical repository links or naming in new examples.
+
+- **Normative grammar and semantics:** [atto-spec](https://github.com/atto-lang/atto-spec). Check the current versioned contracts for ownership operations (`borrow!`, `take!`, `share!`, `copy!`, `copy!!`), implicit argument borrowing, `lt!` binders, `eq`/`neq` value equality, `susp` effects and file/module `define const`. These are *specification targets*, not claims of executable support in this backend.
+- **Positive and negative guest execution evidence:** [atto-platform-conformance](https://github.com/atto-lang/atto-platform-conformance) and [atto-compilers-parity-testing](https://github.com/atto-lang/atto-compilers-parity-testing). Report `passed`, `failed`, `unsupported` or `not executed`, and pin exact compiler, source tree, target and toolchain.
+- **Portable shared sources and target constraints:** [atto-common-source](https://github.com/atto-lang/atto-common-source) and [atto-target-profiles](https://github.com/atto-lang/atto-target-profiles). Keep backend-specific gaps explicit, and do not infer guest parity from host tests or zero-step CI runs.
+
 ## Scope
 
 This repository is the AttoLang ecosystem home for:
@@ -43,11 +51,11 @@ Build the independent primitive tests with `cmake -S . -B build -DATTO_FORGE_SAN
 
 **Security and portability boundary:** Target-specific JIT is optional and governed; isolate untrusted tenant capabilities, bound heap/stack/fuel and distinguish emitted native machine code from executed AttoLang guests.
 
-AttoLang is the public name; preserve existing Oreslang repository, CLI and `.ores` compatibility while specifying new portable source in `.atto`. Do not duplicate normative semantics from [atto-spec](https://github.com/atto-lang/atto-spec).
+AttoLang is the canonical project identity. Use `.atto` source, `atto-*` package and repository names, and the active AttoLang CLI contract for current documentation. Do not duplicate normative semantics from [atto-spec](https://github.com/atto-lang/atto-spec).
 
 **Evidence gate:** record exact compiler/runtime head and tree, target/toolchain, nonzero executed steps, positive and negative guest results, and explicit passed/failed/unsupported/not-executed states. Host-only CI and `steps=[]` do not establish guest support. README scope is not a feature-completeness claim.
 
-## Native ownership host-reference model (PR in progress)
+## Native ownership host-reference model (preview)
 
 The header-only C++20 include/atto/ownership_v1.hpp provides a native
 ownership model with **concrete** data-structure behavior, not a parsed Atto
@@ -90,9 +98,6 @@ ASAN_OPTIONS=detect_leaks=1. Tests are assertions compiled without NDEBUG,
 including Release CMake builds. The GitHub Actions runner failure is separate
 and must not be reported as passing CI.
 
-This establishes only **native host-model behavior**, not production
-Forge IR lowering, actor memory isolation or AttoLang guest execution. This establishes only **native host-model behavior**.
-It does not establish Forge guest IR lowering, actor memory isolation or
-AttoLang syntax execution. Related frontend/spec/conformance branches
+This establishes **native host-model behavior only**, not Forge guest IR lowering, actor memory isolation, or executed AttoLang syntax. Related frontend/spec/conformance branches
 are in atto-source.rs#344, atto-borrow-checker.rs#43, atto-spec#92,
 and atto-platform-conformance#76.
