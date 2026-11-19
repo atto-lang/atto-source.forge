@@ -85,4 +85,22 @@ static_assert(sizeof(i64) == sizeof(u64));
 [[nodiscard]] constexpr std::optional<i64> bit_not(i64 a) noexcept {
   return std::bit_cast<i64>(~static_cast<u64>(a));
 }
+// Signed counts mask to the low six bits (modulo 64).
+// Unsigned shifts avoid undefined signed-left-shift and implementation-defined
+// signed right shift. Arithmetic right shift extends the sign explicitly.
+[[nodiscard]] constexpr std::optional<i64> shl_i64(i64 value, i64 count) noexcept {
+  const unsigned shift = static_cast<unsigned>(static_cast<u64>(count) & 63);
+  return std::bit_cast<i64>(static_cast<u64>(value) << shift);
+}
+[[nodiscard]] constexpr std::optional<i64> lshr_i64(i64 value, i64 count) noexcept {
+  const unsigned shift = static_cast<unsigned>(static_cast<u64>(count) & 63);
+  return std::bit_cast<i64>(static_cast<u64>(value) >> shift);
+}
+[[nodiscard]] constexpr std::optional<i64> ashr_i64(i64 value, i64 count) noexcept {
+  const unsigned shift = static_cast<unsigned>(static_cast<u64>(count) & 63);
+  if (shift == 0) return value;
+  u64 bits = static_cast<u64>(value) >> shift;
+  if (value < 0) bits |= ~u64{0} << (64U - shift);
+  return std::bit_cast<i64>(bits);
+}
 }  // namespace atto::forge

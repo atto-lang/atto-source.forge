@@ -89,3 +89,8 @@ file(REMOVE "${link_temp}")
 
 verify_guest(bitwise "0" "15\n" "")
 verify_guest(bitwise_precedence "0" "1\n" "")
+
+verify_guest(shift_logical "0" "9223372036854775807\n" "")
+verify_guest(shift_arithmetic "0" "-1\n" "")
+verify_guest(shift_masked "0" "1\n" "")
+verify_guest(shift_negative_count "0" "-9223372036854775808\n" "")
