@@ -16,7 +16,7 @@ struct Evaluated {
   }
 };
 [[nodiscard]] inline Evaluated evaluate(const Parsed& p) {
-  if (!p.ok() || p.nodes.size() > max_nodes) return {{}, EvalError::invalid_ast};
+  if (!validate_ast(p)) return {{}, EvalError::invalid_ast};
   std::vector<i64> values;
   values.reserve(p.nodes.size());
   for (std::size_t i = 0; i < p.nodes.size(); ++i) {

@@ -31,4 +31,18 @@ int main() {
   malformed.nodes[0].op = Op::add;
   malformed.nodes[0].left = 0;
   assert(!emit_cpp(malformed));
+  auto detached = parse_source(source);
+  assert(detached.ok() && validate_ast(detached));
+  detached.root = 0;
+  assert(!validate_ast(detached));
+  assert(!emit_cpp(detached));
+  auto stray = parse_source(source);
+  stray.nodes.push_back(Node{Op::literal, 0, 0, 100});
+  stray.root = stray.nodes.size() - 1;
+  assert(!validate_ast(stray));
+  assert(!emit_cpp(stray));
+  auto forged = parse_source(source);
+  forged.nodes.back().op = static_cast<Op>(900);
+  assert(!validate_ast(forged));
+  assert(!emit_cpp(forged));
 }

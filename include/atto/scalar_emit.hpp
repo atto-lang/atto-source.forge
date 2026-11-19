@@ -9,7 +9,7 @@
 namespace atto::forge::scalar {
 inline constexpr std::size_t max_emitted_bytes = 64 * 1024;
 [[nodiscard]] inline std::optional<std::string> emit_cpp(const Parsed& p) {
-  if (!p.ok() || p.nodes.size() > max_nodes) return std::nullopt;
+  if (!validate_ast(p)) return std::nullopt;
   std::string code = R"(#include <atto/checked_i64.hpp>
 #include <cstdio>
 #include <cstdint>

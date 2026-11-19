@@ -32,6 +32,52 @@ struct Parsed {
 inline constexpr std::size_t max_nodes = 128;
 inline constexpr int max_parse_depth = 24;
 
+// Verify all untrusted or externally constructed ASTs before evaluation or
+// code emission. A valid postorder AST has the root as its final node,
+// backward-only edges, no detached nodes, and recognized operation tags.
+[[nodiscard]] inline bool validate_ast(const Parsed& p) {
+  if (!p.ok() || p.nodes.size() > max_nodes ||
+      p.root != p.nodes.size() - 1) return false;
+  std::vector<unsigned char> reachable(p.nodes.size(), 0);
+  std::vector<std::size_t> pending{p.root};
+  while (!pending.empty()) {
+    const auto index = pending.back();
+    pending.pop_back();
+    if (index >= p.nodes.size()) return false;
+    if (reachable[index]) continue;
+    reachable[index] = 1;
+    const auto& node = p.nodes[index];
+    switch (node.op) {
+      case Op::literal:
+        if (node.left != 0 || node.right != 0) return false;
+        break;
+      case Op::neg:
+      case Op::bnot:
+        if (node.left >= index || node.right != 0) return false;
+        pending.push_back(node.left);
+        break;
+      case Op::add:
+      case Op::sub:
+      case Op::mul:
+      case Op::div:
+      case Op::rem:
+      case Op::band:
+      case Op::bor:
+      case Op::bxor:
+      case Op::shl:
+      case Op::lshr:
+      case Op::ashr:
+        if (node.left >= index || node.right >= index) return false;
+        pending.push_back(node.left);
+        pending.push_back(node.right);
+        break;
+      default: return false;
+    }
+  }
+  for (auto seen : reachable) if (!seen) return false;
+  return true;
+}
+
 class Parser {
   std::string_view source_;
   std::vector<Token> tokens_;
