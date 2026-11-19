@@ -52,3 +52,15 @@ elseif(MSVC)
 endif()
 add_test(NAME ownership_stress_v1_test COMMAND ownership_stress_v1_test)
 
+
+# Native bounded literal reader; host-only scalar primitive.
+add_executable(decimal_i64_test tests/decimal_i64.cpp)
+target_link_libraries(decimal_i64_test PRIVATE atto_forge_checked_i64)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(decimal_i64_test PRIVATE -Wall -Wextra -Werror -pedantic)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(decimal_i64_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(decimal_i64_test PRIVATE -fsanitize=address,undefined)
+  endif()
+endif()
+add_test(NAME decimal_i64_test COMMAND decimal_i64_test)
