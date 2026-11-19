@@ -148,3 +148,16 @@ add_test(NAME scalar_cli_diagnostics
     "-DFORGE=$<TARGET_FILE:forge_scalar>"
     "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/scalar-diagnostics"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/scalar_cli_diagnostics.cmake")
+
+# Compiler builtins independently attest checked-i64 primitives at boundary
+# and 100,000 deterministic high-entropy signed operand pairs.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  add_executable(checked_i64_oracle_test tests/checked_i64_oracle.cpp)
+  target_link_libraries(checked_i64_oracle_test PRIVATE atto_forge_checked_i64)
+  target_compile_options(checked_i64_oracle_test PRIVATE -Wall -Wextra -Werror -pedantic)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(checked_i64_oracle_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(checked_i64_oracle_test PRIVATE -fsanitize=address,undefined)
+  endif()
+  add_test(NAME checked_i64_oracle_test COMMAND checked_i64_oracle_test)
+endif()
