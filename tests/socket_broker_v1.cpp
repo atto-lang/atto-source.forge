@@ -44,6 +44,7 @@ int main() {
     auto b = broker.start_tenant(2, {1, 16});
     assert(a && b);
     assert(!broker.start_tenant(1, {4, 4096}));
+    assert(!broker.start_tenant(0, {1, 20}));
     auto ca = pair_tcp();
     auto cb = pair_tcp();
     auto ax = broker.adopt_connected_tcp(*a, ca.adopted,
@@ -83,6 +84,8 @@ int main() {
     close_if_valid(ux[0]); close_if_valid(ux[1]);
     auto c = broker.start_tenant(3, {1, 32});
     assert(c);
+    assert(broker.adopt_connected_tcp(*c, cb.adopted,
+        rights(SocketRight::read)).status == SocketStatus::denied);
     int unix_pair[2];
     assert(::socketpair(AF_UNIX, SOCK_STREAM, 0, unix_pair) == 0);
     assert(broker.adopt_connected_tcp(*c, unix_pair[0], rights(SocketRight::read)).status ==
