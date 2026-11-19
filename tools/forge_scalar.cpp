@@ -33,13 +33,25 @@ int main(int argc, char** argv) {
     if (fs::equivalent(input, output, ec) && !ec)
       return deny("E_PATH: hard-link alias");
   }
+  // is_symlink(path, ec) may set ENOENT for a new destination.
+  // Only classify an existing path as a symlink; new outputs are valid.
   ec.clear();
-  if (fs::is_symlink(output, ec) || ec)
-    return deny("E_PATH: symlink output rejected");
+  const bool output_exists = fs::exists(output, ec);
+  if (ec) return deny("E_PATH: cannot inspect output");
+  if (output_exists) {
+    ec.clear();
+    if (fs::is_symlink(output, ec) || ec)
+      return deny("E_PATH: symlink output rejected");
+  }
   const fs::path temporary = output.string() + ".part";
   ec.clear();
-  if (fs::is_symlink(temporary, ec) || ec)
-    return deny("E_PATH: symlink temp rejected");
+  const bool temporary_exists = fs::exists(temporary, ec);
+  if (ec) return deny("E_PATH: cannot inspect temporary");
+  if (temporary_exists) {
+    ec.clear();
+    if (fs::is_symlink(temporary, ec) || ec)
+      return deny("E_PATH: symlink temp rejected");
+  }
   ec.clear();
   const auto size = fs::file_size(input, ec);
   if (ec || size > max_source_bytes) {
