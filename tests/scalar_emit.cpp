@@ -12,6 +12,12 @@ int main() {
   const auto mn = emit_cpp_source(
     "fnc main(): int {return -9223372036854775808;}");
   assert(mn && mn->find("numeric_limits<atto::forge::i64>::min()") != std::string::npos);
+  const auto bitwise = emit_cpp_source(
+    "fnc main(): int {return ~0 & 15 | 1 ^ 2;}");
+  assert(bitwise && bitwise->find("bit_not") != std::string::npos);
+  assert(bitwise->find("bit_and") != std::string::npos);
+  assert(bitwise->find("bit_or") != std::string::npos);
+  assert(bitwise->find("bit_xor") != std::string::npos);
   const auto traps = emit_cpp_source("fnc main(): int {return 3 / 0;}");
   assert(traps && traps->find("E_DIVZERO") != std::string::npos);
   assert(traps->find("return 71") != std::string::npos);

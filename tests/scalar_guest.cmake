@@ -86,3 +86,6 @@ if(NOT "${rc}" STREQUAL "2" OR NOT "${tmp_bytes}" STREQUAL "do not overwrite")
   message(FATAL_ERROR "pre-existing temporary file was overwritten")
 endif()
 file(REMOVE "${link_temp}")
+
+verify_guest(bitwise "0" "15\n" "")
+verify_guest(bitwise_precedence "0" "1\n" "")

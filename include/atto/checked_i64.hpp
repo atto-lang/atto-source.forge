@@ -2,6 +2,7 @@
 
 // Portable C++20 checked i64 runtime primitives for Forge experiments.
 // These are NOT a .atto compiler or actor runtime.
+#include <bit>
 #include <cstdint>
 #include <limits>
 #include <optional>
@@ -68,5 +69,20 @@ using u64 = std::uint64_t;
 [[nodiscard]] constexpr std::optional<i64> checked_abs(i64 a) noexcept {
   if (a == std::numeric_limits<i64>::min()) return std::nullopt;
   return a < 0 ? -a : a;
+}
+// Preserve exact 64-bit two's-complement bit patterns on all C++20 targets.
+// std::bit_cast avoids implementation-defined unsigned-to-signed conversion.
+static_assert(sizeof(i64) == sizeof(u64));
+[[nodiscard]] constexpr std::optional<i64> bit_and(i64 a, i64 b) noexcept {
+  return std::bit_cast<i64>(static_cast<u64>(a) & static_cast<u64>(b));
+}
+[[nodiscard]] constexpr std::optional<i64> bit_or(i64 a, i64 b) noexcept {
+  return std::bit_cast<i64>(static_cast<u64>(a) | static_cast<u64>(b));
+}
+[[nodiscard]] constexpr std::optional<i64> bit_xor(i64 a, i64 b) noexcept {
+  return std::bit_cast<i64>(static_cast<u64>(a) ^ static_cast<u64>(b));
+}
+[[nodiscard]] constexpr std::optional<i64> bit_not(i64 a) noexcept {
+  return std::bit_cast<i64>(~static_cast<u64>(a));
 }
 }  // namespace atto::forge

@@ -117,3 +117,5 @@ or over-budget sources while removing a stale output artifact.
 Scope: one scalar main function with literals, parentheses, unary arithmetic
 and checked i64 operators. This is not a general Forge JIT/AOT compiler, actor
 runtime, library/package system or cross-backend parity proof.
+
+Restricted scalar arithmetic additionally supports signed bitwise `&`, `|`, `^`, and unary `~`, with precedence `~` > multiplicative > additive > `&` > `^` > `|`. Bit patterns are preserved via C++20 `std::bit_cast` rather than implementation-defined signed casts.
