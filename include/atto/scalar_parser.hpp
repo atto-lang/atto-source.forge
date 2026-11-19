@@ -262,9 +262,23 @@ public:
   [[nodiscard]] Parsed parse() {
     if (out_.error != ParseError::none) return std::move(out_);
     (void)name("pub");
-    if (!name("fnc") || !name("main") || !take(Kind::lparen) ||
-        !take(Kind::rparen) || !take(Kind::colon) || !name("int") ||
-        !take(Kind::lbrace) || !name("return")) {
+    const bool fnc = name("fnc");
+    bool signature_ok = false;
+    if (name("int")) {
+      // Prefix return type, with or without fnc.
+      signature_ok = take(Kind::left_arrow) && name("main") &&
+          take(Kind::lparen) && take(Kind::rparen);
+    } else if (fnc && name("main") && take(Kind::lparen) &&
+               take(Kind::rparen)) {
+      // Accept colon return type, arrow return type, or block arrow.
+      if (take(Kind::colon)) {
+        signature_ok = name("int");
+        if (signature_ok) (void)take(Kind::arrow);
+      } else if (take(Kind::arrow)) {
+        signature_ok = name("int");
+      }
+    }
+    if (!signature_ok || !take(Kind::lbrace) || !name("return")) {
       fail(ParseError::syntax);
       return std::move(out_);
     }

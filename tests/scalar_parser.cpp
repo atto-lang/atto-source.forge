@@ -11,6 +11,23 @@ int main() {
   assert(commented.ok());
   auto malformed_comment = parse_source("fnc main(): int {return 1; /*");
   assert(!malformed_comment.ok() && malformed_comment.error == ParseError::lexical);
+  for (const auto* signature : {
+    "fnc main() -> int {return 42;}",
+    "fnc main() : int -> {return 42;}",
+    "fnc int <- main() {return 42;}",
+    "int <- main() {return 42;}",
+    "pub fnc int <- main() {return 42;}",
+    "pub fnc main() -> int {return 42;}"
+  }) assert(parse_source(signature).ok());
+  for (const auto* bad_signature : {
+    "fnc main() -> int -> {return 42;}",
+    "fnc main() -> {return 42;}",
+    "fnc main() : -> int {return 42;}",
+    "fnc int <- other() {return 42;}",
+    "fnc main() <- int {return 42;}",
+    "fnc main() -> string {return 42;}",
+    "int -> main() {return 42;}"
+  }) assert(!parse_source(bad_signature).ok());
   auto a = parse_source("pub fnc main(): int { return 4 + 5 * (6 - 1); }");
   assert(a.ok() && a.nodes[a.root].op == Op::add);
   assert(a.nodes.size() == 7);

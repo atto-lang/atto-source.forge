@@ -17,6 +17,14 @@ int main() {
   for (const auto& t : l.tokens) assert(t.offset + t.length <= source.size());
   assert(tokenize("\r\n fnc main () : int { return 0; }\t").ok());
   assert(tokenize("").ok());
+  auto signatures = tokenize("fnc main() -> int {} int <- main() {}");
+  assert(signatures.ok());
+  bool saw_arrow = false, saw_left_arrow = false;
+  for (const auto& token : signatures.tokens) {
+    saw_arrow = saw_arrow || token.kind == Kind::arrow;
+    saw_left_arrow = saw_left_arrow || token.kind == Kind::left_arrow;
+  }
+  assert(saw_arrow && saw_left_arrow);
   auto comments = tokenize("/* prefix */ 3 // line\n + /* block\nline */ 4 / 2");
   assert(comments.ok());
   assert(comments.tokens.size() == 6);
