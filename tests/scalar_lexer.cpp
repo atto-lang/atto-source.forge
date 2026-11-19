@@ -17,6 +17,18 @@ int main() {
   for (const auto& t : l.tokens) assert(t.offset + t.length <= source.size());
   assert(tokenize("\r\n fnc main () : int { return 0; }\t").ok());
   assert(tokenize("").ok());
+  auto comments = tokenize("/* prefix */ 3 // line\n + /* block\nline */ 4 / 2");
+  assert(comments.ok());
+  assert(comments.tokens.size() == 6);
+  assert(comments.tokens[0].kind == Kind::integer);
+  assert(comments.tokens[1].kind == Kind::plus);
+  assert(comments.tokens[3].kind == Kind::slash);
+  const auto unterminated = tokenize("1 + /* not closed");
+  assert(unterminated.error == LexError::unterminated_comment);
+  assert(unterminated.error_offset == 4);
+  assert(tokenize("// trailing comment without newline").ok());
+  assert(tokenize("//" + std::string(max_source_bytes - 2, '/')).ok());
+  assert(tokenize("/* */").tokens.size() == 1);
   assert(!tokenize("fnc main(){return @;}").ok());
   const std::string nul("1\0" "2", 3);
   auto bad = tokenize(std::string_view(nul));
