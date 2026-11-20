@@ -136,8 +136,14 @@ inline constexpr int max_parse_depth = 24;
       case Op::shl:
       case Op::lshr:
       case Op::ashr:
-      case Op::sequence:
         if (node.left >= index || node.right >= index) return false;
+        pending.push_back(node.left);
+        pending.push_back(node.right);
+        break;
+      case Op::sequence:
+        // Sequence dependencies are ordered and each evaluated exactly once.
+        // A forged reordered/shared child pair must not change failure order.
+        if (node.left >= node.right || node.right >= index) return false;
         pending.push_back(node.left);
         pending.push_back(node.right);
         break;
