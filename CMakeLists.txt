@@ -194,3 +194,33 @@ elseif(MSVC)
   target_compile_options(tenant_dispatch_gate_v1_test PRIVATE /UNDEBUG)
 endif()
 add_test(NAME tenant_dispatch_gate_v1_test COMMAND tenant_dispatch_gate_v1_test)
+
+
+# Stage-0 real WebAssembly memory isolation experiment.
+# Compile restricted scalar .atto source using the actual checked parser into
+# zero-import, fixed-memory WebAssembly. This does NOT enable hostile actor
+# execution in the normal Forge dispatcher or certify a native sandbox.
+option(ATTO_FORGE_WASM_CAGE_PROBE "Build and test real-engine stage-0 Wasm cage" ON)
+if(ATTO_FORGE_WASM_CAGE_PROBE)
+  find_program(ATTO_FORGE_NODE_EXECUTABLE node REQUIRED)
+  add_executable(scalar_wasm_fixture_v1 tests/scalar_wasm_fixture_v1.cpp)
+  target_link_libraries(scalar_wasm_fixture_v1 PRIVATE atto_forge_checked_i64)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(scalar_wasm_fixture_v1 PRIVATE -Wall -Wextra -Werror -pedantic -UNDEBUG)
+    if(ATTO_FORGE_SANITIZERS)
+      target_compile_options(scalar_wasm_fixture_v1 PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+      target_link_options(scalar_wasm_fixture_v1 PRIVATE -fsanitize=address,undefined)
+    endif()
+  elseif(MSVC)
+    target_compile_options(scalar_wasm_fixture_v1 PRIVATE /UNDEBUG)
+  endif()
+  add_test(NAME scalar_wasm_fixture_v1
+    COMMAND $<TARGET_FILE:scalar_wasm_fixture_v1> "\${CMAKE_CURRENT_BINARY_DIR}/tenant-wasm-v1")
+  set_tests_properties(scalar_wasm_fixture_v1 PROPERTIES FIXTURES_SETUP tenant_wasm_v1)
+  add_test(NAME tenant_wasm_v1_engine
+    COMMAND "\${CMAKE_COMMAND}" -E env
+      "ATTO_GUEST_DIR=\${CMAKE_CURRENT_BINARY_DIR}/tenant-wasm-v1"
+      "\${ATTO_FORGE_NODE_EXECUTABLE}" --test
+      "\${CMAKE_CURRENT_SOURCE_DIR}/tests/tenant_wasm_v1.test.mjs")
+  set_tests_properties(tenant_wasm_v1_engine PROPERTIES FIXTURES_REQUIRED tenant_wasm_v1)
+endif()
