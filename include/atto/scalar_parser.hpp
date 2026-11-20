@@ -18,7 +18,8 @@ struct Node {
   i64 value = 0;
 };
 enum class ParseError {
-  none, lexical, syntax, literal_out_of_range, depth_limit, node_limit
+  none, lexical, syntax, literal_out_of_range, depth_limit, node_limit,
+  io_direction_unsupported
 };
 // Stable sanitized diagnostics; never echo user source bytes.
 [[nodiscard]] constexpr std::string_view parse_error_name(ParseError error) noexcept {
@@ -29,6 +30,7 @@ enum class ParseError {
     case ParseError::literal_out_of_range: return "E_PARSE_RANGE";
     case ParseError::depth_limit: return "E_PARSE_DEPTH";
     case ParseError::node_limit: return "E_PARSE_NODES";
+    case ParseError::io_direction_unsupported: return "E_IO_DIRECTION_UNSUPPORTED";
   }
   return "E_PARSE_UNKNOWN";
 }
@@ -286,6 +288,19 @@ public:
     if (!lexed.ok()) {
       out_.error = ParseError::lexical;
       out_.error_offset = lexed.error_offset;
+    }
+    // Directional << and >> are lexically distinct from <<< / >>> scalar
+    // shifts, but this backend has only an i64 AST. Fail before scalar
+    // evaluation/code emission: neither a checked receive nor a fallible
+    // bounded write can be represented as an integer shift.
+    if (out_.error == ParseError::none) {
+      for (const auto& token : tokens_) {
+        if (token.kind == Kind::io_write || token.kind == Kind::io_read) {
+          out_.error = ParseError::io_direction_unsupported;
+          out_.error_offset = token.offset;
+          break;
+        }
+      }
     }
   }
   [[nodiscard]] Parsed parse() {

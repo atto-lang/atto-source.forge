@@ -8,7 +8,8 @@
 namespace atto::forge::scalar {
 enum class Kind {
   name, integer, lparen, rparen, lbrace, rbrace, colon, semicolon,
-  plus, minus, star, slash, percent, bit_and, bit_or, bit_xor, tilde, shl, lshr, arrow, left_arrow, comma, greater, end
+  plus, minus, star, slash, percent, bit_and, bit_or, bit_xor, tilde, shl, lshr,
+  io_write, io_read, arrow, left_arrow, comma, greater, end
 };
 struct Token { Kind kind; std::size_t offset; std::size_t length; };
 enum class LexError { none, source_too_large, token_limit, unsupported_byte, unterminated_comment };
@@ -88,6 +89,17 @@ inline constexpr std::size_t max_tokens = 256;
     } else if (c == '>' && src.substr(i, 3) == ">>>") {
       kind = Kind::lshr;
       i += 3;
+    } else if (c == '<' && src.substr(i, 2) == "<<") {
+      // Contiguous directional I/O is distinct from numeric <<< shift.
+      // The scalar backend must still reject this until checked channel
+      // ownership, Result/Option and suspension are implemented.
+      kind = Kind::io_write;
+      i += 2;
+    } else if (c == '>' && src.substr(i, 2) == ">>") {
+      // A terminal channel read and a directional read binder share
+      // the same token; the typed parser must resolve the context.
+      kind = Kind::io_read;
+      i += 2;
     } else if (is_digit(c)) {
       kind = Kind::integer;
       do { ++i; } while (i < src.size() && is_digit(src[i]));
