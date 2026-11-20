@@ -29,3 +29,10 @@ foreach(i RANGE 1 70)
 endforeach()
 string(APPEND many ";}")
 check_diag(nodes "${many}" "E_PARSE_NODES")
+
+# Task syntax must be admitted only for the pure scalar inline subset.
+# Failed task admissions must never leave stale or freshly emitted C++.
+check_diag(spawn "fnc main(): int {return task<int> {return 42;};}" "E_TASK_UNSUPPORTED")
+check_diag(sync_reserved "fnc main(): int {return sync;}" "E_RESERVED")
+check_diag(sync_bad_type "fnc main(): int {return sync task<int> {return;};}" "E_TASK_RETURN_TYPE")
+check_diag(sync_void_value "fnc main(): int {do sync task<void> {return 42;}; return 0;}" "E_TASK_RETURN_TYPE")

@@ -21,6 +21,7 @@ int main() {
   const auto inlined = emit_cpp_source(
     "fnc main(): int { do sync task {} return sync task<int> {return 42;}; }");
   assert(inlined && inlined->find("std::printf") != std::string::npos);
+  assert(inlined->find("[[maybe_unused]]") != std::string::npos);
   assert(inlined->find("TaskSpawn") == std::string::npos);
   assert(inlined->find("Future<") == std::string::npos);
   assert(!emit_cpp_source("fnc main(): int {return task<int> {return 42;};}"));
