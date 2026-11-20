@@ -207,6 +207,40 @@ foreach(idx RANGE 12 14)
   endif()
 endforeach()
 
+# Filename-only output must be accepted in a real current working
+# directory and remain no-clobber on its second invocation.
+set(relative_cpp "${OUT_DIR}/relative-guest.cpp")
+set(relative_bin "${OUT_DIR}/relative-guest")
+file(REMOVE "${relative_cpp}" "${relative_bin}" "${relative_cpp}.part")
+execute_process(COMMAND "${FORGE}" "${ROOT}/fixtures/functional-pipelines-v1/block-body.atto"
+  -o "relative-guest.cpp"
+  WORKING_DIRECTORY "${OUT_DIR}"
+  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+if(NOT "${rc}" STREQUAL "0" OR NOT EXISTS "${relative_cpp}" OR
+   NOT "${out}" STREQUAL "" OR NOT "${err}" STREQUAL "")
+  message(FATAL_ERROR "filename-only -o path rejected by the Forge compiler")
+endif()
+file(SHA256 "${relative_cpp}" relative_sha)
+execute_process(COMMAND "${FORGE}" "${ROOT}/fixtures/functional-pipelines-v1/block-body.atto"
+  -o "relative-guest.cpp"
+  WORKING_DIRECTORY "${OUT_DIR}"
+  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+file(SHA256 "${relative_cpp}" observed_sha)
+if(NOT "${rc}" STREQUAL "2" OR NOT "${relative_sha}" STREQUAL "${observed_sha}")
+  message(FATAL_ERROR "relative-path no-overwrite compiler gate failed")
+endif()
+execute_process(COMMAND "${CXX}" -std=c++20 -Wall -Wextra -Werror -pedantic
+  ${guest_flags} "-I${ROOT}/include" "${relative_cpp}" -o "${relative_bin}"
+  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+if(NOT "${rc}" STREQUAL "0")
+  message(FATAL_ERROR "relative-path native guest failed to compile: ${err}")
+endif()
+execute_process(COMMAND "${relative_bin}"
+  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+if(NOT "${rc}" STREQUAL "0" OR NOT "${out}" STREQUAL "83\n" OR NOT "${err}" STREQUAL "")
+  message(FATAL_ERROR "relative-path native guest result mismatch")
+endif()
+
 # Stale output must not be replaced, including output and temp symlinks.
 set(safe_source "${ROOT}/fixtures/functional-pipelines-v1/block-body.atto")
 set(guard "${OUT_DIR}/guarded.cpp")
@@ -245,4 +279,4 @@ if(NOT "${rc}" STREQUAL "2" OR NOT "${kept}" STREQUAL "do not replace"
 endif()
 file(REMOVE "${guard_temp}")
 
-message(STATUS "ATTO_FORGE_FUNCTIONAL_GUEST_MATRIX=6 native_guests_including_min_and_overflow 18 negative_no_artifacts")
+message(STATUS "ATTO_FORGE_FUNCTIONAL_GUEST_MATRIX=7 native_guests_including_min_overflow_and_relative_path 18 negative_no_artifacts")
