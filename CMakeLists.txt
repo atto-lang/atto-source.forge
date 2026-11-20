@@ -89,6 +89,22 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 add_test(NAME scalar_parser_test COMMAND scalar_parser_test)
 
+# Deterministic bounded source-admission fuzz matrix: UTF-8 byte fragments,
+# nested comment delimiters, ownership bangs and arbitrary token sequences.
+# No native guest ABI or actor-runtime parity is claimed by this host test.
+add_executable(scalar_lexer_parser_fuzz_test tests/scalar_lexer_parser_fuzz.cpp)
+target_link_libraries(scalar_lexer_parser_fuzz_test PRIVATE atto_forge_checked_i64)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(scalar_lexer_parser_fuzz_test PRIVATE -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(scalar_lexer_parser_fuzz_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(scalar_lexer_parser_fuzz_test PRIVATE -fsanitize=address,undefined)
+  endif()
+elseif(MSVC)
+  target_compile_options(scalar_lexer_parser_fuzz_test PRIVATE /UNDEBUG)
+endif()
+add_test(NAME scalar_lexer_parser_fuzz_test COMMAND scalar_lexer_parser_fuzz_test)
+
 # Checked native scalar AST evaluator: no guest execution claim.
 add_executable(scalar_eval_test tests/scalar_eval.cpp)
 target_link_libraries(scalar_eval_test PRIVATE atto_forge_checked_i64)
