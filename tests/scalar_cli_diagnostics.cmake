@@ -10,8 +10,10 @@ function(check_diag label source expected)
   file(WRITE "${output}" "stale source")
   execute_process(COMMAND "${FORGE}" "${input}" -o "${output}"
     RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
-  if(NOT "${rc}" STREQUAL "2" OR EXISTS "${output}" OR NOT "${out}" STREQUAL "")
-    message(FATAL_ERROR "${label}: invalid source admitted or stale output retained")
+  file(READ "${output}" preserved)
+  if(NOT "${rc}" STREQUAL "2" OR NOT "${preserved}" STREQUAL "stale source" OR
+     NOT "${out}" STREQUAL "")
+    message(FATAL_ERROR "${label}: failed compile modified pre-existing output")
   endif()
   if(NOT "${err}" MATCHES "^${expected} byte=[0-9]+\n$")
     message(FATAL_ERROR "${label}: expected ${expected} with byte offset, got [${err}]")
