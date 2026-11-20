@@ -27,6 +27,17 @@ The revised checked-in Forge C++ header blob `856e554994591f73ee4d74d10385c1e39d
 
 **Total local host C++ binary runs: 14/14 PASS.** These are native primitive tests, **not** a run of the actual `forge_scalar` source-to-generated-native-guest compilation workflow and **not** a whole-program `.atto` conformance certificate.
 
+## Additional exact-corpus native host oracle and symlink hardening
+
+The draft additionally includes `tests/shared_checked_i64_header_oracle.cpp` (exact Git blob `76755fcf8ce38bd826940da7517f8266f1788fb1`). This C++20 test reads all fifteen original source-call arithmetic expressions from the unmodified shared TSV, parses and evaluates them through **the real Forge `checked_add/sub/mul/neg/rem` production header**, validates seven values/seven overflow faults/one zero divisor, and refuses a changed case count. It is separately registered as `shared_checked_i64_header_oracle_test` in CMake with a **configure-time SHA-256 check** and sanitizer options.
+
+- **Exact-copy local GCC/Clang native execution:** both compilers at O0/O2 and Clang O1 ASan+UBSan, **5/5 actual compiled host binaries passed** (all 15 cases each).
+- **Isolated minimal CMake/CTest reproduction** of the new target and sanitizer configuration: GCC and Clang **2/2 tests passed**. The complete production Forge CMake source tree was not checked out; this verifies only the reproduced target configuration.
+- **Mutation proof:** restoring the previous `MIN rem -1` rejection in a *temporary local header copy* caused the same checked-in new oracle to abort on `safe-min-rem` (exit 134). No source mutation was pushed.
+- **Source symlink defense:** the generated-native-guest CMake harness now removes a preplanted `.atto` source symlink before `file(WRITE)` to avoid following/truncating its target. It also rejects unexpected symlinks or missing artifacts.
+
+These additional tests **cannot** certify real `forge_scalar` source compilation or generated-native-guest parity. They cover the native C++ arithmetic backend and CMake-test mechanics only.
+
 ## Remaining gates
 
 Execute the complete CMake/CTest tree on real, exact-head source CI under GCC and Clang with sanitizers, including both the changed existing `scalar_guest_conformance` and new `shared_checked_i64_native_guests`. Record nonzero runner steps, compiler and binary hashes, source/tree SHA, diagnostics and independent review. The grammar still supports only Forge's current restricted scalar source; do not claim actors, imports, JIT/AOT engine parity, TenantVM security or hard real-time guarantees.
