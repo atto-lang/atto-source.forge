@@ -47,13 +47,31 @@ inline bool source_export_name_valid(std::string_view name) noexcept {
 [[noreturn]] inline void source_export_error(const char* category) {
   throw std::runtime_error(category);
 }
+inline constexpr bool source_export_scope_valid(SourceExportScope scope) noexcept {
+  switch (scope) {
+    case SourceExportScope::File: case SourceExportScope::Package:
+    case SourceExportScope::Public: return true;
+  }
+  return false;
+}
+inline constexpr bool source_export_origin_valid(SourceExportOrigin origin) noexcept {
+  switch (origin) {
+    case SourceExportOrigin::ImplicitPub:
+    case SourceExportOrigin::ExplicitExport: return true;
+  }
+  return false;
+}
 inline void validate_source_exports(
     const std::vector<SourceExportBinding>& bindings) {
   if (bindings.size()>1024) source_export_error("EXPORT_SOURCE_LIMIT");
   std::unordered_map<std::string,std::size_t> seen;
   for (std::size_t i=0; i<bindings.size(); ++i) {
     const auto& b=bindings[i];
-    if (b.owner_namespace!="$root" || b.local_kind!="fnc" ||
+    if (!source_export_scope_valid(b.scope) ||
+        !source_export_origin_valid(b.origin) ||
+        (b.origin==SourceExportOrigin::ImplicitPub &&
+         b.local_name!=b.external_name) ||
+        b.owner_namespace!="$root" || b.local_kind!="fnc" ||
         !source_export_name_valid(b.local_name) ||
         !source_export_name_valid(b.external_name) ||
         b.local_symbol_id!="$root::fnc::"+b.local_name)
@@ -69,6 +87,9 @@ inline std::vector<SourceExportBinding> resolve_source_exports(
     source_export_error("EXPORT_SOURCE_LIMIT");
   std::unordered_map<std::string,SourceLocalFnc> locals;
   for (const auto& d:declarations) {
+    if ((d.visibility && !source_export_scope_valid(*d.visibility)) ||
+        (d.explicit_private && d.visibility))
+      source_export_error("EXPORT_INVALID_VISIBILITY");
     if (!source_export_name_valid(d.name))
       source_export_error("EXPORT_INVALID_NAME");
     if (!locals.emplace(d.name,d).second)
@@ -106,6 +127,8 @@ inline std::vector<SourceExportBinding> resolve_source_exports(
       add(d,d.name,*d.visibility,SourceExportOrigin::ImplicitPub);
   }
   for (const auto& request:requests) {
+    if (!source_export_scope_valid(request.scope))
+      source_export_error("EXPORT_UNKNOWN_SCOPE");
     if (!request.kind.empty() && request.kind!="fnc") {
       if (locals.contains(request.local_name))
         source_export_error("EXPORT_KIND_MISMATCH");
