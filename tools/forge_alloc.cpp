@@ -256,8 +256,9 @@ int deny(std::string_view code) {std::cerr<<code<<'\n';return 2;}
 } // namespace
 
 int main(int argc,char**argv) {
-  if(argc!=4 || std::string_view(argv[2])!="-o")return deny("E_ALLOC_USAGE");
-  const fs::path input(argv[1]),output(argv[3]);
+  if(argc!=5 || std::string_view(argv[1])!="--experimental-host-profile" ||
+     std::string_view(argv[3])!="-o")return deny("E_ALLOC_EXPERIMENTAL_REQUIRED");
+  const fs::path input(argv[2]),output(argv[4]);
   if(input.extension()!=".atto"||output.extension()!=".cpp")return deny("E_ALLOC_PATH");
   std::error_code ec;
   if(!fs::is_regular_file(input,ec)||ec)return deny("E_ALLOC_SOURCE");
