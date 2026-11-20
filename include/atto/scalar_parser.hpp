@@ -18,7 +18,7 @@ struct Node {
   i64 value = 0;
 };
 enum class ParseError {
-  none, lexical, syntax, literal_out_of_range, depth_limit, node_limit
+  none, lexical, syntax, unsupported_continuous_pipe, literal_out_of_range, depth_limit, node_limit
 };
 // Stable sanitized diagnostics; never echo user source bytes.
 [[nodiscard]] constexpr std::string_view parse_error_name(ParseError error) noexcept {
@@ -26,6 +26,7 @@ enum class ParseError {
     case ParseError::none: return "NONE";
     case ParseError::lexical: return "E_PARSE_LEXICAL";
     case ParseError::syntax: return "E_PARSE_SYNTAX";
+    case ParseError::unsupported_continuous_pipe: return "E_UNSUPPORTED_CONTINUOUS_PIPE";
     case ParseError::literal_out_of_range: return "E_PARSE_RANGE";
     case ParseError::depth_limit: return "E_PARSE_DEPTH";
     case ParseError::node_limit: return "E_PARSE_NODES";
@@ -301,6 +302,23 @@ public:
 };
 
 [[nodiscard]] inline Parsed parse_source(std::string_view src) {
-  return Parser(src, tokenize(src)).parse();
+  auto lexed = tokenize(src);
+  // Both keywords describe continuous typed DATA graphs, NOT bitwise '|'
+  // and NOT single-value functional pipelines. The stage-0 scalar Forge
+  // compiler must never emit guest C++ without the actor transport ABI.
+  // Inspect real lexer tokens: comments are ignored, never raw regex matches.
+  if (lexed.ok()) {
+    for (const auto& token : lexed.tokens) {
+      if (token.kind != Kind::name) continue;
+      const auto word = src.substr(token.offset, token.length);
+      if (word == "pipe" || word == "rpipe") {
+        Parsed rejected;
+        rejected.error = ParseError::unsupported_continuous_pipe;
+        rejected.error_offset = token.offset;
+        return rejected;
+      }
+    }
+  }
+  return Parser(src, std::move(lexed)).parse();
 }
 }  // namespace atto::forge::scalar
