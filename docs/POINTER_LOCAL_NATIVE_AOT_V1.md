@@ -74,3 +74,9 @@ Related candidate compilers: [Rust/Wasm #419](https://github.com/atto-lang/atto-
 [LLVM #64](https://github.com/atto-lang/atto-source.llvm/pull/64),
 [.NET #22](https://github.com/atto-lang/atto-source.net/pull/22).
 All remain unverified pending actual guest execution.
+
+## Audit: preserve caller-owned output on rejection
+
+An invalid Atto source previously caused `forge_scalar` to delete an existing caller-supplied `.cpp` output file. Rejection is never authority to remove or modify caller-owned data. The CLI now preserves existing output on source-length, read, lexical, syntax and AST rejection. Only a compiler-created incomplete `.part` file may be cleaned up.
+
+The native pointer test suite now checks all 24 invalid fixtures twice: a fresh output must remain absent, and a pre-existing sentinel must survive byte-identically. The scalar guest and CLI diagnostic suites also assert preservation. The old binary fails the new regression; the patched compiler passes under GCC and Clang with ASan/UBSan. This does not prove filesystem race safety: symlink-safe directory-descriptor-relative output publication is still required to close malicious concurrent-path-replacement races.
