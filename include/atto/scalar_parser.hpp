@@ -80,8 +80,16 @@ inline constexpr int max_parse_depth = 24;
         if (!start(ch) && !(ch >= '0' && ch <= '9')) return false;
       return true;
     };
+    const auto reserved = [](const std::string& n) {
+      return n == "main" || n == "int" || n == "Pointer" ||
+             n == "let" || n == "val" || n == "rt" ||
+             n == "ref" || n == "deref" || n == "unref" ||
+             n == "return" || n == "fnc" || n == "pub";
+    };
     if (!safe_name(l.referent) || !safe_name(l.handle) ||
         !safe_name(l.copied_scalar) ||
+        reserved(l.referent) || reserved(l.handle) ||
+        reserved(l.copied_scalar) ||
         l.referent == l.handle || l.referent == l.copied_scalar ||
         l.handle == l.copied_scalar ||
         p.nodes.size() != 1 || p.root != 0 ||
