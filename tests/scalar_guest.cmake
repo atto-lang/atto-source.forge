@@ -145,3 +145,13 @@ verify_guest(infer_arrow "0" "42\n" "")
 verify_guest(infer_block "0" "42\n" "")
 verify_guest(infer_prefix "0" "42\n" "")
 verify_guest(infer_bare_prefix "0" "42\n" "")
+
+# Retained exact source fixtures from #42 and #52; no silent compilation
+# of nonvoid `do sync task` is permitted in these corrected fixtures.
+verify_guest(seq_scalar "0" "42\n" "")
+verify_guest(seq_divzero "71" "" "E_DIVZERO\n")
+verify_guest(seq_overflow "70" "" "E_OVERFLOW\n")
+verify_guest(sync_inline_discard "0" "42\n" "")
+verify_guest(sync_inline_nested "0" "42\n" "")
+verify_guest(sync_inline_statement "0" "42\n" "")
+verify_guest(sync_inline_trap "71" "" "E_DIVZERO\n")
