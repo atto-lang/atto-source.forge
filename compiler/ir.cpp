@@ -41,6 +41,8 @@ std::int64_t checked(Op op, std::int64_t a, std::int64_t b) {
 }
 }
 void verify(const Program& p) {
+  // Untrusted/fabricated IR must not inject malformed export binding tables.
+  validate_source_exports(p.source_export_bindings);
   if (p.parameter_count > 4) throw std::runtime_error("runtime entry parameter budget exceeded");
   if (p.instructions.empty()) throw std::runtime_error("empty IR");
   if (p.instructions.size() > 100000) throw std::runtime_error("IR instruction budget exceeded");
