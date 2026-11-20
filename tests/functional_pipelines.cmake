@@ -394,4 +394,25 @@ foreach(keyword IN ITEMS sync task yield)
   endforeach()
 endforeach()
 
+# Real concurrency/native race test of the actual Forge CLI, only on Linux
+# where linkat(AT_EMPTY_PATH) publishes its O_TMPFILE inode without names.
+if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux")
+  execute_process(
+    COMMAND bash "${ROOT}/tests/functional_publication_race.sh"
+      "${FORGE}"
+      "${ROOT}/fixtures/functional-pipelines-v1/block-body.atto"
+      "${OUT_DIR}" "${CXX}" "${ROOT}/include" ${guest_flags}
+    RESULT_VARIABLE publication_rc
+    OUTPUT_VARIABLE publication_out
+    ERROR_VARIABLE publication_err)
+  if(NOT "${publication_rc}" STREQUAL "0" OR
+     NOT "${publication_out}" MATCHES "ATTO_FORGE_LINUX_FD_PUBLICATION_PASS")
+    message(FATAL_ERROR
+      "Forge Linux fd-anchored publisher gate failed: exit=${publication_rc}
+stdout=${publication_out}
+stderr=${publication_err}")
+  endif()
+  message(STATUS "${publication_out}")
+endif()
+
 message(STATUS "ATTO_FORGE_FUNCTIONAL_GUEST_MATRIX=7 native_guests_including_min_overflow_and_relative_path 27 negative_no_artifacts")
