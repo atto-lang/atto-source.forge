@@ -21,6 +21,15 @@ common=(-Wall -Wextra -Wpedantic -Werror -I"$root" -I"$root/runtime/arena")
 "$cxx" -std=c++20 "${common[@]}" "${flags[@]}" "$root/verification/scalar_heap_safety.cpp" "$work/heap.o" -pthread "${wrap[@]}" -o "$work/heap"
 "$work/heap"
 "$cxx" -std=c++20 "${common[@]}" "${flags[@]}" "$root/runtime/scalar_actor.cpp" "$root/verification/scalar_actor.cpp" "$work/heap.o" -pthread "${wrap[@]}" -o "$work/actor"
+# New actor-owned logical frame storage, including a real scalar actor
+# callback bridge; both modes use the exact source-local C++ implementation.
+"$cxx" -std=c++20 "${common[@]}" "${flags[@]}" \
+  "$root/verification/actor_frames.cpp" -pthread -o "$work/frames"
+"$work/frames"
+"$cxx" -std=c++20 "${common[@]}" "${flags[@]}" \
+  "$root/verification/scalar_actor_frames.cpp" "$root/runtime/scalar_actor.cpp" \
+  "$work/heap.o" -pthread -o "$work/actor-frames"
+"$work/actor-frames"
 "$work/actor"
 "$cxx" -std=c++20 "${common[@]}" "${flags[@]}" "$root/verification/native_memory_model_test.cpp" \
   "$work/arena.o" "$work/heap.o" -pthread -o "$work/memory-model"

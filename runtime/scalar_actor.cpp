@@ -12,9 +12,13 @@ ScalarActor::ScalarActor(std::uint64_t id, std::size_t fields, std::size_t capac
     if (!id || !fields || fields > 4096 || !capacity || capacity > 4096
             || !initialize || !handler)
         throw std::invalid_argument("invalid bounded scalar actor configuration");
+    // Reserve actor-private frame bytes during construction, never in a
+    // guest turn. Failure does not publish an actor with half a stack.
+    auto frames = std::make_unique<ActorFrameStack>(id, 1);
     identity_ = std::make_shared<ScalarActorIdentity>();
     ring_.resize(capacity);
     heap_ = ores_actor_i64_heap_open(id, 1, fields);
+    frames_ = std::move(frames);
     // Initialization is CONTROL work for the first admitted worker turn.
     // Constructing metadata must not execute a child's code on its parent.
 }
@@ -26,6 +30,7 @@ void ScalarActor::wipe_queue() noexcept {
 ScalarActor::~ScalarActor() noexcept {
     if (active_) std::abort(); // external scheduler must fence its callbacks
     wipe_queue();
+    if (frames_) frames_->retire();
     if (heap_) {
         ores_actor_i64_heap_retire(heap_);
         if (!ores_actor_i64_heap_try_destroy(heap_)) std::abort();
@@ -61,15 +66,31 @@ ScalarActor::Result ScalarActor::run_one() {
     }
     // No lifecycle/mailbox lock is held while guest ABI code executes.
     // Sends and stop remain responsive; another carrier gets Busy.
-    const auto turn = ores_actor_i64_heap_enter(heap_, id_, 1);
+    OresActorTurn turn{};
+    try {
+        turn = ores_actor_i64_heap_enter(heap_, id_, 1);
+    } catch (...) {
+        frames_->retire();
+        std::scoped_lock lock(mutex_);
+        active_ = false;
+        stopped_ = true;
+        wipe_queue();
+        throw;
+    }
     std::int64_t value = 0;
     try {
+        // Frame authority is active only while the matching heap turn runs.
+        // This is separate *logical* frame storage, not a switched OS stack.
+        ActorFrameStack::Turn frame_turn(*frames_);
         if (!initialized_) initializer_(heap_, turn.domain, turn.epoch);
         // The synchronized publication below is the only writer of the
         // initialized state. Other run_one calls observe active_ meanwhile.
         if (has_message) value = handler_(heap_, turn.domain, turn.epoch, message);
-    }
-    catch (...) {
+        // Even callbacks that catch their own frame-limit errors cannot
+        // commit the turn after the actor's frame arena has been poisoned.
+        if (frames_->poisoned()) throw std::logic_error("actor frame poison");
+    } catch (...) {
+        frames_->retire();
         ores_actor_i64_heap_leave(heap_, turn);
         std::scoped_lock lock(mutex_);
         active_ = false;
@@ -82,12 +103,14 @@ ScalarActor::Result ScalarActor::run_one() {
         std::scoped_lock lock(mutex_);
         initialized_ = true;
         active_ = false;
+        if (stopped_ && !count_) frames_->retire();
     }
     return {has_message ? Turn::Executed : Turn::Initialized, value};
 }
 void ScalarActor::stop() {
     std::scoped_lock lock(mutex_);
     stopped_ = true;
+    if (!active_ && !count_) frames_->retire();
 }
 bool ScalarActor::done() const {
     std::scoped_lock lock(mutex_);
