@@ -179,3 +179,70 @@ add_test(NAME scalar_check_only
     "-DFORGE=$<TARGET_FILE:forge_scalar>"
     "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/scalar-check"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/scalar_check.cmake")
+
+
+# Host-only TenantVM cooperation budget reconciliation. Not guest preemption.
+# Registered in the existing GCC/Clang + sanitizer CTest matrix.
+add_executable(tenant_cooperation_budget_v1_test tests/tenant_cooperation_budget_v1.cpp)
+target_link_libraries(tenant_cooperation_budget_v1_test PRIVATE atto_forge_checked_i64 Threads::Threads)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(tenant_cooperation_budget_v1_test PRIVATE
+    -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(tenant_cooperation_budget_v1_test PRIVATE
+      -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(tenant_cooperation_budget_v1_test PRIVATE
+      -fsanitize=address,undefined)
+  endif()
+elseif(MSVC)
+  target_compile_options(tenant_cooperation_budget_v1_test PRIVATE /UNDEBUG)
+endif()
+add_test(NAME tenant_cooperation_budget_v1_test COMMAND tenant_cooperation_budget_v1_test)
+
+
+# Compiler-backed export conformance: exercises actual Forge frontend and IR,
+# checked interpreter and both native assembly emitters. Not a full module
+# linker or compiled guest/host symbol exposure certification.
+add_executable(export_semantics_v1_test
+  tests/export_semantics_v1.cpp
+  compiler/frontend.cpp
+  compiler/ir.cpp
+  codegen/native.cpp)
+target_include_directories(export_semantics_v1_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(export_semantics_v1_test PRIVATE cxx_std_20)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(export_semantics_v1_test PRIVATE
+    -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(export_semantics_v1_test PRIVATE
+      -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(export_semantics_v1_test PRIVATE
+      -fsanitize=address,undefined)
+  endif()
+elseif(MSVC)
+  target_compile_options(export_semantics_v1_test PRIVATE /UNDEBUG)
+endif()
+add_test(NAME export_semantics_v1_test COMMAND export_semantics_v1_test)
+
+
+# A separately executable source-export resolver hardening suite, proven
+# against exact Git blobs locally (not evidence of compiler guest parity).
+add_executable(export_resolution_adversarial_v1_test
+  tests/export_resolution_adversarial_v1.cpp)
+target_include_directories(export_resolution_adversarial_v1_test PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(export_resolution_adversarial_v1_test PRIVATE cxx_std_20)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(export_resolution_adversarial_v1_test PRIVATE
+    -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(export_resolution_adversarial_v1_test PRIVATE
+      -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(export_resolution_adversarial_v1_test PRIVATE
+      -fsanitize=address,undefined)
+  endif()
+elseif(MSVC)
+  target_compile_options(export_resolution_adversarial_v1_test PRIVATE /UNDEBUG)
+endif()
+add_test(NAME export_resolution_adversarial_v1_test
+  COMMAND export_resolution_adversarial_v1_test)
