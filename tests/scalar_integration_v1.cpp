@@ -71,6 +71,19 @@ int main() {
   invalid("fnc main(): int {return 12 ^ 10;}", ParseError::syntax);
   invalid("fnc main(): int {return seq(1,);}", ParseError::syntax);
 
+  auto ordered = parse_source("fnc main(): int {return seq(1,2,42);}");
+  assert(ordered.ok() && ordered.nodes[ordered.root].op == Op::sequence);
+  auto forged_order = ordered;
+  auto& root = forged_order.nodes[forged_order.root];
+  const auto saved = root.left;
+  root.left = root.right;
+  root.right = saved;
+  assert(!validate_ast(forged_order) && !emit_cpp(forged_order));
+  auto shared_child = ordered;
+  shared_child.nodes[shared_child.root].left =
+      shared_child.nodes[shared_child.root].right;
+  assert(!validate_ast(shared_child) && !emit_cpp(shared_child));
+
   auto divzero = evaluate_source("fnc main(): int {return seq(1/0, 42);}");
   assert(divzero.error == EvalError::divide_by_zero);
   auto overflow = evaluate_source(
