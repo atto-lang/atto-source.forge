@@ -1,0 +1,105 @@
+#include "runtime/persistent_actor_map.hpp"
+#include <cassert>
+#include <cstdint>
+#include <memory>
+#include <limits>
+#include <map>
+#include <random>
+#include <stdexcept>
+#include <string>
+
+using namespace oresforge::runtime;
+
+int main() {
+    auto empty = PersistentActorMap::empty();
+    auto one = empty.with("Aa", 1);
+    auto both = one.with("BB", 2);
+    assert(empty.size() == 0 && one.size() == 1 && both.size() == 2);
+    assert(std::get<std::int64_t>(one.get("Aa")->storage()) == 1);
+    assert(std::get<std::int64_t>(both.get("BB")->storage()) == 2);
+
+    auto old = both;
+    auto changed = both.with("Aa", 99);
+    assert(std::get<std::int64_t>(old.get("Aa")->storage()) == 1);
+    assert(std::get<std::int64_t>(changed.get("Aa")->storage()) == 99);
+
+    auto nested = std::make_shared<const PersistentActorMap>(both);
+    auto parent = empty.with("child", PersistentActorMap::Value(nested));
+    assert(std::get<PersistentActorMap::MapRef>(
+        parent.get("child")->storage()) == nested);
+    assert(parent.with("child", PersistentActorMap::Value(nested)).size() == 1);
+
+    const std::string huge_key(4097, 'x');
+    assert(both.get(huge_key) == nullptr && !both.contains(huge_key));
+    for (const std::string key: {std::string(), huge_key}) {
+        bool rejected = false;
+        try { (void)both.without(key); }
+        catch (const std::invalid_argument&) { rejected = true; }
+        assert(rejected);
+    }
+    bool null_text_denied = false;
+    try { (void)empty.with("bad", PersistentActorMap::Value(
+        static_cast<const char*>(nullptr))); }
+    catch (const std::invalid_argument&) { null_text_denied = true; }
+    assert(null_text_denied);
+    assert(both.size() == 2);
+
+    bool nonfiniteDenied = false;
+    try { (void)empty.with("bad", PersistentActorMap::Value(
+        std::numeric_limits<double>::infinity())); }
+    catch (const std::invalid_argument&) { nonfiniteDenied = true; }
+    assert(nonfiniteDenied);
+
+    PersistentActorMap subject = empty;
+    std::map<std::string, std::int64_t> oracle;
+    std::mt19937_64 rng(0xF047Eu);
+    for (int step = 0; step < 10000; ++step) {
+        auto key = std::string("model-") + std::to_string(rng() % 1024);
+        if ((rng() & 3u) == 0) {
+            subject = subject.without(key);
+            oracle.erase(key);
+        } else {
+            auto value = static_cast<std::int64_t>(rng() & 0x7fffffff);
+            subject = subject.with(key, value);
+            oracle[key] = value;
+        }
+        assert(subject.size() == oracle.size());
+        for (int probe = 0; probe < 4; ++probe) {
+            auto pkey = std::string("model-") + std::to_string(rng() % 1024);
+            auto it = oracle.find(pkey);
+            const auto* actual = subject.get(pkey);
+            assert((it == oracle.end()) == (actual == nullptr));
+            if (actual)
+                assert(std::get<std::int64_t>(actual->storage()) == it->second);
+        }
+    }
+
+    auto deleted = changed.without("BB");
+    assert(!deleted.contains("BB") && changed.contains("BB"));
+
+    PersistentActorMap flood = empty;
+    for (int n = 0; n < 64; ++n) {
+        std::string key;
+        for (int i = 0; i < 7; ++i)
+            key += ((n >> i) & 1) ? "BB" : "Aa";
+        flood = flood.with(key, n);
+    }
+    bool denied = false;
+    try { (void)flood.with("AaAaAaAaAaAaBB", 65); }
+    catch (const std::length_error&) { denied = true; }
+    assert(denied);
+    // A rejected 65th colliding key does not mutate the immutable root.
+    // Removing one key from a new version must free exactly one bucket slot,
+    // without altering the original 64-key version or unrelated entries.
+    const std::string first_key = "AaAaAaAaAaAaAa";
+    const std::string new_key = "AaAaAaAaAaAaBB";
+    assert(flood.contains(first_key) && !flood.contains(new_key));
+    auto shortened = flood.without(first_key);
+    assert(shortened.size() == 63 && !shortened.contains(first_key));
+    assert(flood.size() == 64 && flood.contains(first_key));
+    auto refilled = shortened.with(new_key, 65);
+    assert(refilled.size() == 64 && refilled.contains(new_key));
+    assert(std::get<std::int64_t>(refilled.get(new_key)->storage()) == 65);
+    assert(!flood.contains(new_key));
+    assert(std::get<std::int64_t>(flood.get(first_key)->storage()) == 0);
+}
