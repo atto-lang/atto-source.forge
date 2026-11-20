@@ -59,6 +59,19 @@ function(reject label source error_name)
      NOT "${out}" STREQUAL "" OR NOT found EQUAL 0)
     message(FATAL_ERROR "${label}: wanted ${error_name} with no artifact, got ${rc}: ${err}")
   endif()
+  # A distinct existing destination must remain byte-identical when
+  # compiler admission fails, even if the same source failed at an
+  # initially absent destination. A stale file is NOT a new artifact.
+  set(existing "${OUT_DIR}/existing-${label}.cpp")
+  file(WRITE "${existing}" "KEEP_USER_FILE_UNCHANGED")
+  execute_process(COMMAND "${FORGE}" "${input}" -o "${existing}"
+    RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+  file(READ "${existing}" preserved)
+  string(FIND "${err}" "${error_name}" found)
+  if(NOT "${rc}" STREQUAL "2" OR NOT found EQUAL 0 OR
+     NOT "${preserved}" STREQUAL "KEEP_USER_FILE_UNCHANGED")
+    message(FATAL_ERROR "${label}: failed compiler clobbered existing user file")
+  endif()
   execute_process(COMMAND "${FORGE}" --check "${input}"
     RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
   string(FIND "${err}" "${error_name}" found)
