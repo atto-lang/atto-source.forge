@@ -193,3 +193,18 @@ elseif(MSVC)
   target_compile_options(byte_buffer_v1_test PRIVATE /UNDEBUG)
 endif()
 add_test(NAME byte_buffer_v1_test COMMAND byte_buffer_v1_test)
+
+# Canonical shared C++20 allocator host source, pinned to atto-common-source #30.
+# No Atto guest/runtime/TenantVM certification is implied by this CTest.
+add_executable(tenant_bytes_v1_test tests/tenant_bytes_v1.cpp)
+target_link_libraries(tenant_bytes_v1_test PRIVATE atto_forge_checked_i64 Threads::Threads)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(tenant_bytes_v1_test PRIVATE -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(tenant_bytes_v1_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(tenant_bytes_v1_test PRIVATE -fsanitize=address,undefined)
+  endif()
+elseif(MSVC)
+  target_compile_options(tenant_bytes_v1_test PRIVATE /UNDEBUG)
+endif()
+add_test(NAME tenant_bytes_v1_test COMMAND tenant_bytes_v1_test)
