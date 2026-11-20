@@ -16,19 +16,46 @@
 namespace oresforge::runtime {
 class ActorArena final {
  public:
-  struct Turn { std::uint64_t domain, epoch; };
-  struct Handle { std::uint64_t domain, generation; std::size_t slot; };
-  struct Scratch { std::uint64_t domain, epoch; std::size_t offset, length; };
+  // Type-level admission: these are issued authority tickets, not
+  // forgeable public aggregates. Trusted host callers may copy an issued
+  // ticket, but cannot construct an arbitrary (domain,slot,generation) to
+  // probe other live allocations or synthesize a turn/scratch authority.
+  // This is only C++ API hardening, NOT guest ref32 or cryptographic handles.
+  struct Turn {
+    Turn(const Turn&) = default;
+    Turn& operator=(const Turn&) = default;
+   private:
+    friend class ActorArena;
+    Turn(std::uint64_t d, std::uint64_t e) : domain(d), epoch(e) {}
+    std::uint64_t domain, epoch;
+  };
+  struct Handle {
+    Handle(const Handle&) = default;
+    Handle& operator=(const Handle&) = default;
+   private:
+    friend class ActorArena;
+    Handle(std::uint64_t d, std::uint64_t g, std::size_t s)
+        : domain(d), generation(g), slot(s) {}
+    std::uint64_t domain, generation;
+    std::size_t slot;
+  };
+  struct Scratch {
+    Scratch(const Scratch&) = default;
+    Scratch& operator=(const Scratch&) = default;
+   private:
+    friend class ActorArena;
+    Scratch(std::uint64_t d, std::uint64_t e,
+            std::size_t o, std::size_t n)
+        : domain(d), epoch(e), offset(o), length(n) {}
+    std::uint64_t domain, epoch;
+    std::size_t offset, length;
+  };
   static constexpr std::size_t Slots = 64;
   static constexpr std::size_t SlotBytes = 256;
   static constexpr std::size_t ScratchBytes = 16 * 1024;
   explicit ActorArena(std::uint64_t actor, std::uint64_t incarnation)
       : actor_(actor), incarnation_(incarnation),
-        domain_(next_domain_.fetch_add(1, std::memory_order_relaxed)) {
-    if (!actor || !incarnation || !domain_ ||
-        domain_ == std::numeric_limits<std::uint64_t>::max())
-      throw std::invalid_argument("invalid actor arena identity");
-  }
+        domain_(issue_domain(actor, incarnation)) {}
   ActorArena(const ActorArena&) = delete;
   ActorArena& operator=(const ActorArena&) = delete;
   ~ActorArena() noexcept {
@@ -147,6 +174,24 @@ class ActorArena final {
     bool live = false;
   };
   inline static std::atomic<std::uint64_t> next_domain_{1};
+  // Reserve 0 and UINT64_MAX as permanent exhaustion sentinels. A wrapping
+  // fetch_add could eventually recycle domain 1 and revalidate an old
+  // issuer's stale handle in an unrelated future arena; CAS saturation
+  // makes exhaustion terminal even when callers retry construction.
+  static std::uint64_t issue_domain(std::uint64_t actor,
+                                    std::uint64_t incarnation) {
+    if (!actor || !incarnation)
+      throw std::invalid_argument("invalid actor arena identity");
+    auto candidate = next_domain_.load(std::memory_order_relaxed);
+    while (candidate != 0 &&
+           candidate != std::numeric_limits<std::uint64_t>::max()) {
+      if (next_domain_.compare_exchange_weak(
+              candidate, candidate + 1, std::memory_order_relaxed,
+              std::memory_order_relaxed))
+        return candidate;
+    }
+    throw std::overflow_error("actor arena domain exhausted");
+  }
   std::uint64_t actor_, incarnation_, domain_, epoch_ = 0;
   std::array<Slot, Slots> slots_{};
   std::array<std::byte, ScratchBytes> scratch_{};

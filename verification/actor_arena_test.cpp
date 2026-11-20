@@ -6,8 +6,28 @@
 #include <stdexcept>
 #include <thread>
 #include <atomic>
-#include <thread>
+#include <optional>
+#include <memory>
+#include <type_traits>
 using oresforge::runtime::ActorArena;
+// Public POD tickets were previously forgeable with known actor domain,
+// generation and slot indices. Only the arena may now mint a new ticket.
+// Copying an already issued ticket is intentional and remains supported.
+static_assert(!std::is_aggregate_v<ActorArena::Turn>);
+static_assert(!std::is_default_constructible_v<ActorArena::Turn>);
+static_assert(!std::is_constructible_v<ActorArena::Turn, std::uint64_t, std::uint64_t>);
+static_assert(std::is_copy_constructible_v<ActorArena::Turn>);
+static_assert(!std::is_aggregate_v<ActorArena::Handle>);
+static_assert(!std::is_default_constructible_v<ActorArena::Handle>);
+static_assert(!std::is_constructible_v<ActorArena::Handle,
+                                     std::uint64_t, std::uint64_t, std::size_t>);
+static_assert(std::is_copy_constructible_v<ActorArena::Handle>);
+static_assert(!std::is_aggregate_v<ActorArena::Scratch>);
+static_assert(!std::is_default_constructible_v<ActorArena::Scratch>);
+static_assert(!std::is_constructible_v<ActorArena::Scratch,
+                                     std::uint64_t, std::uint64_t, std::size_t,
+                                     std::size_t>);
+static_assert(std::is_copy_constructible_v<ActorArena::Scratch>);
 static void ensure(bool ok) { if (!ok) throw std::runtime_error("actor arena invariant failed"); }
 template <typename F> static void rejects(F&& f) {
   bool caught = false;
@@ -15,17 +35,70 @@ template <typename F> static void rejects(F&& f) {
   ensure(caught);
 }
 int main() {
+  rejects([] { ActorArena invalidActor(0, 1); });
+  rejects([] { ActorArena invalidIncarnation(1, 0); });
+  // Re-created arenas with the same actor identity must never accept an
+  // independently issued handle, even if slot/generation happen to match.
+  // A unique, non-wrapping domain is the boundary.
+  std::optional<ActorArena::Handle> previous;
+  for (std::uint64_t incarnation = 1; incarnation <= 128; ++incarnation) {
+    ActorArena freshArena(300, incarnation);
+    auto turn = freshArena.begin_turn(300, incarnation);
+    auto issued = freshArena.allocate(turn, 1);
+    std::array<std::byte, 1> output{};
+    if (previous) {
+      rejects([&] { freshArena.read(turn, *previous, output); });
+      rejects([&] { (void)freshArena.try_read_byte(turn, *previous, -1); });
+    }
+    previous = issued;
+    freshArena.end_turn(turn);
+    freshArena.retire();
+  }
+  // Concurrent issuers sharing even the same logical actor identity must
+  // never issue interchangeable live tickets. The domain, not just actor ID,
+  // forms the physical arena identity for host-only allocation handles.
+  constexpr std::size_t ConcurrentArenas = 16;
+  std::array<std::unique_ptr<ActorArena>, ConcurrentArenas> concurrent{};
+  std::array<std::optional<ActorArena::Handle>, ConcurrentArenas> tickets{};
+  std::array<std::thread, ConcurrentArenas> issuers{};
+  for (std::size_t i = 0; i < ConcurrentArenas; ++i) {
+    issuers[i] = std::thread([&, i] {
+      concurrent[i] = std::make_unique<ActorArena>(900, 1);
+      auto turn = concurrent[i]->begin_turn(900, 1);
+      const auto ticket = concurrent[i]->allocate(turn, 1);
+      std::array<std::byte, 1> value{std::byte{static_cast<unsigned char>(i + 1)}};
+      concurrent[i]->write(turn, ticket, value);
+      tickets[i] = ticket;
+      concurrent[i]->end_turn(turn);
+    });
+  }
+  for (auto& thread : issuers) thread.join();
+  for (std::size_t i = 0; i < ConcurrentArenas; ++i) {
+    auto turn = concurrent[i]->begin_turn(900, 1);
+    std::array<std::byte, 1> output{};
+    for (std::size_t j = 0; j < ConcurrentArenas; ++j) {
+      if (i != j) {
+        rejects([&] { concurrent[i]->read(turn, *tickets[j], output); });
+      }
+    }
+    concurrent[i]->read(turn, *tickets[i], output);
+    ensure(output[0] == std::byte{static_cast<unsigned char>(i + 1)});
+    concurrent[i]->end_turn(turn);
+    concurrent[i]->retire();
+  }
   ActorArena a(10, 1), b(11, 1);
   auto ta = a.begin_turn(10, 1);
   auto tb = b.begin_turn(11, 1);
   auto h = a.allocate(ta, 2);
+  const auto copiedTurn = ta;
+  const auto copiedHandle = h;
   std::array<std::byte, 2> value{std::byte{42}, std::byte{9}}, output{};
   a.write(ta, h, value);
   rejects([&] { b.read(tb, h, output); });
   rejects([&] { a.read(tb, h, output); });
   std::thread foreign([&] { rejects([&] { a.read(ta, h, output); }); });
   foreign.join();
-  a.read(ta, h, output);
+  a.read(copiedTurn, copiedHandle, output);
   ensure(output == value);
   ensure(a.try_read_byte(ta,h,0).has_value());
   ensure(a.try_read_byte(ta,h,0).value() == std::byte{42});
