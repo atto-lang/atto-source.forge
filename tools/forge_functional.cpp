@@ -131,6 +131,8 @@ struct Parser {
       if (error != std::errc{} || end != digits.data() + digits.size()) fail("E_LITERAL");
       ++at;
       lhs = Expr{Expr::Kind::lit, value, "", {}};
+    } else if (peek() == "true" || peek() == "false") {
+      fail("E_TYPE");
     } else {
       std::string symbol = name();
       if (peek() == "(")
