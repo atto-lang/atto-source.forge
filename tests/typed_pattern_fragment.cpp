@@ -2,6 +2,7 @@
 #include "atto/typed_pattern_fragment.hpp"
 #include <cassert>
 #include <cstdint>
+#include <initializer_list>
 #include <string>
 #include <vector>
 
@@ -42,6 +43,13 @@ int main() {
   const auto zero=parse("...(0 of int), 9");
   assert(zero.ok() && zero.fragment.items.size()==1);
 
+  const auto left=parse("...");
+  const auto right=parse("7, ...");
+  const auto combined=p::compose({left.fragment,right.fragment},Type::integer);
+  assert(combined.ok() && combined.fragment.items.size()==3);
+  assert(p::compose({left.fragment,left.fragment},Type::integer).error==Error::source);
+  assert(p::compose({left.fragment,parse("...",Type::any).fragment},Type::integer).error==Error::type);
+
   const auto in_list=parse("..., 3, 4, 5, ...");
   assert(in_list.ok());
   auto hit=reference_match_i64(in_list.fragment,{1,2,3,4,5,9});
@@ -75,6 +83,7 @@ int main() {
     "..., ...", "1, (2,3)", "\"bad\\z\""
   }) rejection(invalid,Error::source,Type::any);
   rejection("...(129 of int)",Error::budget);
+  rejection("...(9999999999999999999999 of int)",Error::budget);
   rejection(std::string(4097,'x'),Error::budget);
   rejection(std::string("\xE2\x80\xAE")+"...",Error::source,Type::any);
 
