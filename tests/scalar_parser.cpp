@@ -96,5 +96,23 @@ int main() {
   many += ";}";
   auto budget = parse_source(many);
   assert(budget.error == ParseError::node_limit);
-  assert(parse_source(std::string(16385, 'a')).error == ParseError::lexical);
+  // Task and sync must not be mistaken for scalar functions or expressions.
+  // These are compiler admission tests, NOT guest Future/lock runtime support.
+  for (const auto* source : {
+    "fnc main(): int { return task<int> { return 42; }; }",
+    "fnc main(): int { do task<int> { return 42; }; return 0; }",
+    "fnc main(): int { do sync task<int> { return 42; }; return 0; }",
+    "fnc main(): int { return task /* comment */ <int> { return 42; }; }",
+    "fnc main(): int { return task { return 42; }; }"
+  }) assert(parse_source(source).error == ParseError::task_unsupported ||
+            parse_source(source).error == ParseError::reserved_sync);
+  for (const auto* source : {
+    "fnc main(): int { return sync task<int> { return 42; }; }",
+    "fnc main(): int { return sync; }"
+  }) assert(parse_source(source).error == ParseError::reserved_sync);
+  const auto inert = parse_source(
+      "fnc main(): int { /* task<int> do sync task */ return 42; }");
+  assert(inert.ok());
+  assert(inert.error == ParseError::none);
+    assert(parse_source(std::string(16385, 'a')).error == ParseError::lexical);
 }
