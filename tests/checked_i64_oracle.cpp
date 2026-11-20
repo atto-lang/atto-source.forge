@@ -33,13 +33,20 @@ static void check(i64 a, i64 b) {
   const bool mul_overflow = __builtin_mul_overflow(a, b, &oracle);
   if (mul_overflow) require(!checked_mul(a, b));
   else require(checked_mul(a, b) == std::optional<i64>{oracle});
-  const bool division_undefined =
-      b == 0 || (a == std::numeric_limits<i64>::min() && b == -1);
-  if (division_undefined) {
+  const bool overflow_quotient =
+      a == std::numeric_limits<i64>::min() && b == -1;
+  if (b == 0 || overflow_quotient) {
     require(!checked_div(a, b));
-    require(!checked_rem(a, b));
   } else {
     require(checked_div(a, b) == std::optional<i64>{a / b});
+  }
+  if (b == 0) {
+    require(!checked_rem(a, b));
+  } else if (overflow_quotient) {
+    // Avoid evaluating native a % b: MIN % -1 is UB in C++ but
+    // mathematical truncating remainder is exactly zero.
+    require(checked_rem(a, b) == std::optional<i64>{0});
+  } else {
     require(checked_rem(a, b) == std::optional<i64>{a % b});
   }
 }
