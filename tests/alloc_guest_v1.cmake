@@ -97,3 +97,21 @@ if(NOT "${rc}" STREQUAL "2" OR EXISTS "${oversized_cpp}" OR
    NOT "${err}" STREQUAL "E_ALLOC_LIMIT\n")
   message(FATAL_ERROR "Allocation compiler admitted over-budget source")
 endif()
+
+# An input symlink must not redirect the source reader to another file.
+set(source_link "${OUT_DIR}/source-link.atto")
+set(source_link_cpp "${OUT_DIR}/source-link.cpp")
+file(REMOVE "${source_link}" "${source_link_cpp}")
+file(CREATE_LINK "${ROOT}/fixtures/alloc-guest-v1/equal.atto"
+  "${source_link}" SYMBOLIC RESULT link_result)
+if(NOT "${link_result}" STREQUAL "0")
+  message(FATAL_ERROR "Cannot create input-symlink regression")
+endif()
+execute_process(COMMAND "${FORGE_ALLOC}" --experimental-host-profile
+  "${source_link}" -o "${source_link_cpp}"
+  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+if(NOT "${rc}" STREQUAL "2" OR EXISTS "${source_link_cpp}" OR
+   NOT "${err}" STREQUAL "E_ALLOC_SOURCE\n")
+  message(FATAL_ERROR "Allocation compiler followed a symlink source")
+endif()
+file(REMOVE "${source_link}")
