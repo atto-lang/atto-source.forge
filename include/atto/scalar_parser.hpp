@@ -18,7 +18,7 @@ struct Node {
   i64 value = 0;
 };
 enum class ParseError {
-  none, lexical, syntax, literal_out_of_range, depth_limit, node_limit
+  none, lexical, syntax, literal_out_of_range, depth_limit, node_limit, task_unsupported, reserved_sync
 };
 // Stable sanitized diagnostics; never echo user source bytes.
 [[nodiscard]] constexpr std::string_view parse_error_name(ParseError error) noexcept {
@@ -29,6 +29,8 @@ enum class ParseError {
     case ParseError::literal_out_of_range: return "E_PARSE_RANGE";
     case ParseError::depth_limit: return "E_PARSE_DEPTH";
     case ParseError::node_limit: return "E_PARSE_NODES";
+    case ParseError::task_unsupported: return "E_TASK_UNSUPPORTED";
+    case ParseError::reserved_sync: return "E_RESERVED";
   }
   return "E_PARSE_UNKNOWN";
 }
@@ -301,6 +303,28 @@ public:
 };
 
 [[nodiscard]] inline Parsed parse_source(std::string_view src) {
-  return Parser(src, tokenize(src)).parse();
+  Lexed lexed = tokenize(src);
+  if (lexed.ok()) {
+    // Lexical source, not regex: source comments cannot forge task keywords.
+    // Until this backend has Future<T>, TaskScope, cancellation and guard
+    // cleanup lowering, reject task syntax before native C++ emission.
+    for (const auto& token : lexed.tokens) {
+      if (token.kind != Kind::name) continue;
+      const auto word = src.substr(token.offset, token.length);
+      if (word == "sync") {
+        Parsed out;
+        out.error = ParseError::reserved_sync;
+        out.error_offset = token.offset;
+        return out;
+      }
+      if (word == "task") {
+        Parsed out;
+        out.error = ParseError::task_unsupported;
+        out.error_offset = token.offset;
+        return out;
+      }
+    }
+  }
+  return Parser(src, std::move(lexed)).parse();
 }
 }  // namespace atto::forge::scalar
