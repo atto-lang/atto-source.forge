@@ -188,6 +188,25 @@ if(NOT "${rc}" STREQUAL "2" OR EXISTS "${rejected}" OR
   message(FATAL_ERROR "out-of-range signed i64 negative must fail with no artifact")
 endif()
 
+# Reserved authority/effect names cannot be compiled as ordinary scalar
+# functions or lexical locals; this is a gate, not an actor implementation.
+file(WRITE "${OUT_DIR}/negative-12.atto"
+  "fnc unsafe(int x): int -> x; pub fnc main(): int -> unsafe(42);\n")
+file(WRITE "${OUT_DIR}/negative-13.atto"
+  "fnc await(int x): int -> x; pub fnc main(): int -> await(42);\n")
+file(WRITE "${OUT_DIR}/negative-14.atto"
+  "fnc pipe(int x): int -> x; pub fnc main(): int -> pipe(42);\n")
+foreach(idx RANGE 12 14)
+  set(output "${OUT_DIR}/negative-${idx}.cpp")
+  file(REMOVE "${output}")
+  execute_process(COMMAND "${FORGE}" "${OUT_DIR}/negative-${idx}.atto"
+    -o "${output}" RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+  if(NOT "${rc}" STREQUAL "2" OR EXISTS "${output}" OR
+     NOT "${out}" STREQUAL "" OR NOT "${err}" STREQUAL "E_NAME\n")
+    message(FATAL_ERROR "reserved authority name escaped the scalar compiler")
+  endif()
+endforeach()
+
 # Stale output must not be replaced, including output and temp symlinks.
 set(safe_source "${ROOT}/fixtures/functional-pipelines-v1/block-body.atto")
 set(guard "${OUT_DIR}/guarded.cpp")
@@ -226,4 +245,4 @@ if(NOT "${rc}" STREQUAL "2" OR NOT "${kept}" STREQUAL "do not replace"
 endif()
 file(REMOVE "${guard_temp}")
 
-message(STATUS "ATTO_FORGE_FUNCTIONAL_GUEST_MATRIX=6 native_guests_including_min_and_overflow 15 negative_no_artifacts")
+message(STATUS "ATTO_FORGE_FUNCTIONAL_GUEST_MATRIX=6 native_guests_including_min_and_overflow 18 negative_no_artifacts")
