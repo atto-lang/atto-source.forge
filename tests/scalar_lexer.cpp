@@ -71,7 +71,8 @@ int main() {
   for (const std::string_view src : {
        "copy!42", "take!item", "borrow! mut item", "mut borrow!item",
        "share!item", "pin!item", "drop!item", "ref!item",
-       "ref!(item)", "deref!handle", "unref!handle", "ref!eqfoo" }) {
+       "ref!(item)", "deref!handle", "unref!handle", "ref!eqfoo",
+       "copy!eq\\xC3\\xA9", "ref!eq\\xC3\\xA9" }) {
     const auto result = tokenize(src);
     assert(result.error == LexError::ownership_bang_unsupported);
     assert(result.error_offset < src.size());
