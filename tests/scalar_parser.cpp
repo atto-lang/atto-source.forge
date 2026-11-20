@@ -19,7 +19,7 @@ int main() {
     assert(parse_error_name(result.error) == "E_UNSUPPORTED_CONTINUOUS_PIPE");
   }
   // Both keywords in comments are inert: no raw-source keyword search.
-  assert(parse_source("// pipe rpipe\\nfnc main(): int {return 42;}").ok());
+  assert(parse_source("// pipe rpipe\nfnc main(): int {return 42;}").ok());
   assert(parse_source("fnc main(): int { /* pipe rpipe */ return 42; }").ok());
   auto malformed_comment = parse_source("fnc main(): int {return 1; /*");
   assert(!malformed_comment.ok() && malformed_comment.error == ParseError::lexical);
