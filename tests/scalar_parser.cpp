@@ -97,4 +97,29 @@ int main() {
   auto budget = parse_source(many);
   assert(budget.error == ParseError::node_limit);
   assert(parse_source(std::string(16385, 'a')).error == ParseError::lexical);
+
+  for (const auto* src : {
+    "fnc main(): int {return seq(1);}",
+    "fnc main(): int {return seq(1,2,42);}",
+    "fnc main(): int {return (> 1,2,42);}",
+    "fnc main(): int {return seq(1,(> 2,3),42);}",
+    "fnc main(): int {return seq(1,2)+40;}",
+    "fnc main(): int {return seq(1, // comment\n42);}"
+  }) assert(parse_source(src).ok());
+  for (const auto* src : {
+    "fnc main(): int {return seq();}",
+    "fnc main(): int {return seq(1,);}",
+    "fnc main(): int {return seq(,1);}",
+    "fnc main(): int {return seq(1;2);}",
+    "fnc main(): int {return seq(1 2);}",
+    "fnc main(): int {return (1,2);}",
+    "fnc main(): int {return (>);}",
+    "fnc main(): int {return (> 1,);}",
+    "fnc main(): int {return seq 1,2;}"
+  }) assert(!parse_source(src).ok());
+  auto forged_seq = parse_source("fnc main(): int {return seq(1,42);}");
+  assert(forged_seq.ok());
+  forged_seq.nodes.back().right = forged_seq.nodes.size();
+  assert(!validate_ast(forged_seq));
+
 }
