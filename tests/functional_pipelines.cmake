@@ -125,6 +125,69 @@ foreach(idx RANGE 1 10)
   endif()
 endforeach()
 
+# The signed 64-bit minimum requires special parsing and C++ emission;
+# its positive magnitude must remain a rejected literal.
+set(boundary_source "${OUT_DIR}/i64-min.atto")
+set(boundary_cpp "${OUT_DIR}/i64-min.cpp")
+set(boundary_bin "${OUT_DIR}/i64-min")
+file(WRITE "${boundary_source}" "pub fnc main(): int -> -9223372036854775808;\n")
+file(REMOVE "${boundary_cpp}" "${boundary_bin}")
+execute_process(COMMAND "${FORGE}" "${boundary_source}" -o "${boundary_cpp}"
+  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+if(NOT "${rc}" STREQUAL "0" OR NOT EXISTS "${boundary_cpp}" OR
+   NOT "${out}" STREQUAL "" OR NOT "${err}" STREQUAL "")
+  message(FATAL_ERROR "signed i64 minimum rejected before native compilation: ${err}")
+endif()
+execute_process(COMMAND "${CXX}" -std=c++20 -Wall -Wextra -Werror -pedantic
+  ${guest_flags} "-I${ROOT}/include" "${boundary_cpp}" -o "${boundary_bin}"
+  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+if(NOT "${rc}" STREQUAL "0")
+  message(FATAL_ERROR "signed i64 minimum produced invalid generated C++: ${err}")
+endif()
+execute_process(COMMAND "${boundary_bin}"
+  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+if(NOT "${rc}" STREQUAL "0" OR
+   NOT "${out}" STREQUAL "-9223372036854775808\n" OR
+   NOT "${err}" STREQUAL "")
+  message(FATAL_ERROR "signed i64 minimum native guest mismatch ${rc}: ${out} ${err}")
+endif()
+
+# Checked arithmetic overflow is a runtime rejection, not wraparound.
+set(overflow_source "${OUT_DIR}/i64-overflow.atto")
+set(overflow_cpp "${OUT_DIR}/i64-overflow.cpp")
+set(overflow_bin "${OUT_DIR}/i64-overflow")
+file(WRITE "${overflow_source}" "pub fnc main(): int -> 9223372036854775807 + 1;\n")
+file(REMOVE "${overflow_cpp}" "${overflow_bin}")
+execute_process(COMMAND "${FORGE}" "${overflow_source}" -o "${overflow_cpp}"
+  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+if(NOT "${rc}" STREQUAL "0" OR NOT EXISTS "${overflow_cpp}")
+  message(FATAL_ERROR "overflow guest source should compile, but must trap when run")
+endif()
+execute_process(COMMAND "${CXX}" -std=c++20 -Wall -Wextra -Werror -pedantic
+  ${guest_flags} "-I${ROOT}/include" "${overflow_cpp}" -o "${overflow_bin}"
+  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+if(NOT "${rc}" STREQUAL "0")
+  message(FATAL_ERROR "overflow guest source failed native build: ${err}")
+endif()
+execute_process(COMMAND "${overflow_bin}"
+  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+if(NOT "${rc}" STREQUAL "70" OR
+   NOT "${out}" STREQUAL "" OR
+   NOT "${err}" STREQUAL "E_OVERFLOW\n")
+  message(FATAL_ERROR "overflow guest must reject with error 70, got ${rc}: ${out} ${err}")
+endif()
+
+file(WRITE "${OUT_DIR}/negative-11.atto"
+  "pub fnc main(): int -> -9223372036854775809;\n")
+set(rejected "${OUT_DIR}/negative-11.cpp")
+file(REMOVE "${rejected}")
+execute_process(COMMAND "${FORGE}" "${OUT_DIR}/negative-11.atto" -o "${rejected}"
+  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+if(NOT "${rc}" STREQUAL "2" OR EXISTS "${rejected}" OR
+   NOT "${out}" STREQUAL "" OR NOT "${err}" STREQUAL "E_LITERAL\n")
+  message(FATAL_ERROR "out-of-range signed i64 negative must fail with no artifact")
+endif()
+
 # Stale output must not be replaced, including output and temp symlinks.
 set(safe_source "${ROOT}/fixtures/functional-pipelines-v1/block-body.atto")
 set(guard "${OUT_DIR}/guarded.cpp")
@@ -163,4 +226,4 @@ if(NOT "${rc}" STREQUAL "2" OR NOT "${kept}" STREQUAL "do not replace"
 endif()
 file(REMOVE "${guard_temp}")
 
-message(STATUS "ATTO_FORGE_FUNCTIONAL_GUEST_MATRIX=4 native_guests 14 negative_no_artifacts")
+message(STATUS "ATTO_FORGE_FUNCTIONAL_GUEST_MATRIX=6 native_guests_including_min_and_overflow 15 negative_no_artifacts")
