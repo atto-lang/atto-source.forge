@@ -122,7 +122,7 @@ int main() {
       R"(define struct Point as int foo; end pub fnc main():int { p["foo"] = 3; return 0; })");
   assert(nominal.error == ParseError::unsupported_index);
   auto commented_collection = parse_source(
-      "// Entry<string,int> => Map[foo] is comment only\\n"
+      "// Entry<string,int> => Map[foo] is comment only\n"
       "/* Record r[foo] = 3; */ pub fnc main():int { return 42; }");
   assert(commented_collection.ok());
   assert(commented_collection.nodes[commented_collection.root].value == 42);
