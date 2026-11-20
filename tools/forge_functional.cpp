@@ -20,6 +20,7 @@
 #include <vector>
 #if defined(__unix__) || defined(__APPLE__)
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 namespace fs = std::filesystem;
@@ -414,15 +415,48 @@ int main(int argc, char** argv) {
     fs::path input = check_only ? fs::path(argv[2]) : fs::path(argv[1]);
     if (input.extension() != ".atto") fail("E_PATH");
     std::error_code ec;
-    if (!fs::is_regular_file(input, ec) || ec || fs::is_symlink(input, ec) || ec)
+    std::string source;
+#if defined(__linux__) || defined(__APPLE__)
+    // Validate and read the SAME opened inode. A preliminary path-based
+    // is_regular_file/is_symlink check followed by ifstream is racy: a
+    // competing process could replace the source with a symlink between
+    // those checks and the second open, including an out-of-scope host file.
+    // O_NONBLOCK prevents blocking on an attacker-substituted FIFO.
+    const int source_fd = ::open(input.c_str(),
+        O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+    if (source_fd < 0) fail("E_SOURCE");
+    struct stat stat_before {};
+    if (::fstat(source_fd, &stat_before) != 0 ||
+        !S_ISREG(stat_before.st_mode)) {
+      ::close(source_fd);
       fail("E_SOURCE");
-    auto size = fs::file_size(input, ec);
-    if (ec || size > 16384) fail("E_SOURCE_LIMIT");
-    std::ifstream stream(input, std::ios::binary);
-    if (!stream) fail("E_SOURCE");
-    std::string source(static_cast<std::size_t>(size), '\0');
-    if (!source.empty()) stream.read(source.data(), static_cast<std::streamsize>(size));
-    if (!stream || stream.peek() != std::char_traits<char>::eof()) fail("E_SOURCE");
+    }
+    if (stat_before.st_size < 0 || stat_before.st_size > 16384) {
+      ::close(source_fd);
+      fail("E_SOURCE_LIMIT");
+    }
+    source.resize(static_cast<std::size_t>(stat_before.st_size));
+    std::size_t read_bytes = 0;
+    bool source_ok = true;
+    while (read_bytes < source.size()) {
+      const ssize_t n = ::read(source_fd, source.data() + read_bytes,
+                               source.size() - read_bytes);
+      if (n > 0) read_bytes += static_cast<std::size_t>(n);
+      else if (n < 0 && errno == EINTR) continue;
+      else { source_ok = false; break; }
+    }
+    // Even if another writer extended the file after fstat, refuse a
+    // truncated/mixed snapshot rather than silently compiling a prefix.
+    char trailing{};
+    ssize_t extra{};
+    do { extra = ::read(source_fd, &trailing, 1); }
+    while (extra < 0 && errno == EINTR);
+    if (extra != 0) source_ok = false;
+    const bool source_closed = ::close(source_fd) == 0;
+    if (!source_ok || !source_closed) fail("E_SOURCE");
+#else
+    fail("E_SOURCE_UNSUPPORTED");
+#endif
     auto functions = Parser(source).parse();
     validate(functions);
     if (check_only) return 0;
