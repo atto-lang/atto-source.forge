@@ -1,0 +1,9 @@
+import module r from pkg "alloc.byte_region";
+import module bytes from pkg "std.byte_ops";
+pub fnc main(): int throws Error {
+  val mut a = r.ByteRegion.allocate_zeroed(16);
+  val mut b = r.ByteRegion.allocate_zeroed(16);
+  a.write_byte(0, 42);
+  b.write_byte(0, 42);
+  return bytes.bytes_equal(a, b) ? 1 : 0;
+}
