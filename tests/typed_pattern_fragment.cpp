@@ -75,6 +75,7 @@ int main() {
   rejection("8",Error::type,Type::text);
   rejection("true",Error::type);
   assert(parse("\"a,b\"",Type::text).ok());
+  assert(parse("\"a as b\"",Type::text).ok());
   assert(parse("\"a\\\"b\"",Type::text).ok());
 
   for(const auto invalid:{
