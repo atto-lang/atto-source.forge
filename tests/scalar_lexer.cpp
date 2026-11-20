@@ -31,6 +31,24 @@ int main() {
   assert(comments.tokens[0].kind == Kind::integer);
   assert(comments.tokens[1].kind == Kind::plus);
   assert(comments.tokens[3].kind == Kind::slash);
+  // Nested ownership-looking comments cannot leak executable tokens past
+  // the first */. The byte offset for the next real token is preserved.
+  const std::string nested =
+      "/* outer /* ref!item deref!h unref!h */ still outer */ 42";
+  auto inert = tokenize(nested);
+  assert(inert.ok());
+  assert(inert.tokens.size() == 2);
+  assert(inert.tokens[0].kind == Kind::integer);
+  assert(inert.tokens[0].offset == nested.find("42"));
+  assert(tokenize("/* outer /* ref!item */").error == LexError::unterminated_comment);
+  std::string comments64, comments65;
+  for (int n = 0; n < 64; ++n) comments64 += "/*";
+  for (int n = 0; n < 64; ++n) comments64 += "*/";
+  comments65 = "/*" + comments64 + "*/";
+  assert(tokenize(comments64 + "42").ok());
+  const auto overdepth = tokenize(comments65);
+  assert(overdepth.error == LexError::comment_nesting_limit);
+  assert(overdepth.error_offset == 128);
   const auto unterminated = tokenize("1 + /* not closed");
   assert(unterminated.error == LexError::unterminated_comment);
   assert(unterminated.error_offset == 4);
