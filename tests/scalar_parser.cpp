@@ -149,10 +149,10 @@ int main() {
   ).error == ParseError::task_return_type);
   assert(parse_source(
     "fnc main(): int {sync task {};return 42;}"
-  ).error == ParseError::syntax);
+  ).error == ParseError::sync_stmt_requires_do);
   assert(parse_source(
     "fnc main(): int {sync task<void> {};return 42;}"
-  ).error == ParseError::syntax);
+  ).error == ParseError::sync_stmt_requires_do);
   const auto inert = parse_source(
       "fnc main(): int { /* task<int> do sync task */ return 42; }");
   assert(inert.ok());

@@ -20,7 +20,7 @@ struct Node {
 };
 enum class ParseError {
   none, lexical, syntax, literal_out_of_range, depth_limit, node_limit, task_unsupported, reserved_sync,
-  task_return_type
+  task_return_type, sync_stmt_requires_do
 };
 // Stable sanitized diagnostics; never echo user source bytes.
 [[nodiscard]] constexpr std::string_view parse_error_name(ParseError error) noexcept {
@@ -34,6 +34,7 @@ enum class ParseError {
     case ParseError::task_unsupported: return "E_TASK_UNSUPPORTED";
     case ParseError::reserved_sync: return "E_RESERVED";
     case ParseError::task_return_type: return "E_TASK_RETURN_TYPE";
+    case ParseError::sync_stmt_requires_do: return "E_SYNTAX";
   }
   return "E_PARSE_UNKNOWN";
 }
@@ -352,6 +353,12 @@ public:
       } else {
         before_return = *inline_value;
       }
+    }
+    // Standalone sync task statements require do; keep generic grammar's
+    // E_PARSE_SYNTAX for other unrelated syntax failures.
+    if (current().kind == Kind::name && text() == "sync") {
+      fail(ParseError::sync_stmt_requires_do);
+      return std::move(out_);
     }
     if (!name("return")) { fail(ParseError::syntax); return std::move(out_); }
     auto root = expr(0);

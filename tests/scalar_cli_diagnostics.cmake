@@ -40,5 +40,5 @@ check_diag(sync_void_value "fnc main(): int {do sync task<void> {return 42;}; re
 # Atto spec #129: do-inline is void-only; void statement requires do.
 check_diag(sync_do_int_value "fnc main(): int {do sync task<int> {return 41;};return 42;}" "E_TASK_RETURN_TYPE")
 check_diag(sync_do_infer_value "fnc main(): int {do sync task {return 41;};return 42;}" "E_TASK_RETURN_TYPE")
-check_diag(sync_bare_void "fnc main(): int {sync task {} return 42;}" "E_PARSE_SYNTAX")
-check_diag(sync_bare_explicit_void "fnc main(): int {sync task<void> {} return 42;}" "E_PARSE_SYNTAX")
+check_diag(sync_bare_void "fnc main(): int {sync task {} return 42;}" "E_SYNTAX")
+check_diag(sync_bare_explicit_void "fnc main(): int {sync task<void> {} return 42;}" "E_SYNTAX")
