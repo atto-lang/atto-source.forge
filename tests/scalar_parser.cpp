@@ -119,8 +119,8 @@ int main() {
     "fnc main(): int { return sync task { return 40+2; }; }",
     "fnc main(): int { return 1 + sync task<int> { return 41; }; }",
     "fnc main(): int { return sync task<int> { return sync task<int> {return 42;}; }; }",
-    "fnc main(): int { do sync task<int> { return 41; }; return 42; }",
-    "fnc main(): int { sync task {} return 42; }",
+    "fnc main(): int { do sync task {} return 42; }",
+    "fnc main(): int { do sync task {return;} return 42; }",
     "fnc main(): int { do sync task<void> {return;} return 42; }"
   }) {
     const auto parsed = parse_source(source);
@@ -130,12 +130,29 @@ int main() {
     "fnc main(): int { return sync task<int> {}; }",
     "fnc main(): int { return sync task<void> {}; }",
     "fnc main(): int { do sync task<int> {}; return 42; }",
+    "fnc main(): int { do sync task<int> {return 41;}; return 42; }",
+    "fnc main(): int { do sync task {return 41;}; return 42; }",
+    "fnc main(): int { sync task {} return 42; }",
+    "fnc main(): int { sync task<void> {} return 42; }",
     "fnc main(): int { do sync task<void> {return 42;}; return 42; }",
     "fnc main(): int { return sync task<int> {return;}; }",
     "fnc main(): int { return sync task<bool> {return 42;}; }",
     "fnc main(): int { return sync task<int> {return task<int> {return 42;};}; }",
     "fnc main(): int { return sync task<int> {return await 42;}; }"
   }) assert(!parse_source(source).ok());
+  // Distinguish void-only do form from bare-statement syntax errors.
+  assert(parse_source(
+    "fnc main(): int {do sync task<int> {return 1;};return 42;}"
+  ).error == ParseError::task_return_type);
+  assert(parse_source(
+    "fnc main(): int {do sync task {return 1;};return 42;}"
+  ).error == ParseError::task_return_type);
+  assert(parse_source(
+    "fnc main(): int {sync task {};return 42;}"
+  ).error == ParseError::syntax);
+  assert(parse_source(
+    "fnc main(): int {sync task<void> {};return 42;}"
+  ).error == ParseError::syntax);
   const auto inert = parse_source(
       "fnc main(): int { /* task<int> do sync task */ return 42; }");
   assert(inert.ok());
