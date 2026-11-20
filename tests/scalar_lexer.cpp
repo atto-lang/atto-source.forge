@@ -51,4 +51,31 @@ int main() {
   assert(tokenize(std::string(max_source_bytes + 1, 'a')).error == LexError::source_too_large);
   assert(tokenize(std::string(max_tokens + 1, '+')).error == LexError::token_limit);
   assert(tokenize(std::string(max_tokens, '+')).ok());
+  // Lexer identifies proposed collection syntax but never interprets its
+  // values in the stage-0 scalar compiler.
+  const std::string entry_source =
+      R"(let e = "foo" => 5 (as Entry<string,int>);)";
+  auto collection = tokenize(entry_source);
+  assert(collection.ok());
+  bool saw_fat_arrow = false, saw_quoted = false;
+  for (const auto& token : collection.tokens) {
+    saw_fat_arrow = saw_fat_arrow || token.kind == Kind::fat_arrow;
+    saw_quoted = saw_quoted || token.kind == Kind::quoted;
+  }
+  assert(saw_fat_arrow && saw_quoted);
+  auto static_record = tokenize(R"(r["content-type"] = 3;)");
+  assert(static_record.ok());
+  bool bracket_seen = false;
+  for (const auto& token : static_record.tokens)
+    bracket_seen = bracket_seen || token.kind == Kind::lbracket;
+  assert(bracket_seen);
+  auto quoted_arrow = tokenize(R"("Entry => Map[foo]")");
+  assert(quoted_arrow.ok());
+  assert(quoted_arrow.tokens[0].kind == Kind::quoted);
+  assert(quoted_arrow.tokens[1].kind == Kind::end);
+  assert(tokenize(R"("unfinished)").error == LexError::unterminated_quoted);
+  assert(tokenize(std::string("\"", 1) + std::string(4097, 'x') + "\"").error
+         == LexError::quoted_too_large);
+  assert(tokenize(R"("escaped \" => Entry")").ok());
+
 }
