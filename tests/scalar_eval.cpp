@@ -33,15 +33,18 @@ int main() {
     "fnc main(): int { return sync task<int> {return 42;}; }",
     "fnc main(): int { return 1 + sync task {return 41;}; }",
     "fnc main(): int { do sync task {} return 42; }",
-    "fnc main(): int { do sync task<int> {return 4;}; return 42; }",
+    "fnc main(): int { do sync task<void> {return;}; return 42; }",
     "fnc main(): int { return sync task<int> {return sync task<int> {return 42;};}; }"
   }) {
     auto r = evaluate_source(source);
     assert(r.ok() && *r.value == 42);
   }
   assert(evaluate_source(
-    "fnc main(): int { do sync task<int> {return 1/0;}; return 42; }").error ==
+    "fnc main(): int { return sync task<int> {return 1/0;}; }").error ==
     EvalError::divide_by_zero);
+  assert(evaluate_source(
+    "fnc main(): int {do sync task<int> {return 1;};return 42;}"
+  ).error == EvalError::parse_error);
   for (const char* expr : {
     "9223372036854775807 + 1",
     "-9223372036854775808 - 1",
