@@ -151,10 +151,12 @@ For the restricted integer-only scalar frontend, all expressions have the i64 re
 In the stage-0 scalar compiler only, `sync task<int> { return expr; }`
 and inferred `sync task { return expr; }` evaluate the checked-int
 expression immediately in the caller, including nested expressions.
-`do sync task { }` and `do sync task<int> { return expr; }` are
-supported before the enclosing `main` return; the latter evaluates and
-discards the result, in order. `sync task {}` is permitted as a void
-expression statement. The inline AST boundary is preserved, but this
+`do sync task { }` and `do sync task<void> { return; }` are the
+only supported standalone inline-task forms before the enclosing `main`
+return. Inferred value-producing and explicit nonvoid `do sync task`
+reject with `E_TASK_RETURN_TYPE`: the do-form cannot discard a value.
+Bare standalone `sync task {}` and `sync task<void> {}` reject with
+`E_PARSE_SYNTAX`; a standalone void task always requires `do`. The inline AST boundary is preserved, but this
 restricted pure scalar backend has no local captures, deferred cleanup,
 suspension, shared mutable state, actor TenantVM or task runtime.
 
