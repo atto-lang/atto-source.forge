@@ -45,4 +45,12 @@ int main() {
   forged.nodes.back().op = static_cast<Op>(900);
   assert(!validate_ast(forged));
   assert(!emit_cpp(forged));
+
+  const auto seq = emit_cpp_source("fnc main(): int {return seq(1,(> 2,3),42);}");
+  assert(seq && seq->find("std::optional<atto::forge::i64>") != std::string::npos);
+  assert(seq == emit_cpp_source("fnc main(): int {return seq(1,(> 2,3),42);}"));
+  const auto failed_prefix = emit_cpp_source("fnc main(): int {return seq(1/0,42);}");
+  assert(failed_prefix && failed_prefix->find("E_DIVZERO") != std::string::npos);
+  assert(!emit_cpp_source("fnc main(): int {return seq(1,);}"));
+
 }
