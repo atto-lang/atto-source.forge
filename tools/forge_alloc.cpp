@@ -261,7 +261,17 @@ int main(int argc,char**argv) {
   const fs::path input(argv[2]),output(argv[4]);
   if(input.extension()!=".atto"||output.extension()!=".cpp")return deny("E_ALLOC_PATH");
   std::error_code ec;
-  if(!fs::is_regular_file(input,ec)||ec)return deny("E_ALLOC_SOURCE");
+  const auto source_absolute=fs::absolute(input,ec);
+  if(ec)return deny("E_ALLOC_PATH");
+  fs::path source_parent=source_absolute.lexically_normal().root_path();
+  for(const auto&part:source_absolute.lexically_normal().relative_path().parent_path()) {
+    source_parent/=part;
+    ec.clear(); const auto state=fs::symlink_status(source_parent,ec);
+    if(ec||fs::is_symlink(state)||!fs::is_directory(state))return deny("E_ALLOC_PATH");
+  }
+  ec.clear(); const auto source_state=fs::symlink_status(source_absolute,ec);
+  if(ec||fs::is_symlink(source_state)||!fs::is_regular_file(source_state))
+    return deny("E_ALLOC_SOURCE");
   const auto size=fs::file_size(input,ec);
   if(ec||size>16384)return deny("E_ALLOC_LIMIT");
   std::ifstream file(input,std::ios::binary);
