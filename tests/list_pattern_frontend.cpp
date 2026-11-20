@@ -48,6 +48,17 @@ int main() {
        p::Error::binding);
   fail(substitute(std::string(base),"is int as val a","is int as val return"),
        p::Error::reserved);
+  fail(substitute(std::string(base),"is int as val a","is int as val yield"),
+       p::Error::reserved);
+  fail(substitute(std::string(base),"val items: List<int>","val namespace: List<int>"),
+       p::Error::reserved);
+  // 'main' is a callable entrypoint spelling, not a reserved local name
+  // in the canonical Rust parser::RESERVED list.
+  const auto main_local=substitute(
+      substitute(std::string(base),"val items: List<int>","val main: List<int>"),
+      "match<int> items over","match<int> main over");
+  assert(p::compile(main_local).ok());
+
   fail(substitute(std::string(base),"on _ -> 0","on _ -> a"),
        p::Error::binding);
   fail(substitute(std::string(base),"..., is int as val a","..., ..., is int as val a"),
