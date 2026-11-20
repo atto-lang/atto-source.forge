@@ -265,3 +265,15 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
       -P "${CMAKE_CURRENT_SOURCE_DIR}/verification/tenant_native_entry.cmake")
   set_tests_properties(oresforge_compiled_tenant_isolate_native PROPERTIES TIMEOUT 90)
 endif()
+
+# Host-only durable-object queue parity, stacked on tenant isolate draft.
+if(BUILD_TESTING)
+  add_executable(oresforge_durable_queue_parity verification/durable_queue_isolate_test.cpp)
+  target_include_directories(oresforge_durable_queue_parity PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_durable_queue_parity PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_durable_queue_parity PRIVATE -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+  endif()
+  add_test(NAME oresforge_durable_queue_isolate COMMAND oresforge_durable_queue_parity)
+  set_tests_properties(oresforge_durable_queue_isolate PROPERTIES TIMEOUT 30)
+endif()
