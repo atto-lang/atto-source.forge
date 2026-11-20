@@ -96,10 +96,17 @@ inline constexpr std::size_t max_tokens = 256;
           word == "copy" || word == "take" || word == "borrow" ||
           word == "share" || word == "pin" || word == "drop" ||
           word == "ref" || word == "deref" || word == "unref";
+      // The stage-0 source subset only lexes ASCII identifiers. Still
+      // classify a non-ASCII continuation as potentially identifier-like,
+      // not a !eq comparison boundary: copy!eq\xC3\xA9 must fail as an
+      // ownership prefix instead of accidentally falling through as !eq.
+      const bool eq_boundary = i + 3 == src.size() ||
+          (i + 3 < src.size() &&
+           static_cast<unsigned char>(src[i + 3]) < 0x80 &&
+           !is_name(src[i + 3]));
       const bool comparison =
           src.substr(i, 2) == "!=" ||
-          (src.substr(i, 3) == "!eq" &&
-           (i + 3 == src.size() || !is_name(src[i + 3])));
+          (src.substr(i, 3) == "!eq" && eq_boundary);
       if (ownership_verb && i < src.size() && src[i] == '!' && !comparison) {
         out.error = LexError::ownership_bang_unsupported;
         out.error_offset = start;
