@@ -369,4 +369,29 @@ if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux")
   endif()
 endif()
 
-message(STATUS "ATTO_FORGE_FUNCTIONAL_GUEST_MATRIX=7 native_guests_including_min_overflow_and_relative_path 18 negative_no_artifacts")
+# Source-level authority words must never be treated as scalar
+# callables or names, regardless of whether they appear at declaration,
+# parameter, or local-binding positions.
+foreach(keyword IN ITEMS sync task yield)
+  foreach(location IN ITEMS function parameter local)
+    if(location STREQUAL "function")
+      set(source "fnc ${keyword}(int x): int -> x; pub fnc main(): int -> 42 |> ${keyword};")
+    elseif(location STREQUAL "parameter")
+      set(source "fnc f(int ${keyword}): int -> 42; pub fnc main(): int -> f(1);")
+    else()
+      set(source "pub fnc main(): int { val ${keyword} = 42; return ${keyword}; }")
+    endif()
+    set(input "${OUT_DIR}/reserved-${keyword}-${location}.atto")
+    set(generated "${OUT_DIR}/reserved-${keyword}-${location}.cpp")
+    file(WRITE "${input}" "${source}\n")
+    file(REMOVE "${generated}")
+    execute_process(COMMAND "${FORGE}" "${input}" -o "${generated}"
+      RESULT_VARIABLE rc OUTPUT_VARIABLE stdout ERROR_VARIABLE stderr)
+    if(NOT "${rc}" STREQUAL "2" OR EXISTS "${generated}" OR
+       NOT "${stdout}" STREQUAL "" OR NOT "${stderr}" STREQUAL "E_NAME\n")
+      message(FATAL_ERROR "reserved ${keyword}/${location} admitted or emitted guest")
+    endif()
+  endforeach()
+endforeach()
+
+message(STATUS "ATTO_FORGE_FUNCTIONAL_GUEST_MATRIX=7 native_guests_including_min_overflow_and_relative_path 27 negative_no_artifacts")
