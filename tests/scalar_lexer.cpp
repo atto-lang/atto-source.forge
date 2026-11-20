@@ -41,6 +41,29 @@ int main() {
   const std::string nul("1\0" "2", 3);
   auto bad = tokenize(std::string_view(nul));
   assert(bad.error == LexError::unsupported_byte && bad.error_offset == 1);
+  // The Forge numeric shifts are spelled <<< and >>>. Two-character
+  // directional channel I/O is a different syntax family and cannot be
+  // accidentally interpreted as a shift or malformed one-byte tokens.
+  const std::string directions = "c << 42; (c >>); c <<< 3; c >>> 2;";
+  const auto ops_io = tokenize(directions);
+  assert(ops_io.ok());
+  int io_writes = 0, io_reads = 0, numeric_shifts = 0;
+  for (const auto& op : ops_io.tokens) {
+    if (op.kind == Kind::io_write) {
+      ++io_writes;
+      assert(directions.substr(op.offset, op.length) == "<<");
+    }
+    if (op.kind == Kind::io_read) {
+      ++io_reads;
+      assert(directions.substr(op.offset, op.length) == ">>");
+    }
+    if (op.kind == Kind::shl || op.kind == Kind::lshr) ++numeric_shifts;
+  }
+  assert(io_writes == 1 && io_reads == 1 && numeric_shifts == 2);
+  assert(tokenize("c < < 42;").error == LexError::unsupported_byte);
+  assert(tokenize("c > >;").error == LexError::unsupported_byte);
+  assert(tokenize("// c << 42\n 7").ok());
+  assert(tokenize("/* c >> */ 7").ok());
   const auto bits = tokenize("~1 & 2 | 3 ^ 4");
   assert(bits.ok());
   assert(bits.tokens[0].kind == Kind::tilde);
