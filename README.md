@@ -145,3 +145,23 @@ For restricted scalar parsing, the 24-level nesting budget measures actual paren
 For tooling and CI, `forge_scalar --check path/to/file.atto` performs bounded lexical/AST admission without creating or deleting output files; returns 0 on supported scalar source or 2 with sanitized diagnostics. This is not a full language type checker.
 
 For the restricted integer-only scalar frontend, all expressions have the i64 result type; `infer` return annotations are therefore accepted in the same colon, arrow, block-arrow, and prefix signatures as `int` and lower to the same native i64 implementation. This is not general language-wide type inference: strings, booleans, effects, and noninteger functions remain unsupported.
+
+## Restricted pure scalar `sync task` preview
+
+In the stage-0 scalar compiler only, `sync task<int> { return expr; }`
+and inferred `sync task { return expr; }` evaluate the checked-int
+expression immediately in the caller, including nested expressions.
+`do sync task { }` and `do sync task<int> { return expr; }` are
+supported before the enclosing `main` return; the latter evaluates and
+discards the result, in order. `sync task {}` is permitted as a void
+expression statement. The inline AST boundary is preserved, but this
+restricted pure scalar backend has no local captures, deferred cleanup,
+suspension, shared mutable state, actor TenantVM or task runtime.
+
+`task<T>`, `do task`, `await task`, cancellation, suspending inline
+bodies and unsupported task payloads **still fail closed** with no
+emitted guest artifact. This is not full task parity or general
+InlineTaskEnter/InlineTaskExit MIR: that requires effects/ownership
+proof, lexical cleanup, cancellation unwinding, scheduler and TenantVM
+isolation, with conformance certification. The authoritative target is
+atto-spec PR #129.

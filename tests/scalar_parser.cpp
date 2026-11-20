@@ -107,15 +107,35 @@ int main() {
   for (const auto* source : {
     "fnc main(): int { return task<int> { return 42; }; }",
     "fnc main(): int { do task<int> { return 42; }; return 0; }",
-    "fnc main(): int { do sync task<int> { return 42; }; return 0; }",
     "fnc main(): int { return task /* comment */ <int> { return 42; }; }",
     "fnc main(): int { return task { return 42; }; }"
   }) assert(parse_source(source).error == ParseError::task_unsupported ||
             parse_source(source).error == ParseError::reserved_sync);
   for (const auto* source : {
-    "fnc main(): int { return sync task<int> { return 42; }; }",
     "fnc main(): int { return sync; }"
   }) assert(parse_source(source).error == ParseError::reserved_sync);
+  for (const auto* source : {
+    "fnc main(): int { return sync task<int> { return 42; }; }",
+    "fnc main(): int { return sync task { return 40+2; }; }",
+    "fnc main(): int { return 1 + sync task<int> { return 41; }; }",
+    "fnc main(): int { return sync task<int> { return sync task<int> {return 42;}; }; }",
+    "fnc main(): int { do sync task<int> { return 41; }; return 42; }",
+    "fnc main(): int { sync task {} return 42; }",
+    "fnc main(): int { do sync task<void> {return;} return 42; }"
+  }) {
+    const auto parsed = parse_source(source);
+    assert(parsed.ok() && validate_ast(parsed));
+  }
+  for (const auto* source : {
+    "fnc main(): int { return sync task<int> {}; }",
+    "fnc main(): int { return sync task<void> {}; }",
+    "fnc main(): int { do sync task<int> {}; return 42; }",
+    "fnc main(): int { do sync task<void> {return 42;}; return 42; }",
+    "fnc main(): int { return sync task<int> {return;}; }",
+    "fnc main(): int { return sync task<bool> {return 42;}; }",
+    "fnc main(): int { return sync task<int> {return task<int> {return 42;};}; }",
+    "fnc main(): int { return sync task<int> {return await 42;}; }"
+  }) assert(!parse_source(source).ok());
   const auto inert = parse_source(
       "fnc main(): int { /* task<int> do sync task */ return 42; }");
   assert(inert.ok());

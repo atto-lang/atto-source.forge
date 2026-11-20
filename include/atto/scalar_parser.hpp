@@ -11,14 +11,16 @@
 #include <vector>
 
 namespace atto::forge::scalar {
-enum class Op { literal, add, sub, mul, div, rem, neg, band, bor, bxor, bnot, shl, lshr, ashr };
+enum class Op { literal, add, sub, mul, div, rem, neg, band, bor, bxor, bnot, shl, lshr, ashr,
+                inline_task, sequence };
 struct Node {
   Op op;
   std::size_t left = 0, right = 0;
   i64 value = 0;
 };
 enum class ParseError {
-  none, lexical, syntax, literal_out_of_range, depth_limit, node_limit, task_unsupported, reserved_sync
+  none, lexical, syntax, literal_out_of_range, depth_limit, node_limit, task_unsupported, reserved_sync,
+  task_return_type
 };
 // Stable sanitized diagnostics; never echo user source bytes.
 [[nodiscard]] constexpr std::string_view parse_error_name(ParseError error) noexcept {
@@ -31,6 +33,7 @@ enum class ParseError {
     case ParseError::node_limit: return "E_PARSE_NODES";
     case ParseError::task_unsupported: return "E_TASK_UNSUPPORTED";
     case ParseError::reserved_sync: return "E_RESERVED";
+    case ParseError::task_return_type: return "E_TASK_RETURN_TYPE";
   }
   return "E_PARSE_UNKNOWN";
 }
@@ -68,6 +71,7 @@ inline constexpr int max_parse_depth = 24;
         break;
       case Op::neg:
       case Op::bnot:
+      case Op::inline_task:
         if (node.left >= index || node.right != 0) return false;
         pending.push_back(node.left);
         break;
@@ -82,6 +86,7 @@ inline constexpr int max_parse_depth = 24;
       case Op::shl:
       case Op::lshr:
       case Op::ashr:
+      case Op::sequence:
         if (node.left >= index || node.right >= index) return false;
         pending.push_back(node.left);
         pending.push_back(node.right);
@@ -250,6 +255,10 @@ class Parser {
       if (!take(Kind::rparen)) { fail(ParseError::syntax); return std::nullopt; }
       return inside;
     }
+    // The scalar-only inline body is evaluated immediately in the caller:
+    // no child TaskId, Future, admission, or suspension is created.
+    if (current().kind == Kind::name && text() == "sync")
+      return inline_task(depth + 1, false);
     if (current().kind == Kind::integer) {
       auto n = parse_decimal_i64(text());
       if (!n) { fail(ParseError::literal_out_of_range); return std::nullopt; }
@@ -258,6 +267,42 @@ class Parser {
     }
     fail(ParseError::syntax);
     return std::nullopt;
+  }
+  // Stage-0 pure-scalar subset only. Distinct inline_task AST node retains
+  // the lexical boundary; unlike task<T>, this does NOT schedule a child.
+  // Only a single checked-i64 return (or void for discard) is admissible.
+  [[nodiscard]] std::optional<std::size_t> inline_task(int depth, bool discard) {
+    if (depth > max_parse_depth) { fail(ParseError::depth_limit); return std::nullopt; }
+    if (!name("sync") || !name("task")) {
+      fail(ParseError::syntax);
+      return std::nullopt;
+    }
+    enum class Payload { inferred, integer, void_type };
+    Payload payload = Payload::inferred;
+    if (take(Kind::lt)) {
+      if (name("int")) payload = Payload::integer;
+      else if (name("void")) payload = Payload::void_type;
+      else { fail(ParseError::task_unsupported); return std::nullopt; }
+      if (!take(Kind::gt)) { fail(ParseError::task_unsupported); return std::nullopt; }
+    }
+    if (!take(Kind::lbrace)) { fail(ParseError::syntax); return std::nullopt; }
+    std::optional<std::size_t> body;
+    if (name("return")) {
+      if (current().kind != Kind::semicolon) body = expr(depth + 1);
+      if (out_.error != ParseError::none) return std::nullopt;
+      if (!take(Kind::semicolon)) { fail(ParseError::syntax); return std::nullopt; }
+    }
+    if (!take(Kind::rbrace)) { fail(ParseError::syntax); return std::nullopt; }
+    // A return exits only the inline lexical body, never enclosing main().
+    // Void is legal only where the inline task's result is discarded.
+    if ((payload == Payload::void_type && body) ||
+        (payload == Payload::integer && !body) || (!discard && !body)) {
+      fail(ParseError::task_return_type);
+      return std::nullopt;
+    }
+    if (!body) body = append(Node{Op::literal, 0, 0, 0}); // void sentinel, never observed
+    if (!body) return std::nullopt;
+    return append(Node{Op::inline_task, *body, 0, 0});
   }
 public:
   Parser(std::string_view source, Lexed lexed)
@@ -286,16 +331,37 @@ public:
         signature_ok = scalar_return_type();
       }
     }
-    if (!signature_ok || !take(Kind::lbrace) || !name("return")) {
+    if (!signature_ok || !take(Kind::lbrace)) {
       fail(ParseError::syntax);
       return std::move(out_);
     }
+    // Preserve source order for zero or more inline discard statements.
+    // The restricted scalar main still requires a final return expression.
+    std::optional<std::size_t> before_return;
+    while (current().kind == Kind::name &&
+           (text() == "do" || text() == "sync")) {
+      (void)name("do");
+      auto inline_value = inline_task(1, true);
+      if (!inline_value) return std::move(out_);
+      (void)take(Kind::semicolon);
+      if (before_return) {
+        before_return = append(Node{Op::sequence, *before_return, *inline_value, 0});
+        if (!before_return) return std::move(out_);
+      } else {
+        before_return = *inline_value;
+      }
+    }
+    if (!name("return")) { fail(ParseError::syntax); return std::move(out_); }
     auto root = expr(0);
     if (!root) return std::move(out_);
     if (!take(Kind::semicolon) || !take(Kind::rbrace) ||
         current().kind != Kind::end) {
       fail(ParseError::syntax);
       return std::move(out_);
+    }
+    if (before_return) {
+      root = append(Node{Op::sequence, *before_return, *root, 0});
+      if (!root) return std::move(out_);
     }
     out_.root = *root;
     return std::move(out_);
@@ -305,22 +371,27 @@ public:
 [[nodiscard]] inline Parsed parse_source(std::string_view src) {
   Lexed lexed = tokenize(src);
   if (lexed.ok()) {
-    // Lexical source, not regex: source comments cannot forge task keywords.
-    // Until this backend has Future<T>, TaskScope, cancellation and guard
-    // cleanup lowering, reject task syntax before native C++ emission.
-    for (const auto& token : lexed.tokens) {
-      if (token.kind != Kind::name) continue;
-      const auto word = src.substr(token.offset, token.length);
-      if (word == "sync") {
+    // Lexed-token reservation: comments cannot forge keywords. A sync token
+    // is legal only directly before task; an independently scheduled task is
+    // still unsupported and MUST NOT be lowered as an inline one.
+    const auto word_at = [&](std::size_t i) {
+      const auto& t = lexed.tokens[i];
+      return t.kind == Kind::name ? src.substr(t.offset, t.length)
+                                  : std::string_view{};
+    };
+    for (std::size_t i = 0; i < lexed.tokens.size(); ++i) {
+      const auto word = word_at(i);
+      if (word == "sync" &&
+          (i + 1 >= lexed.tokens.size() || word_at(i + 1) != "task")) {
         Parsed out;
         out.error = ParseError::reserved_sync;
-        out.error_offset = token.offset;
+        out.error_offset = lexed.tokens[i].offset;
         return out;
       }
-      if (word == "task") {
+      if (word == "task" && (i == 0 || word_at(i - 1) != "sync")) {
         Parsed out;
         out.error = ParseError::task_unsupported;
-        out.error_offset = token.offset;
+        out.error_offset = lexed.tokens[i].offset;
         return out;
       }
     }
