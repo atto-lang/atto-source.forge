@@ -223,3 +223,26 @@ elseif(MSVC)
   target_compile_options(export_semantics_v1_test PRIVATE /UNDEBUG)
 endif()
 add_test(NAME export_semantics_v1_test COMMAND export_semantics_v1_test)
+
+
+# A separately executable source-export resolver hardening suite, proven
+# against exact Git blobs locally (not evidence of compiler guest parity).
+add_executable(export_resolution_adversarial_v1_test
+  tests/export_resolution_adversarial_v1.cpp)
+target_include_directories(export_resolution_adversarial_v1_test PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(export_resolution_adversarial_v1_test PRIVATE cxx_std_20)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(export_resolution_adversarial_v1_test PRIVATE
+    -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(export_resolution_adversarial_v1_test PRIVATE
+      -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(export_resolution_adversarial_v1_test PRIVATE
+      -fsanitize=address,undefined)
+  endif()
+elseif(MSVC)
+  target_compile_options(export_resolution_adversarial_v1_test PRIVATE /UNDEBUG)
+endif()
+add_test(NAME export_resolution_adversarial_v1_test
+  COMMAND export_resolution_adversarial_v1_test)
