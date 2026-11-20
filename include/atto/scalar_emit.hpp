@@ -17,6 +17,20 @@ inline constexpr std::size_t max_emitted_bytes = 64 * 1024;
 #include <optional>
 int main() {
 )";
+  // Emit genuine native stack storage and a const pointer read. Names from
+  // user source never enter generated C++; the borrow is compiler-authenticated
+  // and nonowning, and unref only invalidates this lexical handle.
+  if (p.local) {
+    const auto initial = std::to_string(p.local->initial);
+    code += "  const atto::forge::i64 __atto_place{" + initial + "};\n";
+    code += "  const atto::forge::i64* __atto_borrow = &__atto_place;\n";
+    code += "  const atto::forge::i64 __atto_copy = *__atto_borrow;\n";
+    code += "  __atto_borrow = nullptr; // non-owning unref, not delete/free\n";
+    code += "  std::printf(\"%lld\\n\", static_cast<long long>(__atto_copy));\n";
+    code += "  return 0;\n}\n";
+    if (code.size() > max_emitted_bytes) return std::nullopt;
+    return code;
+  }
   auto var = [](std::size_t n) { return "v" + std::to_string(n); };
   for (std::size_t i = 0; i < p.nodes.size(); ++i) {
     const auto& n = p.nodes[i];
