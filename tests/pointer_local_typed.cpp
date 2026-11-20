@@ -37,5 +37,17 @@ int main() {
   forged.nodes.emplace_back(Node{Op::literal, 0, 0, 42});
   forged.root = 1;
   assert(!validate_ast(forged));
+  // Lexical pointer profiles preserve the signed int literal gate:
+  // zero and MAX_I64 are valid, an overflowing positive literal is not.
+  auto zero = parse_source(std::string(exact).replace(
+      std::string(exact).find("= 42;"), 5, "= 0;"));
+  assert(zero.ok() && zero.local && zero.local->initial == 0);
+  auto max_i64 = parse_source(std::string(exact).replace(
+      std::string(exact).find("= 42;"), 5, "= 9223372036854775807;"));
+  assert(max_i64.ok() && max_i64.local &&
+         max_i64.local->initial == INT64_MAX);
+  auto overflow = parse_source(std::string(exact).replace(
+      std::string(exact).find("= 42;"), 5, "= 9223372036854775808;"));
+  assert(!overflow.ok() && overflow.error == ParseError::literal_out_of_range);
   return 0;
 }

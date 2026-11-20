@@ -51,4 +51,30 @@ int main() {
   assert(tokenize(std::string(max_source_bytes + 1, 'a')).error == LexError::source_too_large);
   assert(tokenize(std::string(max_tokens + 1, '+')).error == LexError::token_limit);
   assert(tokenize(std::string(max_tokens, '+')).ok());
+  // Pointer-local tokens share the same lexer as scalar shifts and arrows.
+  const std::string lease = "Pointer<int> ptr = ref!value; deref!ptr; unref!ptr;";
+  const auto pointer_tokens = tokenize(lease);
+  assert(pointer_tokens.ok());
+  bool less = false, greater = false, assign = false, bang = false;
+  for (std::size_t j = 0; j < pointer_tokens.tokens.size(); ++j) {
+    const auto& tok = pointer_tokens.tokens[j];
+    less = less || tok.kind == Kind::lt;
+    greater = greater || tok.kind == Kind::gt;
+    assign = assign || tok.kind == Kind::assign;
+    if (tok.kind == Kind::bang) {
+      assert(j > 0);
+      const auto& before = pointer_tokens.tokens[j - 1];
+      assert(before.kind == Kind::name);
+      assert(before.offset + before.length == tok.offset);
+      bang = true;
+    }
+  }
+  assert(less && greater && assign && bang);
+  const auto distinct_shifts = tokenize("1 <<< 2 >>> 1");
+  assert(distinct_shifts.ok());
+  assert(distinct_shifts.tokens[1].kind == Kind::shl);
+  assert(distinct_shifts.tokens[3].kind == Kind::lshr);
+  const auto distinct_arrow = tokenize("int <- main()");
+  assert(distinct_arrow.tokens[1].kind == Kind::left_arrow);
+
 }
