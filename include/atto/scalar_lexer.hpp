@@ -56,7 +56,7 @@ inline constexpr std::size_t max_tokens = 256;
       // otherwise the first interior */ can expose source inside a comment.
       while (i < src.size() && depth != 0) {
         if (i + 1 < src.size() && src[i] == '/' && src[i + 1] == '*') {
-          if (depth >= 64) {
+          if (depth >= 128) {
             out.error = LexError::comment_nesting_limit;
             out.error_offset = i;
             return out;
