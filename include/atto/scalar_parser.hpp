@@ -294,9 +294,10 @@ class Parser {
     }
     if (!take(Kind::rbrace)) { fail(ParseError::syntax); return std::nullopt; }
     // A return exits only the inline lexical body, never enclosing main().
-    // Void is legal only where the inline task's result is discarded.
-    if ((payload == Payload::void_type && body) ||
-        (payload == Payload::integer && !body) || (!discard && !body)) {
+    // Canonical do-sync is void-only; values cannot be silently discarded.
+    // Expression-position sync task must instead produce a scalar result.
+    if ((discard && (payload == Payload::integer || body)) ||
+        (!discard && (payload == Payload::void_type || !body))) {
       fail(ParseError::task_return_type);
       return std::nullopt;
     }
@@ -338,8 +339,9 @@ public:
     // Preserve source order for zero or more inline discard statements.
     // The restricted scalar main still requires a final return expression.
     std::optional<std::size_t> before_return;
-    while (current().kind == Kind::name &&
-           (text() == "do" || text() == "sync")) {
+    // Standalone void inline tasks require 'do'; a bare 'sync task'
+    // statement is invalid even when its body produces no value.
+    while (current().kind == Kind::name && text() == "do") {
       (void)name("do");
       auto inline_value = inline_task(1, true);
       if (!inline_value) return std::move(out_);
