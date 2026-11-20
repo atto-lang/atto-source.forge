@@ -392,6 +392,19 @@ struct Compiled {
 }
 [[nodiscard]] inline Compiled compile(std::string_view source) {
   Compiled result;
+  // An over-budget source cannot be tokenized. Still classify an explicit
+  // List guest request as a budget rejection, never fall back to an
+  // unrelated scalar frontend or produce a partial guest artifact.
+  if (source.size()>max_source) {
+    const auto prefix=source.substr(0,max_source);
+    result.candidate=prefix.find("List<int>")!=std::string_view::npos ||
+                     prefix.find("List.of(")!=std::string_view::npos;
+    if (result.candidate) {
+      result.error=Error::budget;
+      result.offset=max_source;
+    }
+    return result;
+  }
   result.candidate=is_candidate(source);
   if (!result.candidate) return result;
   const auto lexed=lex(source);
