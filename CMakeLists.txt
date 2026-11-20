@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 project(OresForge VERSION 0.1.0 LANGUAGES C CXX)
 option(ORESFORGE_FUZZ "Build Clang libFuzzer target" OFF)
-add_library(oresforge_core STATIC compiler/frontend.cpp compiler/ir.cpp compiler/call_native.cpp codegen/native.cpp runtime/actor.cpp jit/tiered.cpp)
+add_library(oresforge_core STATIC compiler/frontend.cpp compiler/ir.cpp compiler/call_native.cpp compiler/actor_source.cpp codegen/native.cpp runtime/actor.cpp jit/tiered.cpp)
 target_include_directories(oresforge_core PUBLIC .)
 target_compile_features(oresforge_core PUBLIC cxx_std_20)
 # Native bounded actor storage shared with the LLVM implementation. This is a
@@ -199,4 +199,25 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
         --compiler "$<TARGET_FILE:oresforge>")
     set_tests_properties(oresforge_real_native_recursive_calls PROPERTIES TIMEOUT 180)
   endif()
+endif()
+
+# Compiler-backed opt-in stage-0 .atto actor path. The real oresforge parser
+# emits C++ callbacks, which are built with Forge's actual private heap and
+# logical frame runtime and then executed in native CTests. Not Cranelift,
+# general actor codegen or a self-hosted compiler.
+if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  set(ORESFORGE_ACTOR_SANITIZED_ARG "")
+  if(CMAKE_CXX_FLAGS MATCHES "fsanitize")
+    set(ORESFORGE_ACTOR_SANITIZED_ARG "--sanitized")
+  endif()
+  add_test(NAME oresforge_compiled_atto_scalar_actor_native
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/compiled_atto_scalar_actor.py"
+      --compiler "$<TARGET_FILE:oresforge>"
+      --root "${CMAKE_CURRENT_SOURCE_DIR}"
+      --cc "${CMAKE_C_COMPILER}"
+      --cxx "${CMAKE_CXX_COMPILER}"
+      ${ORESFORGE_ACTOR_SANITIZED_ARG})
+  set_tests_properties(oresforge_compiled_atto_scalar_actor_native PROPERTIES TIMEOUT 180)
 endif()

@@ -1,0 +1,8 @@
+// Second source program must compile to different actual behavior.
+define actor Balance as
+  let int amount: 20
+  receive(int delta) -> int ::
+    amount = amount - delta
+    return amount
+  end
+end

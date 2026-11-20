@@ -1,5 +1,6 @@
 #include "compiler/frontend.hpp"
 #include "compiler/call_native.hpp"
+#include "compiler/actor_source.hpp"
 #include "compiler/source_input.hpp"
 #include "compiler/ir.hpp"
 #include "codegen/native.hpp"
@@ -34,6 +35,14 @@ int main(int argc,char** argv) {
         (void)oresforge::interpret(program);
         std::cout<<oresforge::dump_ir(program);
       }
+      std::cout.flush();
+      return 0;
+    }
+    // Explicitly opt-in, closed actor source-to-C++ compiler bridge.
+    // Do not relax the default fail-closed Forge actor frontend.
+    if (argc==3 && std::string(argv[1])=="emit-actor-cxx") {
+      const auto generated=oresforge::actor_source::emit_cxx(read_file(argv[2]));
+      std::cout<<generated;
       std::cout.flush();
       return 0;
     }
@@ -96,7 +105,7 @@ int main(int argc,char** argv) {
       std::cout.flush();
       return 0;
     }
-    std::cerr<<"usage: oresforge run|ir <file.ores> | emit-asm <arch> <file.ores> | run-runtime <file.ores> [i64-args...] | ir-runtime <file.ores> | emit-runtime-asm <arch> <file.ores> | run-calls <file.ores> [i64-args...] | emit-call-asm x86_64 <file.ores>\n";
+    std::cerr<<"usage: oresforge run|ir <file.ores> | emit-asm <arch> <file.ores> | run-runtime <file.ores> [i64-args...] | ir-runtime <file.ores> | emit-runtime-asm <arch> <file.ores> | run-calls <file.ores> [i64-args...] | emit-call-asm x86_64 <file.ores> | emit-actor-cxx <file.atto>\n";
     return 2;
   } catch (const std::exception& e) {
     std::cerr<<"oresforge: "<<e.what()<<'\n';

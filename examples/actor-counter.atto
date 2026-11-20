@@ -1,0 +1,8 @@
+// Restricted Forge stage-0 executable scalar actor fixture.
+define actor Counter as
+  let int total: 0
+  receive(int message) -> int ::
+    total = total + message
+    return total
+  end
+end

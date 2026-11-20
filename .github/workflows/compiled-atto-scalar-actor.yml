@@ -1,0 +1,71 @@
+name: Forge compiled .atto scalar actor M2 (exact source head)
+on:
+  pull_request:
+    paths:
+      - "compiler/actor_source.*"
+      - "compiler/main.cpp"
+      - "runtime/scalar_actor.*"
+      - "runtime/actor_frames.hpp"
+      - "runtime/arena/**"
+      - "examples/actor-*.atto"
+      - "verification/compiled_atto_scalar_actor.py"
+      - "CMakeLists.txt"
+      - ".github/workflows/compiled-atto-scalar-actor.yml"
+permissions:
+  contents: read
+concurrency:
+  group: forge-compiled-atto-${{ github.event.pull_request.number }}-${{ github.workflow }}
+  cancel-in-progress: true
+jobs:
+  compiled-atto-scalar-actor:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+        sanitized: [false, true]
+        include:
+          - compiler: gcc
+            cc: gcc
+            cxx: g++
+          - compiler: clang
+            cc: clang
+            cxx: clang++
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Check exact PR source identity
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test -z "$(git status --porcelain)"
+          printf 'SOURCE_HEAD=%s\nSOURCE_TREE=%s\n' \
+            "$(git rev-parse HEAD)" "$(git rev-parse HEAD^{tree})"
+      - name: Configure actual Forge compiler
+        env:
+          SANITIZED: ${{ matrix.sanitized }}
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+        run: |
+          set -euo pipefail
+          flags=""
+          if [ "$SANITIZED" = "true" ]; then
+            flags="-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer"
+          fi
+          cmake -S . -B build-actor -DCMAKE_BUILD_TYPE=Debug \
+            -DBUILD_TESTING=ON -DCMAKE_C_COMPILER="$CC" \
+            -DCMAKE_CXX_COMPILER="$CXX" \
+            -DCMAKE_C_FLAGS="$flags" -DCMAKE_CXX_FLAGS="$flags" \
+            -DCMAKE_EXE_LINKER_FLAGS="$flags"
+      - name: Compile actual source-owning oresforge executable
+        run: cmake --build build-actor --target oresforge --parallel 2
+      - name: Execute emitted native .atto actor, adversarial admissions, and mutation checks
+        env:
+          ASAN_OPTIONS: detect_leaks=0:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1
+        run: ctest --test-dir build-actor --output-on-failure -V -R '^oresforge_compiled_atto_scalar_actor_native$'
