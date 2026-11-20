@@ -18,6 +18,28 @@ namespace detail {
 // A saturated domain counter permanently denies new arenas. This helper
 // accepts an independent counter so the production algorithm can be tested
 // near UINT64_MAX without mutating the actor runtime's global counter.
+inline std::uint64_t claim_nonrecycling_carrier(
+    std::atomic<std::uint64_t>& next) {
+  auto candidate = next.load(std::memory_order_relaxed);
+  constexpr auto limit = std::numeric_limits<std::uint64_t>::max();
+  while (candidate != 0 && candidate < limit) {
+    if (next.compare_exchange_weak(candidate, candidate + 1,
+                                   std::memory_order_relaxed,
+                                   std::memory_order_relaxed))
+      return candidate;
+  }
+  throw std::overflow_error("actor carrier identity exhausted");
+}
+
+inline std::uint64_t current_carrier_identity() {
+  static std::atomic<std::uint64_t> next{1};
+  // std::thread::id values may be reused after a thread exits. A process-wide
+  // monotonic token makes carrier authority unique for the thread lifetime
+  // even if the C++ implementation later recycles its observable thread ID.
+  thread_local const std::uint64_t identity = claim_nonrecycling_carrier(next);
+  return identity;
+}
+
 inline std::uint64_t claim_actor_domain(
     std::atomic<std::uint64_t>& next,
     std::uint64_t actor,
@@ -95,7 +117,7 @@ class ActorArena final {
         epoch_ == std::numeric_limits<std::uint64_t>::max())
       throw std::logic_error("actor arena admission denied");
     active_ = true;
-    owner_ = std::this_thread::get_id();
+    owner_ = detail::current_carrier_identity();
     return {domain_, ++epoch_};
   }
   void end_turn(Turn turn) {
@@ -106,7 +128,7 @@ class ActorArena final {
     scratch_lengths_.fill(0);
     scratch_top_ = 0;
     active_ = false;
-    owner_ = {};
+    owner_ = 0;
   }
   Handle allocate(Turn turn, std::size_t length) {
     std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
@@ -195,10 +217,10 @@ class ActorArena final {
   std::array<std::uint16_t, ScratchBytes> scratch_lengths_{};
   std::size_t scratch_top_ = 0;
   std::mutex mutex_;
-  std::thread::id owner_{};
+  std::uint64_t owner_ = 0;
   bool active_ = false, retired_ = false;
   void require_turn(Turn t) const {
-    if (!active_ || retired_ || owner_ != std::this_thread::get_id() ||
+    if (!active_ || retired_ || owner_ != detail::current_carrier_identity() ||
         t.domain_ != domain_ || t.epoch_ != epoch_)
       throw std::logic_error("wrong or stale actor turn");
   }

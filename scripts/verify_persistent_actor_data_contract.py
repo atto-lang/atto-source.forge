@@ -7,8 +7,8 @@ NOT that the backend has implemented persistent maps or passed runtime tests.
 import json
 import math
 import os
-import stat
 from pathlib import Path
+import stat
 import sys
 
 EXPECTED_IDS = frozenset(["hamt-path-copy","hamt-delete","hamt-aa-bb","hamt-high-hash-bits","hamt-collision-over-64","hamt-nested-root","hamt-array-input","hamt-mutable-map-input","hamt-foreign-reference","hamt-numeric-subclass","hamt-null-value","hamt-clear-empty","hamt-remove-missing","hamt-remove-if-predicate","hamt-shared-mailbox","hamt-private-mailbox","hamt-untrusted-mailbox","hamt-duplicate-send-quota","hamt-drain-credit-release","hamt-depth-257","hamt-node-budget","pure-actor-single-reducer","pure-actor-no-suspend","pure-actor-no-ambient-io","pure-actor-command-effects","persistent-source-syntax","persistent-vector","edn-wire-shortcut","typed-map-mutating-adapter"])
@@ -52,7 +52,6 @@ def validate_raw(raw):
         data = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_pairs,
                           parse_constant=_bad_constant, parse_float=finite_float)
     except ContractError:
-        # Preserve the explicit non-finite-number denial reason.
         raise
     except (UnicodeError, json.JSONDecodeError, RecursionError, ValueError) as exc:
         raise ContractError("invalid canonical UTF-8 JSON") from exc
@@ -128,9 +127,27 @@ def read_bounded_contract(path):
         if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
             raise ContractError("persistent contract must be a unique regular file")
         if not 0 < before.st_size <= 64 * 1024:
-            raise ContractError("invalid or oversized persistent contract")
-        flags = (os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
-                 | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0))
+            raise ContractError("empty or oversized persistent contract")
+        # Missing or aliased secure-open flags must not silently degrade to
+        # following symlinks or blocking indefinitely on a raced FIFO.
+        # These bits must have independent meanings. An aliased no-follow
+        # flag (including an alias to O_DIRECTORY or a write access mode)
+        # cannot provide the filesystem guarantee required for provenance.
+        required = ("O_DIRECTORY", "O_NONBLOCK", "O_NOFOLLOW", "O_ACCMODE")
+        masks = {name: getattr(os, name, None) for name in required}
+        if any(type(value) is not int or value <= 0 for value in masks.values()):
+            raise ContractError("secure no-follow/nonblocking flags unavailable or aliased")
+        optional = {name: getattr(os, name, 0)
+                    for name in ("O_CLOEXEC", "O_BINARY")}
+        if any(type(value) is not int or value < 0 for value in optional.values()):
+            raise ContractError("secure no-follow/nonblocking flags unavailable or aliased")
+        guards = [masks[name] for name in required]
+        guards.extend(value for value in optional.values() if value)
+        if any(left & right for i, left in enumerate(guards)
+               for right in guards[i + 1:]):
+            raise ContractError("secure no-follow/nonblocking flags unavailable or aliased")
+        flags = (os.O_RDONLY | masks["O_NONBLOCK"] | masks["O_NOFOLLOW"]
+                 | optional["O_BINARY"] | optional["O_CLOEXEC"])
         fd = os.open(path, flags)
         try:
             stream = os.fdopen(fd, "rb")
@@ -145,6 +162,11 @@ def read_bounded_contract(path):
             after = os.fstat(stream.fileno())
             if not same_file(opened, after):
                 raise ContractError("persistent contract changed during read")
+            # Short reads can indicate partial or substituted data even when
+            # a filesystem reports stable inode, size, and timestamps.
+            # Never validate only a prefix of the pinned fixture.
+            if len(data) != after.st_size:
+                raise ContractError("persistent contract short read")
         if not same_file(after, path.lstat()):
             raise ContractError("persistent contract path changed during read")
     except OSError as exc:

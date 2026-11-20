@@ -2,7 +2,6 @@
 #include <array>
 #include <cstddef>
 #include <stdexcept>
-#include <exception>
 #include <thread>
 #include <atomic>
 #include <type_traits>
@@ -17,6 +16,8 @@
 #endif
 using oresforge::runtime::ActorArena;
 using oresforge::runtime::detail::claim_actor_domain;
+using oresforge::runtime::detail::claim_nonrecycling_carrier;
+using oresforge::runtime::detail::current_carrier_identity;
 // No host caller can manufacture a valid-looking arena authority from the
 // observable domain/slot/generation values. Handles remain copyable once
 // issued, so mailbox continuation code can carry them across turns.
@@ -65,6 +66,29 @@ int main() {
   rejects([&] { (void)claim_actor_domain(invalid_owner_counter, 0, 1); });
   rejects([&] { (void)claim_actor_domain(invalid_owner_counter, 1, 0); });
   ensure(invalid_owner_counter.load() == 7);
+
+  // Carrier authority must never depend on reusable std::thread::id values.
+  // The process-lifetime token is stable within a thread and unique across
+  // sequential thread lifetimes, even if the OS/C++ runtime recycles IDs.
+  ensure(current_carrier_identity() == current_carrier_identity());
+  constexpr std::size_t CarrierThreads = 512;
+  std::array<std::uint64_t, CarrierThreads> carrier_ids{};
+  for (std::size_t i = 0; i < CarrierThreads; ++i) {
+    std::thread carrier([&, i] { carrier_ids[i] = current_carrier_identity(); });
+    carrier.join();
+  }
+  auto sorted_carriers = carrier_ids;
+  std::sort(sorted_carriers.begin(), sorted_carriers.end());
+  ensure(sorted_carriers.front() != 0);
+  ensure(std::adjacent_find(sorted_carriers.begin(), sorted_carriers.end()) ==
+         sorted_carriers.end());
+
+  constexpr auto max_carrier = std::numeric_limits<std::uint64_t>::max();
+  std::atomic<std::uint64_t> near_carrier_end{max_carrier - 1};
+  ensure(claim_nonrecycling_carrier(near_carrier_end) == max_carrier - 1);
+  ensure(near_carrier_end.load() == max_carrier);
+  rejects([&] { (void)claim_nonrecycling_carrier(near_carrier_end); });
+  ensure(near_carrier_end.load() == max_carrier);
 #if defined(__unix__) || defined(__APPLE__)
   ensure(destruction_outcome(0) == 77);
   ensure(destruction_outcome(1) == 77);
