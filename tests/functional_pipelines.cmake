@@ -24,6 +24,13 @@ assert_pinned_blob(reject-return-type 74b2f398a72b41407039ac68cdc44b23b7ece125)
 assert_pinned_blob(reject-unterminated-body 1d84e3f31fee46a73a6c111e406ebb883e5645b2)
 assert_pinned_blob(reject-ambiguous-mixed-direction 7e579225f25720da5255ecb47640831be6e3a1c7)
 assert_pinned_blob(reject-reverse-mixed-unparenthesized 2727d012e5482c407c2e642b3612144e67fad767)
+assert_pinned_blob(edge/two-argument-61 4089c524db1d076593994ad65acb5ca7f90eea32)
+assert_pinned_blob(edge/preapplied-grouped-42 9a89ada18865fead0d92a7de75415957fbb5f67f)
+assert_pinned_blob(edge/signed-i64-min bbc22347d7ccb0a5be1a7c2193f11c5f2f4805cc)
+assert_pinned_blob(edge/checked-overflow 59bb890b54addc1659065ab55cd565771523bfce)
+assert_pinned_blob(edge/reject-i64-positive-overflow 2e584ee01ee74a3a31e282cf0116957f9ff95bd1)
+assert_pinned_blob(edge/reject-i64-negative-underflow 8b63b45e406db3e19aa793e0f7a627914623b9e0)
+assert_pinned_blob(edge/reject-reserved-unsafe b159def3fa26ca6023395e1c546b95c1b929fd14)
 
 set(guest_flags)
 if(SANITIZERS)
@@ -76,6 +83,69 @@ compile_and_execute(block-body 83)
 compile_and_execute(inline-arrow-body 83)
 compile_and_execute(reverse-associative 42)
 compile_and_execute(mixed-parenthesized 42)
+
+# Supplemental spec edge v1: real native execution.
+function(compile_edge_guest name expected expected_status expected_error)
+  set(source "${ROOT}/fixtures/functional-pipelines-v1/edge/${name}.atto")
+  set(generated "${OUT_DIR}/edge-${name}.cpp")
+  set(executable "${OUT_DIR}/edge-${name}")
+  file(REMOVE "${generated}" "${executable}" "${generated}.part")
+  execute_process(COMMAND "${FORGE}" --check "${source}"
+    RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+  if(NOT "${rc}" STREQUAL "0" OR NOT "${out}" STREQUAL "" OR NOT "${err}" STREQUAL "")
+    message(FATAL_ERROR "edge ${name}: accepted Atto program rejected: ${err}")
+  endif()
+  execute_process(COMMAND "${FORGE}" "${source}" -o "${generated}"
+    RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+  if(NOT "${rc}" STREQUAL "0" OR NOT EXISTS "${generated}" OR NOT "${err}" STREQUAL "")
+    message(FATAL_ERROR "edge ${name}: missing compiled C++ output")
+  endif()
+  execute_process(COMMAND "${CXX}" -std=c++20 -Wall -Wextra -Werror -pedantic
+    ${guest_flags} "-I${ROOT}/include" "${generated}" -o "${executable}"
+    RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+  if(NOT "${rc}" STREQUAL "0")
+    message(FATAL_ERROR "edge ${name}: C++ native compilation failed: ${err}")
+  endif()
+  execute_process(COMMAND "${executable}"
+    RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+  if(NOT "${rc}" STREQUAL "${expected_status}" OR
+     NOT "${out}" STREQUAL "${expected}" OR
+     NOT "${err}" STREQUAL "${expected_error}")
+    message(FATAL_ERROR "edge ${name}: native exit=${rc}, stdout=[${out}], stderr=[${err}]")
+  endif()
+  file(SHA256 "${generated}" digest)
+  message(STATUS "ATTO_FORGE_EDGE_GUEST_EXECUTED ${name} sha256=${digest}")
+endfunction()
+compile_edge_guest(two-argument-61 "61\n" 0 "")
+compile_edge_guest(preapplied-grouped-42 "42\n" 0 "")
+compile_edge_guest(signed-i64-min "-9223372036854775808\n" 0 "")
+compile_edge_guest(checked-overflow "" 70 "E_OVERFLOW\n")
+
+# Invalid literal/authority cases must fail before guest emission.
+foreach(row IN ITEMS
+  "reject-i64-positive-overflow:E_LITERAL"
+  "reject-i64-negative-underflow:E_LITERAL"
+  "reject-reserved-unsafe:E_NAME")
+  string(REPLACE ":" ";" parts "${row}")
+  list(GET parts 0 name)
+  list(GET parts 1 expected)
+  set(source "${ROOT}/fixtures/functional-pipelines-v1/edge/${name}.atto")
+  set(out_file "${OUT_DIR}/edge-${name}.cpp")
+  file(REMOVE "${out_file}")
+  execute_process(COMMAND "${FORGE}" --check "${source}"
+    RESULT_VARIABLE check_rc OUTPUT_VARIABLE check_out ERROR_VARIABLE check_err)
+  if(NOT "${check_rc}" STREQUAL "2" OR NOT "${check_out}" STREQUAL ""
+     OR NOT "${check_err}" STREQUAL "${expected}\n")
+    message(FATAL_ERROR "edge ${name}: invalid source accepted by --check")
+  endif()
+  execute_process(COMMAND "${FORGE}" "${source}" -o "${out_file}"
+    RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+  if(NOT "${rc}" STREQUAL "2" OR EXISTS "${out_file}"
+     OR NOT "${out}" STREQUAL "" OR NOT "${err}" STREQUAL "${expected}\n")
+    message(FATAL_ERROR "edge ${name}: rejected source produced an artifact")
+  endif()
+endforeach()
+
 
 function(reject_no_artifact name diagnostic)
   set(source "${ROOT}/fixtures/functional-pipelines-v1/${name}.atto")
