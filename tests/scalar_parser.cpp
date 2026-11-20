@@ -8,7 +8,8 @@ int main() {
   for (const std::string_view expression : {
        "copy!42", "take!item", "borrow! item", "borrow! mut item",
        "mut borrow!item", "share!item", "ref!item", "deref!handle",
-       "unref!handle", "pin!item", "drop!item" }) {
+       "unref!handle", "pin!item", "drop!item",
+       "copy!eq\\xC3\\xA9", "ref!eq\\xC3\\xA9" }) {
     const auto parsed = parse_source(std::string("fnc main(): int { return ")
                                      + std::string(expression) + "; }");
     assert(parsed.error == ParseError::ownership_bang_unsupported);
