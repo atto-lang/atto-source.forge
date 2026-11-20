@@ -53,6 +53,15 @@ int main() {
   assert(tokenize(std::string(max_tokens, '+')).ok());
   // Lexer identifies proposed collection syntax but never interprets its
   // values in the stage-0 scalar compiler.
+  auto question = tokenize("int.parse(x)?");
+  assert(question.ok());
+  bool saw_question = false;
+  for (const auto& token : question.tokens)
+    saw_question = saw_question || token.kind == Kind::question;
+  assert(saw_question);
+  const auto quoted_effect = tokenize(R"("trap Result<int,Error> ?")");
+  assert(quoted_effect.ok() && quoted_effect.tokens[0].kind == Kind::quoted);
+
   const std::string entry_source =
       R"(let e = "foo" => 5 (as Entry<string,int>);)";
   auto collection = tokenize(entry_source);

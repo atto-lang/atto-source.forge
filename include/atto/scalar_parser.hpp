@@ -19,7 +19,7 @@ struct Node {
 };
 enum class ParseError {
   none, lexical, syntax, literal_out_of_range, depth_limit, node_limit,
-  unsupported_map_entry, unsupported_record, unsupported_index
+  unsupported_map_entry, unsupported_record, unsupported_index, unsupported_result_effects
 };
 // Stable sanitized diagnostics; never echo user source bytes.
 [[nodiscard]] constexpr std::string_view parse_error_name(ParseError error) noexcept {
@@ -33,6 +33,7 @@ enum class ParseError {
     case ParseError::unsupported_map_entry: return "E_UNSUPPORTED_MAP_ENTRY";
     case ParseError::unsupported_record: return "E_UNSUPPORTED_RECORD";
     case ParseError::unsupported_index: return "E_UNSUPPORTED_INDEX_WRITE";
+    case ParseError::unsupported_result_effects: return "E_UNSUPPORTED_RESULT_EFFECTS";
   }
   return "E_PARSE_UNKNOWN";
 }
@@ -312,18 +313,39 @@ public:
   // Strings and comments cannot masquerade as Map/Entry/Record syntax.
   // Check the entire token stream: the restricted scalar parser would
   // otherwise stop at 'let' before identifying a later whole Entry/Map.
-  for (const auto& token : lexed.tokens) {
+  for (std::size_t i = 0; i < lexed.tokens.size(); ++i) {
+    const auto& token = lexed.tokens[i];
     ParseError unsupported = ParseError::none;
     if (token.kind == Kind::fat_arrow) {
       unsupported = ParseError::unsupported_map_entry;
     } else if (token.kind == Kind::lbracket || token.kind == Kind::rbracket) {
       unsupported = ParseError::unsupported_index;
+    } else if (token.kind == Kind::question) {
+      // Postfix ? and ternary ? both need typed Result/Option/control flow.
+      unsupported = ParseError::unsupported_result_effects;
     } else if (token.kind == Kind::name) {
       const auto name = src.substr(token.offset, token.length);
       if (name == "Entry" || name == "Map") {
         unsupported = ParseError::unsupported_map_entry;
       } else if (name == "Record") {
         unsupported = ParseError::unsupported_record;
+      } else if (name == "Result" || name == "Option" ||
+                 name == "Ok" || name == "Err" || name == "Some" ||
+                 name == "None" || name == "Error" ||
+                 name == "trap" || name == "throw" ||
+                 name == "raise" || name == "panic" ||
+                 name == "try" || name == "catch" ||
+                 name == "finally" || name == "defer" ||
+                 name == "recover") {
+        // Forge's scalar emitter cannot carry tagged errors or unwind
+        // cleanup. Never convert failure to an i64 sentinel or host throw.
+        unsupported = ParseError::unsupported_result_effects;
+      } else if (name == "int" && i + 2 < lexed.tokens.size()) {
+        const auto& dot = lexed.tokens[i + 1];
+        const auto& method = lexed.tokens[i + 2];
+        if (dot.kind == Kind::dot && method.kind == Kind::name &&
+            src.substr(method.offset, method.length) == "parse")
+          unsupported = ParseError::unsupported_result_effects;
       }
     }
     if (unsupported != ParseError::none) {

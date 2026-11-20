@@ -126,6 +126,30 @@ int main() {
       "/* Record r[foo] = 3; */ pub fnc main():int { return 42; }");
   assert(commented_collection.ok());
   assert(commented_collection.nodes[commented_collection.root].value == 42);
+  // Typed error effects are not scalar i64 expressions. This frontend must
+  // reject them without exposing pseudo-values or claiming execution.
+  for (const auto* source : {
+    R"(pub fnc main():Result<int,Error>{return Ok(42);})",
+    R"(pub fnc main():int{return int.parse("42");})",
+    R"(pub fnc main():int{return trap explode();})",
+    R"(pub fnc main():int{return fail()?;})",
+    R"(fnc main(): Option<int> { return None; })",
+    R"(pub fnc main():int{throw Error("bad");})"
+  }) {
+    const auto rejected = parse_source(source);
+    assert(!rejected.ok() &&
+           rejected.error == ParseError::unsupported_result_effects);
+  }
+  const auto effect_comment = parse_source(
+    "// Result<int,Error> ? trap int.parse(42)\n"
+    "pub fnc main():int{return 42;}");
+  assert(effect_comment.ok());
+  const auto effect_string = parse_source(
+    R"(pub fnc main():int{return "Result<int,Error> ? trap";})");
+  assert(effect_string.error == ParseError::syntax);
+  assert(parse_error_name(ParseError::unsupported_result_effects) ==
+         "E_UNSUPPORTED_RESULT_EFFECTS");
+
   auto quoted_name = parse_source(R"(fnc main():int { return "Entry Map => Record[foo]"; })");
   assert(quoted_name.error == ParseError::syntax);
   assert(parse_error_name(ParseError::unsupported_map_entry) == "E_UNSUPPORTED_MAP_ENTRY");
