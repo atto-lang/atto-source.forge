@@ -164,6 +164,16 @@ class Parser {
       if (tok_.text=="any" || tok_.text=="unknown" ||
           tok_.text=="Any" || tok_.text=="Unknown")
         error("any/unknown requires tagged opaque-value ABI and runtime type descriptors");
+      // Typed exceptional control has no Forge stage-0 Error/Result or
+      // supervisor/unwind lowering. Deny canonical bang spellings before IR.
+      if ((tok_.text=="trap" || tok_.text=="throw" ||
+           tok_.text=="raise" || tok_.text=="panic") &&
+          at_<source_.size() && source_[at_]=='!' &&
+          source_.substr(at_,2)!="!=" &&
+          !(source_.substr(at_,3)=="!eq" &&
+            (at_+3==source_.size() ||
+             (!ascii_alnum(static_cast<unsigned char>(source_[at_+3])) && source_[at_+3]!='_'))))
+        error("EXCEPTION_BANG_BACKEND_UNSUPPORTED: typed error, Result, unwind and actor CONTROL lowering required");
       // The bootstrap parser cannot resolve any Java/Graal import forms.
       // Reject with a stable diagnostic rather than emitting an unrelated
       // scalar result from a source that depends on external modules.
