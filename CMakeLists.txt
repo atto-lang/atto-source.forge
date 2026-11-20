@@ -191,3 +191,13 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   endif()
 endif()
 add_test(NAME scalar_integration_v1_test COMMAND scalar_integration_v1_test)
+
+# Issue #103: stepful compiled native guest and negative artifact matrix.
+add_test(NAME scalar_integration_native_guests
+  COMMAND "${CMAKE_COMMAND}"
+    "-DROOT=${CMAKE_CURRENT_SOURCE_DIR}"
+    "-DCXX=${CMAKE_CXX_COMPILER}"
+    "-DSANITIZERS=${ATTO_FORGE_SANITIZERS}"
+    "-DFORGE=$<TARGET_FILE:forge_scalar>"
+    "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/scalar-integration-guests"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/scalar_integration_guests.cmake")
