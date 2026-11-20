@@ -100,13 +100,15 @@ int main() {
   assert(nested_tokens.ok());
   assert(nested_tokens.tokens[0].offset == nested_comments.find("ref!"));
   assert(tokenize("/* outer /* ref!item */").error == LexError::unterminated_comment);
-  std::string nested_64, nested_65;
-  for (int n = 0; n < 64; ++n) nested_64 += "/*";
-  for (int n = 0; n < 64; ++n) nested_64 += "*/";
-  nested_65 = "/*" + nested_64 + "*/";
-  assert(tokenize(nested_64 + "42").ok());
-  const auto exceeded = tokenize(nested_65);
+  // Portable language contract: 128 levels accepted, the 129th denied.
+  // The first 128 opener bytes are 256 bytes, so the rejected byte is 256.
+  std::string nested_128, nested_129;
+  for (int n = 0; n < 128; ++n) nested_128 += "/*";
+  for (int n = 0; n < 128; ++n) nested_128 += "*/";
+  nested_129 = "/*" + nested_128 + "*/";
+  assert(tokenize(nested_128 + "42").ok());
+  const auto exceeded = tokenize(nested_129);
   assert(exceeded.error == LexError::comment_nesting_limit);
-  assert(exceeded.error_offset == 128);
+  assert(exceeded.error_offset == 256);
 
 }
