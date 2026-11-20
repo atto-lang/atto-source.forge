@@ -29,3 +29,5 @@ guest positives/error exits and 10 compile-negative cases (GCC O0).
 The compiled equal-bytes native guest also passed GCC/Clang ASan/UBSan.
 These are restricted guest results, not canonical .atto stdlib execution.
 No exact-head source-organization Actions step execution is yet verified.
+
+The frontend requires --experimental-host-profile before source/output arguments. Without this explicit opt-in it refuses code generation with E_ALLOC_EXPERIMENTAL_REQUIRED. This prevents accidental use as the production TenantVM compiler.
