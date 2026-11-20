@@ -1,5 +1,6 @@
 // Bounded Atto functional-pipeline frontend; real checked native C++ guests.
 // Existing forge_scalar (single-expression frontend) remains unchanged.
+// All C++ aggregate nodes initialize every member explicitly under -Werror.
 // No Python bootstrap, host-side guest evaluation, or raw guest-source output.
 #include <atto/checked_i64.hpp>
 #include <algorithm>
@@ -122,14 +123,14 @@ struct Parser {
       need(")");
     } else if (eat("-")) {
       Expr rhs = expr(30, depth + 1);
-      lhs = Expr{Expr::Kind::sub, 0, "", {Expr{Expr::Kind::lit, 0}, std::move(rhs)}};
+      lhs = Expr{Expr::Kind::sub, 0, "", {Expr{Expr::Kind::lit, 0, "", {}}, std::move(rhs)}};
     } else if (!peek().empty() && digit(peek().front())) {
       i64 value = 0;
       const auto& digits = peek();
       const auto [end, error] = std::from_chars(digits.data(), digits.data() + digits.size(), value);
       if (error != std::errc{} || end != digits.data() + digits.size()) fail("E_LITERAL");
       ++at;
-      lhs = Expr{Expr::Kind::lit, value};
+      lhs = Expr{Expr::Kind::lit, value, "", {}};
     } else {
       std::string symbol = name();
       if (peek() == "(")
