@@ -357,14 +357,22 @@ class Parser {
         !expected("int") || !expected(Kind::gt))
       return false;
     auto handle = local_id();
-    if (!handle || *handle == *owner ||
-        !expected(Kind::assign) || !local_op("ref") ||
+    if (!handle) return false;
+    if (*handle == *owner) {
+      fail(ParseError::pointer_profile);
+      return false;
+    }
+    if (!expected(Kind::assign) || !local_op("ref") ||
         !expected(*owner) || !expected(Kind::semicolon) ||
         !expected("val"))
       return false;
     auto copy = local_id();
-    if (!copy || *copy == *owner || *copy == *handle ||
-        !expected(Kind::assign) || !local_op("deref") ||
+    if (!copy) return false;
+    if (*copy == *owner || *copy == *handle) {
+      fail(ParseError::pointer_profile);
+      return false;
+    }
+    if (!expected(Kind::assign) || !local_op("deref") ||
         !expected(*handle) || !expected(Kind::semicolon) ||
         !local_op("unref") || !expected(*handle) ||
         !expected(Kind::semicolon) || !expected("return") ||
