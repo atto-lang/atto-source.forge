@@ -41,15 +41,19 @@ file(WRITE "${invalid}" "fnc main(): int {return os.read_env(\"HOME\");}")
 file(WRITE "${stale}" "stale source")
 execute_process(COMMAND "${FORGE}" "${invalid}" -o "${stale}"
   RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
-if(NOT "${rc}" STREQUAL "2" OR EXISTS "${stale}")
-  message(FATAL_ERROR "invalid source published or stale output retained")
+file(READ "${stale}" preserved_bytes)
+if(NOT "${rc}" STREQUAL "2" OR
+   NOT "${preserved_bytes}" STREQUAL "stale source")
+  message(FATAL_ERROR "invalid source altered caller-owned output")
 endif()
 string(REPEAT "1" 17000 huge)
 file(WRITE "${OUT_DIR}/huge.atto" "${huge}")
 execute_process(COMMAND "${FORGE}" "${OUT_DIR}/huge.atto" -o "${stale}"
   RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
-if(NOT "${rc}" STREQUAL "2" OR EXISTS "${stale}")
-  message(FATAL_ERROR "source-size budget violated")
+file(READ "${stale}" preserved_bytes)
+if(NOT "${rc}" STREQUAL "2" OR
+   NOT "${preserved_bytes}" STREQUAL "stale source")
+  message(FATAL_ERROR "source-size rejection altered caller-owned output")
 endif()
 
 # Guard output and temp-path direct symlink clobber.
