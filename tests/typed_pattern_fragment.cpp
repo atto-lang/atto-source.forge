@@ -69,6 +69,8 @@ int main() {
   assert(parse("is int",Type::any).ok());
   assert(parse("is !bool",Type::integer).ok());
   rejection("is !int",Error::type);
+  rejection("is int as val x",Error::binding,Type::any);
+  rejection("-0",Error::source);
   rejection("is bool",Error::type);
   rejection("8",Error::type,Type::text);
   rejection("true",Error::type);
@@ -76,12 +78,13 @@ int main() {
   assert(parse("\"a\\\"b\"",Type::text).ok());
 
   for(const auto invalid:{
-    "is int as val x", "get_secret()", "await read()", "..._", "_...",
-    "1 as val x", "...(2 of ...)", "...(2 of ...(1 of int))",
+    "get_secret()", "await read()", "..._", "_...",
+    "...(2 of ...)", "...(2 of ...(1 of int))",
     "...(2..4 of int)", "...(n of int)", "...(3 of List.of(1))",
-    "...(1 of is int as val x)", "...(3 of int", "...,",
+    "...(3 of int", "...,",
     "..., ...", "1, (2,3)", "\"bad\\z\""
   }) rejection(invalid,Error::source,Type::any);
+  rejection("...(0 of is int as val x)",Error::binding);
   rejection("...(129 of int)",Error::budget);
   rejection("...(9999999999999999999999 of int)",Error::budget);
   rejection(std::string(4097,'x'),Error::budget);
