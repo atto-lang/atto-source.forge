@@ -106,6 +106,17 @@ This establishes **native host-model behavior only**, not Forge guest IR lowerin
 are in atto-source.rs#344, atto-borrow-checker.rs#43, atto-spec#92,
 and atto-platform-conformance#76.
 
+
+## Restricted real native List<int> structural-pattern guest (draft PR #43)
+
+The existing \`forge_scalar\` source compiler now admits a strictly bounded, single-source \`List<int>\` profile: one immutable \`List.of\` literal (maximum 32 i64 elements), one \`return match<int>\`, and a required wildcard fallback. It supports native \`...\` only at sequence boundaries, exact integer literals, \`is int\` / \`is int as val name\` binders, a scalar comparison guard, and checked addition of captured integers. The frontend uses source tokens, immutable checked pattern data and deterministic C++20 emission. **The generated native binary owns and reads the List values and evaluates matching at runtime; it does not invoke the host-only pattern reference matcher or precompute an answer in the compiler.**
+
+The native guest uses a stack-owned \`std::array<int64_t,N>\`, never a cross-tenant actor capability or exposed pointer. Matching picks the first (leftmost-shortest) witness. A guard is evaluated once for that witness; failure selects fallback without exploring later decompositions. The generated code has bounded loops, bounded captures and \`checked_add\` with \`E_OVERFLOW\` / exit 70. This differs from the Rust/Wasm guest overflow ABI (\`panic_code=1\`), while expressing the same overflow semantics.
+
+This **is not general Forge List/Array lowering** and not a TenantVM sandbox, JIT/AOT isolation proof, library implementation or compiled \`pattern.of<T>()\`. Dynamic elements, runtime template values, \`std.pattern\` import linking, counted repetition, interior rests, non-int list elements, mutable rest views and escaping capture loans are not admitted. The separate \`typed_pattern_fragment.hpp\` remains host-reference-only. The compiler must not emit native source for malformed or unsupported programs.
+
+\`fixtures/list-pattern-guest/\` pins **eight byte-identical shared source programs** from Rust/Wasm PR #415 (seven positive expected results 60,0,30,7,1,3,32 and one overflow). \`tests/list_pattern_guest.cmake\` requires \`forge_scalar\` to compile the sources, GCC or Clang to build generated C++ and the native binaries to produce exact outputs, plus 11 invalid/no-artifact diagnostics. \`tests/list_pattern_frontend.cpp\` tests scope, budgets, comment spoofing, UTF-8-injection rejection and deterministic code generation with assertions retained in Release. The matrix includes ASan/UBSan. **The source files and tests are committed; no current-head compiler build or compiled native guest CI pass has been observed yet.** Do not promote the candidate until material CI executes on an exact source SHA/tree and independent security/ownership review approves it.
+
 ## Restricted native scalar compiled guest (stage 0)
 
 Build CMake and invoke `build/forge_scalar fixtures/scalar-v1/arithmetic.atto -o /tmp/atto-scalar.cpp`,
