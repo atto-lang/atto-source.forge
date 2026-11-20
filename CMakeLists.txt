@@ -179,3 +179,15 @@ add_test(NAME scalar_check_only
     "-DFORGE=$<TARGET_FILE:forge_scalar>"
     "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/scalar-check"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/scalar_check.cmake")
+
+# Integration candidate for #103: admission, evaluator and emitter agree.
+add_executable(scalar_integration_v1_test tests/scalar_integration_v1.cpp)
+target_link_libraries(scalar_integration_v1_test PRIVATE atto_forge_checked_i64)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(scalar_integration_v1_test PRIVATE -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(scalar_integration_v1_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(scalar_integration_v1_test PRIVATE -fsanitize=address,undefined)
+  endif()
+endif()
+add_test(NAME scalar_integration_v1_test COMMAND scalar_integration_v1_test)
