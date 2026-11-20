@@ -5,6 +5,7 @@
 #include <atto/checked_i64.hpp>
 #include <algorithm>
 #include <charconv>
+#include <cerrno>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -17,6 +18,10 @@
 #include <system_error>
 #include <utility>
 #include <vector>
+#if defined(__unix__) || defined(__APPLE__)
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 namespace fs = std::filesystem;
 using i64 = atto::forge::i64;
 namespace {
@@ -432,11 +437,30 @@ int main(int argc, char** argv) {
     if (ec != std::errc::no_such_file_or_directory &&
         (ec || fs::exists(tmp_status) || fs::is_symlink(tmp_status))) fail("E_OUTPUT");
     {
-      std::ofstream file(tmp, std::ios::binary | std::ios::trunc);
-      if (!file) fail("E_OUTPUT");
-      file.write(generated.data(), static_cast<std::streamsize>(generated.size()));
-      file.flush();
-      if (!file) { fs::remove(tmp, ec); fail("E_OUTPUT"); }
+#if defined(__unix__) || defined(__APPLE__)
+      // Never open an output candidate with O_TRUNC after a symlink precheck.
+      // O_CREAT|O_EXCL atomically rejects both an existing file and a
+      // competing symlink created between preflight and open(). This is not
+      // a substitute for dirfd-anchored publication in a hostile directory.
+      const int fd = ::open(tmp.c_str(),
+          O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+      if (fd < 0) fail("E_OUTPUT");
+      std::size_t written = 0;
+      bool valid = true;
+      while (written < generated.size()) {
+        const ssize_t count = ::write(fd, generated.data() + written,
+                                      generated.size() - written);
+        if (count > 0) written += static_cast<std::size_t>(count);
+        else if (count < 0 && errno == EINTR) continue;
+        else { valid = false; break; }
+      }
+      if (::close(fd) != 0) valid = false;
+      if (!valid) { fs::remove(tmp, ec); fail("E_OUTPUT"); }
+#else
+      // This standalone bootstrap intentionally supports POSIX only until
+      // Windows can provide equivalent non-clobbering file publication.
+      fail("E_OUTPUT_UNSUPPORTED");
+#endif
     }
     // Publication must NEVER replace an output planted after preflight.
     // Temp/output reside in the same directory and filesystem; a hard-link
