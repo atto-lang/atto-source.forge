@@ -77,24 +77,21 @@ reject_no_artifact(reject-unterminated-body)
 reject_no_artifact(reject-ambiguous-mixed-direction)
 reject_no_artifact(reject-reverse-mixed-unparenthesized)
 
-set(extra_negative
-  "fnc main(): int { val a = b; val b = 42; return a; }"
-  "fnc main(): int { val a = 1; val a = 2; return a; }"
-  "fnc double(int x): int -> x * 2; fnc main(): int -> 20 |> double(21);"
-  "fnc main(): int -> 21 <| 42;"
-  "fnc main(): int -> 20 |> missing;"
-  "fnc main(): int -> 1 + true;"
-  "fnc main(): int -> 9223372036854775808;"
-  "fnc main(): int -> 1 / 0;"
-  "fnc double(int x): int -> x*2; fnc main(): int -> double <| 1 |> double;"
-  "fnc main(): int -> main();"
-)
-set(idx 0)
-foreach(body IN LISTS extra_negative)
-  math(EXPR idx "${idx}+1")
+file(WRITE "${OUT_DIR}/negative-1.atto" "fnc main(): int { val a = b; val b = 42; return a; }\n")
+file(WRITE "${OUT_DIR}/negative-2.atto" "fnc main(): int { val a = 1; val a = 2; return a; }\n")
+file(WRITE "${OUT_DIR}/negative-3.atto" "fnc double(int x): int -> x * 2; fnc main(): int -> 20 |> double(21);\n")
+file(WRITE "${OUT_DIR}/negative-4.atto" "fnc main(): int -> 21 <| 42;\n")
+file(WRITE "${OUT_DIR}/negative-5.atto" "fnc main(): int -> 20 |> missing;\n")
+file(WRITE "${OUT_DIR}/negative-6.atto" "fnc main(): int -> 1 + true;\n")
+file(WRITE "${OUT_DIR}/negative-7.atto" "fnc main(): int -> 9223372036854775808;\n")
+file(WRITE "${OUT_DIR}/negative-8.atto" "fnc main(): int -> 1 / 0;\n")
+file(WRITE "${OUT_DIR}/negative-9.atto" "fnc double(int x): int -> x*2; fnc main(): int -> double <| 1 |> double;\n")
+file(WRITE "${OUT_DIR}/negative-10.atto" "fnc main(): int -> main();\n")
+
+foreach(idx RANGE 1 10)
   set(source "${OUT_DIR}/negative-${idx}.atto")
-  file(WRITE "${source}" "${body}\n")
   set(output "${OUT_DIR}/negative-${idx}.cpp")
+  file(REMOVE "${output}")
   execute_process(COMMAND "${FORGE}" "${source}" -o "${output}"
     RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
   if(NOT "${rc}" STREQUAL "2" OR EXISTS "${output}" OR
