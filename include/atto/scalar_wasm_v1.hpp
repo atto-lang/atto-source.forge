@@ -44,29 +44,31 @@ inline void section(Bytes& module, std::uint8_t id, const Bytes& payload) {
   uleb(module, payload.size());
   module.insert(module.end(), payload.begin(), payload.end());
 }
-inline void emit_node(Bytes& out, const atto::forge::scalar::Parsed& p,
-                      std::size_t index) {
+inline bool emit_node(Bytes& out, const atto::forge::scalar::Parsed& p,
+                      std::size_t index, std::size_t depth = 0) {
+  // Bound emissions even if future frontends introduce shared-node DAGs.
+  if (depth > atto::forge::scalar::max_nodes || out.size() > 4096) return false;
   using atto::forge::scalar::Op;
   const auto& node = p.nodes[index];
   if (node.op == Op::literal) {
     out.push_back(0x42); // i64.const
     sleb64(out, node.value);
-    return;
+    return out.size() <= 4096;
   }
   if (node.op == Op::neg) {
     out.push_back(0x42); sleb64(out, 0);
-    emit_node(out, p, node.left);
+    if (!emit_node(out, p, node.left, depth+1)) return false;
     out.push_back(0x7d); // i64.sub
-    return;
+    return out.size() <= 4096;
   }
   if (node.op == Op::bnot) {
-    emit_node(out, p, node.left);
+    if (!emit_node(out, p, node.left, depth+1)) return false;
     out.push_back(0x42); sleb64(out, -1);
     out.push_back(0x85); // i64.xor
-    return;
+    return out.size() <= 4096;
   }
-  emit_node(out, p, node.left);
-  emit_node(out, p, node.right);
+  if (!emit_node(out, p, node.left, depth+1) ||
+      !emit_node(out, p, node.right, depth+1)) return false;
   switch (node.op) {
     case Op::add: out.push_back(0x7c); break;
     case Op::sub: out.push_back(0x7d); break;
@@ -79,8 +81,9 @@ inline void emit_node(Bytes& out, const atto::forge::scalar::Parsed& p,
     case Op::shl: out.push_back(0x86); break;
     case Op::lshr: out.push_back(0x88); break;
     case Op::ashr: out.push_back(0x87); break;
-    default: break; // excluded by validate_ast; never reached
+    default: return false; // fail closed on any unknown operation
   }
+  return out.size() <= 4096;
 }
 inline void body(Bytes& code, const Bytes& instructions) {
   Bytes payload{0x00}; // zero local declarations
@@ -120,7 +123,7 @@ inline void body(Bytes& code, const Bytes& instructions) {
   detail::section(mod, 7, exports);
   Bytes code{0x03};
   Bytes main;
-  detail::emit_node(main, parsed, parsed.root);
+  if (!detail::emit_node(main, parsed, parsed.root)) return std::nullopt;
   detail::body(code, main);
   // Test-only memory probes: bounds enforced by the Wasm engine.
   detail::body(code, Bytes{0x20,0x00,0x2d,0x00,0x00}); // peek
