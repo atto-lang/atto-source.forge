@@ -7,11 +7,15 @@
 
 namespace atto::forge::scalar {
 enum class Kind {
-  name, integer, lparen, rparen, lbrace, rbrace, colon, semicolon,
+  name, integer, quoted, lparen, rparen, lbrace, rbrace, lbracket, rbracket,
+  colon, semicolon, comma, dot, assign, lt, gt, fat_arrow,
   plus, minus, star, slash, percent, bit_and, bit_or, bit_xor, tilde, shl, lshr, arrow, left_arrow, end
 };
 struct Token { Kind kind; std::size_t offset; std::size_t length; };
-enum class LexError { none, source_too_large, token_limit, unsupported_byte, unterminated_comment };
+enum class LexError {
+  none, source_too_large, token_limit, unsupported_byte, unterminated_comment,
+  unterminated_quoted, quoted_too_large
+};
 struct Lexed {
   std::vector<Token> tokens;
   LexError error = LexError::none;
@@ -76,6 +80,44 @@ inline constexpr std::size_t max_tokens = 256;
     if (is_name_start(c)) {
       kind = Kind::name;
       do { ++i; } while (i < src.size() && is_name(src[i]));
+    } else if (c == '"' || c == '\\'') {
+      // Lex, but never interpret, quoted text in the scalar compiler.
+      // Both Entry arrows and Map/Record names inside quotes remain inert.
+      // Bound the scan, reject control bytes and malformed escapes.
+      kind = Kind::quoted;
+      ++i;
+      bool closed = false;
+      while (i < src.size()) {
+        if (i - start > 4096) {
+          out.error = LexError::quoted_too_large;
+          out.error_offset = start;
+          return out;
+        }
+        const char next = src[i++];
+        if (next == c) { closed = true; break; }
+        if (next == '\\0' || next == '\\r' || next == '\\n') {
+          out.error = LexError::unsupported_byte;
+          out.error_offset = i - 1;
+          return out;
+        }
+        if (next == '\\\\') {
+          if (i == src.size() || src[i] == '\\0'
+              || src[i] == '\\r' || src[i] == '\\n') {
+            out.error = LexError::unterminated_quoted;
+            out.error_offset = start;
+            return out;
+          }
+          ++i; // Escaped code unit cannot terminate the quote.
+        }
+      }
+      if (!closed) {
+        out.error = LexError::unterminated_quoted;
+        out.error_offset = start;
+        return out;
+      }
+    } else if (c == '=' && src.substr(i, 2) == "=>") {
+      kind = Kind::fat_arrow;
+      i += 2;
     } else if (c == '-' && src.substr(i, 2) == "->") {
       kind = Kind::arrow;
       i += 2;
@@ -98,8 +140,15 @@ inline constexpr std::size_t max_tokens = 256;
         case ')': kind = Kind::rparen; break;
         case '{': kind = Kind::lbrace; break;
         case '}': kind = Kind::rbrace; break;
+        case '[': kind = Kind::lbracket; break;
+        case ']': kind = Kind::rbracket; break;
         case ':': kind = Kind::colon; break;
         case ';': kind = Kind::semicolon; break;
+        case ',': kind = Kind::comma; break;
+        case '.': kind = Kind::dot; break;
+        case '=': kind = Kind::assign; break;
+        case '<': kind = Kind::lt; break;
+        case '>': kind = Kind::gt; break;
         case '+': kind = Kind::plus; break;
         case '-': kind = Kind::minus; break;
         case '*': kind = Kind::star; break;
