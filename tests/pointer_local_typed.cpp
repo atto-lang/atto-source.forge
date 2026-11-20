@@ -45,7 +45,7 @@ int main() {
   auto max_i64 = parse_source(std::string(exact).replace(
       std::string(exact).find("= 42;"), 5, "= 9223372036854775807;"));
   assert(max_i64.ok() && max_i64.local &&
-         max_i64.local->initial == INT64_MAX);
+         max_i64.local->initial == std::numeric_limits<std::int64_t>::max());
   auto overflow = parse_source(std::string(exact).replace(
       std::string(exact).find("= 42;"), 5, "= 9223372036854775808;"));
   assert(!overflow.ok() && overflow.error == ParseError::literal_out_of_range);
