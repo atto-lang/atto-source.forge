@@ -8,7 +8,7 @@
 namespace atto::forge::scalar {
 enum class Kind {
   name, integer, lparen, rparen, lbrace, rbrace, colon, semicolon,
-  plus, minus, star, slash, percent, bit_and, bit_or, bit_xor, tilde, shl, lshr, arrow, left_arrow, end
+  plus, minus, star, slash, percent, bit_and, bit_or, bit_xor, tilde, shl, lshr, arrow, left_arrow, comma, greater, end
 };
 struct Token { Kind kind; std::size_t offset; std::size_t length; };
 enum class LexError { none, source_too_large, token_limit, unsupported_byte, unterminated_comment };
@@ -99,6 +99,8 @@ inline constexpr std::size_t max_tokens = 256;
         case '{': kind = Kind::lbrace; break;
         case '}': kind = Kind::rbrace; break;
         case ':': kind = Kind::colon; break;
+        case ',': kind = Kind::comma; break;
+        case '>': kind = Kind::greater; break;
         case ';': kind = Kind::semicolon; break;
         case '+': kind = Kind::plus; break;
         case '-': kind = Kind::minus; break;
