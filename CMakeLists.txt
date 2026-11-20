@@ -179,3 +179,17 @@ add_test(NAME scalar_check_only
     "-DFORGE=$<TARGET_FILE:forge_scalar>"
     "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/scalar-check"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/scalar_check.cmake")
+
+# ByteBuffer v1 native endian/bounds primitive (host-only, not Atto guest).
+add_executable(byte_buffer_v1_test tests/byte_buffer_v1.cpp)
+target_link_libraries(byte_buffer_v1_test PRIVATE atto_forge_checked_i64)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(byte_buffer_v1_test PRIVATE -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(byte_buffer_v1_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(byte_buffer_v1_test PRIVATE -fsanitize=address,undefined)
+  endif()
+elseif(MSVC)
+  target_compile_options(byte_buffer_v1_test PRIVATE /UNDEBUG)
+endif()
+add_test(NAME byte_buffer_v1_test COMMAND byte_buffer_v1_test)
