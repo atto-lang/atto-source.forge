@@ -53,3 +53,47 @@ compile_run(bad_value "73" "" "E_BUFFER_VALUE\n")
 reject_source(immutable "E_ALLOC_IMMUTABLE")
 reject_source(direct_owned "E_SEALED_ALLOC")
 reject_source(invalid_import "E_ALLOC_IMPORT")
+
+# Production-default entry is denied: the generated host principal is test-only.
+set(no_optin "${OUT_DIR}/no-optin.cpp")
+file(REMOVE "${no_optin}")
+execute_process(COMMAND "${FORGE_ALLOC}"
+  "${ROOT}/fixtures/alloc-guest-v1/equal.atto" -o "${no_optin}"
+  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+if(NOT "${rc}" STREQUAL "2" OR EXISTS "${no_optin}" OR
+   NOT "${err}" STREQUAL "E_ALLOC_EXPERIMENTAL_REQUIRED\n")
+  message(FATAL_ERROR "Ungated allocation guest compiler accepted a nonexperimental request")
+endif()
+
+# A symlink output must never redirect the compiler into an existing file.
+set(protected "${OUT_DIR}/protected.txt")
+set(alias "${OUT_DIR}/alias.cpp")
+file(WRITE "${protected}" "do not overwrite")
+file(REMOVE "${alias}")
+file(CREATE_LINK "${protected}" "${alias}" SYMBOLIC RESULT link_result)
+if(NOT "${link_result}" STREQUAL "0")
+  message(FATAL_ERROR "Cannot create output-symlink regression")
+endif()
+execute_process(COMMAND "${FORGE_ALLOC}" --experimental-host-profile
+  "${ROOT}/fixtures/alloc-guest-v1/equal.atto" -o "${alias}"
+  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+file(READ "${protected}" protected_bytes)
+if(NOT "${rc}" STREQUAL "2" OR
+   NOT "${protected_bytes}" STREQUAL "do not overwrite" OR NOT IS_SYMLINK "${alias}")
+  message(FATAL_ERROR "Allocation compiler followed a symlink output")
+endif()
+file(REMOVE "${alias}")
+
+# Source size budget rejects before emitting any guest artifact.
+set(oversized "${OUT_DIR}/oversized.atto")
+set(oversized_cpp "${OUT_DIR}/oversized.cpp")
+string(REPEAT "x" 17000 huge)
+file(WRITE "${oversized}" "${huge}")
+file(REMOVE "${oversized_cpp}")
+execute_process(COMMAND "${FORGE_ALLOC}" --experimental-host-profile
+  "${oversized}" -o "${oversized_cpp}"
+  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+if(NOT "${rc}" STREQUAL "2" OR EXISTS "${oversized_cpp}" OR
+   NOT "${err}" STREQUAL "E_ALLOC_LIMIT\n")
+  message(FATAL_ERROR "Allocation compiler admitted over-budget source")
+endif()
