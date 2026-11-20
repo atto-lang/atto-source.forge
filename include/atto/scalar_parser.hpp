@@ -11,7 +11,7 @@
 #include <vector>
 
 namespace atto::forge::scalar {
-enum class Op { literal, add, sub, mul, div, rem, neg, band, bor, bxor, bnot, shl, lshr, ashr };
+enum class Op { literal, add, sub, mul, div, rem, neg, band, bor, bxor, bnot, shl, lshr, ashr, seq };
 struct Node {
   Op op;
   std::size_t left = 0, right = 0;
@@ -80,6 +80,7 @@ inline constexpr int max_parse_depth = 24;
       case Op::shl:
       case Op::lshr:
       case Op::ashr:
+      case Op::seq:
         if (node.left >= index || node.right >= index) return false;
         pending.push_back(node.left);
         pending.push_back(node.right);
@@ -215,6 +216,23 @@ class Parser {
     }
     return lhs;
   }
+  // Restricted scalar sequences: each prefix remains an AST dependency on
+  // the tail, preserving checked traps and source order; max 16 elements.
+  [[nodiscard]] std::optional<std::size_t> sequence_body(int depth) {
+    if (depth > max_parse_depth) { fail(ParseError::depth_limit); return std::nullopt; }
+    auto last = expr(depth + 1);
+    if (!last) return std::nullopt;
+    std::size_t count = 1;
+    while (take(Kind::comma)) {
+      if (++count > 16) { fail(ParseError::node_limit); return std::nullopt; }
+      auto next = expr(depth + 1);
+      if (!next) return std::nullopt;
+      last = append(Node{Op::seq, *last, *next, 0});
+      if (!last) return std::nullopt;
+    }
+    if (!take(Kind::rparen)) { fail(ParseError::syntax); return std::nullopt; }
+    return last;
+  }
   [[nodiscard]] std::optional<std::size_t> unary(int depth) {
     if (depth > max_parse_depth) { fail(ParseError::depth_limit); return std::nullopt; }
     if (take(Kind::plus)) return unary(depth + 1);
@@ -242,7 +260,12 @@ class Parser {
       if (!rhs) return std::nullopt;
       return append(Node{Op::neg, *rhs, 0, 0});
     }
+    if (name("seq")) {
+      if (!take(Kind::lparen)) { fail(ParseError::syntax); return std::nullopt; }
+      return sequence_body(depth + 1);
+    }
     if (take(Kind::lparen)) {
+      if (take(Kind::greater)) return sequence_body(depth + 1);
       auto inside = expr(depth + 1);
       if (!inside) return std::nullopt;
       if (!take(Kind::rparen)) { fail(ParseError::syntax); return std::nullopt; }
