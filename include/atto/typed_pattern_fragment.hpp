@@ -111,7 +111,8 @@ inline constexpr std::size_t max_dp_states = (max_items + 1) * (max_input_elemen
 
 [[nodiscard]] inline Error atom(std::string_view text, Type expected, Atom& out) {
   text = trim(text);
-  if (text.find(" as ") != std::string_view::npos) return Error::binding;
+  if (!(text.size()>1 && text.front()=='"' && text.back()=='"') &&
+      text.find(" as ") != std::string_view::npos) return Error::binding;
   if (text == "_") { out.kind = Kind::one; return Error::none; }
   if (text == "...") { out.kind = Kind::rest; return Error::none; }
   if (text.starts_with("is ")) {
