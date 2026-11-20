@@ -20,7 +20,7 @@ int main() {
   auto nested_mutex = parse_source("pub fnc main(): int {return Mutex<Option<int>>(0); }");
   assert(!nested_mutex.ok() && nested_mutex.error == ParseError::new_required);
   auto only_comment_mutex = parse_source(
-      "// Mutex<int>(0) is commented out\\nfnc main():int{return 42;}");
+      "// Mutex<int>(0) is commented out\nfnc main():int{return 42;}");
   assert(only_comment_mutex.ok());
 
   auto malformed_comment = parse_source("fnc main(): int {return 1; /*");
