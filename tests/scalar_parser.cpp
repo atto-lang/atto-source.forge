@@ -1,3 +1,6 @@
+#ifdef NDEBUG
+#undef NDEBUG // Keep admission assertions enabled in Release CMake builds.
+#endif
 #include "atto/scalar_parser.hpp"
 #include <cassert>
 #include <limits>
@@ -5,6 +8,9 @@
 using namespace atto::forge;
 using namespace atto::forge::scalar;
 int main() {
+  int assert_witness = 0;
+  assert(++assert_witness == 1);
+  if (assert_witness != 1) return 99; // Fail if assertions were compiled out.
   auto commented = parse_source(
       "/* module header */ fnc main(): int { // body\n"
       " return 8 / /* denominator */ 2; /* tail */ }");
