@@ -14,6 +14,13 @@ int main() {
     assert(parsed.error == ParseError::ownership_bang_unsupported);
     assert(parse_error_name(parsed.error) == "E_OWNERSHIP_BANG_UNSUPPORTED");
   }
+  // Nested lexical comments are discarded before ownership admission
+  // and must not alter the AST of the following real scalar expression.
+  const auto safe_nested = parse_source(
+      "fnc main(): int { return /* outer /* ref!p */ still outer */ 42; }");
+  assert(safe_nested.ok());
+  assert(safe_nested.nodes.at(safe_nested.root).op == Op::literal);
+  assert(safe_nested.nodes.at(safe_nested.root).value == 42);
   auto commented = parse_source(
       "/* module header */ fnc main(): int { // body\n"
       " return 8 / /* denominator */ 2; /* tail */ }");
