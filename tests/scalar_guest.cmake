@@ -143,3 +143,18 @@ verify_guest(infer_bare_prefix "0" "42\n" "")
 verify_guest(seq_scalar "0" "42\n" "")
 verify_guest(seq_divzero "71" "" "E_DIVZERO\n")
 verify_guest(seq_overflow "70" "" "E_OVERFLOW\n")
+
+
+# The combined scoped-seq frontend must fail closed for channel I/O and
+# malformed sequence delimiters, even with a pre-existing output artifact.
+foreach(seq_expr IN ITEMS "seq(1 << 2, 42)" "seq(1 >> 2, 42)" "seq(1,)")
+  set(seq_input "${OUT_DIR}/seq-rejected.atto")
+  set(seq_output "${OUT_DIR}/seq-rejected.cpp")
+  file(WRITE "${seq_input}" "fnc main(): int {return ${seq_expr};}\n")
+  file(WRITE "${seq_output}" "stale output must be deleted")
+  execute_process(COMMAND "${FORGE}" "${seq_input}" -o "${seq_output}"
+    RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+  if(NOT "${rc}" STREQUAL "2" OR EXISTS "${seq_output}")
+    message(FATAL_ERROR "seq improperly admitted channel I/O, bad comma, or left an artifact: ${seq_expr}")
+  endif()
+endforeach()
