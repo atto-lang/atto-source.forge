@@ -278,5 +278,25 @@ if(NOT "${rc}" STREQUAL "2" OR NOT "${kept}" STREQUAL "do not replace"
   message(FATAL_ERROR "Forge pipeline publisher followed temporary symlink")
 endif()
 file(REMOVE "${guard_temp}")
+# A preexisting ordinary .part file must be neither truncated nor removed.
+file(WRITE "${guard_temp}" "do not truncate")
+execute_process(COMMAND "${FORGE}" "${safe_source}" -o "${guard}"
+  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+file(READ "${guard_temp}" kept)
+if(NOT "${rc}" STREQUAL "2" OR NOT "${kept}" STREQUAL "do not truncate"
+   OR EXISTS "${guard}")
+  message(FATAL_ERROR "Forge functional writer truncated a competing regular .part file")
+endif()
+file(REMOVE "${guard_temp}")
+
+# Private file mode is required for emitted code while still in a potentially
+# multi-tenant build workspace. Linux runner's stat format is deterministic.
+if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux")
+  execute_process(COMMAND stat -c "%a" "${relative_cpp}"
+    RESULT_VARIABLE rc OUTPUT_VARIABLE mode OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(NOT "${rc}" STREQUAL "0" OR NOT "${mode}" STREQUAL "600")
+    message(FATAL_ERROR "generated native source must be mode 0600 (saw ${mode})")
+  endif()
+endif()
 
 message(STATUS "ATTO_FORGE_FUNCTIONAL_GUEST_MATRIX=7 native_guests_including_min_overflow_and_relative_path 18 negative_no_artifacts")
