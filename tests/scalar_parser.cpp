@@ -43,6 +43,24 @@ int main() {
     "fnc main() -> string {return 42;}",
     "int -> main() {return 42;}"
   }) assert(!parse_source(bad_signature).ok());
+  // Channel direction syntax must never lower as i64 shifts or a
+  // synthetic scalar read; preserve a deterministic error before guest emit.
+  for (const auto* io : {
+    "fnc main(): int { return 1 >>; }",
+    "fnc main(): int { return (1 >>); }",
+    "fnc main(): int { return 1 << 2; }",
+    "fnc main(): int { return 1 >> 2; }",
+    "fnc main(): int { return << 1; }"
+  }) {
+    const auto denied = parse_source(io);
+    assert(!denied.ok());
+    assert(denied.error == ParseError::io_direction_unsupported);
+    assert(parse_error_name(denied.error) == "E_IO_DIRECTION_UNSUPPORTED");
+  }
+  // Numeric triple-angle shifts remain normal scalar i64 operations.
+  const auto numeric_shift = parse_source(
+      "fnc main(): int { return 1 <<< 3 | 8 >>> 2; }");
+  assert(numeric_shift.ok());
   auto a = parse_source("pub fnc main(): int { return 4 + 5 * (6 - 1); }");
   assert(a.ok() && a.nodes[a.root].op == Op::add);
   assert(a.nodes.size() == 7);
