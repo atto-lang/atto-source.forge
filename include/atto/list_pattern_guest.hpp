@@ -310,9 +310,18 @@ struct Compiled {
   std::string source;
   [[nodiscard]] bool ok() const noexcept { return candidate && error==Error::none; }
 };
-[[nodiscard]] inline bool is_candidate(std::string_view source) noexcept {
-  return source.find("List<int>")!=std::string_view::npos ||
-         source.find("List.of(")!=std::string_view::npos;
+[[nodiscard]] inline bool is_candidate(std::string_view source) {
+  // Inspect actual tokens, not raw text: an existing scalar program must
+  // not switch compiler profiles merely because a comment says "List<int>".
+  const auto tokens=lex(source);
+  const auto& ts=tokens.tokens;
+  for (std::size_t i=0;i+3<ts.size();++i) {
+    if (ts[i].text=="List" && ts[i+1].text=="<" &&
+        ts[i+2].text=="int" && ts[i+3].text==">") return true;
+    if (ts[i].text=="List" && ts[i+1].text=="." &&
+        ts[i+2].text=="of" && ts[i+3].text=="(") return true;
+  }
+  return false;
 }
 [[nodiscard]] inline std::string int_text(std::int64_t value) {
   return value==std::numeric_limits<std::int64_t>::min() ?
