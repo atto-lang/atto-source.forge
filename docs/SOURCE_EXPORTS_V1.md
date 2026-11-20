@@ -59,3 +59,25 @@ sanitizer builds. Record exact-head *executed* CTest and compiled guests
 separately. Empty steps and no workflow runs are **NOT_EXECUTED**,
 never a pass. Do not merge or claim full compiler/guest conformance until
 all applicable material gates and independent reviews are satisfied.
+
+
+## Security hardening, 2026-11-20
+
+An adversarial native test demonstrated that the original metadata validator
+accepted an invalid `SourceExportScope` enum value. The updated resolver
+now validates every scope and origin enum, rejects forged implicit-`pub`
+aliases, rejects contradictory explicit-private/public declarations, and
+bounds external names to the declared 256-byte source identifier limit.
+
+`tests/export_resolution_adversarial_v1.cpp` is a registered native CTest
+target with 300 deterministic export-order permutations, invalid enum and
+identity tests, duplicate and collision rejection, and 1024/1025 declaration
+admission boundaries. The compiler-backed `export_semantics_v1_test` also
+contains invalid-scope/origin direct-IR verification tests. The latter
+is not counted as passed until executed with the actual compiler sources.
+
+Local independently executed *component-only* CMake/CTest matrix using
+SHA-matched Git blobs: GCC 14.2 / Clang 17, Release optimized and ASan/UBSan
+(O1), two CTests in each configuration, **8/8 PASS**. This does *not*
+substitute for full-source exact-head CI, compiled guest tests, or
+authenticating external package visibility.
