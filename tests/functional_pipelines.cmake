@@ -4,6 +4,27 @@ if(NOT DEFINED ROOT OR NOT DEFINED FORGE OR NOT DEFINED CXX OR NOT DEFINED OUT_D
   message(FATAL_ERROR "missing required Forge functional guest inputs")
 endif()
 file(MAKE_DIRECTORY "${OUT_DIR}")
+
+# Exact source-fixture Git blobs copied from atto-spec#121. A drifted
+# fixture must fail before C++ emission, even if the output looks correct.
+function(assert_pinned_blob file expected)
+  set(source "${ROOT}/fixtures/functional-pipelines-v1/${file}.atto")
+  execute_process(COMMAND git hash-object "${source}"
+    WORKING_DIRECTORY "${ROOT}" RESULT_VARIABLE rc
+    OUTPUT_VARIABLE hash ERROR_VARIABLE err OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(NOT "${rc}" STREQUAL "0" OR NOT "${hash}" STREQUAL "${expected}")
+    message(FATAL_ERROR "canonical Atto fixture blob mismatch: ${file}, observed=${hash}, error=${err}")
+  endif()
+endfunction()
+assert_pinned_blob(block-body 4a2eab34e1ba39709198afda19a71cfce67f4030)
+assert_pinned_blob(inline-arrow-body ec25b1ce607afa7d30dd5315eace12ff42f0c4d6)
+assert_pinned_blob(reverse-associative e71023cd0cc258c9650167e979c45ffb5162d9f7)
+assert_pinned_blob(mixed-parenthesized 0fcdce8f0b1381125d0148122441c81dfb2a0abf)
+assert_pinned_blob(reject-return-type 74b2f398a72b41407039ac68cdc44b23b7ece125)
+assert_pinned_blob(reject-unterminated-body 1d84e3f31fee46a73a6c111e406ebb883e5645b2)
+assert_pinned_blob(reject-ambiguous-mixed-direction 7e579225f25720da5255ecb47640831be6e3a1c7)
+assert_pinned_blob(reject-reverse-mixed-unparenthesized 2727d012e5482c407c2e642b3612144e67fad767)
+
 set(guest_flags)
 if(SANITIZERS)
   list(APPEND guest_flags -fsanitize=address,undefined -fno-omit-frame-pointer)
