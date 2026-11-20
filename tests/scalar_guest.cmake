@@ -137,3 +137,9 @@ verify_guest(infer_arrow "0" "42\n" "")
 verify_guest(infer_block "0" "42\n" "")
 verify_guest(infer_prefix "0" "42\n" "")
 verify_guest(infer_bare_prefix "0" "42\n" "")
+
+
+# Generated real native guests: prefix traps cannot be optimized away.
+verify_guest(seq_scalar "0" "42\n" "")
+verify_guest(seq_divzero "71" "" "E_DIVZERO\n")
+verify_guest(seq_overflow "70" "" "E_OVERFLOW\n")
