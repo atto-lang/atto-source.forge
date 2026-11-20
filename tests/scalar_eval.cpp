@@ -64,4 +64,13 @@ int main() {
   bad_unary.nodes.back().right = 1;
   assert(!validate_ast(bad_unary));
   assert(evaluate(bad_unary).error == EvalError::invalid_ast);
+
+  for (const auto* e : {"seq(1,2,42)","(> 3,4,42)","seq(42)",
+          "seq(1,seq(2,42))","seq(1,2)+40","(> 3,(> 4,5),42)"}) {
+    const auto result = evaluate_source(program(e));
+    assert(result.ok() && *result.value == 42);
+  }
+  assert(evaluate_source(program("seq(1/0,42)")).error == EvalError::divide_by_zero);
+  assert(evaluate_source(program("seq(9223372036854775807+1,42)")).error == EvalError::overflow);
+
 }
