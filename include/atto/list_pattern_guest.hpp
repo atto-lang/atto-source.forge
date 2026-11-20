@@ -254,7 +254,7 @@ class Parser {
  public:
   explicit Parser(const std::vector<Token>& tokens):ts_(tokens){}
   [[nodiscard]] Parsed parse() {
-    eat("pub");
+    if (eat("pub")) { /* explicit visibility is accepted */ }
     if (!need("fnc") || !need("main") || !need("(") ||
         !need(")") || !need(":") || !need("int") || !need("{") ||
         !need("val")) return out_;
@@ -315,7 +315,8 @@ struct Compiled {
          source.find("List.of(")!=std::string_view::npos;
 }
 [[nodiscard]] inline std::string int_text(std::int64_t value) {
-  return value==INT64_MIN ? "INT64_MIN" : std::to_string(value);
+  return value==std::numeric_limits<std::int64_t>::min() ?
+      "std::numeric_limits<std::int64_t>::min()" : std::to_string(value);
 }
 [[nodiscard]] inline std::string emit(const Program& p) {
   std::string out="#include <atto/checked_i64.hpp>\n"
@@ -325,7 +326,7 @@ struct Compiled {
   out+="  const std::array<atto::forge::i64,"+std::to_string(p.list.size())+"> values{";
   for (std::size_t i=0;i<p.list.size();++i) {
     if (i) out+=",";
-    if (p.list[i]==INT64_MIN) out+="std::numeric_limits<std::int64_t>::min()";
+    if (p.list[i]==std::numeric_limits<std::int64_t>::min()) out+="std::numeric_limits<std::int64_t>::min()";
     else out+=std::to_string(p.list[i]);
   }
   out+="};\n";
@@ -361,9 +362,10 @@ struct Compiled {
       };
       out+="      auto total=atto::forge::i64{"+operand(terms[0])+"};\n";
       for (std::size_t i=1;i<terms.size();++i) {
-        out+="      auto sum=atto::forge::checked_add(total,"+operand(terms[i])+
-             ");\n      if(!sum){std::fputs(\"E_OVERFLOW\\n\",stderr);return 70;}\n"
-             "      total=*sum;\n";
+        const auto temp="sum"+std::to_string(i);
+        out+="      auto "+temp+"=atto::forge::checked_add(total,"+operand(terms[i])+
+             ");\n      if(!"+temp+"){std::fputs(\"E_OVERFLOW\\n\",stderr);return 70;}\n"
+             "      total=*"+temp+";\n";
       }
       out+="      std::printf(\"%lld\\n\",static_cast<long long>(total));\n"
            "      return 0;\n";
