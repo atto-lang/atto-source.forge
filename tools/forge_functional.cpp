@@ -2,6 +2,7 @@
 // Existing forge_scalar (single-expression frontend) remains unchanged.
 // No Python bootstrap, host-side guest evaluation, or raw guest-source output.
 #include <atto/checked_i64.hpp>
+#include <algorithm>
 #include <charconv>
 #include <cstdint>
 #include <filesystem>
@@ -361,7 +362,9 @@ void safe_target(const fs::path& source, const fs::path& output) {
   std::error_code ec;
   if (!fs::is_regular_file(source, ec) || ec || fs::is_symlink(source, ec) || ec) fail("E_PATH");
   ec.clear();
-  if (fs::exists(output, ec) || ec || fs::is_symlink(output, ec) || ec) fail("E_OUTPUT");
+  const auto status = fs::symlink_status(output, ec);
+  if (ec != std::errc::no_such_file_or_directory &&
+      (ec || fs::exists(status) || fs::is_symlink(status))) fail("E_OUTPUT");
   if (source == output) fail("E_PATH");
   auto parent = output.parent_path();
   if (parent.empty() || !fs::is_directory(parent, ec) || ec || fs::is_symlink(parent, ec) || ec)
@@ -395,7 +398,10 @@ int main(int argc, char** argv) {
     // Refuse output replacement; secure directory-descriptor-relative
     // publication is a separate hardening gate for multi-tenant hosts.
     auto tmp = fs::path(output.string() + ".part");
-    if (fs::exists(tmp, ec) || ec || fs::is_symlink(tmp, ec) || ec) fail("E_OUTPUT");
+    ec.clear();
+    const auto tmp_status = fs::symlink_status(tmp, ec);
+    if (ec != std::errc::no_such_file_or_directory &&
+        (ec || fs::exists(tmp_status) || fs::is_symlink(tmp_status))) fail("E_OUTPUT");
     {
       std::ofstream file(tmp, std::ios::binary | std::ios::trunc);
       if (!file) fail("E_OUTPUT");
