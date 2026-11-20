@@ -410,8 +410,19 @@ int main(int argc, char** argv) {
       file.flush();
       if (!file) { fs::remove(tmp, ec); fail("E_OUTPUT"); }
     }
-    fs::rename(tmp, output, ec);
-    if (ec) { fs::remove(tmp, ec); fail("E_OUTPUT"); }
+    // Publication must NEVER replace an output planted after preflight.
+    // Temp/output reside in the same directory and filesystem; a hard-link
+    // create is an atomic no-overwrite commit on our supported POSIX runner.
+    ec.clear();
+    fs::create_hard_link(tmp, output, ec);
+    if (ec) { ec.clear(); fs::remove(tmp, ec); fail("E_OUTPUT"); }
+    ec.clear();
+    fs::remove(tmp, ec);
+    if (ec) {
+      std::error_code rollback;
+      fs::remove(output, rollback);
+      fail("E_OUTPUT_CLEANUP");
+    }
     return 0;
   } catch (const Reject& e) {
     std::cerr << e.code << '\n';
