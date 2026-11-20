@@ -77,6 +77,21 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 add_test(NAME scalar_lexer_test COMMAND scalar_lexer_test)
 
+# Typed compiler-only DATA graph planner (no executable pipe ABI yet).
+# Keep assertions enabled and test under native sanitizers when requested.
+add_executable(directed_pipe_plan_test tests/directed_pipe_plan.cpp)
+target_link_libraries(directed_pipe_plan_test PRIVATE atto_forge_checked_i64)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(directed_pipe_plan_test PRIVATE -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(directed_pipe_plan_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(directed_pipe_plan_test PRIVATE -fsanitize=address,undefined)
+  endif()
+elseif(MSVC)
+  target_compile_options(directed_pipe_plan_test PRIVATE /UNDEBUG)
+endif()
+add_test(NAME directed_pipe_plan_test COMMAND directed_pipe_plan_test)
+
 # Strict, bounded native scalar AST parser; no guest execution claim.
 add_executable(scalar_parser_test tests/scalar_parser.cpp)
 target_link_libraries(scalar_parser_test PRIVATE atto_forge_checked_i64)
