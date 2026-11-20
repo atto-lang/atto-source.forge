@@ -30,6 +30,17 @@ int main() {
       denied(std::string("fnc main():int{return 42;}//") + control);
       denied(std::string("fnc main():int{val s = \"") + control + "\";return 42;}");
     }
+    for (const char* op : {"trap!", "throw!", "raise!", "panic!"}) {
+      const auto source = std::string("fnc main():int{return ") + op + " value;}";
+      bool rejected = false;
+      try { (void)oresforge::parse_source(source); }
+      catch (const std::runtime_error& error) {
+        if (std::string_view(error.what()).find("EXCEPTION_BANG_BACKEND_UNSUPPORTED")
+              == std::string_view::npos) throw;
+        rejected = true;
+      }
+      if (!rejected) throw std::runtime_error("Forge accepted unsupported bang exception");
+    }
     oresforge::source::validate_utf8("fnc main():int{\r\n\treturn 42;\r\n}");
     std::cout << "source terminal-control admission passed\n";
     return 0;
