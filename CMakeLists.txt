@@ -194,6 +194,15 @@ elseif(MSVC)
 endif()
 add_test(NAME byte_buffer_v1_test COMMAND byte_buffer_v1_test)
 
+# Compare complete canonical source bytes before any native build.
+# Expected SHA-256 values are from atto-common-source PR #30.
+file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/include/atto/tenant_bytes_v1.hpp" ATTO_SHARED_ALLOC_HEADER_SHA)
+file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/tests/tenant_bytes_v1.cpp" ATTO_SHARED_ALLOC_TEST_SHA)
+if(NOT ATTO_SHARED_ALLOC_HEADER_SHA STREQUAL "9352a8513f3362e4fdf305e3e18223b11f44b9ca9c6d6a56ff7d9fe1f7d9b45c" OR
+   NOT ATTO_SHARED_ALLOC_TEST_SHA STREQUAL "2cc2293dd6fee073afeb420423da2ad658e4d5f3fd31577d829f08461e3f5319")
+  message(FATAL_ERROR "SHARED_ATTO_ALLOC_SOURCE_DRIFT: sync exact reviewed common-source bytes")
+endif()
+
 # Canonical shared C++20 allocator host source, pinned to atto-common-source #30.
 # No Atto guest/runtime/TenantVM certification is implied by this CTest.
 add_executable(tenant_bytes_v1_test tests/tenant_bytes_v1.cpp)
