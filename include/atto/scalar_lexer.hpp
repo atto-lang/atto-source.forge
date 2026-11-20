@@ -80,7 +80,7 @@ inline constexpr std::size_t max_tokens = 256;
     if (is_name_start(c)) {
       kind = Kind::name;
       do { ++i; } while (i < src.size() && is_name(src[i]));
-    } else if (c == '"' || c == '\\'') {
+    } else if (c == '"' || c == '\'') {
       // Lex, but never interpret, quoted text in the scalar compiler.
       // Both Entry arrows and Map/Record names inside quotes remain inert.
       // Bound the scan, reject control bytes and malformed escapes.
@@ -95,14 +95,14 @@ inline constexpr std::size_t max_tokens = 256;
         }
         const char next = src[i++];
         if (next == c) { closed = true; break; }
-        if (next == '\\0' || next == '\\r' || next == '\\n') {
+        if (next == '\0' || next == '\r' || next == '\n') {
           out.error = LexError::unsupported_byte;
           out.error_offset = i - 1;
           return out;
         }
-        if (next == '\\\\') {
-          if (i == src.size() || src[i] == '\\0'
-              || src[i] == '\\r' || src[i] == '\\n') {
+        if (next == '\\') {
+          if (i == src.size() || src[i] == '\0'
+              || src[i] == '\r' || src[i] == '\n') {
             out.error = LexError::unterminated_quoted;
             out.error_offset = start;
             return out;
