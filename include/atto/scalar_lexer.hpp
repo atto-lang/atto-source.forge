@@ -11,7 +11,7 @@ enum class Kind {
   plus, minus, star, slash, percent, bit_and, bit_or, bit_xor, tilde, shl, lshr, arrow, left_arrow, end
 };
 struct Token { Kind kind; std::size_t offset; std::size_t length; };
-enum class LexError { none, source_too_large, token_limit, unsupported_byte, unterminated_comment };
+enum class LexError { none, source_too_large, token_limit, unsupported_byte, unterminated_comment, ownership_bang_unsupported };
 struct Lexed {
   std::vector<Token> tokens;
   LexError error = LexError::none;
@@ -76,6 +76,23 @@ inline constexpr std::size_t max_tokens = 256;
     if (is_name_start(c)) {
       kind = Kind::name;
       do { ++i; } while (i < src.size() && is_name(src[i]));
+      // A typed ownership/checked-handle operation must not silently pass
+      // through the stage-0 scalar emitter. Classify it before the generic
+      // unsupported '!' byte, without treating != or !eq as ownership.
+      const auto word = src.substr(start, i - start);
+      const bool ownership_verb =
+          word == "copy" || word == "take" || word == "borrow" ||
+          word == "share" || word == "pin" || word == "drop" ||
+          word == "ref" || word == "deref" || word == "unref";
+      const bool comparison =
+          src.substr(i, 2) == "!=" ||
+          (src.substr(i, 3) == "!eq" &&
+           (i + 3 == src.size() || !is_name(src[i + 3])));
+      if (ownership_verb && i < src.size() && src[i] == '!' && !comparison) {
+        out.error = LexError::ownership_bang_unsupported;
+        out.error_offset = start;
+        return out;
+      }
     } else if (c == '-' && src.substr(i, 2) == "->") {
       kind = Kind::arrow;
       i += 2;
