@@ -142,6 +142,17 @@ add_test(NAME scalar_guest_conformance
     "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/scalar-conformance"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/scalar_conformance.cmake")
 
+# The exact Java/JS/11-backend corpus is compiled to 15 restricted Forge native
+# scalar guest binaries, not merely interpreted by host arithmetic functions.
+add_test(NAME shared_checked_i64_native_guests
+  COMMAND "${CMAKE_COMMAND}"
+    "-DROOT=${CMAKE_CURRENT_SOURCE_DIR}"
+    "-DCXX=${CMAKE_CXX_COMPILER}"
+    "-DSANITIZERS=${ATTO_FORGE_SANITIZERS}"
+    "-DFORGE=$<TARGET_FILE:forge_scalar>"
+    "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/shared-checked-i64-guests"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/shared_checked_i64_guests.cmake")
+
 # Failed compiler inputs yield typed bounded diagnostics, no echoed source.
 add_test(NAME scalar_cli_diagnostics
   COMMAND "${CMAKE_COMMAND}"
