@@ -135,7 +135,7 @@ struct Parser {
       std::string symbol = name();
       if (peek() == "(")
         lhs = Expr{Expr::Kind::call, 0, std::move(symbol), arguments(depth)};
-      else lhs = Expr{Expr::Kind::ref, 0, std::move(symbol)};
+      else lhs = Expr{Expr::Kind::ref, 0, std::move(symbol), {}};
     }
     std::string current_direction = direction;
     while (true) {
