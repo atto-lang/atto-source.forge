@@ -1,0 +1,92 @@
+name: Forge owned F32 CPU graph exact-head
+
+on:
+  push:
+    branches:
+      - feat/forge-owned-f32-cpu-region-v1-20261016
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-f32:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: ['g++', 'clang++']
+        mode: ['release', 'asan-ubsan', 'tsan']
+        exclude:
+          - compiler: 'clang++'
+            mode: 'tsan'
+    steps:
+      - name: Checkout exact private Forge source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Verify original repository and exact SHA
+        shell: bash
+        env:
+          EXPECTED: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED"
+          test "$(git remote get-url origin | sed -E 's#^https://github.com/##; s#\.git$##')" = 'ores-truffle-oreslang/oreslang-source.forge'
+      - name: Build and execute the production owned-F32 header tests
+        shell: bash
+        env:
+          CXX: ${{ matrix.compiler }}
+          BUILD_MODE: ${{ matrix.mode }}
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1
+          TSAN_OPTIONS: halt_on_error=1
+        run: |
+          set -euo pipefail
+          bash scripts/test-dop-owned-f32-graph-native.sh
+          printf '%s\n' 'SCOPE=owned F32 + graph security + one-shot I64 bridge direct suite; full Forge CMake/CTest follows'
+
+      - name: Compile full Forge compiler and run all registered CTests
+        shell: bash
+        env:
+          CXX: ${{ matrix.compiler }}
+          BUILD_MODE: ${{ matrix.mode }}
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1
+          TSAN_OPTIONS: halt_on_error=1
+        run: |
+          set -euo pipefail
+          extra=()
+          case "$BUILD_MODE" in
+            asan-ubsan)
+              extra+=("-DCMAKE_CXX_FLAGS=-O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined")
+              extra+=("-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined")
+              ;;
+            tsan)
+              extra+=("-DCMAKE_CXX_FLAGS=-O1 -g -fno-omit-frame-pointer -fsanitize=thread")
+              extra+=("-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread")
+              ;;
+          esac
+          cmake -S . -B build-dop-full -DCMAKE_CXX_COMPILER="$CXX" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON "${extra[@]}"
+          cmake --build build-dop-full --parallel 2
+          ctest --test-dir build-dop-full --output-on-failure -j2
+      - name: Create exact-head source evidence
+        shell: bash
+        env:
+          TEST_CXX: ${{ matrix.compiler }}
+          TEST_MODE: ${{ matrix.mode }}
+          TEST_RUN: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p dop-evidence
+          printf 'SOURCE_SHA=%s\nSOURCE_TREE=%s\nRUN=%s\nCOMPILER=%s\nMODE=%s\nFULL_CTEST=PASS\n' \
+            "$(git rev-parse HEAD)" "$(git rev-parse HEAD^{tree})" "$TEST_RUN" "$TEST_CXX" "$TEST_MODE" > dop-evidence/exact-source.txt
+          ctest --test-dir build-dop-full -N > dop-evidence/test-inventory.txt
+      - name: Upload SHA-bound native test evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: forge-dop-${{ matrix.compiler }}-${{ matrix.mode }}-${{ github.sha }}
+          path: dop-evidence/
+          if-no-files-found: error
