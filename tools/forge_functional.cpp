@@ -122,8 +122,17 @@ struct Parser {
       lhs = expr(0, depth + 1);
       need(")");
     } else if (eat("-")) {
-      Expr rhs = expr(30, depth + 1);
-      lhs = Expr{Expr::Kind::sub, 0, "", {Expr{Expr::Kind::lit, 0, "", {}}, std::move(rhs)}};
+      // -2^63 is a valid signed i64 literal, although its unsigned
+      // magnitude (2^63) does not fit in i64. Construct the MIN value
+      // directly rather than parsing +2^63 or using a UB-prone C++ negation.
+      if (peek() == "9223372036854775808") {
+        ++at;
+        lhs = Expr{Expr::Kind::lit, std::numeric_limits<i64>::min(), "", {}};
+      } else {
+        Expr rhs = expr(30, depth + 1);
+        lhs = Expr{Expr::Kind::sub, 0, "",
+                   {Expr{Expr::Kind::lit, 0, "", {}}, std::move(rhs)}};
+      }
     } else if (!peek().empty() && digit(peek().front())) {
       i64 value = 0;
       const auto& digits = peek();
@@ -289,7 +298,13 @@ struct Emitter {
     const std::string id = "t" + std::to_string(next++);
     switch (e.kind) {
       case Expr::Kind::lit:
-        line("const atto::forge::i64 " + id + " = " + std::to_string(e.number) + "LL;");
+        // C++ lexical integer literals cannot spell signed i64::MIN with
+        // a positive decimal magnitude and a later unary minus; emit it
+        // from two representable operands instead, with no overflow.
+        line("const atto::forge::i64 " + id + " = " +
+             (e.number == std::numeric_limits<i64>::min()
+               ? std::string{"(-9223372036854775807LL - 1LL)"}
+               : std::to_string(e.number) + "LL") + ";");
         return id;
       case Expr::Kind::ref: {
         const bool param = std::find(fn.params.begin(), fn.params.end(), e.name) != fn.params.end();
