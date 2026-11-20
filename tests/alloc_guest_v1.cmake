@@ -11,6 +11,8 @@ function(compile_run name want_rc want_out want_err)
   set(source "${ROOT}/fixtures/alloc-guest-v1/${name}.atto")
   set(cpp "${OUT_DIR}/${name}.cpp")
   set(binary "${OUT_DIR}/${name}.bin")
+  # Remove only owned build artifacts so repeated ctest runs are deterministic.
+  file(REMOVE "${cpp}" "${binary}")
   execute_process(COMMAND "${FORGE_ALLOC}" "${source}" -o "${cpp}"
     RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
   if(NOT "${rc}" STREQUAL "0" OR NOT EXISTS "${cpp}")
@@ -33,6 +35,7 @@ endfunction()
 function(reject_source name expected)
   set(source "${ROOT}/fixtures/alloc-guest-v1/${name}.atto")
   set(cpp "${OUT_DIR}/${name}.cpp")
+  file(REMOVE "${cpp}")
   execute_process(COMMAND "${FORGE_ALLOC}" "${source}" -o "${cpp}"
     RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
   if(NOT "${rc}" STREQUAL "2" OR EXISTS "${cpp}" OR
