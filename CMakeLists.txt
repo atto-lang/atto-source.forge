@@ -206,3 +206,17 @@ add_test(NAME list_pattern_compiled_native_guests
     "-DFORGE=$<TARGET_FILE:forge_scalar>"
     "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/list-pattern-guests"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/list_pattern_guest.cmake")
+
+# Independent source-parser/typed-LIR admission; guest execution is above.
+add_executable(list_pattern_frontend_test tests/list_pattern_frontend.cpp)
+target_link_libraries(list_pattern_frontend_test PRIVATE atto_forge_checked_i64)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(list_pattern_frontend_test PRIVATE -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(list_pattern_frontend_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(list_pattern_frontend_test PRIVATE -fsanitize=address,undefined)
+  endif()
+elseif(MSVC)
+  target_compile_options(list_pattern_frontend_test PRIVATE /UNDEBUG)
+endif()
+add_test(NAME list_pattern_frontend_test COMMAND list_pattern_frontend_test)
