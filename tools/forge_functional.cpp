@@ -429,52 +429,84 @@ int main(int argc, char** argv) {
     fs::path output(argv[3]);
     safe_target(input, output);
     auto generated = emit(functions);
-    // Refuse output replacement; secure directory-descriptor-relative
-    // publication is a separate hardening gate for multi-tenant hosts.
-    auto tmp = fs::path(output.string() + ".part");
+    // The output is a newly allocated, independent guest artifact. Never
+    // delete or replace an existing destination, including on cleanup errors.
+    const fs::path parent = output.parent_path().empty()
+        ? fs::path{"."} : output.parent_path();
+    const fs::path tmp = fs::path(output.string() + ".part");
     ec.clear();
     const auto tmp_status = fs::symlink_status(tmp, ec);
     if (ec != std::errc::no_such_file_or_directory &&
-        (ec || fs::exists(tmp_status) || fs::is_symlink(tmp_status))) fail("E_OUTPUT");
-    {
-#if defined(__unix__) || defined(__APPLE__)
-      // Never open an output candidate with O_TRUNC after a symlink precheck.
-      // O_CREAT|O_EXCL atomically rejects both an existing file and a
-      // competing symlink created between preflight and open(). This is not
-      // a substitute for dirfd-anchored publication in a hostile directory.
-      const int fd = ::open(tmp.c_str(),
-          O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
-      if (fd < 0) fail("E_OUTPUT");
-      std::size_t written = 0;
-      bool valid = true;
-      while (written < generated.size()) {
-        const ssize_t count = ::write(fd, generated.data() + written,
-                                      generated.size() - written);
-        if (count > 0) written += static_cast<std::size_t>(count);
-        else if (count < 0 && errno == EINTR) continue;
-        else { valid = false; break; }
-      }
-      if (::close(fd) != 0) valid = false;
-      if (!valid) { fs::remove(tmp, ec); fail("E_OUTPUT"); }
-#else
-      // This standalone bootstrap intentionally supports POSIX only until
-      // Windows can provide equivalent non-clobbering file publication.
-      fail("E_OUTPUT_UNSUPPORTED");
-#endif
+        (ec || fs::exists(tmp_status) || fs::is_symlink(tmp_status)))
+      fail("E_OUTPUT");
+#if defined(__linux__) && defined(O_TMPFILE) && defined(AT_EMPTY_PATH)
+    // Linux: the generated source is initially an UNNAMED inode. The
+    // output directory is held open through the atomic no-replace link,
+    // so a competing process cannot substitute a symlink for a .part
+    // pathname or redirect us to a newly replaced parent directory.
+    // Unsupported filesystems fail closed rather than falling back to a
+    // path-based publication vulnerable to shared-directory races.
+    const int dirfd = ::open(parent.c_str(),
+                            O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (dirfd < 0) fail("E_OUTPUT");
+    const int fd = ::openat(dirfd, ".",
+                            O_TMPFILE | O_WRONLY | O_CLOEXEC, 0600);
+    if (fd < 0) { ::close(dirfd); fail("E_OUTPUT"); }
+    std::size_t written = 0;
+    bool valid = true;
+    while (written < generated.size()) {
+      const ssize_t count = ::write(fd, generated.data() + written,
+                                    generated.size() - written);
+      if (count > 0) written += static_cast<std::size_t>(count);
+      else if (count < 0 && errno == EINTR) continue;
+      else { valid = false; break; }
     }
-    // Publication must NEVER replace an output planted after preflight.
-    // Temp/output reside in the same directory and filesystem; a hard-link
-    // create is an atomic no-overwrite commit on our supported POSIX runner.
+    if (valid && ::fsync(fd) != 0) valid = false;
+    if (!valid) {
+      ::close(fd);
+      ::close(dirfd);
+      fail("E_OUTPUT");
+    }
+    // Link the EXACT inode we just wrote, directly from its still-open
+    // descriptor. AT_EMPTY_PATH prevents pathname substitution; linkat
+    // fails with EEXIST if another publisher claimed the output first.
+    const bool linked = ::linkat(fd, "", dirfd,
+                                 output.filename().c_str(),
+                                 AT_EMPTY_PATH) == 0;
+    const bool closed_file = ::close(fd) == 0;
+    const bool closed_dir = ::close(dirfd) == 0;
+    if (!linked) fail("E_OUTPUT");
+    // Never roll back an output by its pathname: another process could
+    // replace the directory entry between linking and our cleanup.
+    if (!closed_file || !closed_dir) fail("E_OUTPUT_CLEANUP");
+#elif defined(__APPLE__)
+    // The macOS bootstrap still uses exclusive named-temp creation.
+    // Use only in a trusted build directory; Apple lacks Linux O_TMPFILE
+    // and this mode is NOT certified for hostile shared output folders.
+    const int fd = ::open(tmp.c_str(),
+                          O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
+                          0600);
+    if (fd < 0) fail("E_OUTPUT");
+    std::size_t written = 0;
+    bool valid = true;
+    while (written < generated.size()) {
+      const ssize_t count = ::write(fd, generated.data() + written,
+                                    generated.size() - written);
+      if (count > 0) written += static_cast<std::size_t>(count);
+      else if (count < 0 && errno == EINTR) continue;
+      else { valid = false; break; }
+    }
+    if (::close(fd) != 0) valid = false;
+    if (!valid) { fs::remove(tmp, ec); fail("E_OUTPUT"); }
     ec.clear();
     fs::create_hard_link(tmp, output, ec);
     if (ec) { ec.clear(); fs::remove(tmp, ec); fail("E_OUTPUT"); }
     ec.clear();
     fs::remove(tmp, ec);
-    if (ec) {
-      std::error_code rollback;
-      fs::remove(output, rollback);
-      fail("E_OUTPUT_CLEANUP");
-    }
+    if (ec) fail("E_OUTPUT_CLEANUP"); // Never delete a published output
+#else
+    fail("E_OUTPUT_UNSUPPORTED");
+#endif
     return 0;
   } catch (const Reject& e) {
     std::cerr << e.code << '\n';
