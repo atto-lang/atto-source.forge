@@ -8,7 +8,7 @@
 namespace atto::forge::scalar {
 enum class Kind {
   name, integer, lparen, rparen, lbrace, rbrace, colon, semicolon,
-  plus, minus, star, slash, percent, bit_and, bit_or, bit_xor, tilde, shl, lshr, arrow, left_arrow, end
+  comma, lt, gt, dot, assign, plus, minus, star, slash, percent, bit_and, bit_or, bit_xor, tilde, shl, lshr, arrow, left_arrow, end
 };
 struct Token { Kind kind; std::size_t offset; std::size_t length; };
 enum class LexError { none, source_too_large, token_limit, unsupported_byte, unterminated_comment };
@@ -100,6 +100,13 @@ inline constexpr std::size_t max_tokens = 256;
         case '}': kind = Kind::rbrace; break;
         case ':': kind = Kind::colon; break;
         case ';': kind = Kind::semicolon; break;
+        // Lex typed headers before denying an unsupported actor pipe. These
+        // punctuation tokens remain non-executable in the scalar parser.
+        case ',': kind = Kind::comma; break;
+        case '<': kind = Kind::lt; break;
+        case '>': kind = Kind::gt; break;
+        case '.': kind = Kind::dot; break;
+        case '=': kind = Kind::assign; break;
         case '+': kind = Kind::plus; break;
         case '-': kind = Kind::minus; break;
         case '*': kind = Kind::star; break;
