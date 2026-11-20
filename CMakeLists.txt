@@ -179,3 +179,17 @@ add_test(NAME scalar_check_only
     "-DFORGE=$<TARGET_FILE:forge_scalar>"
     "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/scalar-check"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/scalar_check.cmake")
+
+# Host-only compile-time typed pattern fragment reference. NO guest parity claim.
+add_executable(typed_pattern_fragment_test tests/typed_pattern_fragment.cpp)
+target_link_libraries(typed_pattern_fragment_test PRIVATE atto_forge_checked_i64)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(typed_pattern_fragment_test PRIVATE -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(typed_pattern_fragment_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(typed_pattern_fragment_test PRIVATE -fsanitize=address,undefined)
+  endif()
+elseif(MSVC)
+  target_compile_options(typed_pattern_fragment_test PRIVATE /UNDEBUG)
+endif()
+add_test(NAME typed_pattern_fragment_test COMMAND typed_pattern_fragment_test)
