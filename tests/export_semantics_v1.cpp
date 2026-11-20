@@ -146,6 +146,30 @@ int main() {
     assert(std::string_view(e.what()).find("EXPORT_DUPLICATE_METADATA")!=
            std::string_view::npos);
   }
+  // Security regression: malformed metadata enums cannot masquerade as
+  // resolved export authority through direct-IR construction.
+  for (int invalid : {200, -1}) {
+    auto bad_scope=original;
+    bad_scope.source_export_bindings.at(0).scope=
+      static_cast<SourceExportScope>(invalid);
+    try {
+      verify(bad_scope);
+      throw std::runtime_error("forged export scope admitted");
+    } catch (const std::runtime_error& e) {
+      assert(std::string_view(e.what()).find("EXPORT_INVALID_METADATA")!=
+             std::string_view::npos);
+    }
+    auto bad_origin=original;
+    bad_origin.source_export_bindings.at(0).origin=
+      static_cast<SourceExportOrigin>(invalid);
+    try {
+      verify(bad_origin);
+      throw std::runtime_error("forged export origin admitted");
+    } catch (const std::runtime_error& e) {
+      assert(std::string_view(e.what()).find("EXPORT_INVALID_METADATA")!=
+             std::string_view::npos);
+    }
+  }
   // A pre-existing bare Program with no export metadata remains valid.
   Program bare;
   bare.instructions={{Op::Constant,42},{Op::Return,0,0,-1}};
