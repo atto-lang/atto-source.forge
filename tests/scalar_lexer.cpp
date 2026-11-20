@@ -47,6 +47,25 @@ int main() {
   assert(bits.tokens[2].kind == Kind::bit_and);
   assert(bits.tokens[4].kind == Kind::bit_or);
   assert(bits.tokens[6].kind == Kind::bit_xor);
+  // The native stage-0 lexer cannot lower move/borrow or checked handle
+  // effects. These spellings must be denied with an ownership-specific
+  // diagnostic before the compiler attempts to emit a C++ guest.
+  for (const std::string_view src : {
+       "copy!42", "take!item", "borrow! mut item", "mut borrow!item",
+       "share!item", "pin!item", "drop!item", "ref!item",
+       "ref!(item)", "deref!handle", "unref!handle", "ref!eqfoo" }) {
+    const auto result = tokenize(src);
+    assert(result.error == LexError::ownership_bang_unsupported);
+    assert(result.error_offset < src.size());
+  }
+  // Comments and non-ownership punctuation must not be misclassified.
+  assert(tokenize("/* ref!item deref!item */ 42").ok());
+  assert(tokenize("// unref!item\n42").ok());
+  for (const std::string_view src : {
+       "ref !item", "ref!=item", "deref!eq item", "unref!eq item",
+       "copy!eq item", "other!item" }) {
+    assert(tokenize(src).error == LexError::unsupported_byte);
+  }
   assert(tokenize("\xC3\xA9").error == LexError::unsupported_byte);
   assert(tokenize(std::string(max_source_bytes + 1, 'a')).error == LexError::source_too_large);
   assert(tokenize(std::string(max_tokens + 1, '+')).error == LexError::token_limit);
