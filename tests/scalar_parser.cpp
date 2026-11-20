@@ -9,6 +9,20 @@ int main() {
       "/* module header */ fnc main(): int { // body\n"
       " return 8 / /* denominator */ 2; /* tail */ }");
   assert(commented.ok());
+  // Source constructor parity: Mutex<T> is a class requiring new, but
+  // stage-0 Forge has no MutexLease/scheduler guest runtime yet.
+  auto bare_mutex = parse_source("pub fnc main(): int {return Mutex<int>(0); }");
+  assert(!bare_mutex.ok() && bare_mutex.error == ParseError::new_required);
+  assert(parse_error_name(bare_mutex.error) == "E_NEW_REQUIRED");
+  auto new_mutex = parse_source("pub fnc main(): int {return new Mutex<int>(0); }");
+  assert(!new_mutex.ok() && new_mutex.error == ParseError::lock_unsupported);
+  assert(parse_error_name(new_mutex.error) == "E_LOCK_UNSUPPORTED");
+  auto nested_mutex = parse_source("pub fnc main(): int {return Mutex<Option<int>>(0); }");
+  assert(!nested_mutex.ok() && nested_mutex.error == ParseError::new_required);
+  auto only_comment_mutex = parse_source(
+      "// Mutex<int>(0) is commented out\\nfnc main():int{return 42;}");
+  assert(only_comment_mutex.ok());
+
   auto malformed_comment = parse_source("fnc main(): int {return 1; /*");
   assert(!malformed_comment.ok() && malformed_comment.error == ParseError::lexical);
   for (const auto* signature : {
