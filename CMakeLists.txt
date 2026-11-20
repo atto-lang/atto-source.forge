@@ -193,3 +193,16 @@ elseif(MSVC)
   target_compile_options(typed_pattern_fragment_test PRIVATE /UNDEBUG)
 endif()
 add_test(NAME typed_pattern_fragment_test COMMAND typed_pattern_fragment_test)
+
+# Actual source-compiled List<int> guest integration (NOT host reference).
+# A successful test requires forge_scalar parsing real .atto sources,
+# generating C++ that compares native list elements, compiling that C++,
+# and executing the resulting binary including checked overflow.
+add_test(NAME list_pattern_compiled_native_guests
+  COMMAND "${CMAKE_COMMAND}"
+    "-DROOT=${CMAKE_CURRENT_SOURCE_DIR}"
+    "-DCXX=${CMAKE_CXX_COMPILER}"
+    "-DSANITIZERS=${ATTO_FORGE_SANITIZERS}"
+    "-DFORGE=$<TARGET_FILE:forge_scalar>"
+    "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/list-pattern-guests"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/list_pattern_guest.cmake")
