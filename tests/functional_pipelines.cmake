@@ -5,6 +5,47 @@ if(NOT DEFINED ROOT OR NOT DEFINED FORGE OR NOT DEFINED CXX OR NOT DEFINED OUT_D
 endif()
 file(MAKE_DIRECTORY "${OUT_DIR}")
 
+# Path-based symlink preflights are not a security boundary. Validate
+# that the actual Forge source reader rejects a linked inode and a FIFO
+# without blocking, and rejects an oversized opened regular file.
+if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux")
+  set(valid_source "${OUT_DIR}/source-open-valid.atto")
+  set(symlink_source "${OUT_DIR}/source-open-symlink.atto")
+  set(fifo_source "${OUT_DIR}/source-open-fifo.atto")
+  set(oversize_source "${OUT_DIR}/source-open-too-big.atto")
+  file(WRITE "${valid_source}" "pub fnc main(): int -> 83;\n")
+  file(REMOVE "${symlink_source}" "${fifo_source}" "${oversize_source}")
+  file(CREATE_LINK "${valid_source}" "${symlink_source}" SYMBOLIC
+       RESULT_VARIABLE symlink_status)
+  if(NOT "${symlink_status}" STREQUAL "0")
+    message(FATAL_ERROR "Forge source descriptor test cannot create linked fixture")
+  endif()
+  execute_process(COMMAND mkfifo "${fifo_source}"
+    RESULT_VARIABLE fifo_status)
+  if(NOT "${fifo_status}" STREQUAL "0")
+    message(FATAL_ERROR "Forge source descriptor test cannot create FIFO")
+  endif()
+  string(REPEAT "x" 16385 too_large)
+  file(WRITE "${oversize_source}" "${too_large}")
+  foreach(row IN ITEMS
+      "source-open-symlink:E_SOURCE"
+      "source-open-fifo:E_SOURCE"
+      "source-open-too-big:E_SOURCE_LIMIT")
+    string(REPLACE ":" ";" tokens "${row}")
+    list(GET tokens 0 name)
+    list(GET tokens 1 expected)
+    execute_process(COMMAND "${FORGE}" --check "${OUT_DIR}/${name}.atto"
+      TIMEOUT 5 RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+    if(NOT "${rc}" STREQUAL "2" OR NOT "${out}" STREQUAL "" OR
+       NOT "${err}" STREQUAL "${expected}\n")
+      message(FATAL_ERROR
+        "Forge source open must fail closed: ${name} exit=${rc} stderr=${err}")
+    endif()
+  endforeach()
+  file(REMOVE "${symlink_source}" "${fifo_source}" "${oversize_source}"
+       "${valid_source}")
+endif()
+
 # Exact source-fixture Git blobs copied from atto-spec#121. A drifted
 # fixture must fail before C++ emission, even if the output looks correct.
 function(assert_pinned_blob file expected)
