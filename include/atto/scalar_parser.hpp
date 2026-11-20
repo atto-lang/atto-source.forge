@@ -18,7 +18,8 @@ struct Node {
   i64 value = 0;
 };
 enum class ParseError {
-  none, lexical, syntax, literal_out_of_range, depth_limit, node_limit
+  none, lexical, syntax, literal_out_of_range, depth_limit, node_limit,
+  new_required, lock_unsupported
 };
 // Stable sanitized diagnostics; never echo user source bytes.
 [[nodiscard]] constexpr std::string_view parse_error_name(ParseError error) noexcept {
@@ -29,6 +30,8 @@ enum class ParseError {
     case ParseError::literal_out_of_range: return "E_PARSE_RANGE";
     case ParseError::depth_limit: return "E_PARSE_DEPTH";
     case ParseError::node_limit: return "E_PARSE_NODES";
+    case ParseError::new_required: return "E_NEW_REQUIRED";
+    case ParseError::lock_unsupported: return "E_LOCK_UNSUPPORTED";
   }
   return "E_PARSE_UNKNOWN";
 }
@@ -301,6 +304,34 @@ public:
 };
 
 [[nodiscard]] inline Parsed parse_source(std::string_view src) {
-  return Parser(src, tokenize(src)).parse();
+  auto lexed = tokenize(src);
+  if (!lexed.ok()) return Parser(src, std::move(lexed)).parse();
+  // This is an intentionally restricted scalar parser, not a guest Mutex
+  // implementation. Token-aware constructor diagnostics cannot be spoofed
+  // by text in comments or by unrelated generic type annotations.
+  const auto is = [&](std::size_t i, Kind kind, std::string_view value = {}) {
+    return i < lexed.tokens.size() && lexed.tokens[i].kind == kind &&
+      (value.empty() || src.substr(lexed.tokens[i].offset,
+                                  lexed.tokens[i].length) == value);
+  };
+  for (std::size_t i = 0; i < lexed.tokens.size(); ++i) {
+    if (!is(i, Kind::name, "Mutex") || !is(i + 1, Kind::lt)) continue;
+    std::size_t depth = 0, close = lexed.tokens.size();
+    for (std::size_t j = i + 1; j < lexed.tokens.size(); ++j) {
+      if (is(j, Kind::lt)) ++depth;
+      else if (is(j, Kind::gt)) {
+        if (depth == 0) break;
+        if (--depth == 0) { close = j; break; }
+      }
+    }
+    if (close == lexed.tokens.size() || !is(close + 1, Kind::lparen))
+      continue; // only a type reference; not a construction call
+    Parsed denied;
+    denied.error = i > 0 && is(i - 1, Kind::name, "new")
+      ? ParseError::lock_unsupported : ParseError::new_required;
+    denied.error_offset = lexed.tokens[i].offset;
+    return denied;
+  }
+  return Parser(src, std::move(lexed)).parse();
 }
 }  // namespace atto::forge::scalar
