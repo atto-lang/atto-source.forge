@@ -97,8 +97,16 @@ struct Parser {
     if (peek().empty() || !ascii_head(peek().front())) fail("E_NAME");
     const std::string result = peek();
     for (char c : result) if (!ascii_tail(c)) fail("E_NAME");
+    // A scalar bootstrap must not turn authority/effect keywords into
+    // ordinary callable symbols, even if it does not implement those effects.
+    // Keep this synchronized with atto-spec and the JS/Cranelift subsets.
     static const std::set<std::string> reserved = {
-      "pub","fnc","int","return","val","let","true","false","bool"};
+      "pub","fnc","int","return","val","let","true","false","bool",
+      "actor","unsafe","await","async","susp","suspends","critical",
+      "trap","panic","raise","throw","borrow","take","share","copy",
+      "drop","pin","rt","io","stdio","process","spawn","select",
+      "import","module","define","namespace","use","pipe","rpipe",
+      "constructor","prototype","__proto__"};
     if (reserved.contains(result)) fail("E_NAME");
     ++at;
     return result;
