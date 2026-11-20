@@ -14,6 +14,9 @@ list(LENGTH rows count)
 if(NOT count EQUAL 15)
   message(FATAL_ERROR "shared checked-i64 corpus must have fifteen cases")
 endif()
+if(IS_SYMLINK "${OUT_DIR}")
+  message(FATAL_ERROR "shared native guest output directory must not be a symlink")
+endif()
 file(MAKE_DIRECTORY "${OUT_DIR}")
 set(flags)
 if(SANITIZERS)
@@ -51,6 +54,22 @@ set(expressions
   "(9223372036854775807+1)-1"
   "(-(-9223372036854775808))+1"
   "1%0")
+set(original_expressions
+  "sum(0,0)"
+  "sum(9223372036854775807,-1)"
+  "subtract(-9223372036854775808,-1)"
+  "multiply(-3037000499,3037000499)"
+  "opposite(-42)"
+  "remainder(-9223372036854775808,-1)"
+  "remainder(-7,3)"
+  "sum(9223372036854775807,1)"
+  "subtract(-9223372036854775808,1)"
+  "multiply(3037000500,3037000500)"
+  "opposite(-9223372036854775808)"
+  "multiply(-9223372036854775808,-1)"
+  "subtract(sum(9223372036854775807,1),1)"
+  "sum(opposite(-9223372036854775808),1)"
+  "remainder(1,0)")
 foreach(n RANGE 0 14)
   list(GET rows ${n} record)
   string(REPLACE "|" ";" fields "${record}")
@@ -66,26 +85,43 @@ foreach(n RANGE 0 14)
   list(GET kinds ${n} kind)
   list(GET expectations ${n} expectation)
   list(GET expressions ${n} expression)
+  list(GET original_expressions ${n} expected_original)
   if(NOT actual_id STREQUAL id OR NOT actual_kind STREQUAL kind
        OR NOT actual_expected STREQUAL expectation
-       OR original_expression STREQUAL "")
+       OR NOT original_expression STREQUAL expected_original)
     message(FATAL_ERROR "shared checked-i64 source case changed")
   endif()
 
   set(source "${OUT_DIR}/${id}.atto")
   set(cpp "${OUT_DIR}/${id}.cpp")
   set(binary "${OUT_DIR}/${id}")
+  file(REMOVE "${cpp}" "${binary}")
   file(WRITE "${source}" "pub fnc main(): int { return ${expression}; }\n")
   execute_process(COMMAND "${FORGE}" "${source}" -o "${cpp}"
     RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
   if(NOT "${rc}" STREQUAL "0")
     message(FATAL_ERROR "${id}: Forge compiler rejected reviewed scalar: ${err}")
   endif()
+  if(NOT EXISTS "${cpp}" OR IS_SYMLINK "${cpp}")
+    message(FATAL_ERROR "${id}: Forge did not publish a new regular generated source")
+  endif()
+  file(SIZE "${cpp}" generated_bytes)
+  if(generated_bytes GREATER 65536)
+    message(FATAL_ERROR "${id}: generated scalar source exceeded 64 KiB")
+  endif()
+  file(READ "${cpp}" generated_cpp)
+  if(NOT generated_cpp MATCHES "#include <atto/checked_i64[.]hpp>" OR
+     NOT generated_cpp MATCHES "atto::forge::checked_(add|sub|mul|rem|neg)")
+    message(FATAL_ERROR "${id}: generated source did not lower through checked i64 primitives")
+  endif()
   execute_process(COMMAND "${CXX}" -std=c++20 -Wall -Wextra -Werror
       ${flags} "-I${ROOT}/include" "${cpp}" -o "${binary}"
     RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
   if(NOT "${rc}" STREQUAL "0")
     message(FATAL_ERROR "${id}: native guest compile failed: ${err}")
+  endif()
+  if(NOT EXISTS "${binary}" OR IS_SYMLINK "${binary}")
+    message(FATAL_ERROR "${id}: native compiler did not publish a new binary")
   endif()
   if(kind STREQUAL "value")
     set(expected_rc "0")
