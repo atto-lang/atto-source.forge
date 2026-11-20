@@ -393,7 +393,10 @@ void safe_target(const fs::path& source, const fs::path& output) {
       (ec || fs::exists(status) || fs::is_symlink(status))) fail("E_OUTPUT");
   if (source == output) fail("E_PATH");
   auto parent = output.parent_path();
-  if (parent.empty() || !fs::is_directory(parent, ec) || ec || fs::is_symlink(parent, ec) || ec)
+  // A filename-only -o destination is relative to the admitted current
+  // working directory; it must not be rejected solely for lacking '/'.
+  if (parent.empty()) parent = ".";
+  if (!fs::is_directory(parent, ec) || ec || fs::is_symlink(parent, ec) || ec)
     fail("E_OUTPUT");
 }
 }  // namespace
