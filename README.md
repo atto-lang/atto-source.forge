@@ -145,3 +145,9 @@ For restricted scalar parsing, the 24-level nesting budget measures actual paren
 For tooling and CI, `forge_scalar --check path/to/file.atto` performs bounded lexical/AST admission without creating or deleting output files; returns 0 on supported scalar source or 2 with sanitized diagnostics. This is not a full language type checker.
 
 For the restricted integer-only scalar frontend, all expressions have the i64 result type; `infer` return annotations are therefore accepted in the same colon, arrow, block-arrow, and prefix signatures as `int` and lower to the same native i64 implementation. This is not general language-wide type inference: strings, booleans, effects, and noninteger functions remain unsupported.
+
+## Draft scalar integration workstream (issue #103)
+
+The source-local integration branch reconciles the existing #42/#44/#49/#50/#52/#102 compiler slices and does not claim complete language support. The canonical `^` is a statement return and contiguous `^^` is integer XOR. A bounded 128-level nested-comment lexer and restricted checked `Pointer<int>` loan profile coexist with ordered scalar `seq(...)`/ `(> ...)` sequences and the pure inline `sync task<int>` expression. Standalone `do sync task` is void-only; unsupported spawned tasks, channel directions and continuous pipes fail closed. These are restricted stage-0 profiles, not actor, scheduler, full ownership or TenantVM execution.
+
+Failed compiler admission **must not delete or overwrite a pre-existing caller-owned output file**. No newly generated `.cpp` artifact is permissible on invalid source. Native compiler/guest/sanitizer evidence on this exact branch is **NOT EXECUTED** until source-local stepful CI can run and independent governance allows review. The older tests that expected deletion of caller-owned output are intentionally migrated to preservation assertions.
