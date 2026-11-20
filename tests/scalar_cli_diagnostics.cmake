@@ -18,6 +18,17 @@ function(check_diag label source expected)
   if(NOT "${err}" MATCHES "^${expected} byte=[0-9]+\n$")
     message(FATAL_ERROR "${label}: expected ${expected} with byte offset, got [${err}]")
   endif()
+  # A separate initially absent path must stay absent. Preserving an
+  # existing caller file is correct, but is NOT proof of zero new artifacts.
+  set(fresh "${OUT_DIR}/fresh_diagnostic_${label}.cpp")
+  file(REMOVE "${fresh}")
+  execute_process(COMMAND "${FORGE}" "${input}" -o "${fresh}"
+    RESULT_VARIABLE fresh_rc OUTPUT_VARIABLE fresh_out ERROR_VARIABLE fresh_err)
+  if(NOT "${fresh_rc}" STREQUAL "2" OR EXISTS "${fresh}" OR
+     NOT "${fresh_out}" STREQUAL "" OR
+     NOT "${fresh_err}" MATCHES "^${expected} byte=[0-9]+\n$")
+    message(FATAL_ERROR "${label}: invalid source generated an artifact at absent destination")
+  endif()
 endfunction()
 check_diag(lexical "fnc main(): int {return @;}" "E_PARSE_LEXICAL")
 check_diag(syntax "fnc main(): int {return 1 + ;}" "E_PARSE_SYNTAX")
