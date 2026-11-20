@@ -111,7 +111,7 @@ struct Parser {
       "trap","panic","raise","throw","borrow","take","share","copy",
       "drop","pin","rt","io","stdio","process","spawn","select",
       "import","module","define","namespace","use","pipe","rpipe",
-      "constructor","prototype","__proto__"};
+      "sync","task","yield","constructor","prototype","__proto__"};
     if (reserved.contains(result)) fail("E_NAME");
     ++at;
     return result;
