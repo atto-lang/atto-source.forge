@@ -5,6 +5,15 @@
 using namespace atto::forge;
 using namespace atto::forge::scalar;
 int main() {
+  for (const std::string_view expression : {
+       "copy!42", "take!item", "borrow! item", "borrow! mut item",
+       "mut borrow!item", "share!item", "ref!item", "deref!handle",
+       "unref!handle", "pin!item", "drop!item" }) {
+    const auto parsed = parse_source(std::string("fnc main(): int { return ")
+                                     + std::string(expression) + "; }");
+    assert(parsed.error == ParseError::ownership_bang_unsupported);
+    assert(parse_error_name(parsed.error) == "E_OWNERSHIP_BANG_UNSUPPORTED");
+  }
   auto commented = parse_source(
       "/* module header */ fnc main(): int { // body\n"
       " return 8 / /* denominator */ 2; /* tail */ }");
