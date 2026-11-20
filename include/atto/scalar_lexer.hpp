@@ -11,7 +11,7 @@ enum class Kind {
   plus, minus, star, slash, percent, bit_and, bit_or, bit_xor, tilde, shl, lshr, arrow, left_arrow, end
 };
 struct Token { Kind kind; std::size_t offset; std::size_t length; };
-enum class LexError { none, source_too_large, token_limit, unsupported_byte, unterminated_comment, ownership_bang_unsupported };
+enum class LexError { none, source_too_large, token_limit, unsupported_byte, unterminated_comment, comment_nesting_limit, ownership_bang_unsupported };
 struct Lexed {
   std::vector<Token> tokens;
   LexError error = LexError::none;
@@ -50,16 +50,28 @@ inline constexpr std::size_t max_tokens = 256;
     if (c == '/' && i + 1 < src.size() && src[i + 1] == '*') {
       const std::size_t opening = i;
       i += 2;
-      bool closed = false;
-      while (i + 1 < src.size()) {
-        if (src[i] == '*' && src[i + 1] == '/') {
+      std::size_t depth = 1;
+      // Nested comments must be entirely inert. A first-*/ lexer could
+      // expose the suffix of a nested ownership-looking comment to the
+      // scalar parser and permit a false source token / compilation.
+      // Bound depth before incrementing; no unbounded stack or recursion.
+      while (i < src.size() && depth != 0) {
+        if (i + 1 < src.size() && src[i] == '/' && src[i + 1] == '*') {
+          if (depth >= 64) {
+            out.error = LexError::comment_nesting_limit;
+            out.error_offset = i;
+            return out;
+          }
+          ++depth;
           i += 2;
-          closed = true;
-          break;
+        } else if (i + 1 < src.size() && src[i] == '*' && src[i + 1] == '/') {
+          --depth;
+          i += 2;
+        } else {
+          ++i;
         }
-        ++i;
       }
-      if (!closed) {
+      if (depth != 0) {
         out.error = LexError::unterminated_comment;
         out.error_offset = opening;
         return out;
