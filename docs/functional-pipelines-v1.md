@@ -83,3 +83,30 @@ ambient host filesystem or C++ compiler access; the directory is a
 trusted compiler-build destination, not a TenantVM storage API. Hostile
 ancestor-directory replacement and differing Linux filesystems still
 require dedicated adversarial review and exact-head CI.
+
+
+## Source admission: one descriptor, one bounded inode
+
+The standalone Forge compiler no longer validates a source pathname and
+then reopens it via `std::ifstream`. It atomically opens the source once
+with `O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK`, validates the
+opened descriptor with `fstat` and `S_ISREG`, rejects inputs larger
+than 16 KiB, reads through that same descriptor, and rejects short
+reads or unexpected trailing bytes. The nonblocking open prevents
+an adversarial path replacement with a FIFO from wedging the compiler
+before its file-type check. Symlink substitution cannot redirect a
+second open into an out-of-scope host file.
+
+The Linux CMake suite now checks symlink source rejection, FIFO rejection
+without blocking, and the 16 KiB limit. Local isolated C++ reproductions
+of the exact descriptor read routine were compiled and executed with
+**GCC 14.2 and Clang 17** under C++20, and again under ASan/UBSan.
+All four compiler/sanitizer variants passed regular/symlink/FIFO/oversize/
+empty-file cases. This is a **syscall routine unit probe**, not a fresh
+full Forge guest-compiler pass.
+
+Limit: an external actor that already holds *write permission to the same
+opened inode* could still mutate its contents while they are read. Source
+files in a hostile workspace must be staged immutably and identity-checked
+by the host before guest compilation. This compiler is not a general
+filesystem access capability for untrusted TenantVM actors.
