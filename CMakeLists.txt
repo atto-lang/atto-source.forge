@@ -217,3 +217,22 @@ elseif(MSVC)
   target_compile_options(tenant_bytes_v1_test PRIVATE /UNDEBUG)
 endif()
 add_test(NAME tenant_bytes_v1_test COMMAND tenant_bytes_v1_test)
+
+# Experimental .atto allocation guest compiler; NOT canonical .atto stdlib linking.
+add_executable(forge_alloc tools/forge_alloc.cpp)
+target_link_libraries(forge_alloc PRIVATE atto_forge_checked_i64 Threads::Threads)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(forge_alloc PRIVATE -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(forge_alloc PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(forge_alloc PRIVATE -fsanitize=address,undefined)
+  endif()
+endif()
+add_test(NAME alloc_guest_v1_compiled
+  COMMAND "${CMAKE_COMMAND}"
+    "-DROOT=${CMAKE_CURRENT_SOURCE_DIR}"
+    "-DCXX=${CMAKE_CXX_COMPILER}"
+    "-DSANITIZERS=${ATTO_FORGE_SANITIZERS}"
+    "-DFORGE_ALLOC=$<TARGET_FILE:forge_alloc>"
+    "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/alloc-v1-guests"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/alloc_guest_v1.cmake")
