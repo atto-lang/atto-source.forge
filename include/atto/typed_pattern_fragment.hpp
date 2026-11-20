@@ -14,7 +14,7 @@
 
 namespace atto::forge::pattern {
 enum class Type { any, integer, boolean, text, floating };
-enum class Error { none, context, constexpr_required, type, source, budget };
+enum class Error { none, context, constexpr_required, type, binding, source, budget };
 enum class Kind { one, rest, int_literal, bool_literal, string_literal, is_type };
 struct Atom {
   Kind kind = Kind::one;
@@ -44,6 +44,7 @@ inline constexpr std::size_t max_dp_states = (max_items + 1) * (max_input_elemen
     case Error::context: return "E_PATTERN_CONTEXT";
     case Error::constexpr_required: return "E_PATTERN_CONSTEXPR";
     case Error::type: return "E_PATTERN_TYPE";
+    case Error::binding: return "E_PATTERN_BINDING";
     case Error::source: return "E_PATTERN_SOURCE";
     case Error::budget: return "E_PATTERN_BUDGET";
   }
@@ -110,6 +111,7 @@ inline constexpr std::size_t max_dp_states = (max_items + 1) * (max_input_elemen
 
 [[nodiscard]] inline Error atom(std::string_view text, Type expected, Atom& out) {
   text = trim(text);
+  if (text.find(" as ") != std::string_view::npos) return Error::binding;
   if (text == "_") { out.kind = Kind::one; return Error::none; }
   if (text == "...") { out.kind = Kind::rest; return Error::none; }
   if (text.starts_with("is ")) {
