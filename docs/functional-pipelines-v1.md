@@ -23,11 +23,17 @@ The tests `tests/functional_pipelines.cmake` are authored to compile the four ca
 
 ## Observed local native execution (not CI certification)
 
-The Forge C++ frontend Git blob `a9dae8e13cd48badff45f29ac710caf0aee370cb` and runtime header blob `e9a6598416c919f9ac7c629847f8d6677c703a14` were reconstructed byte-for-byte in a local Linux container, verified using `git hash-object`, and compiled with both GCC 14.2.0 and Clang 17.0.0 using `-std=c++20 -Wall -Wextra -Werror -pedantic`.
+The Forge C++ frontend Git blob `c64c2ea8ed8c4bbb7fcf4024561cd57fd2d3aa97` and runtime header blob `e9a6598416c919f9ac7c629847f8d6677c703a14` were reconstructed byte-for-byte in a local Linux container, verified using `git hash-object`, and compiled with both GCC 14.2.0 and Clang 17.0.0 using `-std=c++20 -Wall -Wextra -Werror -pedantic`.
 
 Both toolchains compiled and executed **all four** source-Git-blob-matched canonical Atto programs: guest stdout `83, 83, 42, 42`, OS exit 0. The same canonical four rejection sources returned type/syntax diagnostics, status 2, and no generated guest artifact. Both toolchains also compiled/ran signed `i64::MIN` correctly and rejected arithmetic overflow with `E_OVERFLOW`/exit 70. Separate `-fsanitize=address,undefined -fno-omit-frame-pointer` native builds of the six positive/boundary runtime cases produced expected results for both toolchains. Rejected out-of-range literals and forbidden authority keywords produced no output artifact. The updated compiler also accepted a filename-only `-o` output under the current working directory without clobbering existing output.
 
 This verifies **local checked source-to-native guest execution** of the bounded Forge compiler. It does **not** verify an exact GitHub Actions run, all CMake/CTest jobs, production Forge JIT integration, TenantVM security, or full AttoLang parity. Those statuses remain `not_executed` in the conformance ledger.
+
+## Source publication hardening
+
+Generated C++ source now uses POSIX `open(O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600)`, a bounded interrupted-write loop, and atomic no-replace hard-link publication. The compiler **never uses `O_TRUNC` on a preflight-checked temporary path**, so a competing regular file or symlink cannot be silently truncated at that pathname. GCC 14.2 and Clang 17 local runs reconfirmed all four exact canonical native guests and exercised rejection of existing `.part` files and symlinks; generated C++ files were mode 0600.
+
+**Residual limitation:** build-directory ancestor races and attacker-controlled directory entries still require a separate directory-descriptor-anchored threat model and formal race stress gate. This bootstrap publisher supports POSIX platforms only; non-POSIX emission fails closed until equivalent atomic output APIs are implemented. Do not claim secure untrusted TenantVM guest execution from these filesystem checks.
 
 ## Verification and security boundaries
 
