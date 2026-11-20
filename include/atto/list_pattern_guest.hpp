@@ -281,10 +281,15 @@ class Parser {
           atom.kind=AtomKind::capture;
           atom.name=*n;
         }
-      } else {
+      } else if (peek()=="-" ||
+                 (!peek().empty() && peek().front()>='0' && peek().front()<='9')) {
         const auto value=number();
         if (!value) return false;
         atom.kind=AtomKind::literal; atom.value=*value;
+      } else {
+        // A template call, callback or foreign value is unsupported
+        // syntax here, NOT a malformed signed integer literal.
+        fail(Error::unsupported); return false;
       }
       sequence.push_back(std::move(atom));
       if (peek()==")") break;
