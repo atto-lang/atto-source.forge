@@ -40,3 +40,46 @@ Generated C++ source now uses POSIX `open(O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOE
 No performance, Native AOT, hard-real-time, full language, or multitenant security parity claim is made by this bounded path. In-process untrusted actors require a separate validated TenantVM memory/capability/CPU/I/O boundary, never the C++ emitter alone. Production integration and exact native guest execution logs on GCC/Clang with source/tree SHA remain required.
 
 Related implementation: atto-source.rs#381, atto-source.llvm#54, atto-source.net#16, atto-source.java#51; contract atto-spec#121; evidence ledger atto-platform-conformance#112.
+
+
+## Linux publication: descriptor-anchored, unnamed inode
+
+The Linux guest-source publisher has been hardened beyond an exclusive named
+temporary file. It opens the *actual output directory* with
+`O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC`, creates an **unnamed** mode-0600
+`O_TMPFILE` inode relative to that open directory, writes and fsyncs the
+complete checked generated C++ to that still-open descriptor, and publishes
+the **exact same inode** with `linkat(fd, "", dirfd, basename, AT_EMPTY_PATH)`.
+The link is atomic and refuses an existing destination. A hostile process
+cannot replace a path-based `.part` file to make the publisher link an
+attacker-controlled symlink. If `O_TMPFILE` or descriptor-link publication
+is unavailable on a Linux filesystem, output fails closed; it does not
+silently fall back to vulnerable pathname publication.
+
+No rollback removes a published output by its pathname; on a cleanup
+error the build reports failure while preserving the linked artifact.
+The macOS bootstrap retains an explicitly *trusted-directory only*
+exclusive named temporary path; Windows is unsupported by this writer.
+
+`tests/functional_publication_race.sh` (invoked from the native CTest
+script on Linux) requires sixteen independent actual Forge CLI processes
+to compete for one output, exactly one successful atomic publisher, fifteen
+`E_OUTPUT` losers, mode 0600, deterministic independently generated C++
+content, existing output and symlink no-clobber, and actual native guest
+execution returning 83.
+
+**Observed locally in the implementation environment:** the exact isolated
+Linux anonymous-inode publication logic was compiled with GCC 14.2 and
+Clang 17 under both ordinary C++20 and ASan/UBSan; all four
+compiler/sanitizer configurations passed a 24-writer race (one winner,
+23 losers), no-overwrite and symlink gates, 0600 output, and absence of
+named temporary files. This was a **standalone syscall-logic probe**, not
+a full newly compiled Forge CLI or CTest run. The new 16-writer
+`tests/functional_publication_race.sh` is authored but still needs actual
+compiler execution on the current PR head.
+
+Remaining security boundary: untrusted process tenants must not be given
+ambient host filesystem or C++ compiler access; the directory is a
+trusted compiler-build destination, not a TenantVM storage API. Hostile
+ancestor-directory replacement and differing Linux filesystems still
+require dedicated adversarial review and exact-head CI.
