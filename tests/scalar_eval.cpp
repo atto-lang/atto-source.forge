@@ -22,13 +22,17 @@ int main() {
     {"1 <<< 64",1}, {"1 <<< -1",std::numeric_limits<i64>::min()},
     {"-1 >>> 1",std::numeric_limits<i64>::max()},
     {"-8 ashr 2",-2}, {"(1 <<< 63) >>> 63",1},
-    {"-8 ashr 2 + 1",-1}, {"~0",-1}, {"-1 & 42",42}, {"1 | 4",5}, {"6 ^ 3",5},
-    {"~0 & 255",255}, {"1 | 2 & 4",1}, {"1 ^ 3 & 2",3},
-    {"1 | 2 ^ 3 & 2",1}, {"~(-9223372036854775808)",9223372036854775807LL}
+    {"-8 ashr 2 + 1",-1}, {"~0",-1}, {"-1 & 42",42}, {"1 | 4",5}, {"6 ^^ 3",5},
+    {"~0 & 255",255}, {"1 | 2 & 4",1}, {"1 ^^ 3 & 2",3},
+    {"1 | 2 ^^ 3 & 2",1}, {"~(-9223372036854775808)",9223372036854775807LL}
   }) {
     const auto value = evaluate_source(program(c.expr));
     assert(value.ok() && *value.value == c.expected);
   }
+  const auto caret = evaluate_source("fnc main(): int\nbegin\n^ 6 ^^ 3;\nend.");
+  assert(caret.ok() && *caret.value == 5);
+  assert(evaluate_source("fnc main(): int { ^ 40+2; }").value == std::optional<i64>{42});
+  assert(evaluate_source(program("6 ^ 3")).error == EvalError::parse_error);
   for (const char* expr : {
     "9223372036854775807 + 1",
     "-9223372036854775808 - 1",

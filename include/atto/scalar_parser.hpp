@@ -130,7 +130,7 @@ class Parser {
     out_.nodes.push_back(n);
     return out_.nodes.size() - 1;
   }
-  // bit_or < bit_xor < bit_and < addition < multiplication < unary.
+  // bit_or < bit_xor (^^ only) < bit_and < addition < multiplication < unary.
   // Flat precedence tiers do not consume the nesting depth budget.
   // Only actual parenthesized or unary nesting increments depth.
   [[nodiscard]] std::optional<std::size_t> expr(int depth) {
@@ -284,14 +284,54 @@ public:
         signature_ok = scalar_return_type();
       }
     }
-    if (!signature_ok || !take(Kind::lbrace) || !name("return")) {
+    if (!signature_ok) {
+      fail(ParseError::syntax);
+      return std::move(out_);
+    }
+    const bool brace_body = take(Kind::lbrace);
+    if (!brace_body) {
+      if (!name("begin")) {
+        fail(ParseError::syntax);
+        return std::move(out_);
+      }
+      // begin must be a standalone next-line marker in this scalar profile.
+      const auto& begin = tokens_[pos_ - 1];
+      const auto& prior = tokens_[pos_ - 2];
+      const auto before = source_.substr(prior.offset + prior.length,
+                                          begin.offset - prior.offset - prior.length);
+      const auto& first_statement = current();
+      const auto after = source_.substr(begin.offset + begin.length,
+                                         first_statement.offset - begin.offset - begin.length);
+      if (before.find('\n') == std::string_view::npos ||
+          after.find('\n') == std::string_view::npos) {
+        fail(ParseError::syntax);
+        return std::move(out_);
+      }
+    }
+    if (!(name("return") || take(Kind::caret_return))) {
       fail(ParseError::syntax);
       return std::move(out_);
     }
     auto root = expr(0);
     if (!root) return std::move(out_);
-    if (!take(Kind::semicolon) || !take(Kind::rbrace) ||
-        current().kind != Kind::end) {
+    if (!take(Kind::semicolon)) {
+      fail(ParseError::syntax);
+      return std::move(out_);
+    }
+    if (brace_body) {
+      if (!take(Kind::rbrace)) {
+        fail(ParseError::syntax);
+        return std::move(out_);
+      }
+    } else {
+      if (!name("end")) {
+        fail(ParseError::syntax);
+        return std::move(out_);
+      }
+      (void)take(Kind::period);
+      (void)take(Kind::semicolon);
+    }
+    if (current().kind != Kind::end) {
       fail(ParseError::syntax);
       return std::move(out_);
     }

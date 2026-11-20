@@ -1,0 +1,4 @@
+fnc int• main()
+begin
+return 42;
+end;
