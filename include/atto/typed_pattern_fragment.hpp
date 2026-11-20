@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -199,6 +200,7 @@ inline constexpr std::size_t max_dp_states = (max_items + 1) * (max_input_elemen
         }
         std::size_t n=0;
         const auto [end,ec] = std::from_chars(number.data(),number.data()+number.size(),n);
+        if (ec == std::errc::result_out_of_range) { out.error=Error::budget; return out; }
         if (ec != std::errc{} || end != number.data()+number.size()) {
           out.error=Error::source; return out;
         }
@@ -227,6 +229,27 @@ inline constexpr std::size_t max_dp_states = (max_items + 1) * (max_input_elemen
   }
   for (std::size_t i=1;i<out.fragment.items.size();++i) {
     if (out.fragment.items[i-1].kind==Kind::rest && out.fragment.items[i].kind==Kind::rest) {
+      out.error=Error::source; return out;
+    }
+  }
+  return out;
+}
+
+// Combine pure compile-time fragments after contextual type checking.
+// Adjacent-rest restrictions apply after expansion, not merely per string.
+[[nodiscard]] inline Compiled compose(const std::vector<Fragment>& parts, Type type) {
+  Compiled out;
+  out.fragment.type=type;
+  for (const auto& p : parts) {
+    if (p.type != type) { out.error=Error::type; return out; }
+    if (p.items.size() > max_items-out.fragment.items.size()) {
+      out.error=Error::budget; return out;
+    }
+    out.fragment.items.insert(out.fragment.items.end(),p.items.begin(),p.items.end());
+  }
+  for (std::size_t i=1;i<out.fragment.items.size();++i) {
+    if (out.fragment.items[i-1].kind==Kind::rest &&
+        out.fragment.items[i].kind==Kind::rest) {
       out.error=Error::source; return out;
     }
   }
