@@ -1,6 +1,6 @@
 # Forge functional-pipeline bootstrap compiler (bounded native subset)
 
-**Implementation authored; executable guest parity requires exact-head execution evidence.**
+**Local compiled native guests executed on GCC 14.2 and Clang 17; exact-head GitHub Actions/CTest admission remains not executed.**
 
 The new `forge_functional` C++20 frontend compiles real Atto `.atto` source into deterministic C++ source, which GCC/Clang compile into native binaries. It is adjacent to the unchanged `forge_scalar` stage-0 compiler. It is **not** the production Forge JIT/AOT engine, an actor runtime or TenantVM sandbox.
 
@@ -19,7 +19,15 @@ clang++ -std=c++20 -Wall -Wextra -Werror -pedantic -I include /tmp/functional-pi
 
 Both exact user examples print `83\n`; nested right association and explicitly grouped directions print `42\n`. The Forge scalar CLI convention prints the result and returns OS status 0 (unlike the Rust/LLVM/.NET fixtures which may use OS exit status). Native overflow prints `E_OVERFLOW` to stderr and returns 70. Invalid sources return 2 without a generated C++ file.
 
-The tests `tests/functional_pipelines.cmake` compile and execute all four generated native guest programs, check deterministic generated outputs and reject 14 cases without output artifacts. Four positive and four negative sources are copied **byte-for-byte** from atto-spec#121's canonical fixture blobs. Existing Forge scalar compiler tests remain intact.
+The tests `tests/functional_pipelines.cmake` are authored to compile the four canonical native guests plus signed-i64 minimum, checked-overflow and filename-only-output guests, check deterministic generated outputs and reject 18 cases without output artifacts. Four positive and four negative sources are copied **byte-for-byte** from atto-spec#121's canonical fixture blobs. Existing Forge scalar compiler tests remain intact.
+
+## Observed local native execution (not CI certification)
+
+The Forge C++ frontend Git blob `a9dae8e13cd48badff45f29ac710caf0aee370cb` and runtime header blob `e9a6598416c919f9ac7c629847f8d6677c703a14` were reconstructed byte-for-byte in a local Linux container, verified using `git hash-object`, and compiled with both GCC 14.2.0 and Clang 17.0.0 using `-std=c++20 -Wall -Wextra -Werror -pedantic`.
+
+Both toolchains compiled and executed **all four** source-Git-blob-matched canonical Atto programs: guest stdout `83, 83, 42, 42`, OS exit 0. The same canonical four rejection sources returned type/syntax diagnostics, status 2, and no generated guest artifact. Both toolchains also compiled/ran signed `i64::MIN` correctly and rejected arithmetic overflow with `E_OVERFLOW`/exit 70. Separate `-fsanitize=address,undefined -fno-omit-frame-pointer` native builds of the six positive/boundary runtime cases produced expected results for both toolchains. Rejected out-of-range literals and forbidden authority keywords produced no output artifact. The updated compiler also accepted a filename-only `-o` output under the current working directory without clobbering existing output.
+
+This verifies **local checked source-to-native guest execution** of the bounded Forge compiler. It does **not** verify an exact GitHub Actions run, all CMake/CTest jobs, production Forge JIT integration, TenantVM security, or full AttoLang parity. Those statuses remain `not_executed` in the conformance ledger.
 
 ## Verification and security boundaries
 
