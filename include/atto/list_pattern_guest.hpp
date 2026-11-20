@@ -329,7 +329,7 @@ struct Compiled {
     if (p.list[i]==std::numeric_limits<std::int64_t>::min()) out+="std::numeric_limits<std::int64_t>::min()";
     else out+=std::to_string(p.list[i]);
   }
-  out+="};\n";
+  out+="};\n  (void)values;\n";
   const auto fixed=p.fixed.size(), n=p.list.size();
   const auto fallback=[&]() {
     out+="  std::printf(\"%lld\\n\",static_cast<long long>("+int_text(p.fallback)+"));\n"
