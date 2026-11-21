@@ -144,4 +144,11 @@ int main() {
   assert(parse_source("fnc main(): int {return 6 ^^ 3;}").ok());
   assert(parse_source("fnc main(): int {return /* pipe rpipe << >> */ seq(1,42);}").ok());
 
+  assert(parse_source("fnc main(): int {return /* outer /* inner */ rest */ 42;}").ok());
+  auto denied_bang = parse_source("fnc main(): int {return copy! 42;}");
+  assert(denied_bang.error == ParseError::ownership_bang_unsupported);
+  assert(parse_error_name(denied_bang.error) == "E_OWNERSHIP_BANG_UNSUPPORTED");
+  auto ignored_bang = parse_source("fnc main(): int {return /* take! */ 42;}");
+  assert(ignored_bang.ok());
+
 }
