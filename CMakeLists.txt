@@ -11,6 +11,16 @@ add_executable(oresforge compiler/main.cpp)
 target_link_libraries(oresforge PRIVATE oresforge_core)
 include(CTest)
 if(BUILD_TESTING)
+  # All Forge source frontends must deny raw ESC and DEL before lowering.
+  # This adds execution coverage; source admission already resides in main.
+  add_executable(oresforge_source_control_admission_test
+    tests/source_control_admission_test.cpp)
+  target_include_directories(oresforge_source_control_admission_test PRIVATE .)
+  target_link_libraries(oresforge_source_control_admission_test PRIVATE oresforge_core)
+  target_compile_features(oresforge_source_control_admission_test PRIVATE cxx_std_20)
+  add_test(NAME forge_source_terminal_control_admission
+    COMMAND oresforge_source_control_admission_test)
+  set_tests_properties(forge_source_terminal_control_admission PROPERTIES TIMEOUT 15)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   set(ORE_NUMERIC_I64_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated_numeric_i64_cases.hpp")
   add_custom_command(
@@ -37,6 +47,19 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/contracts/v1/numeric-parity/source-i64-overflow-cases.json"
     VERBATIM)
   add_custom_target(oresforge_numeric_overflow_cases DEPENDS "${ORE_NUMERIC_OVERFLOW_HEADER}")
+  # Host compiler source-byte admission test: no guest-language execution
+  # or Python tooling is required.
+  add_executable(oresforge_source_utf8_offsets
+    verification/source_utf8_offsets_test.cpp)
+  target_include_directories(oresforge_source_utf8_offsets PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_source_utf8_offsets PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_source_utf8_offsets PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME oresforge_source_utf8_offsets COMMAND oresforge_source_utf8_offsets)
+  set_tests_properties(oresforge_source_utf8_offsets PROPERTIES TIMEOUT 15)
   # Host-policy substrate only; guest syscall interception remains unimplemented.
   add_executable(oresforge_scoped_policy_tests
     contracts/v1/scoped_permission_policy_test.cpp)
@@ -64,11 +87,26 @@ if(BUILD_TESTING)
 
   configure_file("${CMAKE_CURRENT_SOURCE_DIR}/contracts/v1/annotation-admission-v1.tsv"
     "${CMAKE_CURRENT_BINARY_DIR}/annotation-admission-v1.tsv" COPYONLY)
+  # Keep real source frontend fixtures in CTest's build working directory.
+  # These are identical Atto Git blobs to the Java/LLVM/Wasm/.NET contract.
+  file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/http-actor-v1")
+  foreach(atto_http_fixture serial-1x1.atto explicit-1x1.atto unsupported-3x4.atto)
+    configure_file(
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/fixtures/http-actor-v1/${atto_http_fixture}"
+      "${CMAKE_CURRENT_BINARY_DIR}/http-actor-v1/${atto_http_fixture}"
+      COPYONLY)
+  endforeach()
   add_executable(oresforge_tests verification/tests.cpp)
   add_dependencies(oresforge_tests oresforge_numeric_i64_cases oresforge_numeric_overflow_cases)
   target_include_directories(oresforge_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
   target_link_libraries(oresforge_tests PRIVATE oresforge_core)
   add_test(NAME oresforge_unit COMMAND oresforge_tests)
+  # Execute the real stage-0 parser/IR rejection and positive-control checks.
+  add_executable(oresforge_match_tilde_failclosed
+    verification/atto_match_tilde_failclosed.cpp)
+  target_link_libraries(oresforge_match_tilde_failclosed PRIVATE oresforge_core)
+  add_test(NAME oresforge_match_tilde_failclosed
+    COMMAND oresforge_match_tilde_failclosed)
   # This invokes the real Forge frontend on operator-positive and
   # operator-negative sources, including unreachable declarations.
   add_executable(oresforge_legacy_operator_grammar
@@ -77,11 +115,26 @@ if(BUILD_TESTING)
   add_test(NAME oresforge_legacy_operator_grammar
     COMMAND oresforge_legacy_operator_grammar)
   set_tests_properties(oresforge_legacy_operator_grammar PROPERTIES TIMEOUT 15)
+  # Unicode source-preflight regression, including visible parser admission.
+  add_executable(oresforge_source_unicode_control verification/source_unicode_control_test.cpp)
+  target_link_libraries(oresforge_source_unicode_control PRIVATE oresforge_core)
+  add_test(NAME oresforge_source_unicode_control COMMAND oresforge_source_unicode_control)
+  set_tests_properties(oresforge_source_unicode_control PROPERTIES TIMEOUT 15)
   # Stage-0 single-file AttoLang path admission. Imports remain fail-closed in Forge.
   add_test(NAME oresforge_cli_atto_guest
     COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.atto")
   set_tests_properties(oresforge_cli_atto_guest PROPERTIES
     PASS_REGULAR_EXPRESSION "^14\n?$" TIMEOUT 10)
+  # Real compiler check mode: no program result is published on success,
+  # and parser, unsupported semantics, and checked-i64 failures stay closed.
+  add_test(NAME oresforge_cli_scalar_check
+    COMMAND "${CMAKE_COMMAND}"
+      "-DCOMPILER=$<TARGET_FILE:oresforge>"
+      "-DVALID=${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.atto"
+      "-DOVERFLOW=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/scalar-check/overflow.atto"
+      "-DUNSUPPORTED=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/scalar-check/unsupported.atto"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/verification/scalar_check_cli.cmake")
+  set_tests_properties(oresforge_cli_scalar_check PROPERTIES TIMEOUT 45)
   # Exact byte-identical AttoLang scalar used by Java, LLVM, Wasm and .NET.
   # This CTest builds and executes actual Forge-emitted x86-64 machine code.
   # Forge's stage-0 constant folding is NOT general program/AOT parity.
@@ -192,6 +245,13 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/verification/ets_pg_source_admission.py"
       "$<TARGET_FILE:oresforge>")
   set_tests_properties(oresforge_ets_pg_fail_closed_source PROPERTIES TIMEOUT 30)
+  # Real compiler reject test: comma :: / typed inline => Type -> lambdas
+  # are still unsupported in Forge stage-0; no false parity receipt.
+  add_test(NAME oresforge_comma_lambda_fail_closed
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/comma_lambda_source_admission.py"
+      "$<TARGET_FILE:oresforge>")
+  set_tests_properties(oresforge_comma_lambda_fail_closed PROPERTIES TIMEOUT 90)
   # Source to IR interpreter (not machine code or native AOT parity).
   add_test(NAME oresforge_source_i64_interpreter
     COMMAND "${Python3_EXECUTABLE}"
@@ -238,6 +298,11 @@ if(BUILD_TESTING)
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/value_boundaries.py"
       "$<TARGET_FILE:oresforge>")
   set_tests_properties(value_boundary_admission PROPERTIES TIMEOUT 60)
+  # Source admission only: reject unsupported Option/Result/reactive guest forms.
+  add_test(NAME elm_composition_source_admission
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/elm_composition_admission.py"
+      "$<TARGET_FILE:oresforge>")
+  set_tests_properties(elm_composition_source_admission PROPERTIES TIMEOUT 90)
   add_test(NAME numeric_reference_and_capability_admission
     COMMAND "${Python3_EXECUTABLE}" -m unittest discover
       -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_numeric_*.py" -v)
@@ -340,6 +405,8 @@ endif()
 if(BUILD_TESTING)
   add_executable(oresforge_wrapper_flatten_option_host verification/wrapper_flatten_option_host_test.cpp)
   target_include_directories(oresforge_wrapper_flatten_option_host PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/runtime")
+  # std::optional: do not rely on the compiler default standard (AppleClang < C++17).
+  target_compile_features(oresforge_wrapper_flatten_option_host PRIVATE cxx_std_17)
   target_compile_options(oresforge_wrapper_flatten_option_host PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic -Werror>)
   add_test(NAME forge_wrapper_option_host_conformance COMMAND oresforge_wrapper_flatten_option_host)
@@ -365,3 +432,192 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
   set_tests_properties(forge_actor_stack_domain_host_v1 PROPERTIES
     TIMEOUT 30 LABELS "host-only;native-actor-stack")
 endif()
+
+
+# Source admission only: no claim of compiled AttoLang guest execution.
+if(BUILD_TESTING)
+  add_executable(oresforge_source_bidi_admission verification/source_bidi_admission_test.cpp)
+  target_include_directories(oresforge_source_bidi_admission PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_source_bidi_admission PRIVATE cxx_std_20)
+  add_test(NAME forge_source_bidi_admission_host COMMAND oresforge_source_bidi_admission)
+  set_tests_properties(forge_source_bidi_admission_host PROPERTIES TIMEOUT 20)
+endif()
+
+# ---- atto-lang additions (kept in the ores-canonical reconciliation) ----
+option(ATTO_FORGE_SANITIZERS "Use ASan and UBSan for native tests" ON)
+
+add_library(atto_forge_checked_i64 INTERFACE)
+target_include_directories(atto_forge_checked_i64 INTERFACE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_features(atto_forge_checked_i64 INTERFACE cxx_std_20)
+
+add_executable(checked_i64_test tests/checked_i64.cpp)
+target_link_libraries(checked_i64_test PRIVATE atto_forge_checked_i64)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(checked_i64_test PRIVATE -Wall -Wextra -Werror -pedantic)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(checked_i64_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(checked_i64_test PRIVATE -fsanitize=address,undefined)
+  endif()
+endif()
+add_test(NAME checked_i64_test COMMAND checked_i64_test)
+
+# Host-only ownership contract model: not a Forge guest compiler.
+# Run sanitizer-backed native lifetime and concurrent weak-reference tests.
+find_package(Threads REQUIRED)
+add_executable(ownership_v1_test tests/ownership_v1.cpp)
+target_link_libraries(ownership_v1_test PRIVATE atto_forge_checked_i64 Threads::Threads)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  # Ensure assertions remain enabled even under -DCMAKE_BUILD_TYPE=Release.
+  target_compile_options(ownership_v1_test PRIVATE -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(ownership_v1_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(ownership_v1_test PRIVATE -fsanitize=address,undefined)
+  endif()
+endif()
+if(MSVC)
+  target_compile_options(ownership_v1_test PRIVATE /UNDEBUG)
+endif()
+add_test(NAME ownership_v1_test COMMAND ownership_v1_test)
+# Deterministic native stress matrix: malformed graphs, exact budgets,
+# concurrent region retirement and immovable in-place pin construction.
+add_executable(ownership_stress_v1_test tests/ownership_stress_v1.cpp)
+target_link_libraries(ownership_stress_v1_test PRIVATE atto_forge_checked_i64 Threads::Threads)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(ownership_stress_v1_test PRIVATE -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(ownership_stress_v1_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(ownership_stress_v1_test PRIVATE -fsanitize=address,undefined)
+  endif()
+elseif(MSVC)
+  target_compile_options(ownership_stress_v1_test PRIVATE /UNDEBUG)
+endif()
+add_test(NAME ownership_stress_v1_test COMMAND ownership_stress_v1_test)
+
+
+# Native bounded literal reader; host-only scalar primitive.
+add_executable(decimal_i64_test tests/decimal_i64.cpp)
+target_link_libraries(decimal_i64_test PRIVATE atto_forge_checked_i64)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(decimal_i64_test PRIVATE -Wall -Wextra -Werror -pedantic)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(decimal_i64_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(decimal_i64_test PRIVATE -fsanitize=address,undefined)
+  endif()
+endif()
+add_test(NAME decimal_i64_test COMMAND decimal_i64_test)
+
+# Restricted native lexer has no Python or borrowed source buffers.
+add_executable(scalar_lexer_test tests/scalar_lexer.cpp)
+target_link_libraries(scalar_lexer_test PRIVATE atto_forge_checked_i64)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(scalar_lexer_test PRIVATE -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(scalar_lexer_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(scalar_lexer_test PRIVATE -fsanitize=address,undefined)
+  endif()
+endif()
+add_test(NAME scalar_lexer_test COMMAND scalar_lexer_test)
+
+# Strict, bounded native scalar AST parser; no guest execution claim.
+add_executable(scalar_parser_test tests/scalar_parser.cpp)
+target_link_libraries(scalar_parser_test PRIVATE atto_forge_checked_i64)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(scalar_parser_test PRIVATE -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(scalar_parser_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(scalar_parser_test PRIVATE -fsanitize=address,undefined)
+  endif()
+endif()
+add_test(NAME scalar_parser_test COMMAND scalar_parser_test)
+
+# Checked native scalar AST evaluator: no guest execution claim.
+add_executable(scalar_eval_test tests/scalar_eval.cpp)
+target_link_libraries(scalar_eval_test PRIVATE atto_forge_checked_i64)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(scalar_eval_test PRIVATE -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(scalar_eval_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(scalar_eval_test PRIVATE -fsanitize=address,undefined)
+  endif()
+endif()
+add_test(NAME scalar_eval_test COMMAND scalar_eval_test)
+
+# Deterministic C++ emission from the bounded scalar AST.
+add_executable(scalar_emit_test tests/scalar_emit.cpp)
+target_link_libraries(scalar_emit_test PRIVATE atto_forge_checked_i64)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(scalar_emit_test PRIVATE -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(scalar_emit_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(scalar_emit_test PRIVATE -fsanitize=address,undefined)
+  endif()
+endif()
+add_test(NAME scalar_emit_test COMMAND scalar_emit_test)
+
+# Real compiled restricted scalar guests; no Python bootstrap.
+add_executable(forge_scalar tools/forge_scalar.cpp)
+target_link_libraries(forge_scalar PRIVATE atto_forge_checked_i64)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(forge_scalar PRIVATE -Wall -Wextra -Werror -pedantic)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(forge_scalar PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(forge_scalar PRIVATE -fsanitize=address,undefined)
+  endif()
+endif()
+add_test(NAME scalar_guest_pipeline
+  COMMAND "${CMAKE_COMMAND}"
+    "-DROOT=${CMAKE_CURRENT_SOURCE_DIR}"
+    "-DCXX=${CMAKE_CXX_COMPILER}"
+    "-DSANITIZERS=${ATTO_FORGE_SANITIZERS}"
+    "-DFORGE=$<TARGET_FILE:forge_scalar>"
+    "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/scalar-guests"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/scalar_guest.cmake")
+
+# Executed generated-native-guest conformance corpus under GCC and Clang.
+add_test(NAME scalar_guest_conformance
+  COMMAND "${CMAKE_COMMAND}"
+    "-DROOT=${CMAKE_CURRENT_SOURCE_DIR}"
+    "-DCXX=${CMAKE_CXX_COMPILER}"
+    "-DSANITIZERS=${ATTO_FORGE_SANITIZERS}"
+    "-DFORGE=$<TARGET_FILE:forge_scalar>"
+    "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/scalar-conformance"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/scalar_conformance.cmake")
+
+# Failed compiler inputs yield typed bounded diagnostics, no echoed source.
+add_test(NAME scalar_cli_diagnostics
+  COMMAND "${CMAKE_COMMAND}"
+    "-DFORGE=$<TARGET_FILE:forge_scalar>"
+    "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/scalar-diagnostics"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/scalar_cli_diagnostics.cmake")
+
+# Compiler builtins independently attest checked-i64 primitives at boundary
+# and 100,000 deterministic high-entropy signed operand pairs.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  add_executable(checked_i64_oracle_test tests/checked_i64_oracle.cpp)
+  target_link_libraries(checked_i64_oracle_test PRIVATE atto_forge_checked_i64)
+  target_compile_options(checked_i64_oracle_test PRIVATE -Wall -Wextra -Werror -pedantic)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(checked_i64_oracle_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(checked_i64_oracle_test PRIVATE -fsanitize=address,undefined)
+  endif()
+  add_test(NAME checked_i64_oracle_test COMMAND checked_i64_oracle_test)
+endif()
+
+# Deterministic native emission verified with 48 compiled executable guests.
+add_test(NAME scalar_guest_reproducibility
+  COMMAND "${CMAKE_COMMAND}"
+    "-DROOT=${CMAKE_CURRENT_SOURCE_DIR}"
+    "-DCXX=${CMAKE_CXX_COMPILER}"
+    "-DSANITIZERS=${ATTO_FORGE_SANITIZERS}"
+    "-DFORGE=$<TARGET_FILE:forge_scalar>"
+    "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/scalar-reproducibility"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/scalar_reproducibility.cmake")
+
+# Parse-only admission without output side effects.
+add_test(NAME scalar_check_only
+  COMMAND "${CMAKE_COMMAND}"
+    "-DROOT=${CMAKE_CURRENT_SOURCE_DIR}"
+    "-DFORGE=$<TARGET_FILE:forge_scalar>"
+    "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/scalar-check"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/scalar_check.cmake")
