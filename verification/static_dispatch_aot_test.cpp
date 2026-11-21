@@ -118,8 +118,42 @@ void verify_direct_aot(const std::string& source) {
     reject([&]{(void)oresforge::calls::emit_asm(bad,oresforge::Arch::X86_64);},
            "callable entry must have zero parameters");
   }
+  // These strings are lexically valid but source-reserved. Forged Module
+  // objects must never bypass source admission by supplying them directly.
+  {
+    Module bad=admitted;
+    bad.functions[0].name="int";
+    reject([&]{oresforge::calls::verify(bad);},"duplicate or invalid function");
+  }
+  {
+    Module bad=admitted;
+    bad.functions[0].parameters[0]="return";
+    reject([&]{oresforge::calls::verify(bad);},
+           "invalid or duplicate callable parameter");
+  }
+  {
+    Module bad=admitted;
+    inc_call(bad).value=42;
+    reject([&]{oresforge::calls::verify(bad);},
+           "unexpected callable numeric payload");
+    reject([&]{(void)oresforge::calls::emit_asm(bad,oresforge::Arch::X86_64);},
+           "unexpected callable numeric payload");
+  }
+  {
+    Module bad=admitted;
+    auto& inc=bad.functions[0];
+    inc.nodes[static_cast<std::size_t>(inc.result)].value=42;
+    reject([&]{oresforge::calls::verify(bad);},
+           "unexpected callable numeric payload");
+  }
+  reject([]{(void)oresforge::calls::parse(
+      "fnc int():int{return 42;}fnc main():int{return 0;}");
+  },"reserved function name");
+  reject([]{(void)oresforge::calls::parse(
+      "fnc helper(return:int):int{return 42;}fnc main():int{return 0;}");
+  },"invalid or duplicate parameter");
   std::cout<<"FORGE_STATIC_DISPATCH_AOT_SOURCE_PROOF|functions=3|direct_calls=2|"
-              "interpreter=42|negative_ir_cases=13\n";
+              "interpreter=42|negative_source_ir_cases=19\n";
 }
 }
 
