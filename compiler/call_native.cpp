@@ -339,6 +339,14 @@ struct Native {
   }
   void emit_node(const Function& fn,int index) {
     const auto& n=fn.nodes.at(static_cast<std::size_t>(index));
+    // The interpreter spends one unit before visiting each AST node. Native
+    // execution must enforce the same limit even for exponentially branching
+    // recursion. %r9 is a private in-module fuel register: all callable
+    // targets are locally emitted labels and use at most four SysV arguments.
+    // No external calls or user-controlled indirect branches are admitted.
+    out<<"  testq %r9, %r9\n"
+       <<"  je .Lores_budget\n"
+       <<"  decq %r9\n";
     if(n.kind==Kind::Constant) {
       out<<"  movabsq $"<<n.value<<", %rax\n";
     } else if(n.kind==Kind::Parameter) {
@@ -391,6 +399,7 @@ struct Native {
   std::string build() {
     out<<".text\n.globl oresforge_entry\n.type oresforge_entry, @function\n"
        <<"oresforge_entry:\n  xorl %r8d, %r8d\n"
+       <<"  movq $"<<kMaxEvalSteps<<", %r9\n"
        <<"  jmp .Lores_fn_"<<program.entry<<"\n";
     for (std::size_t i=0;i<program.functions.size();++i) {
       const auto& fn=program.functions[i];
@@ -409,6 +418,7 @@ struct Native {
     }
     out<<".Lores_depth:\n  ud2\n"
        <<".Lores_overflow:\n  ud2\n"
+       <<".Lores_budget:\n  ud2\n"
        <<".size oresforge_entry, .-oresforge_entry\n"
        <<".section .note.GNU-stack,\"\",@progbits\n";
     return out.str();
