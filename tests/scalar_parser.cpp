@@ -151,4 +151,53 @@ int main() {
   auto ignored_bang = parse_source("fnc main(): int {return /* take! */ 42;}");
   assert(ignored_bang.ok());
 
+
+  // Inline tasks remain same-frame, with independent syntax and effect gates.
+  for (const char* source : {
+    "fnc main(): int {return sync task<int> {return 42;};}",
+    "fnc main(): int {return sync task {return 40+2;};}",
+    "fnc main(): int {return sync task<int> {return sync task<int> {return 42;};};}",
+    "fnc main(): int {do sync task {} return 42;}",
+    "fnc main(): int {do sync task<void> {return;}; return 42;}",
+    "fnc main(): int {do sync task {} ^ seq(1, 42);}",
+    "int• main()\nbegin\ndo sync task<void> {return;};\n^ sync task<int> {return 42;};\nend."
+  }) {
+    const auto parsed = parse_source(source);
+    assert(parsed.ok() && validate_ast(parsed));
+  }
+  for (const char* source : {
+    "fnc main(): int {return task<int> {return 42;};}",
+    "fnc main(): int {do task<int> {return 42;}; return 0;}",
+    "fnc main(): int {return sync;}",
+    "fnc main(): int {return sync task<int> {return;};}",
+    "fnc main(): int {return sync task<void> {};}",
+    "fnc main(): int {return sync task<bool> {return 42;};}",
+    "fnc main(): int {do sync task<int> {return 41;};return 42;}",
+    "fnc main(): int {do sync task {return 41;};return 42;}",
+    "fnc main(): int {sync task {} return 42;}",
+    "fnc main(): int {sync task<void> {} return 42;}",
+    "fnc main(): int {return sync task<int> {return await 42;};}"
+  }) assert(!parse_source(source).ok());
+  assert(parse_source(
+    "fnc main(): int {do sync task<int> {return 41;};return 42;}"
+  ).error == ParseError::task_return_type);
+  assert(parse_source(
+    "fnc main(): int {do sync task {return 41;};return 42;}"
+  ).error == ParseError::task_return_type);
+  assert(parse_source(
+    "fnc main(): int {return task<int> {return 42;};}"
+  ).error == ParseError::task_unsupported);
+  assert(parse_source(
+    "fnc main(): int {return sync;}"
+  ).error == ParseError::reserved_sync);
+  auto forged_task = parse_source(
+    "fnc main(): int {return sync task<int> {return 42;};}");
+  assert(forged_task.ok());
+  forged_task.nodes.back().right = 1;
+  assert(!validate_ast(forged_task));
+  assert(parse_source(
+    "fnc main(): int {return /* sync task<int> */ seq(1,42);}"
+  ).ok());
+
+
 }
