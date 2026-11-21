@@ -1,4 +1,5 @@
 #include "compiler/source_utf8.hpp"
+#include "compiler/topic_publish_source_gate.hpp"
 #include "compiler/call_native.hpp"
 #include <algorithm>
 #include <charconv>
@@ -401,6 +402,7 @@ struct Native {
 Module parse(std::string_view source) {
   if (source.size()>kMaxSource)throw std::runtime_error("callable source budget exceeded");
   oresforge::source::validate_utf8(source);
+  oresforge::source::reject_unlowered_topic_publish(source);
   return Parser(source).parse();
 }
 void verify(const Module& m) {

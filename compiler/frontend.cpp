@@ -1,4 +1,5 @@
 #include "compiler/source_utf8.hpp"
+#include "compiler/topic_publish_source_gate.hpp"
 #include "compiler/frontend.hpp"
 #include <algorithm>
 #include <charconv>
@@ -553,12 +554,14 @@ class Parser {
 Program parse_source(std::string_view source) {
   if (source.size() > 1024 * 1024) throw std::runtime_error("source exceeds 1 MiB bootstrap limit");
   oresforge::source::validate_utf8(source);
+  oresforge::source::reject_unlowered_topic_publish(source);
   return Parser(source).parse();
 }
 Program parse_runtime_source(std::string_view source) {
   if (source.size() > 1024 * 1024)
     throw std::runtime_error("source exceeds 1 MiB bootstrap limit");
   oresforge::source::validate_utf8(source);
+  oresforge::source::reject_unlowered_topic_publish(source);
   return Parser(source,true).parse();
 }
 }
