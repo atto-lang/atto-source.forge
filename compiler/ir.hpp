@@ -11,7 +11,12 @@ struct Instruction {
   int a = -1;
   int b = -1;
 };
+struct FileExport {
+  std::string name;
+  bool package_only = false;
+};
 struct Program {
+  std::vector<FileExport> file_exports;
   std::vector<Instruction> instructions;
   // Stage-0 native ABI: up to four signed i64 arguments, in source order.
   std::size_t parameter_count = 0;

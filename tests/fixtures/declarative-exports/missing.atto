@@ -1,0 +1,2 @@
+export pub Missing;
+fnc main(): int { return 42; }
