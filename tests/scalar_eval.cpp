@@ -76,4 +76,24 @@ int main() {
   assert(evaluate_source(program("seq(1/0,42)")).error == EvalError::divide_by_zero);
   assert(evaluate_source(program("seq(9223372036854775807+1,42)")).error == EvalError::overflow);
 
+
+  for (const auto* source : {
+    "fnc main(): int {return sync task<int> {return 42;};}",
+    "fnc main(): int {return 1 + sync task {return 41;};}",
+    "fnc main(): int {do sync task {} return 42;}",
+    "fnc main(): int {do sync task<void> {return;}; return 42;}",
+    "fnc main(): int {return sync task<int> {return sync task<int> {return 42;};};}",
+    "fnc main(): int {return seq(1,sync task<int> {return 42;});}"
+  }) {
+    auto t = evaluate_source(source);
+    assert(t.ok() && *t.value == 42);
+  }
+  assert(evaluate_source(
+    "fnc main(): int {return sync task<int> {return 1/0;};}"
+  ).error == EvalError::divide_by_zero);
+  assert(evaluate_source(
+    "fnc main(): int {do sync task<int> {return 1;};return 42;}"
+  ).error == EvalError::parse_error);
+
+
 }
