@@ -25,7 +25,8 @@ struct Evaluated {
       values.push_back(node.value);
       continue;
     }
-    if (node.left >= i || (node.op != Op::neg && node.op != Op::bnot && node.right >= i))
+    if (node.left >= i || (node.op != Op::neg && node.op != Op::bnot &&
+                          node.op != Op::inline_task && node.right >= i))
       return {{}, EvalError::invalid_ast};
     const i64 lhs = values[node.left];
     std::optional<i64> result;
@@ -66,6 +67,10 @@ struct Evaluated {
         break;
       case Op::bxor:
         result = bit_xor(lhs, values[node.right]);
+        break;
+      case Op::inline_task:
+        // Same-frame lexical boundary, no Future/child actor or suspension.
+        result = lhs;
         break;
       case Op::seq:
         // All prefix nodes were evaluated in postorder, including traps.
