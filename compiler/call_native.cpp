@@ -30,15 +30,24 @@ bool valid_identifier(std::string_view name) {
          std::all_of(name.begin()+1,name.end(),
                      [](char c) { return letter(c)||digit(c); });
 }
-// Use the same reserved-name rules for source tokens and externally supplied
-// Module IR. Verified IR is an explicit input to interpretation and AOT.
+// The callable subset must not repurpose source-language keywords as ABI
+// symbols or argument names. Parse and verify share this one admission gate
+// so externally supplied Module IR cannot bypass the lexer/parser policy.
+bool valid_callable_name(std::string_view name) {
+  if (!valid_identifier(name)) return false;
+  constexpr std::string_view kReserved[] = {
+      "fnc", "define", "pub", "int", "return", "if", "then", "else",
+      "http", "serial", "true", "false"
+  };
+  for (const auto keyword : kReserved)
+    if (name == keyword) return false;
+  return true;
+}
 bool valid_function_name(std::string_view name) {
-  return valid_identifier(name) && name!="int" && name!="return" &&
-         name!="if" && name!="else" && name!="then";
+  return valid_callable_name(name);
 }
 bool valid_parameter_name(std::string_view name) {
-  return valid_identifier(name) && name!="int" && name!="if" &&
-         name!="then" && name!="else" && name!="return" && name!="fnc";
+  return valid_callable_name(name);
 }
 bool space(char c) { return c == ' ' || c == '\r' || c == '\n' || c == '\t' || c == '\v' || c == '\f'; }
 struct Token { std::string_view text; std::size_t offset=0; };
