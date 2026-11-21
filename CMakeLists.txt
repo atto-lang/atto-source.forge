@@ -34,6 +34,15 @@ target_link_libraries(oresforge PRIVATE oresforge_core oresforge_actor_compiler)
 include(CTest)
 if(BUILD_TESTING)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  # CONTROL-plane ABI is separate from the existing actor offset8+1 codec.
+  # This is a host bit-layout oracle, NOT compiled Atto guest support.
+  add_executable(oresforge_control_ref32_codec_tests tests/control_ref32_codec_v1_test.cpp)
+  target_include_directories(oresforge_control_ref32_codec_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_control_ref32_codec_tests PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_control_ref32_codec_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME oresforge_control_ref32_codec_host_only COMMAND oresforge_control_ref32_codec_tests)
   # Native HOST-ONLY actor-private heaps + per-incarnation logical frames.
   add_executable(oresforge_actor_c_arena_tests verification/actor_arena.cpp)
   target_link_libraries(oresforge_actor_c_arena_tests PRIVATE oresforge_actor_arena Threads::Threads)
