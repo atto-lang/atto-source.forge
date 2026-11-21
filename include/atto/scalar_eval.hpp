@@ -67,6 +67,10 @@ struct Evaluated {
       case Op::bxor:
         result = bit_xor(lhs, values[node.right]);
         break;
+      case Op::seq:
+        // All prefix nodes were evaluated in postorder, including traps.
+        result = values[node.right];
+        break;
       case Op::rem:
         if (values[node.right] == 0) return {{}, EvalError::divide_by_zero};
         result = checked_rem(lhs, values[node.right]);
