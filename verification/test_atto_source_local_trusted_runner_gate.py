@@ -58,12 +58,21 @@ def workflow_gates():
                    if line.strip() and not line.lstrip().startswith("#")]
     if permissions != ["  contents: read", "  pull-requests: read"]:
         raise AssertionError("workflow token may only read contents and pull requests")
+    jobs_match = re.search(r"(?ms)^jobs:\n(.*)\Z", source)
+    if not jobs_match:
+        raise AssertionError("expected trusted source-local job missing")
+    job_names = re.findall(r"(?m)^  ([A-Za-z_][A-Za-z_0-9-]*):",
+                           jobs_match.group(1))
+    if job_names != ["native-reviewed-source-full-suite"]:
+        raise AssertionError("only one trusted source-local job permitted")
     job_match = re.search(
         r"(?ms)^  native-reviewed-source-full-suite:\n(.*?)(?=^  [A-Za-z_][A-Za-z_0-9-]*:|\Z)",
         source)
     if not job_match:
         raise AssertionError("expected trusted source-local job missing")
     job_source = job_match.group(1)
+    if re.search(r"(?m)^    permissions:", job_source):
+        raise AssertionError("job cannot override read-only workflow token permissions")
     expected_runner = ("    runs-on:\n"
                        "      group: atto-forge-source-local-trusted\n"
                        "      labels: [self-hosted, linux, x64, atto-ci-trusted]\n")
@@ -215,6 +224,25 @@ class TrustedRunnerAdmissionTest(unittest.TestCase):
                 "github.ref == 'refs/heads/main'\n", "", 1)),
         ]:
             expected = "main-and-repository" if label == "main condition removed" else "runner group"
+            with self.subTest(case=label), \
+                    patch.object(Path, "read_text", return_value=changed), \
+                    self.assertRaisesRegex(AssertionError, expected):
+                workflow_gates()
+
+    def test_no_extra_jobs_or_job_permission_override(self):
+        original = PATH.read_text(encoding="utf-8")
+        for label, changed, expected in [
+            ("extra job", original + "\n  unexpected:\n    runs-on: ubuntu-24.04\n",
+             "only one trusted"),
+            ("job override", original.replace(
+                "    timeout-minutes: 45",
+                "    permissions:\n      contents: write\n    timeout-minutes: 45", 1),
+             "job cannot override"),
+            ("read job override", original.replace(
+                "    timeout-minutes: 45",
+                "    permissions:\n      contents: read\n    timeout-minutes: 45", 1),
+             "job cannot override"),
+        ]:
             with self.subTest(case=label), \
                     patch.object(Path, "read_text", return_value=changed), \
                     self.assertRaisesRegex(AssertionError, expected):
