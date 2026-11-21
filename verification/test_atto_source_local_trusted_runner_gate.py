@@ -54,15 +54,18 @@ def workflow_gates():
     # Inspect EVERY checkout. One safe checkout does not make a second,
     # credential-persisting checkout safe on a privileged ephemeral runner.
     checkouts = re.findall(
-        r"(?ms)^      - uses: actions/checkout@[^\n]+\n(.*?)(?=^      - |\Z)", source)
+        r"(?ms)^      - uses: actions/checkout@([^\n]+)\n(.*?)(?=^      - |\Z)", source)
     if len(checkouts) != 2:
         raise AssertionError("exactly two pinned source-local checkouts required")
     expected_refs = ["github.sha", "inputs.expected_head_sha"]
-    for checkout, expected_ref in zip(checkouts, expected_refs):
+    for (checkout_action, checkout), expected_ref in zip(checkouts, expected_refs):
+        if not re.fullmatch(r"[0-9a-f]{40}(?: #.*)?", checkout_action):
+            raise AssertionError("all checkout actions must use immutable pinned SHA")
         if not re.search(r"(?m)^          persist-credentials: false$", checkout) or \
                 not re.search(r"(?m)^          clean: true$", checkout):
             raise AssertionError("every checkout must erase and deny credentials")
-        if f"ref: " not in checkout or expected_ref not in checkout:
+        ref_line = "          ref: " + "$" + "{{ " + expected_ref + " }}"
+        if not re.search(r"(?m)^" + re.escape(ref_line) + r"$", checkout):
             raise AssertionError("checkout ref must be immutable expected SHA")
     if 'branch_state = fetch("branches/main")' not in source or \
             'branch_state.get("protected") is not True' not in source:
@@ -173,6 +176,16 @@ class TrustedRunnerAdmissionTest(unittest.TestCase):
             ("wrong ref", original.replace(
                 "          ref: " + "$" + "{{ inputs.expected_head_sha }}",
                 "          ref: main", 1), "checkout ref"),
+            ("unpinned checkout", original.replace(
+                "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "actions/checkout@main", 1), "immutable pinned SHA"),
+            ("extra checkout", original.replace(
+                "      - name: Execute source-free hostile-input regression tests",
+                "      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\\n"
+                "        with:\\n"
+                "          persist-credentials: true\\n"
+                "      - name: Execute source-free hostile-input regression tests", 1),
+             "exactly two pinned"),
             ("no clean", original.replace(
                 "          clean: true", "          clean: false", 1), "every checkout"),
         ]
