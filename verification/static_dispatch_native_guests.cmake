@@ -30,18 +30,27 @@ function(check_native_callable name must_trap)
       message(FATAL_ERROR "${name}: real interpreter/IR oracle failed: ${check_rc}: ${check_err}")
     endif()
   endif()
-  if("${name}" STREQUAL "trap-step-budget")
-    # The interpreter rejects the *same* branching source via its existing
-    # bounded AST evaluation. The native guest must reject it by SIGILL too.
+  if(must_trap)
+    # Every SIGILL fixture requires an independent, reason-specific interpreter
+    # oracle so an unrelated native trap is not mistaken for the intended gate.
+    if("${name}" STREQUAL "trap-overflow")
+      set(expected_error "i64 add overflow")
+    elseif("${name}" STREQUAL "trap-depth-limit")
+      set(expected_error "call depth exceeded")
+    elseif("${name}" STREQUAL "trap-step-budget")
+      set(expected_error "callable execution budget exceeded")
+    else()
+      message(FATAL_ERROR "${name}: unregistered negative native fixture")
+    endif()
     execute_process(
       COMMAND "${VERIFIER}" "${src}" --check-42
-      RESULT_VARIABLE fuel_rc OUTPUT_VARIABLE fuel_stdout
-      ERROR_VARIABLE fuel_stderr TIMEOUT 20)
-    if(NOT "${fuel_rc}" STREQUAL "1" OR
-       NOT "${fuel_stdout}" STREQUAL "" OR
-       NOT "${fuel_stderr}" MATCHES "callable execution budget exceeded")
+      RESULT_VARIABLE trap_rc OUTPUT_VARIABLE trap_stdout
+      ERROR_VARIABLE trap_stderr TIMEOUT 20)
+    if(NOT "${trap_rc}" STREQUAL "1" OR
+       NOT "${trap_stdout}" STREQUAL "" OR
+       NOT "${trap_stderr}" MATCHES "${expected_error}")
       message(FATAL_ERROR
-        "trap-step-budget: interpreter must reject exhausted fuel: rc=[${fuel_rc}] stderr=[${fuel_stderr}]")
+        "${name}: interpreter expected [${expected_error}] rc=[${trap_rc}] stderr=[${trap_stderr}]")
     endif()
   endif()
   execute_process(
@@ -82,6 +91,14 @@ function(check_native_callable name must_trap)
       file(WRITE "${driver}"
         "#include <cstdint>\nextern \"C\" std::int64_t oresforge_entry();\n"
         "int main(){const auto first=oresforge_entry();const auto second=oresforge_entry();return first==42 && second==42 ? 0 : 17;}\n")
+    endif()
+    # The generated guest must contain a visible, standalone C++ entrypoint.
+    # A stray CMake '// comment' inside file(WRITE) used to silently comment
+    # out the entire main() definition; catch it before invoking the compiler.
+    file(READ "${driver}" driver_source)
+    string(FIND "${driver_source}" "\nint main(){" main_at)
+    if(main_at LESS 0)
+      message(FATAL_ERROR "${name}/${opt}: malformed generated guest driver: missing main()")
     endif()
     execute_process(
       COMMAND "${CXX}" "-${opt}" -std=c++20 -Wall -Wextra -Werror -pedantic
