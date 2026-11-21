@@ -343,11 +343,21 @@ class Parser {
         // name-first 'value:int' spelling bind the same checked i64
         // parameter slot. Do not admit an untyped argument.
         const bool type_first=take("int");
+        if (type_first && tok_.text=="?")
+          error("E_OPTION_TYPE_ABI_UNSUPPORTED: type-level '?' needs tagged Option<int> ABI");
         const std::string parameter=identifier();
+        if (tok_.text=="?")
+          error("E_OPTIONAL_FORMAL_ABI_UNSUPPORTED: name-level '?' needs checked omitted-argument ABI");
+        if (!type_first) {
+          expect(":"); expect("int");
+          if (tok_.text=="?")
+            error("E_OPTION_TYPE_ABI_UNSUPPORTED: type-level '?' needs tagged Option<int> ABI");
+        }
+        if (tok_.text=="=")
+          error("E_PARAMETER_DEFAULT_REQUIRES_NAME_QUESTION: default requires checked omittable-argument ABI");
         if (parameter=="int" || parameter=="fnc" || parameter=="return" ||
             std::find(fn.parameters.begin(),fn.parameters.end(),parameter)!=fn.parameters.end())
           error("invalid or duplicate parameter");
-        if (!type_first) { expect(":"); expect("int"); }
         fn.parameters.push_back(parameter);
         if (fn.parameters.size()>64) error("too many parameters");
         if (!take(",")) break;
