@@ -106,8 +106,9 @@ fixture consumes **197,021 visits** including `main`, stays just under the
 200,000-visit ceiling, and returns 42. `grow(21)` in the negative fixture
 would consume **318,787 visits** including `main` and must trap at the
 budget. Both stay far below the separate 128-frame depth limit and avoid
-i64 overflow. The negative fixture uses branching direct The CMake suite checks that the real Forge
-interpreter fails specifically with `callable execution budget exceeded`,
+i64 overflow. The CMake suite verifies that the positive fixture
+returns 42 without exhausting fuel and the negative fixture's interpreter
+fails specifically with `callable execution budget exceeded`,
 then requires the compiled native guest to terminate by SIGILL (132) at
 `-O0` and `-O2`, both GCC and Clang. A separately compiled small x86-64
 assembly probe verified register preservation and the SIGILL convention
