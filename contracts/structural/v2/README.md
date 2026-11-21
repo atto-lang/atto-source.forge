@@ -88,3 +88,14 @@ lexically accepted. For implementation parity require:
 - cross-repo identical fixture content and synchronized version.
 Wasm must prove actual wasm32 compile/link and guest execution rather
 than inheriting a host LLVM pass report.
+
+## Five-backend contract-byte convergence (2026-11-11)
+
+Draft alignment adds the four missing negative case IDs `safety.tuple.width.65`,
+`safety.family.size.129`, `safety.unknown.slot`, and
+`safety.mutable.borrow.slot`. It makes Forge's target-only `cases.json`
+byte-identical to the pinned .NET and Wasm contracts, subject to review.
+`check_five_backend_v2_cases.py --self-test` verifies the exact shared Git
+blob, 30 case IDs, expected negative labels, and mutation rejection.
+This proves **target contract parity only**. No Forge guest compiler run or
+structural tuple source acceptance is certified by this check.

@@ -5,13 +5,17 @@
 # ephemeral runner with the custom atto-ci-trusted label in THIS source org.
 # No PR/push trigger: unreviewed workflow or contributor source cannot execute
 # automatically on the trusted self-hosted runner.
-name: AttoLang Forge logical words source-local trusted tests (NOT guest parity)
+name: AttoLang Forge exact-head source-local compiler tests (full CTest)
 
 on:
   workflow_dispatch:
     inputs:
+      expected_pr_number:
+        description: "Open same-repository Forge PR number targeting main (approved exact head)"
+        required: true
+        type: string
       expected_head_sha:
-        description: "Exact current SHA of same-repository Forge PR #241 (40 lowercase hex)"
+        description: "Exact live head SHA of the selected Forge PR (40 lowercase hex)"
         required: true
         type: string
       expected_tree_sha:
@@ -24,13 +28,13 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: atto-forge-logical-words-trusted-source-local
+  group: atto-forge-reviewed-source-local
   cancel-in-progress: false
 
 jobs:
-  native-logical-word-rejection:
-    if: github.repository == 'ores-truffle-oreslang/oreslang-source.forge' && github.ref == 'refs/heads/main'
-    name: pinned-source-gcc-clang-asan-ubsan-NOT-bool-guest-parity
+  native-reviewed-source-full-suite:
+    if: github.repository == 'atto-lang/atto-source.forge' && github.ref == 'refs/heads/main'
+    name: reviewed-exact-head-gcc-clang-asan-ubsan-full-ctest
     # Dedicated org runner group must permit only this reviewed @main workflow.
     # A label alone is not a security boundary.
     runs-on:
@@ -38,9 +42,10 @@ jobs:
       labels: [self-hosted, linux, x64, atto-ci-trusted]
     timeout-minutes: 45
     steps:
-      - name: Bind requested SHA to live same-repo PR #241 before checkout
+      - name: Bind requested PR SHA and tree to independently approved live source
         shell: bash
         env:
+          EXPECTED_PR: ${{ inputs.expected_pr_number }}
           EXPECTED_HEAD: ${{ inputs.expected_head_sha }}
           EXPECTED_TREE: ${{ inputs.expected_tree_sha }}
           READ_ONLY_GITHUB_TOKEN: ${{ github.token }}
@@ -48,14 +53,17 @@ jobs:
           set -euo pipefail
           [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]] || exit 2
           [[ "$EXPECTED_TREE" =~ ^[0-9a-f]{40}$ ]] || exit 2
-          test "$GITHUB_REPOSITORY" = 'ores-truffle-oreslang/oreslang-source.forge'
+          test "$GITHUB_REPOSITORY" = 'atto-lang/atto-source.forge'
           test "$GITHUB_REF" = 'refs/heads/main'
           test -n "${RUNNER_NAME:-}"
           python3 - <<'PY'
           import json, os, re, urllib.request
-          REPO = "ores-truffle-oreslang/oreslang-source.forge"
-          REPO_ID = 1419703674
-          PR = 241
+          REPO = "atto-lang/atto-source.forge"
+          REPO_ID = 1448701874
+          RAW_PR = os.environ["EXPECTED_PR"]
+          if not re.fullmatch(r"[1-9][0-9]{0,5}", RAW_PR):
+              raise SystemExit("DENIED: malformed pull request number")
+          PR = int(RAW_PR)
           SHA = os.environ["EXPECTED_HEAD"]
           TREE = os.environ["EXPECTED_TREE"]
           TOKEN = os.environ["READ_ONLY_GITHUB_TOKEN"]
@@ -172,58 +180,53 @@ jobs:
           echo "ATTO_FORGE_VERIFIED_SOURCE_TREE=$EXPECTED_TREE"
           echo "ATTO_RUN_ATTEMPT=$GITHUB_RUN_ID/$GITHUB_RUN_ATTEMPT"
 
-      - name: GCC full source compilation and all logical-word CTests
+      - name: GCC full-source compiler build, CTest inventory and full suite
         shell: bash
         run: |
           set -euo pipefail
-          cmake -S . -B build-logical-gcc -DCMAKE_BUILD_TYPE=Debug \
+          cmake -S . -B build-trusted-gcc -DCMAKE_BUILD_TYPE=Debug \
             -DBUILD_TESTING=ON -DCMAKE_CXX_COMPILER=g++
-          cmake --build build-logical-gcc --parallel 2
-          count="$(ctest --test-dir build-logical-gcc -N -R '^oresforge_logical_word' |
-            awk '/^Total Tests:/ {print $3}')"
-          test "${count:-0}" -ge 3
-          ctest --test-dir build-logical-gcc --output-on-failure \
-            -R '^oresforge_logical_word'
-          sha256sum build-logical-gcc/oresforge
-          echo "ATTO_FORGE_GCC_ACTUAL_COMPILER_TESTS=EXECUTED_NOT_GUEST_PARITY"
+          cmake --build build-trusted-gcc --parallel 2
+          python3 -m unittest discover -s scripts -p test_verify_ctest_discovery.py -v
+          python3 scripts/verify_ctest_discovery.py --build-dir build-trusted-gcc
+          ctest --test-dir build-trusted-gcc --output-on-failure --no-tests=error --parallel 2
+          sha256sum build-trusted-gcc/oresforge
+          echo "ATTO_FORGE_GCC_FULL_CTEST=EXECUTED_EXACT_HEAD"
 
-      - name: Clang full source compilation and all logical-word CTests
+      - name: Clang full-source compiler build, CTest inventory and full suite
         shell: bash
         run: |
           set -euo pipefail
-          cmake -S . -B build-logical-clang -DCMAKE_BUILD_TYPE=Debug \
+          cmake -S . -B build-trusted-clang -DCMAKE_BUILD_TYPE=Debug \
             -DBUILD_TESTING=ON -DCMAKE_CXX_COMPILER=clang++
-          cmake --build build-logical-clang --parallel 2
-          count="$(ctest --test-dir build-logical-clang -N -R '^oresforge_logical_word' |
-            awk '/^Total Tests:/ {print $3}')"
-          test "${count:-0}" -ge 3
-          ctest --test-dir build-logical-clang --output-on-failure \
-            -R '^oresforge_logical_word'
-          sha256sum build-logical-clang/oresforge
-          echo "ATTO_FORGE_CLANG_ACTUAL_COMPILER_TESTS=EXECUTED_NOT_GUEST_PARITY"
+          cmake --build build-trusted-clang --parallel 2
+          python3 -m unittest discover -s scripts -p test_verify_ctest_discovery.py -v
+          python3 scripts/verify_ctest_discovery.py --build-dir build-trusted-clang
+          ctest --test-dir build-trusted-clang --output-on-failure --no-tests=error --parallel 2
+          sha256sum build-trusted-clang/oresforge
+          echo "ATTO_FORGE_CLANG_FULL_CTEST=EXECUTED_EXACT_HEAD"
 
-      - name: Clang ASan and UBSan source execution of logical-word tests
+      - name: Clang ASan UBSan full-source compiler build and full suite
         shell: bash
         env:
           ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
           UBSAN_OPTIONS: halt_on_error=1
         run: |
           set -euo pipefail
-          cmake -S . -B build-logical-sanitized -DCMAKE_BUILD_TYPE=Debug \
+          cmake -S . -B build-trusted-sanitized -DCMAKE_BUILD_TYPE=Debug \
             -DBUILD_TESTING=ON -DCMAKE_CXX_COMPILER=clang++ \
             -DCMAKE_CXX_FLAGS="-O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined" \
             -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
-          cmake --build build-logical-sanitized --parallel 2
-          count="$(ctest --test-dir build-logical-sanitized -N -R '^oresforge_logical_word' |
-            awk '/^Total Tests:/ {print $3}')"
-          test "${count:-0}" -ge 3
-          ctest --test-dir build-logical-sanitized --output-on-failure \
-            -R '^oresforge_logical_word'
-          echo "ATTO_FORGE_ASAN_UBSAN_TESTS=EXECUTED_NOT_GUEST_PARITY"
+          cmake --build build-trusted-sanitized --parallel 2
+          python3 scripts/verify_ctest_discovery.py --build-dir build-trusted-sanitized
+          ctest --test-dir build-trusted-sanitized --output-on-failure --no-tests=error --parallel 2
+          sha256sum build-trusted-sanitized/oresforge
+          echo "ATTO_FORGE_CLANG_ASAN_UBSAN_FULL_CTEST=EXECUTED_EXACT_HEAD"
 
       - name: Reconfirm exact live head tree and approval after tests
         shell: bash
         env:
+          EXPECTED_PR: ${{ inputs.expected_pr_number }}
           EXPECTED_HEAD: ${{ inputs.expected_head_sha }}
           EXPECTED_TREE: ${{ inputs.expected_tree_sha }}
           READ_ONLY_GITHUB_TOKEN: ${{ github.token }}
@@ -231,9 +234,12 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           import json, os, re, urllib.request
-          REPO = "ores-truffle-oreslang/oreslang-source.forge"
-          REPO_ID = 1419703674
-          PR = 241
+          REPO = "atto-lang/atto-source.forge"
+          REPO_ID = 1448701874
+          RAW_PR = os.environ["EXPECTED_PR"]
+          if not re.fullmatch(r"[1-9][0-9]{0,5}", RAW_PR):
+              raise SystemExit("DENIED: malformed pull request number")
+          PR = int(RAW_PR)
           SHA = os.environ["EXPECTED_HEAD"]
           TREE = os.environ["EXPECTED_TREE"]
           TOKEN = os.environ["READ_ONLY_GITHUB_TOKEN"]
@@ -313,4 +319,4 @@ jobs:
           print("ATTO_SOURCE_LOCAL_INDEPENDENT_APPROVAL_COUNT=" + str(len(approved)))
           print("ATTO_SOURCE_LOCAL_SOURCE_EXPORT=NONE")
           PY
-          echo "ATTO_TRUSTED_RUNNER_ADMISSION=SOURCE_LOCAL_EXECUTION_ONLY_NOT_GUEST_PARITY"
+          echo "ATTO_TRUSTED_RUNNER_ADMISSION=SOURCE_LOCAL_FULL_SUITE_STILL_REQUIRES_MERGE_REVIEW"

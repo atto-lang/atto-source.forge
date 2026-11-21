@@ -13,9 +13,9 @@ import unittest
 from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
 
-REPO = "ores-truffle-oreslang/oreslang-source.forge"
-REPO_ID = 1419703674
-PR_NUMBER = 241
+REPO = "atto-lang/atto-source.forge"
+REPO_ID = 1448701874
+PR_NUMBER = 207
 HEAD = "a" * 40
 TREE = "b" * 40
 PATH = Path(__file__).resolve().parents[1] / ".github/workflows/atto-logical-words-source-local-trusted.yml"
@@ -51,6 +51,14 @@ def workflow_gates():
         raise AssertionError("source review gate is missing")
     if "git rev-parse 'HEAD^{tree}'" not in source:
         raise AssertionError("exact checked-out Git tree comparison is missing")
+    if "ATTO_FORGE_GCC_FULL_CTEST=EXECUTED_EXACT_HEAD" not in source or \
+            "ATTO_FORGE_CLANG_FULL_CTEST=EXECUTED_EXACT_HEAD" not in source or \
+            "ATTO_FORGE_CLANG_ASAN_UBSAN_FULL_CTEST=EXECUTED_EXACT_HEAD" not in source:
+        raise AssertionError("full GCC/Clang/sanitizer CTest gates required")
+    if "scripts/verify_ctest_discovery.py --build-dir" not in source:
+        raise AssertionError("fail-closed full CTest inventory required")
+    if "ores-truffle-oreslang/oreslang-source.forge" in source:
+        raise AssertionError("legacy source repository forbidden in workflow")
     return [compile(script, str(PATH), "exec") for script in scripts]
 
 class TrustedRunnerAdmissionTest(unittest.TestCase):
@@ -70,7 +78,7 @@ class TrustedRunnerAdmissionTest(unittest.TestCase):
         self.permission = "write"
         self.permission_user_id = 220
         self.env = {
-            "EXPECTED_HEAD": HEAD, "EXPECTED_TREE": TREE,
+            "EXPECTED_PR": str(PR_NUMBER), "EXPECTED_HEAD": HEAD, "EXPECTED_TREE": TREE,
             "READ_ONLY_GITHUB_TOKEN": "mock-readonly-token",
         }
         self.calls = []
@@ -128,6 +136,7 @@ class TrustedRunnerAdmissionTest(unittest.TestCase):
             ("wrong base repo", lambda: self.pull["base"]["repo"].update(id=1234), "identity"),
             ("closed PR", lambda: self.pull.update(state="closed"), "identity"),
             ("wrong Git tree", lambda: self.commit["tree"].update(sha="f" * 40), "tree"),
+            ("malformed PR number", lambda: self.env.update(EXPECTED_PR="../bad"), "malformed pull request number"),
             ("malformed head", lambda: self.env.update(EXPECTED_HEAD="../bad"), "malformed"),
             ("malformed tree", lambda: self.env.update(EXPECTED_TREE="x" * 40), "malformed"),
         ]

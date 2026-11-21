@@ -148,6 +148,19 @@ class Parser {
         ++at_;
       }
       tok_={Kind::Word,source_.substr(start,at_-start),start};
+      // A contextual ownership operator requires the verb immediately next
+      // to '!'. The stage-0 scalar IR has no ownership kind or runtime loan
+      // authority; never reinterpret copy!/take!/borrow!/share! as a call.
+      // The same guard catches 'mut borrow!' at the borrow token.
+      if ((tok_.text=="copy" || tok_.text=="take" ||
+           tok_.text=="borrow" || tok_.text=="share") &&
+          at_<source_.size() && source_[at_]=='!' &&
+          !(at_+1<source_.size() && source_[at_+1]=='=') &&
+          !(source_.substr(at_,3)=="!eq" &&
+              (at_+3==source_.size() ||
+               (!ascii_alnum(static_cast<unsigned char>(source_[at_+3])) &&
+                source_[at_+3]!='_'))))
+        error("OWNERSHIP_BANG_BACKEND_UNSUPPORTED: typed ownership and Forge native lowering required");
       if (tok_.text=="any" || tok_.text=="unknown" ||
           tok_.text=="Any" || tok_.text=="Unknown")
         error("any/unknown requires tagged opaque-value ABI and runtime type descriptors");
@@ -158,6 +171,10 @@ class Parser {
       // Scalar bootstrap lacks nominal enum declarations and compiler-owned
       // prebound virtual method slots. Never attempt arity-only fallback.
       if (tok_.text=="enum") error("nominal enum overloads require compiler-bound dispatch");
+      // Match must never be interpreted as an ordinary scalar name or
+      // silently ignored by unreachable helper inlining.
+      if (tok_.text=="match")
+        error("MATCH_DEFAULT_BACKEND_UNSUPPORTED: typed match requires pattern CFG, exhaustiveness and checked fallback lowering");
       if (tok_.text=="gen" || tok_.text=="generator")
         error("generator declarations require iterator-frame and continuation lowering");
       // Fail closed on named language features before the scalar grammar
@@ -230,6 +247,9 @@ class Parser {
     // never the legacy percent or caret operators. Report the actual byte
     // offset before generic punctuation handling, including unreachable
     // helper definitions: these characters cannot become silent aliases.
+    if (c=='~')
+      throw std::runtime_error("TILDE_AGGREGATE_BACKEND_UNSUPPORTED: Map/Record needs typed aggregate AST, ownership and atomic constructor lowering at byte "+
+                               std::to_string(start));
     if (c=='%')
       throw std::runtime_error("legacy % operator is removed; use Integer.rem/mod at byte "+
                                std::to_string(start));
@@ -293,6 +313,16 @@ class Parser {
         error("VIRTUAL_ACTOR_BACKEND_UNSUPPORTED: logical key and activation fencing required");
       error("unexpected declaration after virtual");
     }
+    // Native Forge has a scalar-only stage-0 source compiler. HTTP actor
+    // request/message lifetime policy and physical shutdown cannot be
+    // approximated by its host mailbox or generic actor lowering.
+    if (tok_.text=="http")
+      error("HTTP_ACTOR_BACKEND_UNSUPPORTED: Forge lacks source HTTP actor admission and physical-turn shutdown lowering");
+    if (take("serial")) {
+      if (tok_.text=="http")
+        error("HTTP_ACTOR_BACKEND_UNSUPPORTED: Forge lacks source HTTP actor admission and physical-turn shutdown lowering");
+      error("SERIAL_ACTOR_BACKEND_UNSUPPORTED: Forge lacks source serial actor lowering");
+    }
     // An explicitly inverted declaration is a nominal row-layout request,
     // never a scalar function. The Stage-0 frontend must reject it before
     // parsing a subsequent unrelated function or emitting native code.
@@ -326,7 +356,14 @@ class Parser {
     if (!take(":")) expect("->");
     if (tok_.text=="tuple" || tok_.text=="structural" || tok_.text=="(")
       error("tuple-v2 return requires typed ABI lowering");
-    expect("int"); expect("{");
+    expect("int");
+    // Forge stage-0 still emits a single expression return. A double-colon
+    // body cannot be interpreted as a braced function or a punctuation typo:
+    // it needs ordered lexical locals, explicit return types and region-safe
+    // closure lowering before any guest execution can be admitted.
+    if (tok_.text==":" && source_.substr(tok_.offset,2)=="::")
+      error("FORGE_COMMA_BODY_UNSUPPORTED: typed comma body requires checked lexical lowering");
+    expect("{");
     if (tok_.text=="guard")
       error("GUARD_BACKEND_UNSUPPORTED: early-exit CFG and ownership lowering required");
     expect("return");
@@ -371,7 +408,7 @@ class Parser {
       if (operation=="borrow") {
         next();
         if (tok_.text=="mut")
-          error("legacy 'rt borrow mut' is not valid Oreslang; use 'rt mut borrow value'");
+          error("runtime ownership operation requires typed lowering in Forge"); // compatible legacy order
         error("runtime ownership operation requires typed lowering in Forge");
       }
       if (operation=="mut") {
