@@ -38,3 +38,8 @@ check_diag(io_write "fnc main(): int {return 1 << 2;}" "E_IO_DIRECTION_UNSUPPORT
 check_diag(io_read "fnc main(): int {return 1 >> 2;}" "E_IO_DIRECTION_UNSUPPORTED")
 check_diag(pipe "fnc main(): int {return pipe;}" "E_UNSUPPORTED_CONTINUOUS_PIPE")
 check_diag(rpipe "fnc main(): int {return rpipe;}" "E_UNSUPPORTED_CONTINUOUS_PIPE")
+
+check_diag(ownership_bang "fnc main(): int {return copy! 42;}" "E_OWNERSHIP_BANG_UNSUPPORTED")
+string(REPEAT "/*" 129 too_deep_open)
+string(REPEAT "*/" 129 too_deep_close)
+check_diag(nested_comment_limit "fnc main(): int {return ${too_deep_open}42${too_deep_close};}" "E_PARSE_LEXICAL")
