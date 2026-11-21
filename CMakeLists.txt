@@ -11,6 +11,63 @@ add_executable(oresforge compiler/main.cpp)
 target_link_libraries(oresforge PRIVATE oresforge_core)
 include(CTest)
 if(BUILD_TESTING)
+  foreach(export_positive top bottom package name-256)
+    add_test(NAME oresforge_declarative_export_${export_positive}
+      COMMAND "${CMAKE_COMMAND}"
+        "-DCOMPILER=$<TARGET_FILE:oresforge>"
+        "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/declarative-exports/${export_positive}.atto"
+        "-DEXPECT=42"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/verification/assert-export-acceptance.cmake")
+    set_tests_properties(oresforge_declarative_export_${export_positive}
+      PROPERTIES TIMEOUT 15)
+  endforeach()
+  # Nonzero status alone is insufficient: a crash, missing compiler, or unrelated
+  # parser error must never satisfy the negative export-admission tests.
+  set(export_rejection_cases
+    "missing|EXPORT_UNBOUND|Missing"
+    "duplicate|EXPORT_DUPLICATE|helper"
+    "visibility-conflict|EXPORT_VISIBILITY_CONFLICT|helper"
+    "pkg-entry|EXPORT_PACKAGE_ENTRY_UNSUPPORTED|native main is process entry")
+  foreach(export_rejection_case IN LISTS export_rejection_cases)
+    string(REPLACE "|" ";" export_parts "${export_rejection_case}")
+    list(GET export_parts 0 export_negative)
+    list(GET export_parts 1 export_diagnostic)
+    list(GET export_parts 2 export_symbol)
+    add_test(NAME oresforge_declarative_export_reject_${export_negative}
+      COMMAND "${CMAKE_COMMAND}"
+        "-DCOMPILER=$<TARGET_FILE:oresforge>"
+        "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/declarative-exports/${export_negative}.atto"
+        "-DEXPECT=${export_diagnostic}: ${export_symbol}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/verification/assert-export-rejection.cmake")
+    set_tests_properties(oresforge_declarative_export_reject_${export_negative}
+      PROPERTIES TIMEOUT 15)
+  endforeach()
+  # Stage-0 does not implement nominal class/actor/enum export ABI.
+  # Assert the exact compiler-owned error, not a generic parser failure,
+  # signal/crash, or unrelated stdout.
+  foreach(unsupported_export_case IN ITEMS "class|16" "actor|11" "enum|11")
+    string(REPLACE "|" ";" unsupported_export_parts "${unsupported_export_case}")
+    list(GET unsupported_export_parts 0 unsupported_kind)
+    list(GET unsupported_export_parts 1 unsupported_offset)
+    add_test(NAME oresforge_declarative_export_reject_unsupported_${unsupported_kind}
+      COMMAND "${CMAKE_COMMAND}"
+        "-DCOMPILER=$<TARGET_FILE:oresforge>"
+        "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/declarative-exports/unsupported-${unsupported_kind}.atto"
+        "-DEXPECT=EXPORT_KIND_UNSUPPORTED: Forge stage-0 supports only fnc export targets at byte ${unsupported_offset}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/verification/assert-export-rejection.cmake")
+    set_tests_properties(oresforge_declarative_export_reject_unsupported_${unsupported_kind}
+      PROPERTIES TIMEOUT 15)
+  endforeach()
+  # The canonical atto.exports.v1 export-name field admits at most 256 bytes.
+  # Keep the exact command-line diagnostic under CTest, not only unit tests.
+  add_test(NAME oresforge_declarative_export_reject_name_257
+    COMMAND "${CMAKE_COMMAND}"
+      "-DCOMPILER=$<TARGET_FILE:oresforge>"
+      "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/declarative-exports/name-257.atto"
+      "-DEXPECT=EXPORT_NAME_TOO_LONG at byte 272"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/verification/assert-export-rejection.cmake")
+  set_tests_properties(oresforge_declarative_export_reject_name_257
+    PROPERTIES TIMEOUT 15)
   # All Forge source frontends must deny raw ESC and DEL before lowering.
   # This adds execution coverage; source admission already resides in main.
   add_executable(oresforge_source_control_admission_test
@@ -122,9 +179,12 @@ if(BUILD_TESTING)
   set_tests_properties(oresforge_source_unicode_control PROPERTIES TIMEOUT 15)
   # Stage-0 single-file AttoLang path admission. Imports remain fail-closed in Forge.
   add_test(NAME oresforge_cli_atto_guest
-    COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.atto")
-  set_tests_properties(oresforge_cli_atto_guest PROPERTIES
-    PASS_REGULAR_EXPRESSION "^14\n?$" TIMEOUT 10)
+    COMMAND "${CMAKE_COMMAND}"
+      "-DCOMPILER=$<TARGET_FILE:oresforge>"
+      "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.atto"
+      "-DEXPECT=14"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/verification/assert-export-acceptance.cmake")
+  set_tests_properties(oresforge_cli_atto_guest PROPERTIES TIMEOUT 15)
   # Real compiler check mode: no program result is published on success,
   # and parser, unsupported semantics, and checked-i64 failures stay closed.
   add_test(NAME oresforge_cli_scalar_check
@@ -136,9 +196,12 @@ if(BUILD_TESTING)
       -P "${CMAKE_CURRENT_SOURCE_DIR}/verification/scalar_check_cli.cmake")
   set_tests_properties(oresforge_cli_scalar_check PROPERTIES TIMEOUT 45)
   add_test(NAME oresforge_cli_legacy_ores_guest
-    COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.ores")
-  set_tests_properties(oresforge_cli_legacy_ores_guest PROPERTIES
-    PASS_REGULAR_EXPRESSION "^14\n?$" TIMEOUT 10)
+    COMMAND "${CMAKE_COMMAND}"
+      "-DCOMPILER=$<TARGET_FILE:oresforge>"
+      "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.ores"
+      "-DEXPECT=14"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/verification/assert-export-acceptance.cmake")
+  set_tests_properties(oresforge_cli_legacy_ores_guest PROPERTIES TIMEOUT 15)
   add_executable(oresforge_generator_frame_v1 verification/generator_frame_v1_test.cpp)
   target_link_libraries(oresforge_generator_frame_v1 PRIVATE oresforge_core)
   target_compile_features(oresforge_generator_frame_v1 PRIVATE cxx_std_20)
@@ -244,6 +307,14 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/verification/source_i64_executable.py"
       --compiler "$<TARGET_FILE:oresforge>")
   set_tests_properties(oresforge_source_i64_interpreter PROPERTIES TIMEOUT 100)
+  # Real Forge stage-0 and native-call source parsers: both formal orders,
+  # plus no-codegen rejection of unsupported omission / Option call ABIs.
+  add_test(NAME oresforge_namefirst_typefirst_formal_source_gate
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/optional_formal_order_source_gate.py"
+      --compiler "$<TARGET_FILE:oresforge>")
+  set_tests_properties(oresforge_namefirst_typefirst_formal_source_gate
+    PROPERTIES TIMEOUT 180)
 endif()
 # Static-facts v0: only literal main admitted, with actual Forge verified IR.
 if(BUILD_TESTING)

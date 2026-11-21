@@ -1,0 +1,2 @@
+export pub actor Worker;
+fnc main(): int { return 42; }

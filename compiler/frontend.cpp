@@ -52,7 +52,21 @@ class Parser {
  public:
   explicit Parser(std::string_view text,bool runtime_entry=false): source_(text),runtime_entry_(runtime_entry) { next(); }
   Program parse() {
-    while (tok_.kind != Kind::End) definition();
+    while (tok_.kind != Kind::End) {
+      if (tok_.text=="export") export_declaration();
+      else definition();
+    }
+    std::unordered_set<std::string> exported_names;
+    for (const auto& entry : program_.file_exports) {
+      if (!exported_names.insert(entry.name).second)
+        throw std::runtime_error("EXPORT_DUPLICATE: "+entry.name);
+      if (!functions_.contains(entry.name))
+        throw std::runtime_error("EXPORT_UNBOUND: "+entry.name);
+      if (entry.package_only && public_definitions_.contains(entry.name))
+        throw std::runtime_error("EXPORT_VISIBILITY_CONFLICT: "+entry.name);
+      if (entry.package_only && entry.name=="main")
+        throw std::runtime_error("EXPORT_PACKAGE_ENTRY_UNSUPPORTED: native main is process entry");
+    }
     if (!functions_.contains("main")) error("missing main function");
     if (!runtime_entry_ && !functions_.at("main").parameters.empty())
       error("main must have zero parameters");
@@ -89,6 +103,7 @@ class Parser {
   Token tok_{Kind::End,{},0};
   Program program_;
   std::unordered_map<std::string,Function> functions_;
+  std::unordered_set<std::string> public_definitions_;
   std::size_t node_count_=0;
   static constexpr std::size_t kMaxExpressionDepth=128;
   static constexpr std::size_t kMaxCallDepth=64;
@@ -246,6 +261,12 @@ class Parser {
     if (source_[at_]=='-' && at_+1<source_.size() && source_[at_+1]=='>') {
       at_+=2; tok_={Kind::Punct,source_.substr(start,2),start}; return;
     }
+    if (source_.substr(at_,2)=="<-") {
+      at_+=2; tok_={Kind::Punct,source_.substr(start,2),start}; return;
+    }
+    if (source_.substr(at_,3)=="\xE2\x80\xA2") {
+      at_+=3; tok_={Kind::Punct,source_.substr(start,3),start}; return;
+    }
     if (source_.substr(at_,3)=="...")
       error("tuple-v2 explicit spread requires single-evaluation checked lowering");
     // Canonical AttoLang exposes named Integer.rem/mod/pow/bitXor APIs,
@@ -261,7 +282,7 @@ class Parser {
     if (c=='^')
       throw std::runtime_error("legacy ^/^^ operators are removed; use Integer.pow/bitXor at byte "+
                                std::to_string(start));
-    if (std::string_view("()+-*/{};:,?").find(static_cast<char>(c)) ==
+    if (std::string_view("()+-*/{}[];:,.?=").find(static_cast<char>(c)) ==
         std::string_view::npos) error("invalid character");
     ++at_;
     tok_={Kind::Punct,source_.substr(start,1),start};
@@ -300,6 +321,24 @@ class Parser {
     v.push_back(std::move(b));
     return node(op,std::move(v));
   }
+  void export_declaration() {
+    expect("export");expect("pub");
+    bool package_only=false;
+    if (take("[")) {expect("pkg");expect("]");package_only=true;}
+    // Nominal class/actor/enum declarations are not lowered by the stage-0
+    // scalar compiler. Reject their export kind explicitly rather than
+    // interpreting the keyword as an exported function name.
+    if (tok_.text=="class" || tok_.text=="actor" || tok_.text=="enum")
+      error("EXPORT_KIND_UNSUPPORTED: Forge stage-0 supports only fnc export targets");
+    take("fnc");
+    const auto name=identifier();
+    // Reject noncanonical export names before resolution, inlining or IR
+    // allocation. The atto.exports.v1 manifest field allows 256 bytes.
+    if (name.size()>256) error("EXPORT_NAME_TOO_LONG");
+    expect(";");
+    if (program_.file_exports.size()>=1024) error("EXPORT_SOURCE_LIMIT");
+    program_.file_exports.push_back(FileExport{name,package_only});
+  }
   void definition() {
     bool defined=false, public_=false;
     while (tok_.text=="define" || tok_.text=="pub") {
@@ -337,7 +376,15 @@ class Parser {
     // `model` remains contextual; `fnc model()` is still valid.
     if (tok_.text=="model")
       error("MODEL_LOWERING_UNSUPPORTED: Forge requires typed nominal ModelGraph lowering");
-    expect("fnc");
+    const bool explicit_fnc=take("fnc");
+    const bool return_first=tok_.text=="int";
+    if (return_first) {
+      expect("int");
+      if (!take("<-") && !take("\xE2\x80\xA2"))
+        error("return-first declaration requires <- or •");
+    } else if (!explicit_fnc) {
+      error("expected fnc or int <-/• scalar declaration");
+    }
     const std::string name=identifier();
     if (name=="int" || name=="fnc" || name=="return")
       error("reserved function name");
@@ -347,35 +394,74 @@ class Parser {
       do {
         if (tok_.text=="tuple" || tok_.text=="structural" || tok_.text=="(")
           error("tuple-v2 parameter requires typed ownership/ABI lowering");
-        const std::string parameter=identifier();
+        std::string parameter;
+        if (take("int")) {
+          if (tok_.text=="?")
+            error("E_OPTION_TYPE_ABI_UNSUPPORTED: type-level '?' is a required Option<int>, not an omitted slot");
+          parameter=identifier();
+          if (tok_.text=="?")
+            error("E_OPTIONAL_FORMAL_ABI_UNSUPPORTED: 'int name?' requires checked omission/default ABI");
+        } else {
+          parameter=identifier();
+          if (tok_.text=="?")
+            error("E_OPTIONAL_FORMAL_ABI_UNSUPPORTED: 'name?: int' requires checked omission/default ABI");
+          expect(":");
+          expect("int");
+          if (tok_.text=="?")
+            error("E_OPTION_TYPE_ABI_UNSUPPORTED: 'name: int?' requires tagged Option<int> ABI");
+        }
+        if (tok_.text=="=")
+          error("E_PARAMETER_DEFAULT_REQUIRES_NAME_QUESTION: a parameter default requires name-level '?' and checked lowering");
         if (parameter=="int" || parameter=="fnc" || parameter=="return" ||
             std::find(fn.parameters.begin(),fn.parameters.end(),parameter)!=fn.parameters.end())
           error("invalid or duplicate parameter");
-        expect(":"); expect("int");
         fn.parameters.push_back(parameter);
         if (fn.parameters.size()>64) error("too many parameters");
         if (!take(",")) break;
       } while (true);
     }
+    const auto header_end=tok_.offset+tok_.text.size();
     expect(")");
-    if (!take(":")) expect("->");
-    if (tok_.text=="tuple" || tok_.text=="structural" || tok_.text=="(")
-      error("tuple-v2 return requires typed ABI lowering");
-    expect("int");
+    if (!return_first) {
+      if (!take(":")) expect("->");
+      if (tok_.text=="tuple" || tok_.text=="structural" || tok_.text=="(")
+        error("tuple-v2 return requires typed ABI lowering");
+      expect("int");
+    }
     // Forge stage-0 still emits a single expression return. A double-colon
     // body cannot be interpreted as a braced function or a punctuation typo:
     // it needs ordered lexical locals, explicit return types and region-safe
     // closure lowering before any guest execution can be admitted.
     if (tok_.text==":" && source_.substr(tok_.offset,2)=="::")
       error("FORGE_COMMA_BODY_UNSUPPORTED: typed comma body requires checked lexical lowering");
-    expect("{");
+    if (return_first) {
+      if (tok_.text!="begin") error("return-first declaration requires begin");
+      const auto begin_start=tok_.offset;
+      const auto before=source_.substr(header_end,begin_start-header_end);
+      if (before.find_first_of("\r\n")==std::string_view::npos)
+        error("begin must start on the next line after the signature");
+      const auto begin_end=tok_.offset+tok_.text.size();
+      expect("begin");
+      const auto after=source_.substr(begin_end,tok_.offset-begin_end);
+      if (after.find_first_of("\r\n")==std::string_view::npos)
+        error("begin must be alone on its line");
+    } else {
+      expect("{");
+    }
     if (tok_.text=="guard")
       error("GUARD_BACKEND_UNSUPPORTED: early-exit CFG and ownership lowering required");
     expect("return");
     fn.body=expression(0);
-    expect(";"); expect("}");
+    expect(";");
+    if (return_first) {
+      expect("end");
+      if (!take(".")) take(";");
+    } else {
+      expect("}");
+    }
     if (functions_.contains(name)) error("duplicate function");
     functions_.emplace(name,std::move(fn));
+    if (public_) public_definitions_.insert(name);
   }
   ExprPtr expression(std::size_t depth) {
     check_depth(depth);
