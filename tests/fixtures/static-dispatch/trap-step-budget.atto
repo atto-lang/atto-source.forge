@@ -1,0 +1,5 @@
+// Exponential branching recursion is bounded by the same 200000 AST-node
+// evaluation budget in the interpreter and actual AOT native machine code.
+// Call depth stays comfortably below the independent 128-frame ceiling.
+fnc grow(n:int):int{return if n<=1 then 1 else grow(n-1)+grow(n-2);}
+fnc main():int{return grow(30);}
