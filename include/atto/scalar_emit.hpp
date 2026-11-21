@@ -38,7 +38,7 @@ int main() {
       const auto value = n.value == std::numeric_limits<i64>::min()
           ? "std::numeric_limits<atto::forge::i64>::min()"
           : std::to_string(n.value);
-      code += "  std::optional<atto::forge::i64> " + var(i) + "{" + value + "};\n";
+      code += "  [[maybe_unused]] std::optional<atto::forge::i64> " + var(i) + "{" + value + "};\n";
     } else {
       if (n.left >= i || (n.op != Op::neg && n.op != Op::bnot &&
                           n.op != Op::inline_task && n.right >= i)) return std::nullopt;
