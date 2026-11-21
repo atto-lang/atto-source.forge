@@ -107,6 +107,13 @@ int main() {
     assert(denied.error == LexError::ownership_bang_unsupported);
     assert(denied.error_offset == 0);
   }
-  assert(tokenize("ref!").error == LexError::unsupported_byte);
+  for (const auto* valid : {"ref!", "deref!", "unref!"}) {
+    auto lexed = tokenize(valid);
+    assert(lexed.ok());
+    assert(lexed.tokens.size() == 3);
+    assert(lexed.tokens[0].kind == Kind::name);
+    assert(lexed.tokens[1].kind == Kind::bang);
+    assert(lexed.tokens[2].kind == Kind::end);
+  }
 
 }
