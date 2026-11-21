@@ -48,9 +48,30 @@ def workflow_gates():
     events = re.findall(r"(?m)^  ([A-Za-z_][A-Za-z_0-9-]*):", trigger.group(1))
     if events != ["workflow_dispatch"]:
         raise AssertionError("unexpected GitHub workflow event trigger")
-    if "group: atto-forge-source-local-trusted" not in source or \
-            "labels: [self-hosted, linux, x64, atto-ci-trusted]" not in source:
-        raise AssertionError("approved dedicated runner group and label are required")
+    # Validate the actual YAML sections, not words found elsewhere in comments
+    # or unused jobs. No token write scopes, privileged dispatch, or fallback
+    # to GitHub-hosted/shared runner admission may be silently introduced.
+    permissions_match = re.search(r"(?ms)^permissions:\n(.*?)^concurrency:", source)
+    if not permissions_match:
+        raise AssertionError("workflow token permissions section required")
+    permissions = [line for line in permissions_match.group(1).splitlines()
+                   if line.strip() and not line.lstrip().startswith("#")]
+    if permissions != ["  contents: read", "  pull-requests: read"]:
+        raise AssertionError("workflow token may only read contents and pull requests")
+    job_match = re.search(
+        r"(?ms)^  native-reviewed-source-full-suite:\n(.*?)(?=^  [A-Za-z_][A-Za-z_0-9-]*:|\Z)",
+        source)
+    if not job_match:
+        raise AssertionError("expected trusted source-local job missing")
+    job_source = job_match.group(1)
+    expected_runner = ("    runs-on:\n"
+                       "      group: atto-forge-source-local-trusted\n"
+                       "      labels: [self-hosted, linux, x64, atto-ci-trusted]\n")
+    if job_source.count(expected_runner) != 1 or \
+            len(re.findall(r"(?m)^    runs-on:", job_source)) != 1:
+        raise AssertionError("job must use only dedicated approved runner group")
+    if "    if: github.repository == 'atto-lang/atto-source.forge' && github.ref == 'refs/heads/main'\n" not in job_source:
+        raise AssertionError("source-local job must be main-and-repository scoped")
     # Inspect EVERY checkout. One safe checkout does not make a second,
     # credential-persisting checkout safe on a privileged ephemeral runner.
     # A checkout step may use "- uses:" or "- name:" then "uses:".
@@ -160,6 +181,44 @@ class TrustedRunnerAdmissionTest(unittest.TestCase):
         with self.assertRaises(SystemExit) as raised:
             self.run_gate(index)
         self.assertIn(reason, str(raised.exception))
+
+    def test_workflow_token_is_read_only(self):
+        original = PATH.read_text(encoding="utf-8")
+        for label, changed in [
+            ("contents escalated", original.replace("  contents: read", "  contents: write", 1)),
+            ("pull requests escalated", original.replace("  pull-requests: read",
+                                                          "  pull-requests: write", 1)),
+            ("id token added", original.replace("  pull-requests: read",
+                                                 "  pull-requests: read\n  id-token: write", 1)),
+            ("scope removed", original.replace("  pull-requests: read", "", 1)),
+        ]:
+            with self.subTest(case=label), \
+                    patch.object(Path, "read_text", return_value=changed), \
+                    self.assertRaisesRegex(AssertionError, "workflow token"):
+                workflow_gates()
+
+    def test_actual_source_local_runner_group_required(self):
+        original = PATH.read_text(encoding="utf-8")
+        for label, changed in [
+            ("runner switched to hosted", original.replace(
+                "    runs-on:\n      group: atto-forge-source-local-trusted\n"
+                "      labels: [self-hosted, linux, x64, atto-ci-trusted]\n",
+                "    runs-on: ubuntu-24.04\n", 1)),
+            ("runner group changed", original.replace(
+                "      group: atto-forge-source-local-trusted",
+                "      group: default", 1)),
+            ("additional runs-on", original.replace(
+                "    timeout-minutes: 45",
+                "    runs-on: ubuntu-24.04\n    timeout-minutes: 45", 1)),
+            ("main condition removed", original.replace(
+                "    if: github.repository == 'atto-lang/atto-source.forge' && "
+                "github.ref == 'refs/heads/main'\n", "", 1)),
+        ]:
+            expected = "main-and-repository" if label == "main condition removed" else "runner group"
+            with self.subTest(case=label), \
+                    patch.object(Path, "read_text", return_value=changed), \
+                    self.assertRaisesRegex(AssertionError, expected):
+                workflow_gates()
 
     def test_alternate_event_triggers_are_denied(self):
         original = PATH.read_text(encoding="utf-8")
