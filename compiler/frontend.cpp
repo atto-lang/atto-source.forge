@@ -256,6 +256,12 @@ class Parser {
     if (source_[at_]=='-' && at_+1<source_.size() && source_[at_+1]=='>') {
       at_+=2; tok_={Kind::Punct,source_.substr(start,2),start}; return;
     }
+    if (source_.substr(at_,2)=="<-") {
+      at_+=2; tok_={Kind::Punct,source_.substr(start,2),start}; return;
+    }
+    if (source_.substr(at_,3)=="\xE2\x80\xA2") {
+      at_+=3; tok_={Kind::Punct,source_.substr(start,3),start}; return;
+    }
     if (source_.substr(at_,3)=="...")
       error("tuple-v2 explicit spread requires single-evaluation checked lowering");
     // Canonical AttoLang exposes named Integer.rem/mod/pow/bitXor APIs,
@@ -271,7 +277,7 @@ class Parser {
     if (c=='^')
       throw std::runtime_error("legacy ^/^^ operators are removed; use Integer.pow/bitXor at byte "+
                                std::to_string(start));
-    if (std::string_view("()+-*/{}[];:,?=").find(static_cast<char>(c)) ==
+    if (std::string_view("()+-*/{}[];:,.?=").find(static_cast<char>(c)) ==
         std::string_view::npos) error("invalid character");
     ++at_;
     tok_={Kind::Punct,source_.substr(start,1),start};
@@ -365,7 +371,15 @@ class Parser {
     // `model` remains contextual; `fnc model()` is still valid.
     if (tok_.text=="model")
       error("MODEL_LOWERING_UNSUPPORTED: Forge requires typed nominal ModelGraph lowering");
-    expect("fnc");
+    const bool explicit_fnc=take("fnc");
+    const bool return_first=tok_.text=="int";
+    if (return_first) {
+      expect("int");
+      if (!take("<-") && !take("\xE2\x80\xA2"))
+        error("return-first declaration requires <- or •");
+    } else if (!explicit_fnc) {
+      error("expected fnc or int <-/• scalar declaration");
+    }
     const std::string name=identifier();
     if (name=="int" || name=="fnc" || name=="return")
       error("reserved function name");
@@ -401,23 +415,45 @@ class Parser {
         if (!take(",")) break;
       } while (true);
     }
+    const auto header_end=tok_.offset+tok_.text.size();
     expect(")");
-    if (!take(":")) expect("->");
-    if (tok_.text=="tuple" || tok_.text=="structural" || tok_.text=="(")
-      error("tuple-v2 return requires typed ABI lowering");
-    expect("int");
+    if (!return_first) {
+      if (!take(":")) expect("->");
+      if (tok_.text=="tuple" || tok_.text=="structural" || tok_.text=="(")
+        error("tuple-v2 return requires typed ABI lowering");
+      expect("int");
+    }
     // Forge stage-0 still emits a single expression return. A double-colon
     // body cannot be interpreted as a braced function or a punctuation typo:
     // it needs ordered lexical locals, explicit return types and region-safe
     // closure lowering before any guest execution can be admitted.
     if (tok_.text==":" && source_.substr(tok_.offset,2)=="::")
       error("FORGE_COMMA_BODY_UNSUPPORTED: typed comma body requires checked lexical lowering");
-    expect("{");
+    if (return_first) {
+      if (tok_.text!="begin") error("return-first declaration requires begin");
+      const auto begin_start=tok_.offset;
+      const auto before=source_.substr(header_end,begin_start-header_end);
+      if (before.find_first_of("\r\n")==std::string_view::npos)
+        error("begin must start on the next line after the signature");
+      const auto begin_end=tok_.offset+tok_.text.size();
+      expect("begin");
+      const auto after=source_.substr(begin_end,tok_.offset-begin_end);
+      if (after.find_first_of("\r\n")==std::string_view::npos)
+        error("begin must be alone on its line");
+    } else {
+      expect("{");
+    }
     if (tok_.text=="guard")
       error("GUARD_BACKEND_UNSUPPORTED: early-exit CFG and ownership lowering required");
     expect("return");
     fn.body=expression(0);
-    expect(";"); expect("}");
+    expect(";");
+    if (return_first) {
+      expect("end");
+      if (!take(".")) take(";");
+    } else {
+      expect("}");
+    }
     if (functions_.contains(name)) error("duplicate function");
     functions_.emplace(name,std::move(fn));
     if (public_) public_definitions_.insert(name);

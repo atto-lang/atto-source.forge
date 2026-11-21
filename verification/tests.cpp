@@ -47,6 +47,66 @@ oresforge::Program source(const std::string& expr) {
 int main() {
   try {
     using namespace oresforge;
+    // Return-first spelling is syntactic sugar over the same scalar IR.
+    for (std::string_view header : {
+      "int <- main()", "int• main()", "fnc int <- main()", "fnc int• main()"
+    }) {
+      for (std::string_view end : {"end", "end.", "end;"}) {
+        const std::string code=std::string(header)+"\nbegin\n  return 42;\n"+
+                               std::string(end)+"\n";
+        ensure(interpret(parse_source(code))==42,"return-first source parity");
+        ensure(interpret(parse_runtime_source(code))==42,"return-first runtime-entry parity");
+      }
+    }
+    // Canonical type-first arguments share the same checked i64 helper
+    // ABI as legacy 'name:int'; both return-first markers are equivalent.
+    for (std::string_view separator : {"<-", "•"}) {
+      const std::string helpers=
+        std::string("fnc int ")+std::string(separator)+
+        " add(int a, int b)\nbegin\n  return a+b;\nend.\n"+
+        "int "+std::string(separator)+
+        " main()\nbegin\n  return add(40,2);\nend;\n";
+      ensure(interpret(parse_source(helpers))==42,
+             "return-first typed helper parameter parity");
+      ensure(interpret(parse_runtime_source(helpers))==42,
+             "return-first typed helper parity through runtime-entry lowering");
+    }
+    reject([&] { (void)parse_source(
+      "fnc int <- add(a, b)\nbegin\nreturn a+b;\nend.\n"
+      "int <- main()\nbegin\nreturn add(40,2);\nend"); });
+    for (std::string_view malformed : {
+      "int <- main() begin return 42; end",
+      "int <- main()\nbegin return 42;\nend",
+      "int <- main()\nbegin\nreturn 42;",
+      "int <- main()\nbegin\nreturn 42;\nend..",
+      "int <- main()\nbegin\nreturn 42;\nend; garbage",
+      "int < - main()\nbegin\nreturn 42;\nend",
+      "int <- main() -> int\nbegin\nreturn 42;\nend",
+      "define actor Worker as\nint <- receive()\nbegin\nreturn 42;\nend\nend"
+    }) {
+      reject([&] { (void)parse_source(malformed); });
+      reject([&] { (void)parse_runtime_source(malformed); });
+    }
+    ensure(interpret(parse_source(
+      "int <- main()\nbegin // comment\nreturn 42;\nend. // closer"))==42,
+      "return-first comments are inert");
+    // Return-first must not admit tagged Option or omittable/default formals
+    // merely because its signature has the canonical type-first spelling.
+    for (const auto& entry : std::vector<std::pair<std::string_view,std::string_view>>{
+      {"int <- helper(int? x)\nbegin\nreturn 1;\nend\nint <- main()\nbegin\nreturn 42;\nend",
+       "E_OPTION_TYPE_ABI_UNSUPPORTED"},
+      {"int <- helper(int x?)\nbegin\nreturn 1;\nend\nint <- main()\nbegin\nreturn 42;\nend",
+       "E_OPTIONAL_FORMAL_ABI_UNSUPPORTED"},
+      {"int <- helper(x:int?)\nbegin\nreturn 1;\nend\nint <- main()\nbegin\nreturn 42;\nend",
+       "E_OPTION_TYPE_ABI_UNSUPPORTED"},
+      {"int <- helper(x?:int)\nbegin\nreturn 1;\nend\nint <- main()\nbegin\nreturn 42;\nend",
+       "E_OPTIONAL_FORMAL_ABI_UNSUPPORTED"},
+      {"int <- helper(int x=5)\nbegin\nreturn 1;\nend\nint <- main()\nbegin\nreturn 42;\nend",
+       "E_PARAMETER_DEFAULT_REQUIRES_NAME_QUESTION"}
+    }) {
+      reject_diagnostic([&] { (void)parse_source(entry.first); }, entry.second);
+      reject_diagnostic([&] { (void)parse_runtime_source(entry.first); }, entry.second);
+    }
     // Two-word contextual declarations are not executable stage-0 scalar
     // functions; every mode must reject with the correct semantic capability.
     for (std::string_view source_text : {
