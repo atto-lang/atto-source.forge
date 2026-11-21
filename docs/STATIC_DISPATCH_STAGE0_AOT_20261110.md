@@ -92,6 +92,18 @@ exit (Bash status 132); an unexpected return or unrelated failure is rejected.
   `direct-recursion-boundary`, `direct-i64-boundary`,
   and `direct-step-budget-boundary`.
 - Negative traps: `trap-overflow`, `trap-depth-limit`, and `trap-step-budget`.
+  Each requires the **exact matching interpreter error** (`i64 add overflow`,
+  `call depth exceeded`, or `callable execution budget exceeded`) before
+  the native `SIGILL` result is accepted. This prevents a wrong trap cause
+  from satisfying the test.
+- **Generated guest integrity:** The CMake script uses `#` for comments
+  outside `file(WRITE)`, never `//` as unquoted CMake arguments. The latter
+  can be concatenated into generated C++ and inadvertently comment out
+  `main()`. A generated-driver check now requires a visible standalone
+  `int main(){` before the compiler is invoked. A local isolated CMake
+  reproduction demonstrated the original failure and verified the corrected
+  driver compiled and linked with GCC/Clang at O0/O2. This isolated test is
+  **not** the real Forge compiler or CTest acceptance proof.
 - **Per C++ compiler:** 14 successful native guest processes (each calls
   `oresforge_entry()` twice) plus six intentional native trap processes
   (20 processes total). Across GCC and Clang, this gate requires **40
