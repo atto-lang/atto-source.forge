@@ -47,6 +47,12 @@ def workflow_gates():
         raise AssertionError("approved dedicated runner group and label are required")
     if "persist-credentials: false" not in source:
         raise AssertionError("credentials must not be persisted by checkout")
+    if 'branch_state = fetch("branches/main")' not in source or \
+            'branch_state.get("protected") is not True' not in source:
+        raise AssertionError("source protected main must be enforced by admission gate")
+    if 'source_repo.get("private") is not True' not in source or \
+            'base_repo.get("private") is not True' not in source:
+        raise AssertionError("private source repo identity must be checked")
     if "ATTO_SOURCE_LOCAL_REVIEWED_HEAD=" not in source:
         raise AssertionError("source review gate is missing")
     if "git rev-parse 'HEAD^{tree}'" not in source:
@@ -69,10 +75,11 @@ class TrustedRunnerAdmissionTest(unittest.TestCase):
     def setUp(self):
         self.pull = {
             "state": "open",
-            "head": {"sha": HEAD, "repo": {"id": REPO_ID, "full_name": REPO}},
-            "base": {"ref": "main", "repo": {"id": REPO_ID}},
+            "head": {"sha": HEAD, "repo": {"id": REPO_ID, "full_name": REPO, "private": True}},
+            "base": {"ref": "main", "repo": {"id": REPO_ID, "private": True}},
             "user": {"id": 110},
         }
+        self.branch_state = {"protected": True}
         self.commit = {"tree": {"sha": TREE}}
         self.reviews = [self.review()]
         self.permission = "write"
@@ -99,6 +106,8 @@ class TrustedRunnerAdmissionTest(unittest.TestCase):
         self.assertTrue(url.path.startswith("/repos/" + REPO + "/"))
         self.assertIn(timeout, (20,))
         self.calls.append(request.full_url)
+        if url.path.endswith("/branches/main"):
+            return HttpResult(self.branch_state)
         if url.path.endswith("/pulls/" + str(PR_NUMBER)):
             return HttpResult(self.pull)
         if url.path.endswith("/git/commits/" + HEAD):
@@ -125,12 +134,14 @@ class TrustedRunnerAdmissionTest(unittest.TestCase):
     def test_pinned_independent_approval_allows_source_local_test_only(self):
         for index in (0, 1):
             self.assertIn("ATTO_SOURCE_LOCAL_SOURCE_EXPORT=NONE", self.run_gate(index))
-        self.assertEqual(len(self.calls), 8)
+        self.assertEqual(len(self.calls), 10)
 
     def test_source_identity_fail_closed(self):
         mutations = [
             ("wrong PR head", lambda: self.pull["head"].update(sha="f" * 40), "identity"),
             ("foreign source repo", lambda: self.pull["head"]["repo"].update(full_name="foreign/repo"), "identity"),
+            ("public source repo", lambda: self.pull["head"]["repo"].update(private=False), "identity"),
+            ("public base repo", lambda: self.pull["base"]["repo"].update(private=False), "identity"),
             ("wrong immutable repo id", lambda: self.pull["head"]["repo"].update(id=1234), "identity"),
             ("wrong base ref", lambda: self.pull["base"].update(ref="evil"), "identity"),
             ("wrong base repo", lambda: self.pull["base"]["repo"].update(id=1234), "identity"),
@@ -145,6 +156,16 @@ class TrustedRunnerAdmissionTest(unittest.TestCase):
                 self.setUp()
                 mutate()
                 self.rejected(reason)
+
+    def test_protected_source_main_required_for_both_admission_gates(self):
+        for index in (0, 1):
+            with self.subTest(gate=index):
+                self.branch_state["protected"] = False
+                self.rejected("source main is not protected", index=index)
+                self.branch_state = {}
+                self.rejected("source main is not protected", index=index)
+                self.branch_state = {"protected": True}
+                self.assertIn("ATTO_SOURCE_LOCAL_REVIEWED_HEAD=", self.run_gate(index))
 
     def test_stale_untrusted_and_dismissed_reviews_fail_closed(self):
         mutations = [
@@ -175,7 +196,7 @@ class TrustedRunnerAdmissionTest(unittest.TestCase):
     def test_complete_review_pagination(self):
         self.reviews = [self.review(id=i+1) for i in range(250)]
         self.run_gate()
-        self.assertEqual(len(self.calls), 6)
+        self.assertEqual(len(self.calls), 7)
 
     def test_read_only_org_member_cannot_authorize_runner(self):
         self.permission = "read"

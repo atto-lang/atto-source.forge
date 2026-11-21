@@ -80,6 +80,9 @@ jobs:
                            "User-Agent": "atto-ephemeral-runner-admission"})
               with urllib.request.urlopen(request, timeout=20) as response:
                   return json.load(response)
+          branch_state = fetch("branches/main")
+          if not isinstance(branch_state, dict) or branch_state.get("protected") is not True:
+              raise SystemExit("DENIED: source main is not protected")
           pull = fetch("pulls/" + str(PR))
           head = pull.get("head") or {}
           source_repo = head.get("repo") or {}
@@ -89,7 +92,9 @@ jobs:
           if (pull.get("state") != "open" or head.get("sha") != SHA or
                   source_repo.get("full_name") != REPO or
                   source_repo.get("id") != REPO_ID or
+                  source_repo.get("private") is not True or
                   base.get("ref") != "main" or base_repo.get("id") != REPO_ID or
+                  base_repo.get("private") is not True or
                   not isinstance(author, int)):
               raise SystemExit("DENIED: source PR identity, branch, or author changed")
           commit = fetch("git/commits/" + SHA)
@@ -256,6 +261,9 @@ jobs:
                            "User-Agent": "atto-ephemeral-runner-admission"})
               with urllib.request.urlopen(request, timeout=20) as response:
                   return json.load(response)
+          branch_state = fetch("branches/main")
+          if not isinstance(branch_state, dict) or branch_state.get("protected") is not True:
+              raise SystemExit("DENIED: source main is not protected")
           pull = fetch("pulls/" + str(PR))
           head = pull.get("head") or {}
           source_repo = head.get("repo") or {}
@@ -265,7 +273,9 @@ jobs:
           if (pull.get("state") != "open" or head.get("sha") != SHA or
                   source_repo.get("full_name") != REPO or
                   source_repo.get("id") != REPO_ID or
+                  source_repo.get("private") is not True or
                   base.get("ref") != "main" or base_repo.get("id") != REPO_ID or
+                  base_repo.get("private") is not True or
                   not isinstance(author, int)):
               raise SystemExit("DENIED: source PR identity, branch, or author changed")
           commit = fetch("git/commits/" + SHA)
