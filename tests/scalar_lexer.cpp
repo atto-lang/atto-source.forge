@@ -85,4 +85,28 @@ int main() {
   assert(tokenize("a < b").ok());
   assert(tokenize("// c << 42\n 7").ok());
 
+  std::string nested_comments;
+  for (int depth = 0; depth < 128; ++depth) nested_comments += "/*";
+  nested_comments += "7";
+  for (int depth = 0; depth < 128; ++depth) nested_comments += "*/";
+  auto bounded_comments = tokenize(nested_comments);
+  assert(bounded_comments.ok());
+  assert(bounded_comments.tokens.size() == 2);
+  assert(bounded_comments.tokens[0].kind == Kind::integer);
+  nested_comments.insert(0, "/*");
+  nested_comments += "*/";
+  auto excessive_comments = tokenize(nested_comments);
+  assert(excessive_comments.error == LexError::comment_nesting_limit);
+  assert(excessive_comments.error_offset == 256);
+  auto hidden_tokens = tokenize("/* outer /* copy! */ rpipe >> */ 42");
+  assert(hidden_tokens.ok());
+  assert(hidden_tokens.tokens.size() == 2);
+  for (const auto* forbidden : {"copy!", "copy!!", "take!", "borrow!", "share!",
+                                "pin!", "drop!", "freeze!", "weak!"}) {
+    auto denied = tokenize(forbidden);
+    assert(denied.error == LexError::ownership_bang_unsupported);
+    assert(denied.error_offset == 0);
+  }
+  assert(tokenize("ref!").error == LexError::unsupported_byte);
+
 }
