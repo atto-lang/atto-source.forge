@@ -1,6 +1,8 @@
 #include "compiler/ir.hpp"
 #include <limits>
 #include <sstream>
+#include <unordered_set>
+#include <string_view>
 #include <stdexcept>
 namespace oresforge {
 namespace {
@@ -41,6 +43,31 @@ std::int64_t checked(Op op, std::int64_t a, std::int64_t b) {
 }
 }
 void verify(const Program& p) {
+  // The source parser validates file exports, but Program is a public IR type
+  // also consumed by JIT/codegen. Never trust callers to have used the parser.
+  if (p.file_exports.size() > 1024) throw std::runtime_error("EXPORT_SOURCE_LIMIT");
+  std::unordered_set<std::string> seen_exports;
+  for (const auto& item : p.file_exports) {
+    // The atto.exports.v1 wire name limit is 256 bytes. Enforce it for
+    // direct IR callers as well as compiler-produced source metadata.
+    if (item.name.size() > 256)
+      throw std::runtime_error("EXPORT_NAME_TOO_LONG");
+    // Keep the IR boundary's identifier grammar locale-independent.
+    bool valid = !item.name.empty();
+    for (std::size_t i=0; i<item.name.size() && valid; ++i) {
+      const unsigned char c=static_cast<unsigned char>(item.name[i]);
+      const bool letter=(c>='A' && c<='Z') || (c>='a' && c<='z');
+      const bool digit=(c>='0' && c<='9');
+      valid=letter || c=='_' || (i>0 && digit);
+    }
+    if (!valid) throw std::runtime_error("EXPORT_INVALID_NAME: "+item.name);
+    if (!seen_exports.insert(item.name).second)
+      throw std::runtime_error("EXPORT_DUPLICATE: "+item.name);
+    if (item.package_only && item.name=="main")
+      throw std::runtime_error("EXPORT_PACKAGE_ENTRY_UNSUPPORTED: native main is process entry");
+    // Symbol binding and visibility against declarations require the frontend
+    // scope graph; they are checked before Program is produced.
+  }
   if (p.parameter_count > 4) throw std::runtime_error("runtime entry parameter budget exceeded");
   if (p.instructions.empty()) throw std::runtime_error("empty IR");
   if (p.instructions.size() > 100000) throw std::runtime_error("IR instruction budget exceeded");
