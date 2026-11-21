@@ -32,6 +32,8 @@ def main():
                       "pub fnc main():int{return add(20,22);}"),
         ("mixed", "fnc add(int x,y:int):int{return x+y;}"
                   "pub fnc main():int{return add(20,22);}"),
+        ("reverse_mixed", "fnc add(x:int,int y):int{return x+y;}"
+                          "pub fnc main():int{return add(20,22);}"),
     ]
     rejected = [
         ("typefirst_option", "fnc add(int? x):int{return 42;}",
@@ -50,6 +52,12 @@ def main():
          "E_PARAMETER_DEFAULT_REQUIRES_NAME_QUESTION"),
         ("typefirst_bad_default", "fnc add(int x=10):int{return x;}",
          "E_PARAMETER_DEFAULT_REQUIRES_NAME_QUESTION"),
+        ("unreachable_type_option",
+         "fnc dead(int? x):int{return 1;} fnc main():int{return 42;}",
+         "E_OPTION_TYPE_ABI_UNSUPPORTED"),
+        ("unreachable_name_omission",
+         "fnc dead(x?:int):int{return 1;} fnc main():int{return 42;}",
+         "E_OPTIONAL_FORMAL_ABI_UNSUPPORTED"),
     ]
 
     with tempfile.TemporaryDirectory(prefix="atto-forge-formal-order-") as td:
@@ -70,8 +78,8 @@ def main():
                       expected in result.stderr,
                       f"{mode} {label} escaped compiler fail-closed diagnostic: {result}")
 
-    print("PASS 6 Forge source-interpreter/call-compiler controls and"
-          " 16 rejection cases; optional/default ABIs remain unsupported")
+    print(f"PASS {len(positive)*2} Forge source-interpreter/call-compiler controls and"
+          f" {len(rejected)*2} rejection cases; optional/default ABIs remain unsupported")
 
 
 if __name__ == "__main__":
