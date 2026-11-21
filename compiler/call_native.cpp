@@ -30,6 +30,16 @@ bool valid_identifier(std::string_view name) {
          std::all_of(name.begin()+1,name.end(),
                      [](char c) { return letter(c)||digit(c); });
 }
+// Use the same reserved-name rules for source tokens and externally supplied
+// Module IR. Verified IR is an explicit input to interpretation and AOT.
+bool valid_function_name(std::string_view name) {
+  return valid_identifier(name) && name!="int" && name!="return" &&
+         name!="if" && name!="else" && name!="then";
+}
+bool valid_parameter_name(std::string_view name) {
+  return valid_identifier(name) && name!="int" && name!="if" &&
+         name!="then" && name!="else" && name!="return" && name!="fnc";
+}
 bool space(char c) { return c == ' ' || c == '\r' || c == '\n' || c == '\t' || c == '\v' || c == '\f'; }
 struct Token { std::string_view text; std::size_t offset=0; };
 
@@ -126,8 +136,7 @@ class Parser {
     }
     expect("fnc");
     const std::string name=identifier();
-    if (name=="int"||name=="return"||name=="if"||name=="else"||name=="then")
-      fail("reserved function name");
+    if (!valid_function_name(name)) fail("reserved function name");
     if (names_.contains(name))fail("duplicate function");
     if (module_.functions.size()>=kMaxFunctions)fail("function count budget exceeded");
     const int index=static_cast<int>(module_.functions.size());
@@ -138,8 +147,7 @@ class Parser {
     if (token_.text!=")") {
       do {
         const std::string param=identifier();
-        if (param=="int"||param=="if"||param=="then"||param=="else"||
-            param=="return"||param=="fnc"||
+        if (!valid_parameter_name(param) ||
             std::find(current_->parameters.begin(),current_->parameters.end(),param)
             !=current_->parameters.end())fail("invalid or duplicate parameter");
         expect(":");expect("int");
@@ -411,12 +419,12 @@ void verify(const Module& m) {
   std::size_t total=0;
   for (std::size_t fi=0;fi<m.functions.size();++fi) {
     const auto& fn=m.functions[fi];
-    if(!valid_identifier(fn.name) || !names.emplace(fn.name,fi).second)
+    if(!valid_function_name(fn.name) || !names.emplace(fn.name,fi).second)
       throw std::runtime_error("duplicate or invalid function");
     if(fn.parameters.size()>4)throw std::runtime_error("function parameter budget exceeded");
     std::map<std::string,bool> source_parameter_slots;
     for(const auto& parameter : fn.parameters) {
-      if(!valid_identifier(parameter) ||
+      if(!valid_parameter_name(parameter) ||
          !source_parameter_slots.emplace(parameter,true).second)
         throw std::runtime_error("invalid or duplicate callable parameter");
     }
@@ -441,6 +449,10 @@ void verify(const Module& m) {
       }
       if(n.kind!=Kind::Call && !n.name.empty())
         throw std::runtime_error("unexpected callable symbol payload");
+      // The only meaningful numeric payloads are a Constant literal or a
+      // Parameter slot. Anything else is forged/unlowered IR, not authority.
+      if(n.kind!=Kind::Constant && n.kind!=Kind::Parameter && n.value!=0)
+        throw std::runtime_error("unexpected callable numeric payload");
       for(int arg:n.children) {
         if(arg<0 || static_cast<std::size_t>(arg)>=i)
           throw std::runtime_error("callable use before definition");
