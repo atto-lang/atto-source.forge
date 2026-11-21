@@ -53,8 +53,18 @@ def workflow_gates():
         raise AssertionError("approved dedicated runner group and label are required")
     # Inspect EVERY checkout. One safe checkout does not make a second,
     # credential-persisting checkout safe on a privileged ephemeral runner.
-    checkouts = re.findall(
-        r"(?ms)^      - uses: actions/checkout@([^\n]+)\n(.*?)(?=^      - |\Z)", source)
+    # A checkout step may use "- uses:" or "- name:" then "uses:".
+    # Inspect both styles and reject any extra checkout step.
+    step_bodies = re.findall(
+        r"(?ms)^      - (.*?)(?=^      - |\Z)", source)
+    checkouts = []
+    for body in step_bodies:
+        uses = re.findall(
+            r"(?m)^(?:uses:|        uses:) actions/checkout@([^\n]+)$", body)
+        if len(uses) > 1:
+            raise AssertionError("checkout step must have exactly one action")
+        if uses:
+            checkouts.append((uses[0], body))
     if len(checkouts) != 2:
         raise AssertionError("exactly two pinned source-local checkouts required")
     expected_refs = ["github.sha", "inputs.expected_head_sha"]
