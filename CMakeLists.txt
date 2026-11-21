@@ -37,6 +37,7 @@ if(BUILD_TESTING)
         "-DROOT=${CMAKE_CURRENT_SOURCE_DIR}"
         "-DVERIFIER=$<TARGET_FILE:oresforge_static_dispatch_aot_verifier>"
         "-DCXX=${CMAKE_CXX_COMPILER}"
+        "-DHOST_ARCH=${CMAKE_SYSTEM_PROCESSOR}"
         "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/static-dispatch-native-guests"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/verification/static_dispatch_native_guests.cmake")
     set_tests_properties(oresforge_static_dispatch_aot_compiled_native_guests
