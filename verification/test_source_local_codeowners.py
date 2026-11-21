@@ -4,6 +4,7 @@ This is a conservative matcher for the exact-file and root-directory patterns
 used in this repository, not a full implementation of GitHub CODEOWNERS globbing.
 """
 from pathlib import Path
+import hashlib
 import unittest
 
 OWNER_FILE = Path(__file__).resolve().parents[1] / '.github' / 'CODEOWNERS'
@@ -53,9 +54,19 @@ def assert_expected(content):
 
 CI_FILE = Path(__file__).resolve().parents[1] / '.github' / 'workflows' / 'ci.yml'
 
+# Immutable fingerprint of the complete reviewed job stanza, including steps.
+# Any legitimate change requires a newly reviewed CI job and matching digest.
+CI_JOB_SHA256 = '5322998e09711cca47c2b9865c141d2fd6b05522096d128d31364d633710c94d'
+
 
 def assert_ci_wiring(content):
     """Require a separate exact-head, source-free, read-only governance job."""
+    if content.count("\njobs:\n") != 1:
+        raise AssertionError('unexpected jobs block count')
+    if content.count("\npermissions:\n") != 1:
+        raise AssertionError('unexpected workflow permissions block count')
+    if content.count("  source-free-codeowners-contract:\n") != 1:
+        raise AssertionError('duplicate or missing CODEOWNERS CI job')
     start = content.find("  source-free-codeowners-contract:\n")
     end = content.find("  bootstrap:\n", start)
     if start < 0 or end <= start:
@@ -86,6 +97,8 @@ def assert_ci_wiring(content):
         raise AssertionError('unexpected additional CODEOWNERS CI checkout')
     if '    permissions:' in job:
         raise AssertionError('CODEOWNERS CI job must not override workflow token scopes')
+    if hashlib.sha256(job.encode('utf8')).hexdigest() != CI_JOB_SHA256:
+        raise AssertionError('unreviewed CODEOWNERS CI job modification')
 
 
 class TrustedCIReviewerCoverageTest(unittest.TestCase):
@@ -143,6 +156,33 @@ class TrustedCIReviewerCoverageTest(unittest.TestCase):
                                    'ref: \\' + '$' + '{{ github.event.pull_request.head.sha || github.sha }}', 1)
         with self.assertRaisesRegex(AssertionError, 'escaped/non-executable'):
             assert_ci_wiring(escaped)
+
+    def test_extra_or_inert_ci_steps_are_rejected(self):
+        original = CI_FILE.read_text(encoding='utf8')
+        cases = (
+            ('extra shell', original.replace(
+                '  bootstrap:\n',
+                '      - name: Evasion step\n        run: echo unapproved\n  bootstrap:\n', 1)),
+            ('extra action', original.replace(
+                '  bootstrap:\n',
+                '      - uses: malicious/action@main\n  bootstrap:\n', 1)),
+            ('commented test', original.replace(
+                '        run: python3 -m unittest discover -s verification -p test_source_local_codeowners.py -v',
+                '        run: echo bypassed\n'
+                '        # run: python3 -m unittest discover -s verification -p test_source_local_codeowners.py -v', 1)),
+            ('second same-name job', original +
+                '  source-free-codeowners-contract:\n    runs-on: ubuntu-24.04\n'),
+            ('duplicate jobs block', original +
+                '\njobs:\n  malicious:\n    runs-on: ubuntu-24.04\n'),
+            ('duplicate workflow token section', original +
+                '\npermissions:\n  contents: write\n'),
+            ('unreviewed checkout flag', original.replace(
+                '          clean: true',
+                '          clean: true\n          fetch-depth: 0', 1)),
+        )
+        for name, mutated in cases:
+            with self.subTest(case=name), self.assertRaises(AssertionError):
+                assert_ci_wiring(mutated)
 
     def test_source_local_paths_have_independent_codeowners(self):
         assert_expected(self.source)
