@@ -86,7 +86,7 @@ class Parser {
       ++at_;
     } else if (c=='-' && at_<text_.size() && text_[at_]=='>') {
       ++at_;
-    } else if (std::string_view("()+-*{};:,<>=").find(c)==std::string_view::npos) {
+    } else if (std::string_view("()+-*{};:,<>?=").find(c)==std::string_view::npos) {
       at_=begin;
       fail("invalid character");
     }
@@ -138,12 +138,27 @@ class Parser {
     expect("(");
     if (token_.text!=")") {
       do {
-        const std::string param=identifier();
+        std::string param;
+        if (take("int")) {
+          if (token_.text=="?")
+            fail("E_OPTION_TYPE_ABI_UNSUPPORTED: type-level '?' requires tagged Option<int> ABI");
+          param=identifier();
+          if (token_.text=="?")
+            fail("E_OPTIONAL_FORMAL_ABI_UNSUPPORTED: 'int name?' requires checked omission/default ABI");
+        } else {
+          param=identifier();
+          if (token_.text=="?")
+            fail("E_OPTIONAL_FORMAL_ABI_UNSUPPORTED: 'name?: int' requires checked omission/default ABI");
+          expect(":");expect("int");
+          if (token_.text=="?")
+            fail("E_OPTION_TYPE_ABI_UNSUPPORTED: 'name: int?' is required Option<int>, not omission");
+        }
+        if (token_.text=="=")
+          fail("E_PARAMETER_DEFAULT_REQUIRES_NAME_QUESTION: defaults require an omittable name-level '?' and checked ABI");
         if (param=="int"||param=="if"||param=="then"||param=="else"||
             param=="return"||param=="fnc"||
             std::find(current_->parameters.begin(),current_->parameters.end(),param)
             !=current_->parameters.end())fail("invalid or duplicate parameter");
-        expect(":");expect("int");
         current_->parameters.push_back(param);
         if(current_->parameters.size()>4)fail("function parameter budget exceeded");
         if (!take(","))break;

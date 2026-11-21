@@ -307,6 +307,14 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/verification/source_i64_executable.py"
       --compiler "$<TARGET_FILE:oresforge>")
   set_tests_properties(oresforge_source_i64_interpreter PROPERTIES TIMEOUT 100)
+  # Real Forge stage-0 and native-call source parsers: both formal orders,
+  # plus no-codegen rejection of unsupported omission / Option call ABIs.
+  add_test(NAME oresforge_namefirst_typefirst_formal_source_gate
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verification/optional_formal_order_source_gate.py"
+      --compiler "$<TARGET_FILE:oresforge>")
+  set_tests_properties(oresforge_namefirst_typefirst_formal_source_gate
+    PROPERTIES TIMEOUT 180)
 endif()
 # Static-facts v0: only literal main admitted, with actual Forge verified IR.
 if(BUILD_TESTING)

@@ -271,7 +271,7 @@ class Parser {
     if (c=='^')
       throw std::runtime_error("legacy ^/^^ operators are removed; use Integer.pow/bitXor at byte "+
                                std::to_string(start));
-    if (std::string_view("()+-*/{}[];:,?").find(static_cast<char>(c)) ==
+    if (std::string_view("()+-*/{}[];:,?=").find(static_cast<char>(c)) ==
         std::string_view::npos) error("invalid character");
     ++at_;
     tok_={Kind::Punct,source_.substr(start,1),start};
@@ -375,11 +375,27 @@ class Parser {
       do {
         if (tok_.text=="tuple" || tok_.text=="structural" || tok_.text=="(")
           error("tuple-v2 parameter requires typed ownership/ABI lowering");
-        const std::string parameter=identifier();
+        std::string parameter;
+        if (take("int")) {
+          if (tok_.text=="?")
+            error("E_OPTION_TYPE_ABI_UNSUPPORTED: type-level '?' is a required Option<int>, not an omitted slot");
+          parameter=identifier();
+          if (tok_.text=="?")
+            error("E_OPTIONAL_FORMAL_ABI_UNSUPPORTED: 'int name?' requires checked omission/default ABI");
+        } else {
+          parameter=identifier();
+          if (tok_.text=="?")
+            error("E_OPTIONAL_FORMAL_ABI_UNSUPPORTED: 'name?: int' requires checked omission/default ABI");
+          expect(":");
+          expect("int");
+          if (tok_.text=="?")
+            error("E_OPTION_TYPE_ABI_UNSUPPORTED: 'name: int?' requires tagged Option<int> ABI");
+        }
+        if (tok_.text=="=")
+          error("E_PARAMETER_DEFAULT_REQUIRES_NAME_QUESTION: a parameter default requires name-level '?' and checked lowering");
         if (parameter=="int" || parameter=="fnc" || parameter=="return" ||
             std::find(fn.parameters.begin(),fn.parameters.end(),parameter)!=fn.parameters.end())
           error("invalid or duplicate parameter");
-        expect(":"); expect("int");
         fn.parameters.push_back(parameter);
         if (fn.parameters.size()>64) error("too many parameters");
         if (!take(",")) break;
