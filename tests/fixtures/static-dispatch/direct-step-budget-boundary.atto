@@ -1,0 +1,5 @@
+// Fibonacci-style branching consumes 197021 AST visits including main,
+// just below the shared 200000-node interpreter and native AOT fuel budget.
+// This must return 42 (and must never trap spuriously).
+fnc grow(n:int):int{return if n<=1 then 1 else grow(n-1)+grow(n-2);}
+fnc main():int{return if grow(20)>0 then 42 else 0;}
