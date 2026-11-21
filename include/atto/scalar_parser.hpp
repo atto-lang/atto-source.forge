@@ -19,7 +19,8 @@ struct Node {
 };
 enum class ParseError {
   none, lexical, syntax, literal_out_of_range, depth_limit, node_limit,
-  io_direction_unsupported, unsupported_continuous_pipe
+  io_direction_unsupported, unsupported_continuous_pipe,
+  ownership_bang_unsupported
 };
 // Stable sanitized diagnostics; never echo user source bytes.
 [[nodiscard]] constexpr std::string_view parse_error_name(ParseError error) noexcept {
@@ -32,6 +33,7 @@ enum class ParseError {
     case ParseError::node_limit: return "E_PARSE_NODES";
     case ParseError::io_direction_unsupported: return "E_IO_DIRECTION_UNSUPPORTED";
     case ParseError::unsupported_continuous_pipe: return "E_UNSUPPORTED_CONTINUOUS_PIPE";
+    case ParseError::ownership_bang_unsupported: return "E_OWNERSHIP_BANG_UNSUPPORTED";
   }
   return "E_PARSE_UNKNOWN";
 }
@@ -286,7 +288,8 @@ public:
   Parser(std::string_view source, Lexed lexed)
       : source_(source), tokens_(std::move(lexed.tokens)) {
     if (!lexed.ok()) {
-      out_.error = ParseError::lexical;
+      out_.error = lexed.error == LexError::ownership_bang_unsupported
+          ? ParseError::ownership_bang_unsupported : ParseError::lexical;
       out_.error_offset = lexed.error_offset;
     }
     if (out_.error == ParseError::none) {
