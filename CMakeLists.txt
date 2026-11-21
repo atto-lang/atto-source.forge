@@ -27,6 +27,7 @@ if(BUILD_TESTING)
     "missing|EXPORT_UNBOUND|Missing"
     "duplicate|EXPORT_DUPLICATE|helper"
     "trailing-duplicate|EXPORT_DUPLICATE|helper"
+    "trailing-duplicate-reversed|EXPORT_DUPLICATE|helper"
     "visibility-conflict|EXPORT_VISIBILITY_CONFLICT|helper"
     "pkg-entry|EXPORT_PACKAGE_ENTRY_UNSUPPORTED|native main is process entry")
   foreach(export_rejection_case IN LISTS export_rejection_cases)
