@@ -149,3 +149,10 @@ verify_guest(seq_overflow "70" "" "E_OVERFLOW\n")
 
 # Nested comments are inert even when they conceal reserved words and I/O.
 verify_guest(nested_comments "0" "42\n" "")
+
+# Restricted inline sync task guests are same-frame and non-suspending.
+# These test emitted native C++; no Future, scheduler or cancellation claim.
+verify_guest(sync_inline_discard "0" "42\n" "")
+verify_guest(sync_inline_nested "0" "42\n" "")
+verify_guest(sync_inline_statement "0" "42\n" "")
+verify_guest(sync_inline_trap "71" "" "E_DIVZERO\n")
