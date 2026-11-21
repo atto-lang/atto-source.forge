@@ -1,0 +1,3 @@
+// Main depth 0, then 127 active callable frames at the accepted limit.
+fnc descend(n:int):int{return if n<=0 then 42 else descend(n-1);}
+fnc main():int{return descend(126);}
