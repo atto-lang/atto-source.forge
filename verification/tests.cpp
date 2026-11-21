@@ -620,7 +620,9 @@ int main() {
     }, "runtime entry parameter budget exceeded");
     reject_diagnostic([] { parse_source("fnc main(a:int):int{return a;}"); },
                       "main must have zero parameters");
-    Program broken_params{{{Op::Parameter,1},{Op::Return,0,0,-1}},1};
+    Program broken_params;
+    broken_params.instructions={{Op::Parameter,1},{Op::Return,0,0,-1}};
+    broken_params.parameter_count=1;
     reject_diagnostic([&] { verify(broken_params); },
                       "invalid runtime parameter index");
     broken_params.instructions[0].value=0;
@@ -628,8 +630,9 @@ int main() {
            "verified runtime parameter");
     reject_diagnostic([&] { emit_asm(broken_params,Arch::X86_64); },
                       "runtime argument count mismatch");
-    Program runtime_division{{{Op::Constant,8},{Op::Constant,2},
-                              {Op::Div,0,0,1},{Op::Return,0,2,-1}}};
+    Program runtime_division;
+    runtime_division.instructions={{Op::Constant,8},{Op::Constant,2},
+                                   {Op::Div,0,0,1},{Op::Return,0,2,-1}};
     reject_diagnostic([&] { emit_runtime_asm(runtime_division,Arch::X86_64); },
                       "runtime i64 division lowering not supported");
 
@@ -719,8 +722,9 @@ int main() {
     for (const auto& expression : {"0.125", "1e10", "1E-10", "123.456d", "123d"})
       reject_diagnostic([&] { source(expression); }, "typed numeric lowering");
     // Internal checked-i64 IR division is distinct from the source / operator.
-    Program internal_division{{{Op::Constant,-3},{Op::Constant,2},
-                              {Op::Div,0,0,1},{Op::Return,0,2,-1}}};
+    Program internal_division;
+    internal_division.instructions={{Op::Constant,-3},{Op::Constant,2},
+                                    {Op::Div,0,0,1},{Op::Return,0,2,-1}};
     ensure(interpret(internal_division)==-1,"internal checked division");
     internal_division.instructions[1].value=0;
     reject_diagnostic([&] { interpret(internal_division); }, "division by zero");
@@ -870,10 +874,53 @@ int main() {
     reject([] { parse_source("fnc main():int {return 1;} garbage"); });
     reject([] { parse_source("fnc main():int {return x;}"); });
     reject([] { parse_source("pub pub fnc main():int {return 1;}"); });
-    Program broken{{{Op::Add,0,0,0},{Op::Return,0,0,-1}}};
+    // Program now begins with file_exports; initialize instructions by name
+    // rather than accidentally trying to construct FileExport objects.
+    Program broken;
+    broken.instructions={{Op::Add,0,0,0},{Op::Return,0,0,-1}};
     reject([&] { verify(broken); });
-    Program missing{{{Op::Constant,3}}};
+    Program missing;
+    missing.instructions={{Op::Constant,3}};
     reject([&] { verify(missing); });
+    // IR consumers must not bypass parser-validated export authorities by
+    // manufacturing Program metadata for the JIT or native codegen.
+    Program export_metadata;
+    export_metadata.instructions={{Op::Constant,42},{Op::Return,0,0,-1}};
+    export_metadata.file_exports={{"api",false}};
+    ensure(interpret(export_metadata)==42,"valid direct IR public export");
+    // Match the 256-byte atto.exports.v1 symbol name limit in parser and IR.
+    const std::string max_export_name(256,'n');
+    const std::string long_export_name(257,'n');
+    export_metadata.file_exports={{max_export_name,false}};
+    ensure(interpret(export_metadata)==42,"maximal canonical IR export name");
+    export_metadata.file_exports={{long_export_name,false}};
+    reject_diagnostic([&] { verify(export_metadata); }, "EXPORT_NAME_TOO_LONG");
+    const auto long_export_source =
+      "export pub fnc "+long_export_name+"; fnc "+long_export_name+
+      "():int{return 42;} fnc main():int{return 42;}";
+    reject_diagnostic([&] { (void)parse_source(long_export_source); },
+                      "EXPORT_NAME_TOO_LONG");
+    reject_diagnostic([&] { (void)parse_runtime_source(long_export_source); },
+                      "EXPORT_NAME_TOO_LONG");
+    const auto max_export_source =
+      "export pub fnc "+max_export_name+"; fnc "+max_export_name+
+      "():int{return 42;} fnc main():int{return "+max_export_name+"();}";
+    ensure(interpret(parse_source(max_export_source))==42,
+           "maximal canonical source export name");
+    export_metadata.file_exports={{"main",true}};
+    reject_diagnostic([&] { verify(export_metadata); },
+                      "EXPORT_PACKAGE_ENTRY_UNSUPPORTED");
+    export_metadata.file_exports={{"api",false},{"api",true}};
+    reject_diagnostic([&] { verify(export_metadata); },
+                      "EXPORT_DUPLICATE");
+    for (const auto& bad_name : {"", "1api", "bad-name"}) {
+      export_metadata.file_exports={{bad_name,false}};
+      reject_diagnostic([&] { verify(export_metadata); },
+                        "EXPORT_INVALID_NAME");
+    }
+    export_metadata.file_exports.assign(1025,FileExport{"api",false});
+    reject_diagnostic([&] { verify(export_metadata); },
+                      "EXPORT_SOURCE_LIMIT");
     ensure(dump_ir(source("2+3*4")).find("mul.i64.checked")!=std::string::npos,"IR dump");
     ensure(emit_asm(source("2+3*4"),Arch::X86_64).find("movabs $14")!=std::string::npos,"x86_64 asm");
     ensure(emit_asm(source("2+3*4"),Arch::ARM64).find("movz x0, #14")!=std::string::npos,"arm64 asm");

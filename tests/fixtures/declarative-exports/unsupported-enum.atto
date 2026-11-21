@@ -1,0 +1,2 @@
+export pub enum Status;
+fnc main(): int { return 42; }
