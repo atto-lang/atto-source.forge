@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <functional>
 #include <fstream>
+#include <iterator>
 #include <set>
 #include <iostream>
 #include <limits>
@@ -255,6 +256,61 @@ int main() {
                    "private abstract receive(int x): int; end");
     }, "private abstract hooks require typed native vtables");
 
+    // Generic serial actors are distinct from source HTTP actors and must
+    // fail with their OWN compiler-owned unsupported capability marker.
+    for (const char* program : {
+      "define serial actor Worker as end",
+      "pub define serial actor Worker as end"
+    }) {
+      reject_diagnostic([&] { (void)parse_source(program); },
+                        "SERIAL_ACTOR_BACKEND_UNSUPPORTED");
+      reject_diagnostic([&] { (void)calls::parse(program); },
+                        "SERIAL_ACTOR_BACKEND_UNSUPPORTED");
+    }
+    // A source HTTP actor must never downgrade to a scalar callable just
+    // because the host has mailbox primitives. Verify the actual stage-0
+    // parser's typed rejection for both equivalent serial spellings and 3x4.
+    for (const char* program : {
+      "define serial http actor Endpoint as end",
+      "define http actor Endpoint as int requestConcurrency = 1; int messageConcurrency = 1; end",
+      "define http actor Endpoint as int requestConcurrency = 3; int messageConcurrency = 4; end",
+      "pub define serial http actor Endpoint as end",
+      "define pub http actor Endpoint as end"
+    }) {
+      reject_diagnostic([&] { (void)parse_source(program); },
+                        "HTTP_ACTOR_BACKEND_UNSUPPORTED");
+      reject_diagnostic([&] { (void)calls::parse(program); },
+                        "HTTP_ACTOR_BACKEND_UNSUPPORTED");
+    }
+    // Exercise identical bytes with BOTH independent Forge source compilers.
+    // CMake copies these into the test build working directory, so this
+    // cannot accidentally pass by looking at a mutable relative source path.
+    for (const auto& [name, expected] : std::array<std::pair<const char*,const char*>,3>{{
+      {"serial-1x1.atto",
+       "define pub serial http actor Endpoint as\n"
+       "  receive(ActorMail<int> mail): void { return; }\nend\n"},
+      {"explicit-1x1.atto",
+       "define pub http actor Endpoint as\n"
+       "  int requestConcurrency = 1;\n  int messageConcurrency = 1;\n"
+       "  receive(ActorMail<int> mail): void { return; }\nend\n"},
+      {"unsupported-3x4.atto",
+       "define pub http actor Endpoint as\n"
+       "  int requestConcurrency = 3;\n  int messageConcurrency = 4;\n"
+       "  receive(ActorMail<int> mail): void { return; }\nend\n"}
+    }}) {
+      std::ifstream input(std::string("http-actor-v1/")+name,std::ios::binary);
+      ensure(static_cast<bool>(input),"missing canonical HTTP actor Atto fixture");
+      const std::string data((std::istreambuf_iterator<char>(input)),
+                             std::istreambuf_iterator<char>());
+      ensure(data==expected,"canonical HTTP actor source bytes drifted");
+      reject_diagnostic([&] { (void)parse_source(data); },
+                        "HTTP_ACTOR_BACKEND_UNSUPPORTED");
+      reject_diagnostic([&] { (void)calls::parse(data); },
+                        "HTTP_ACTOR_BACKEND_UNSUPPORTED");
+    }
+    ensure(interpret(parse_source(
+      "fnc main():int{return 42;} // define serial http actor NotReal as end"))==42,
+      "HTTP actor comment must remain lexical trivia");
     // The scalar bootstrap has no class vtable, receiver loan, or closure
     // representation. New language constructs must fail closed until their
     // actual native codegen and ownership checking are present.

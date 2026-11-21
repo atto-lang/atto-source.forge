@@ -32,6 +32,17 @@ std::string emit_asm(const Program& p,Arch arch) {
 // Linux System V x86-64 and AAPCS64 integer-argument ABI only.
 // Every SSA result owns an 8-byte stack slot. No calls, frame pointer,
 // heap allocation, register allocator, or generated helper-function ABI yet.
+// FULL_GUEST_AOT_TODO (platform-conformance #321): This emitter handles a
+// bounded scalar instruction frame, not an entire statically closed .atto
+// module graph. Preserve the working native arithmetic lane while adding
+// separately verified call/receiver dispatch, typed ownership, actors,
+// async continuations, exception cleanup and transitive native linking.
+// The constant-folding emit_asm path above must not be counted as compiled
+// runtime guest execution for a general application.
+// ZERO_TRACING_GC_TODO: No heap use in this scalar frame does not certify
+// process/FFI zero GC. Add actor-owned bounded arenas, 32-bit relative
+// handles with generation fences, checked borrow/drop and cancellation/
+// supervisor retirement proofs before advertising full zero-GC AOT.
 std::string emit_runtime_asm(const Program& p,Arch arch) {
   if (arch != Arch::X86_64 && arch != Arch::ARM64)
     throw std::runtime_error("unsupported architecture");

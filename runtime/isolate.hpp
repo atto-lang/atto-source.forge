@@ -37,6 +37,8 @@ public:
     explicit IsolateHandle(std::shared_ptr<State> s) : state_(s), epoch_(s->generation) {}
   public: IsolateHandle()=default;
   };
+  // Canonical opaque per-tenant generation handle. No new trust mode.
+  using TenantVMHandle = IsolateHandle;
   class ActorTicket final {
     friend class OresVM;
     std::weak_ptr<State> state_;
@@ -64,8 +66,13 @@ public:
     if(max_tenants_==0||max_tenants_>1024)throw std::invalid_argument("tenant quota");
   }
   OresVM(const OresVM&)=delete;OresVM& operator=(const OresVM&)=delete;
+  // Canonical name for the existing TRUSTED host admission only.
+  // Native Forge machine code remains unsandboxed.
+  TenantVMHandle create_tenant_vm(std::string tenant,std::size_t max_actors){
+    return create_isolate(std::move(tenant),max_actors);
+  }
   IsolateHandle create_isolate(std::string tenant,std::size_t max_actors){
-    const bool invalid_tenant = tenant.empty() || tenant.size()>128 ||
+    const bool invalid_tenant = tenant.empty() || tenant=="." || tenant==".." || tenant.size()>128 ||
       !std::all_of(tenant.begin(),tenant.end(),[](unsigned char c){
         return (c>='a'&&c<='z') || (c>='A'&&c<='Z') ||
                (c>='0'&&c<='9') || c=='-' || c=='_' || c=='.';
