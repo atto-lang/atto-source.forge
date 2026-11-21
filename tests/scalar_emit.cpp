@@ -53,4 +53,18 @@ int main() {
   assert(seq == emit_cpp_source("fnc main(): int {return seq(1,(> 2,3),42);}"));
   assert(!emit_cpp_source("fnc main(): int {return seq(1,);}"));
 
+
+  auto inlined = emit_cpp_source(
+    "fnc main(): int {do sync task {} return sync task<int> {return 42;};}");
+  assert(inlined && inlined->find("std::printf") != std::string::npos);
+  assert(inlined->find("[[maybe_unused]]") != std::string::npos);
+  assert(inlined->find("TaskSpawn") == std::string::npos);
+  assert(inlined->find("Future<") == std::string::npos);
+  assert(inlined == emit_cpp_source(
+    "fnc main(): int {do sync task {} return sync task<int> {return 42;};}"));
+  assert(!emit_cpp_source("fnc main(): int {return task<int> {return 42;};}"));
+  assert(!emit_cpp_source(
+    "fnc main(): int {do sync task<int> {return 1;};return 42;}"));
+
+
 }
