@@ -79,14 +79,32 @@ exit (Bash status 132); an unexpected return or unrelated failure is rejected.
 - Positive fixtures: `direct-42`, `direct-four-args`,
   `direct-nested-calls`, `direct-lazy-branch`,
   `direct-recursion-boundary`, and `direct-i64-boundary`.
-- Negative traps: `trap-overflow` and `trap-depth-limit`.
+- Negative traps: `trap-overflow`, `trap-depth-limit`, and `trap-step-budget`.
 - **Per C++ compiler:** 12 successful native guest executions plus
-  four intentional native trap executions (16 total). With both compilers,
-  32 actual guest executions are required for this narrow native AOT gate.
+  six intentional native trap executions (18 total). With both compilers,
+  36 actual guest executions are required for this narrow native AOT gate.
 - IR hardening additionally rejects lexically valid but source-reserved
   function/parameter names and noncanonical numeric payloads injected into
   dispatch nodes. The source parser and external IR verifier share the
   same identifier rules.
+
+**Execution-budget parity:** The callable interpreter already deducts one unit
+of its 200,000-node budget before visiting each AST node. Generated x86-64
+AOT now uses `%r9` as a private per-entry fuel register: it initializes
+`%r9 = 200000`, then checks and decrements fuel before each emitted AST
+node. All emitted calls are direct and take at most four SysV argument
+registers, so none uses or transfers the fuel register across a foreign
+ABI. Exhaustion traps through `.Lores_budget: ud2` without global mutable
+state, retaining safe isolation between independent invocations.
+
+The `trap-step-budget.atto` fixture uses exponentially branching direct
+recursion with depth below 128. The CMake suite checks that the real Forge
+interpreter fails specifically with `callable execution budget exceeded`,
+then requires the compiled native guest to terminate by SIGILL (132) at
+`-O0` and `-O2`, both GCC and Clang. A separately compiled small x86-64
+assembly probe verified register preservation and the SIGILL convention
+under both compilers and both optimization levels; this probe does **not**
+attest real Forge source parsing or AOT emission.
 
 **Evidence boundary:** The CMake harness itself was exercised in the
 isolated development container against a **synthetic** small emitter with GCC
