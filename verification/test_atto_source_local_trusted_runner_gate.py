@@ -38,15 +38,32 @@ def workflow_gates():
     scripts = ["\n".join(line[10:] for line in block.splitlines()) for block in matches]
     if scripts[0] != scripts[1]:
         raise AssertionError("pre-test and post-test authorization diverged")
-    if not re.search(r"(?m)^on:\s*\n  workflow_dispatch:", source):
+    # A workflow_dispatch presence check is not sufficient: reject any
+    # additional schedule/workflow_run/repository_dispatch trigger.
+    if len(re.findall(r"(?m)^on:", source)) != 1:
+        raise AssertionError("only one manual dispatch trigger section is permitted")
+    trigger = re.search(r"(?ms)^on:\n(.*?)^permissions:", source)
+    if not trigger:
         raise AssertionError("only manual dispatch is permitted")
-    if re.search(r"(?m)^  (?:pull_request|push|pull_request_target):", source):
-        raise AssertionError("untrusted auto-dispatch is prohibited")
+    events = re.findall(r"(?m)^  ([A-Za-z_][A-Za-z_0-9-]*):", trigger.group(1))
+    if events != ["workflow_dispatch"]:
+        raise AssertionError("unexpected GitHub workflow event trigger")
     if "group: atto-forge-source-local-trusted" not in source or \
             "labels: [self-hosted, linux, x64, atto-ci-trusted]" not in source:
         raise AssertionError("approved dedicated runner group and label are required")
-    if "persist-credentials: false" not in source:
-        raise AssertionError("credentials must not be persisted by checkout")
+    # Inspect EVERY checkout. One safe checkout does not make a second,
+    # credential-persisting checkout safe on a privileged ephemeral runner.
+    checkouts = re.findall(
+        r"(?ms)^      - uses: actions/checkout@[^\n]+\n(.*?)(?=^      - |\Z)", source)
+    if len(checkouts) != 2:
+        raise AssertionError("exactly two pinned source-local checkouts required")
+    expected_refs = ["github.sha", "inputs.expected_head_sha"]
+    for checkout, expected_ref in zip(checkouts, expected_refs):
+        if not re.search(r"(?m)^          persist-credentials: false$", checkout) or \
+                not re.search(r"(?m)^          clean: true$", checkout):
+            raise AssertionError("every checkout must erase and deny credentials")
+        if f"ref: " not in checkout or expected_ref not in checkout:
+            raise AssertionError("checkout ref must be immutable expected SHA")
     if 'branch_state = fetch("branches/main")' not in source or \
             'branch_state.get("protected") is not True' not in source:
         raise AssertionError("source protected main must be enforced by admission gate")
@@ -130,6 +147,40 @@ class TrustedRunnerAdmissionTest(unittest.TestCase):
         with self.assertRaises(SystemExit) as raised:
             self.run_gate(index)
         self.assertIn(reason, str(raised.exception))
+
+    def test_alternate_event_triggers_are_denied(self):
+        original = PATH.read_text(encoding="utf-8")
+        for event in ("schedule", "workflow_run", "repository_dispatch",
+                      "workflow_call", "workflow_dispatch"):
+            trigger = "  workflow_dispatch:\n"
+            altered = original.replace(trigger, trigger + f"  {event}:\n", 1)
+            with self.subTest(event=event), \
+                    patch.object(Path, "read_text", return_value=altered):
+                with self.assertRaisesRegex(AssertionError, "unexpected GitHub workflow event"):
+                    workflow_gates()
+
+    def test_both_checkout_credentials_and_refs_are_enforced(self):
+        original = PATH.read_text(encoding="utf-8")
+        credential = "          persist-credentials: false"
+        second = original.rfind(credential)
+        self.assertGreater(second, original.find(credential))
+        second_invalid = original[:second] + original[second:].replace(
+            credential, "          persist-credentials: true", 1)
+        mutations = [
+            ("first credentials", original.replace(
+                credential, "          persist-credentials: true", 1), "every checkout"),
+            ("second credentials", second_invalid, "every checkout"),
+            ("wrong ref", original.replace(
+                "          ref: " + "$" + "{{ inputs.expected_head_sha }}",
+                "          ref: main", 1), "checkout ref"),
+            ("no clean", original.replace(
+                "          clean: true", "          clean: false", 1), "every checkout"),
+        ]
+        for label, altered, expected in mutations:
+            with self.subTest(case=label), \
+                    patch.object(Path, "read_text", return_value=altered):
+                with self.assertRaisesRegex(AssertionError, expected):
+                    workflow_gates()
 
     def test_pinned_independent_approval_allows_source_local_test_only(self):
         for index in (0, 1):
