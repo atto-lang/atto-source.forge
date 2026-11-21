@@ -75,11 +75,12 @@ function(check_native_callable name must_trap)
         "#include <cstdint>\nextern \"C\" std::int64_t oresforge_entry();\n"
         "int main(){volatile std::int64_t value=oresforge_entry();(void)value;return 99;}\n")
     else()
+      # Two independent entry invocations ensure the private native fuel
+      # counter resets on each call. CMake comments must start with '#'
+      # and stay outside file(WRITE), otherwise '// ...' is emitted into
+      # the generated C++ source and can comment out main().
       file(WRITE "${driver}"
         "#include <cstdint>\nextern \"C\" std::int64_t oresforge_entry();\n"
-        // Two independent entry invocations ensure the private native fuel
-        // counter is reset on every call; the near-budget positive guest
-        // would trap on the second entry if it reused leftover fuel.
         "int main(){const auto first=oresforge_entry();const auto second=oresforge_entry();return first==42 && second==42 ? 0 : 17;}\n")
     endif()
     execute_process(
