@@ -1,0 +1,5 @@
+pub fnc int• main()
+begin
+  do sync task<void> { return; };
+  ^ seq(1, sync task<int> { return 40 + 2; });
+end.
