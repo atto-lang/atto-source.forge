@@ -158,3 +158,8 @@ verify_guest(sync_inline_discard "0" "42\n" "")
 verify_guest(sync_inline_nested "0" "42\n" "")
 verify_guest(sync_inline_statement "0" "42\n" "")
 verify_guest(sync_inline_trap "71" "" "E_DIVZERO\n")
+
+# Cross-feature executable guests: begin/end + bullet + void do + value task
+# + ordered sequence; failure must short-circuit before later task result.
+verify_guest(integration_task_seq_bullet "0" "42\n" "")
+verify_guest(integration_task_seq_trap "71" "" "E_DIVZERO\n")
