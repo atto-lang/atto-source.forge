@@ -160,6 +160,40 @@ void verify_direct_aot(const std::string& source) {
   reject([]{(void)oresforge::calls::parse(
       "fnc helper(return:int):int{return 42;}fnc main():int{return 0;}");
   },"invalid or duplicate parameter");
+  // Twelve source keywords must be rejected identically in source parsing
+  // and the public verifier (which also accepts externally constructed IR).
+  // This yields 4 independently checked rejection paths per keyword.
+  for (const std::string_view word : {
+         "fnc", "define", "pub", "int", "return", "if", "then", "else",
+         "http", "serial", "true", "false"}) {
+    const std::string symbol(word);
+    reject([&]{(void)oresforge::calls::parse(
+        "fnc "+symbol+"():int{return 42;}fnc main():int{return 0;}");
+    },"reserved function name");
+    reject([&]{(void)oresforge::calls::parse(
+        "fnc helper("+symbol+":int):int{return 42;}fnc main():int{return 0;}");
+    },"invalid or duplicate parameter");
+    {
+      Module forged=admitted;
+      forged.functions[0].name=symbol;
+      reject([&]{oresforge::calls::verify(forged);},
+             "duplicate or invalid function");
+    }
+    {
+      Module forged=admitted;
+      forged.functions[0].parameters[0]=symbol;
+      reject([&]{oresforge::calls::verify(forged);},
+             "invalid or duplicate callable parameter");
+    }
+  }
+  // Prefixes of reserved tokens remain legal, preventing overbroad bans.
+  const auto names=oresforge::calls::parse(
+      "fnc fnc_helper(http_flag:int):int{return http_flag;}"
+      "fnc main():int{return fnc_helper(42);}");
+  if (oresforge::calls::interpret(names,std::span<const std::int64_t>{})!=42)
+    throw std::runtime_error("valid identifier prefixes were rejected");
+  std::cout<<"FORGE_STATIC_DISPATCH_AOT_RESERVED_KEYWORDS|rejections=48|"
+              "prefix_control=42\n";
   std::cout<<"FORGE_STATIC_DISPATCH_AOT_SOURCE_PROOF|functions=3|direct_calls=2|"
               "interpreter=42|negative_source_ir_cases=19\n";
 }
