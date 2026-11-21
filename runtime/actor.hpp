@@ -39,6 +39,10 @@ class Mailbox {
   // No guest code/callback may run while this lease owns the mailbox mutex.
   [[nodiscard]] std::unique_lock<std::mutex> lock_authorized(
       const ActorRef& owner, const ActorRef& caller) const;
+  // Capacity pressure is normal for asynchronous actor producers: return
+  // false without admitting DATA. Invalid/retired authority still throws.
+  // This is a host-native admission primitive, not guest Result lowering.
+  [[nodiscard]] bool try_send(ActorRef,std::span<const std::uint8_t>);
   void send(ActorRef,std::span<const std::uint8_t>);
   std::optional<std::vector<std::uint8_t>> receive();
   void close();
