@@ -48,4 +48,9 @@ int main() {
   forged.nodes.back().op = static_cast<Op>(900);
   assert(!validate_ast(forged));
   assert(!emit_cpp(forged));
+  const auto seq = emit_cpp_source("fnc main(): int {return seq(1,(> 2,3),42);}");
+  assert(seq);
+  assert(seq == emit_cpp_source("fnc main(): int {return seq(1,(> 2,3),42);}"));
+  assert(!emit_cpp_source("fnc main(): int {return seq(1,);}"));
+
 }
