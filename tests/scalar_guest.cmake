@@ -143,6 +143,6 @@ verify_guest(infer_prefix "0" "42\n" "")
 verify_guest(infer_bare_prefix "0" "42\n" "")
 
 # Real native guests: prefix traps must not be optimized away.
-verify_guest(seq_scalar "0" "42\\n" "")
-verify_guest(seq_divzero "71" "" "E_DIVZERO\\n")
-verify_guest(seq_overflow "70" "" "E_OVERFLOW\\n")
+verify_guest(seq_scalar "0" "42\n" "")
+verify_guest(seq_divzero "71" "" "E_DIVZERO\n")
+verify_guest(seq_overflow "70" "" "E_OVERFLOW\n")
