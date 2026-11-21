@@ -71,4 +71,18 @@ int main() {
   assert(tokenize(std::string(max_source_bytes + 1, 'a')).error == LexError::source_too_large);
   assert(tokenize(std::string(max_tokens + 1, '+')).error == LexError::token_limit);
   assert(tokenize(std::string(max_tokens, '+')).ok());
+  const auto directions = tokenize("c << 42; (c >>); c <<< 3; c >>> 2;");
+  assert(directions.ok());
+  int writes = 0, reads = 0, shifts = 0;
+  for (const auto& token : directions.tokens) {
+    if (token.kind == Kind::io_write) ++writes;
+    if (token.kind == Kind::io_read) ++reads;
+    if (token.kind == Kind::shl || token.kind == Kind::lshr) ++shifts;
+  }
+  assert(writes == 1 && reads == 1 && shifts == 2);
+  assert(tokenize("(> 1,2)").ok());
+  assert(tokenize("a = b").ok());
+  assert(tokenize("a < b").ok());
+  assert(tokenize("// c << 42\\n 7").ok());
+
 }
