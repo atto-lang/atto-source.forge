@@ -181,9 +181,9 @@ class TrustedRunnerAdmissionTest(unittest.TestCase):
                 "actions/checkout@main", 1), "immutable pinned SHA"),
             ("extra checkout", original.replace(
                 "      - name: Execute source-free hostile-input regression tests",
-                "      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\\n"
-                "        with:\\n"
-                "          persist-credentials: true\\n"
+                "      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n"
+                "        with:\n"
+                "          persist-credentials: true\n"
                 "      - name: Execute source-free hostile-input regression tests", 1),
              "exactly two pinned"),
             ("no clean", original.replace(
