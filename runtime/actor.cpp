@@ -53,20 +53,29 @@ std::unique_lock<std::mutex> Mailbox::lock_authorized(
     throw std::runtime_error("stale or foreign actor memory operation");
   return lock;
 }
-void Mailbox::send(ActorRef destination,std::span<const std::uint8_t> payload) {
+bool Mailbox::try_send(ActorRef destination,std::span<const std::uint8_t> payload) {
   std::scoped_lock lock(mutex_);
+  // Capability denial is not ordinary backpressure. Always authorize first
+  // so a foreign or retired sender learns nothing about queue capacity.
   if (closed_ || destination.id!=id_ || destination.generation!=generation_ ||
       destination.authority_!=authority_)
     throw std::runtime_error("closed or stale actor");
-  // Check capability before exposing receiver message limits.
-  if (payload.size()>kMaxMessageBytes) throw std::length_error("message size limit");
-  if (queue_.size()>=capacity_ || queued_bytes_>byte_capacity_ ||
+  if (payload.size()>kMaxMessageBytes ||
+      queue_.size()>=capacity_ || queued_bytes_>byte_capacity_ ||
       payload.size()>byte_capacity_-queued_bytes_)
-    throw std::length_error("mailbox capacity");
-  // A default empty span may have null iterators. It still uses one slot.
+    return false;
+  // A zero-length message still consumes a record slot.
   if (payload.empty()) queue_.emplace_back();
   else queue_.emplace_back(payload.begin(),payload.end());
   queued_bytes_+=payload.size();
+  return true;
+}
+void Mailbox::send(ActorRef destination,std::span<const std::uint8_t> payload) {
+  if (try_send(destination,payload)) return;
+  // Preserve legacy typed failures for existing native producers.
+  if (payload.size()>kMaxMessageBytes)
+    throw std::length_error("message size limit");
+  throw std::length_error("mailbox capacity");
 }
 std::optional<std::vector<std::uint8_t>> Mailbox::receive() {
   std::scoped_lock lock(mutex_);

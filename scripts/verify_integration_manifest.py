@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
+import stat
 import sys
 
 PROTOCOL = 'oreslang-ecosystem-integration'
@@ -81,19 +83,80 @@ def verify_bytes(raw: bytes, repository_name: str) -> dict[str, object]:
     return value
 
 
+
+def _read_manifest_physically(root: Path) -> bytes:
+    """Pin both path components to directory fds; never follow a swapped leaf.
+
+    A source-controlled security gate cannot silently fall back to racy path
+    reads on a platform without descriptor-relative, no-follow access.
+    Native Windows reparse-point support needs a separate implementation.
+    """
+    required = ('O_DIRECTORY', 'O_NOFOLLOW', 'O_NONBLOCK', 'O_CLOEXEC')
+    if os.name != 'posix' or any(not hasattr(os, flag) for flag in required):
+        raise InvalidManifest('secure descriptor-relative manifest reads unavailable')
+
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    leaf_flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+    # A no-follow open of an absolute path checks only its final component.
+    # Walk from the filesystem root to reject symlinks in *all* ancestors.
+    if not root.is_absolute():
+        raise InvalidManifest('repository root must be absolute')
+    root_fd = os.open(root.anchor, directory_flags)
+    try:
+        for component in root.parts[1:]:
+            next_fd = os.open(component, directory_flags, dir_fd=root_fd)
+            os.close(root_fd)
+            root_fd = next_fd
+    except BaseException:
+        os.close(root_fd)
+        raise
+    try:
+        parent_fd = os.open('.oreslang', directory_flags, dir_fd=root_fd)
+        try:
+            leaf_fd = os.open('integration.json', leaf_flags, dir_fd=parent_fd)
+            try:
+                opened = os.fstat(leaf_fd)
+                if not stat.S_ISREG(opened.st_mode):
+                    raise InvalidManifest('opened manifest is not a regular file')
+                if opened.st_nlink != 1:
+                    raise InvalidManifest('manifest has unexpected hardlink aliases')
+                if opened.st_size > MAX_BYTES:
+                    raise InvalidManifest('manifest exceeds size limit')
+
+                # The file may grow after fstat. Request no more than 4097
+                # bytes total, including the one-byte overlimit witness.
+                chunks: list[bytes] = []
+                remaining = MAX_BYTES + 1
+                while remaining:
+                    chunk = os.read(leaf_fd, remaining)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    remaining -= len(chunk)
+                return b''.join(chunks)
+            finally:
+                os.close(leaf_fd)
+        finally:
+            os.close(parent_fd)
+    finally:
+        os.close(root_fd)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--repository-root', type=Path, default=Path(__file__).resolve().parent.parent)
     args = parser.parse_args(argv)
-    root = args.repository_root.resolve()
-    expected_name = root.name
-    manifest = root / '.oreslang' / 'integration.json'
+    # Preserve the final path component for O_NOFOLLOW; resolve() would
+    # silently dereference a symlinked repository-root authority alias.
     try:
-        if manifest.is_symlink() or not manifest.is_file():
-            raise InvalidManifest('manifest missing or symlinked')
-        if manifest.stat().st_size > MAX_BYTES:
-            raise InvalidManifest('manifest exceeds size limit')
-        verify_bytes(manifest.read_bytes(), expected_name)
+        # Reject parent traversal before abspath() folds it lexically. In
+        # particular, "symlink/../repo" can resolve somewhere different from
+        # the lexically normalized path when the kernel follows the symlink.
+        if '..' in args.repository_root.parts:
+            raise InvalidManifest('repository root parent traversal is forbidden')
+        root = Path(os.path.abspath(args.repository_root))
+        expected_name = root.name
+        verify_bytes(_read_manifest_physically(root), expected_name)
     except (InvalidManifest, OSError) as exc:
         print(f'integration manifest DENIED: {exc}', file=sys.stderr)
         return 1
