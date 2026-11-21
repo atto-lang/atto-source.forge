@@ -51,6 +51,14 @@ void verify_direct_aot(const std::string& source) {
   if(asmText.find("  call *")!=std::string::npos ||
      asmText.find("  jmp *")!=std::string::npos)
     throw std::runtime_error("closed scalar callable emitted indirect branch");
+  // Fuel must be initialized once per exported entry and decremented for
+  // every evaluated AST node, including work reached by recursive direct calls.
+  // Without this, bounded call depth still permits exponential native work.
+  if(asmText.find("  movq $200000, %r9\n")==std::string::npos ||
+     asmText.find("  testq %r9, %r9\n  je .Lores_budget\n  decq %r9\n")
+       ==std::string::npos ||
+     asmText.find(".Lores_budget:\n  ud2\n")==std::string::npos)
+    throw std::runtime_error("native callable execution-fuel budget missing");
 
   {
     Module bad=admitted;
