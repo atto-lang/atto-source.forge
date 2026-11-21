@@ -175,6 +175,11 @@ class Parser {
       // silently ignored by unreachable helper inlining.
       if (tok_.text=="match")
         error("MATCH_DEFAULT_BACKEND_UNSUPPORTED: typed match requires pattern CFG, exhaustiveness and checked fallback lowering");
+      // Rust/.NET lower ifnot/unless as conditionals; stage-0 Forge has no
+      // Boolean condition IR or checked imperative control-flow regions.
+      // Reserve both whole tokens, including inside unreachable declarations.
+      if (tok_.text=="ifnot" || tok_.text=="unless")
+        error("IFNOT_UNLESS_BACKEND_UNSUPPORTED: typed Boolean CFG and branch-merge lowering required");
       if (tok_.text=="gen" || tok_.text=="generator")
         error("generator declarations require iterator-frame and continuation lowering");
       // Fail closed on named language features before the scalar grammar
