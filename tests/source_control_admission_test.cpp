@@ -41,6 +41,51 @@ int main() {
       }
       if (!rejected) throw std::runtime_error("Forge accepted unsupported bang exception");
     }
+
+    // 18 canonical lexical boundary vectors (atto-spec #146). Forge's
+    // scalar-only compiler must fail closed on all six exceptional effects
+    // and never misclassify twelve other punctuation/trivia forms.
+    for (const char* expr : {
+      "trap! parse_id(\"42\")", "trap!parse_id(\"42\")",
+      "throw! Error(\"bad\")", "raise! Error(\"bad\")",
+      "panic! Error(\"bad\")", "throw!Error(\"bad\")"
+    }) {
+      auto source = std::string("fnc main():int{return ") + expr + ";}";
+      bool correctly_denied = false;
+      try { (void)oresforge::parse_source(source); }
+      catch (const std::runtime_error& error) {
+        correctly_denied = std::string_view(error.what()).find(
+            "EXCEPTION_BANG_BACKEND_UNSUPPORTED") != std::string_view::npos;
+      }
+      if (!correctly_denied)
+        throw std::runtime_error("Forge exceptional-bang escaped denial: " + std::string(expr));
+    }
+    for (const char* expr : {
+      "trap parse_id(\"42\")", "throw Error(\"bad\")",
+      "raise Error(\"bad\")", "panic Error(\"bad\")",
+      "trap !ready", "trap!=next", "trap!eq next",
+      "trapped! parse_id()", "copy! owned"
+    }) {
+      auto source = std::string("fnc main():int{return ") + expr + ";}";
+      try { (void)oresforge::parse_source(source); }
+      catch (const std::runtime_error& error) {
+        if (std::string_view(error.what()).find("EXCEPTION_BANG_BACKEND_UNSUPPORTED")
+            != std::string_view::npos)
+          throw std::runtime_error("Forge false exceptional-bang match: " + std::string(expr));
+      }
+    }
+    for (const char* source : {
+      "fnc main():int{return 7;} // trap! throw! raise! panic!",
+      "fnc main():int{/* trap! throw! raise! panic! */return 7;}",
+      "fnc main():int{return \"trap! throw! raise! panic!\";}"
+    }) {
+      try { (void)oresforge::parse_source(source); }
+      catch (const std::runtime_error& error) {
+        if (std::string_view(error.what()).find("EXCEPTION_BANG_BACKEND_UNSUPPORTED")
+            != std::string_view::npos)
+          throw std::runtime_error("Forge reclassified quoted/trivia exceptional keywords");
+      }
+    }
     oresforge::source::validate_utf8("fnc main():int{\r\n\treturn 42;\r\n}");
     std::cout << "source terminal-control admission passed\n";
     return 0;
