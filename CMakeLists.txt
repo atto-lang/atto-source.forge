@@ -27,6 +27,22 @@ if(BUILD_TESTING)
   set_tests_properties(oresforge_static_dispatch_aot_source_and_ir
     PROPERTIES TIMEOUT 20)
 
+  # Real .atto -> callable IR -> x86_64 SysV assembly -> linked/executed
+  # native guests at O0 and O2. Linux-only signal assertions are deliberate.
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+     CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" AND
+     CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    add_test(NAME oresforge_static_dispatch_aot_compiled_native_guests
+      COMMAND "${CMAKE_COMMAND}"
+        "-DROOT=${CMAKE_CURRENT_SOURCE_DIR}"
+        "-DVERIFIER=$<TARGET_FILE:oresforge_static_dispatch_aot_verifier>"
+        "-DCXX=${CMAKE_CXX_COMPILER}"
+        "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/static-dispatch-native-guests"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/verification/static_dispatch_native_guests.cmake")
+    set_tests_properties(oresforge_static_dispatch_aot_compiled_native_guests
+      PROPERTIES TIMEOUT 180)
+  endif()
+
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   set(ORE_NUMERIC_I64_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated_numeric_i64_cases.hpp")
   add_custom_command(
