@@ -83,6 +83,6 @@ int main() {
   assert(tokenize("(> 1,2)").ok());
   assert(tokenize("a = b").ok());
   assert(tokenize("a < b").ok());
-  assert(tokenize("// c << 42\\n 7").ok());
+  assert(tokenize("// c << 42\n 7").ok());
 
 }
