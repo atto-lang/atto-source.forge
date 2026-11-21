@@ -171,6 +171,10 @@ class Parser {
       // Scalar bootstrap lacks nominal enum declarations and compiler-owned
       // prebound virtual method slots. Never attempt arity-only fallback.
       if (tok_.text=="enum") error("nominal enum overloads require compiler-bound dispatch");
+      // Match must never be interpreted as an ordinary scalar name or
+      // silently ignored by unreachable helper inlining.
+      if (tok_.text=="match")
+        error("MATCH_DEFAULT_BACKEND_UNSUPPORTED: typed match requires pattern CFG, exhaustiveness and checked fallback lowering");
       if (tok_.text=="gen" || tok_.text=="generator")
         error("generator declarations require iterator-frame and continuation lowering");
       // Fail closed on named language features before the scalar grammar
@@ -249,13 +253,16 @@ class Parser {
     // never the legacy percent or caret operators. Report the actual byte
     // offset before generic punctuation handling, including unreachable
     // helper definitions: these characters cannot become silent aliases.
+    if (c=='~')
+      throw std::runtime_error("TILDE_AGGREGATE_BACKEND_UNSUPPORTED: Map/Record needs typed aggregate AST, ownership and atomic constructor lowering at byte "+
+                               std::to_string(start));
     if (c=='%')
       throw std::runtime_error("legacy % operator is removed; use Integer.rem/mod at byte "+
                                std::to_string(start));
     if (c=='^')
       throw std::runtime_error("legacy ^/^^ operators are removed; use Integer.pow/bitXor at byte "+
                                std::to_string(start));
-    if (std::string_view("()+-*/{};:,.?").find(static_cast<char>(c)) ==
+    if (std::string_view("()+-*/{};:,.?=").find(static_cast<char>(c)) ==
         std::string_view::npos) error("invalid character");
     ++at_;
     tok_={Kind::Punct,source_.substr(start,1),start};
@@ -312,6 +319,16 @@ class Parser {
         error("VIRTUAL_ACTOR_BACKEND_UNSUPPORTED: logical key and activation fencing required");
       error("unexpected declaration after virtual");
     }
+    // Native Forge has a scalar-only stage-0 source compiler. HTTP actor
+    // request/message lifetime policy and physical shutdown cannot be
+    // approximated by its host mailbox or generic actor lowering.
+    if (tok_.text=="http")
+      error("HTTP_ACTOR_BACKEND_UNSUPPORTED: Forge lacks source HTTP actor admission and physical-turn shutdown lowering");
+    if (take("serial")) {
+      if (tok_.text=="http")
+        error("HTTP_ACTOR_BACKEND_UNSUPPORTED: Forge lacks source HTTP actor admission and physical-turn shutdown lowering");
+      error("SERIAL_ACTOR_BACKEND_UNSUPPORTED: Forge lacks source serial actor lowering");
+    }
     // An explicitly inverted declaration is a nominal row-layout request,
     // never a scalar function. The Stage-0 frontend must reject it before
     // parsing a subsequent unrelated function or emitting native code.
@@ -339,22 +356,24 @@ class Parser {
       do {
         if (tok_.text=="tuple" || tok_.text=="structural" || tok_.text=="(")
           error("tuple-v2 parameter requires typed ownership/ABI lowering");
-        // Both the canonical type-first 'int value' and legacy
-        // name-first 'value:int' spelling bind the same checked i64
-        // parameter slot. Do not admit an untyped argument.
-        const bool type_first=take("int");
-        if (type_first && tok_.text=="?")
-          error("E_OPTION_TYPE_ABI_UNSUPPORTED: type-level '?' needs tagged Option<int> ABI");
-        const std::string parameter=identifier();
-        if (tok_.text=="?")
-          error("E_OPTIONAL_FORMAL_ABI_UNSUPPORTED: name-level '?' needs checked omitted-argument ABI");
-        if (!type_first) {
-          expect(":"); expect("int");
+        std::string parameter;
+        if (take("int")) {
           if (tok_.text=="?")
-            error("E_OPTION_TYPE_ABI_UNSUPPORTED: type-level '?' needs tagged Option<int> ABI");
+            error("E_OPTION_TYPE_ABI_UNSUPPORTED: type-level '?' is a required Option<int>, not an omitted slot");
+          parameter=identifier();
+          if (tok_.text=="?")
+            error("E_OPTIONAL_FORMAL_ABI_UNSUPPORTED: 'int name?' requires checked omission/default ABI");
+        } else {
+          parameter=identifier();
+          if (tok_.text=="?")
+            error("E_OPTIONAL_FORMAL_ABI_UNSUPPORTED: 'name?: int' requires checked omission/default ABI");
+          expect(":");
+          expect("int");
+          if (tok_.text=="?")
+            error("E_OPTION_TYPE_ABI_UNSUPPORTED: 'name: int?' requires tagged Option<int> ABI");
         }
         if (tok_.text=="=")
-          error("E_PARAMETER_DEFAULT_REQUIRES_NAME_QUESTION: default requires checked omittable-argument ABI");
+          error("E_PARAMETER_DEFAULT_REQUIRES_NAME_QUESTION: a parameter default requires name-level '?' and checked lowering");
         if (parameter=="int" || parameter=="fnc" || parameter=="return" ||
             std::find(fn.parameters.begin(),fn.parameters.end(),parameter)!=fn.parameters.end())
           error("invalid or duplicate parameter");
