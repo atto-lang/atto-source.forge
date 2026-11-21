@@ -3,6 +3,7 @@
 #include "compiler/call_native.hpp"
 #include <fstream>
 #include <iterator>
+#include <random>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -66,9 +67,31 @@ int main(int argc, char** argv) {
     "pub fnc main():int{return \x60topic.try_publish(event)\x60;}",
     "// alias.try_publish(event)\xC2\x85" "pub fnc main():int{return 42;}",
   }) expect_inert(input);
+  // Deterministic randomized source-only audit: trivia and nested comments
+  // must never hide a member call, and a comment-only mention is inert.
+  std::mt19937 rng(0xA7702026);
+  const std::string trivia[]={" ","\t","\n","/* simple */",
+    "/* outer /* nested */ end */","// comment\n"," /* inert .try_publish() */"};
+  for(int case_id=0;case_id<12000;++case_id) {
+    std::string source="fnc main():int{return imported_topic";
+    for(int n=0;n<5;++n)source+=trivia[rng()%7];
+    source+='.';
+    for(int n=0;n<5;++n)source+=trivia[rng()%7];
+    source+="try_publish(share! event);}";
+    try { oresforge::source::reject_unlowered_topic_publish(source); }
+    catch(const std::runtime_error& e) {
+      if(std::string_view(e.what()).find("TOPIC_PUBLISH_BACKEND_UNSUPPORTED")!=std::string_view::npos) {
+        oresforge::source::reject_unlowered_topic_publish(
+          "fnc main():int{return 42;} /* imported_topic.try_publish(event) */");
+        continue;
+      }
+      throw;
+    }
+    throw std::runtime_error("randomized Topic member denial escaped");
+  }
   auto parse_ok=oresforge::parse_source("fnc main():int{return 42;}");
   auto runtime_ok=oresforge::parse_runtime_source("fnc main():int{return 42;}");
   if(parse_ok.instructions.empty()||runtime_ok.instructions.empty())
     throw std::runtime_error("scalar positive frontends failed");
-  std::cout << "FORGE_TYPED_PUBSUB_SOURCE_ADMISSION_PASS negative_cases=7 unicode_control_cases=2 inert_cases=9 scalar_frontends=2\n";
+  std::cout << "FORGE_TYPED_PUBSUB_SOURCE_ADMISSION_PASS negative_cases=7 unicode_control_cases=2 inert_cases=9 scalar_frontends=2 randomized_cases=12000\n";
 }
