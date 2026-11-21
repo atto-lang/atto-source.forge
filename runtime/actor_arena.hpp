@@ -9,6 +9,7 @@
 #include <exception>
 #include <limits>
 #include <mutex>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <thread>
@@ -85,6 +86,18 @@ class ActorArena final {
     auto& s = slot(turn, handle);
     if (out.size() != s.length) throw std::out_of_range("read length");
     std::memcpy(out.data(), s.data.data(), out.size());
+  }
+  // Owned byte Copy/None host primitive; never exposes a live arena view.
+  // An absent index does not bypass actor turn or generation authentication.
+  // This is not yet AttoLang source-level Option/ReadLoan lowering.
+  std::optional<std::byte> try_read_byte(Turn turn, Handle handle,
+                                         std::int64_t index) {
+    std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
+    if (!lock.owns_lock()) throw std::logic_error("actor arena busy");
+    auto& s = slot(turn, handle);
+    if (index < 0 || static_cast<std::uint64_t>(index) >= s.length)
+      return std::nullopt;
+    return s.data[static_cast<std::size_t>(index)];
   }
   void drop(Turn turn, Handle handle) {
     std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
