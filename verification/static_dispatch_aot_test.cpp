@@ -132,10 +132,30 @@ int main(int argc,char** argv) {
     const std::string source(std::istreambuf_iterator<char>{in},
                              std::istreambuf_iterator<char>{});
     if(argc==3) {
-      if(std::string(argv[2])!="--asm")throw std::runtime_error("invalid output mode");
+      const std::string mode(argv[2]);
       const auto verified=oresforge::calls::parse(source);
-      std::cout<<oresforge::calls::emit_asm(verified,oresforge::Arch::X86_64);
-      return 0;
+      if(mode=="--check-42") {
+        // Independent host interpreter oracle for the same source that the
+        // native guest script later assembles, links, and actually executes.
+        if(oresforge::calls::interpret(
+             verified,std::span<const std::int64_t>{})!=42)
+          throw std::runtime_error("callable guest oracle expected exactly 42");
+        const auto native=oresforge::calls::emit_asm(
+            verified,oresforge::Arch::X86_64);
+        if(native.find("  call .Lores_fn_")==std::string::npos ||
+           native.find("  call *")!=std::string::npos ||
+           native.find("  jmp *")!=std::string::npos)
+          throw std::runtime_error("native callable dispatch must be direct");
+        std::cout<<"FORGE_STAGE0_NATIVE_CALL_ORACLE|value=42|functions="
+                 <<verified.functions.size()<<'\n';
+        return 0;
+      }
+      if(mode=="--asm") {
+        std::cout<<oresforge::calls::emit_asm(
+            verified,oresforge::Arch::X86_64);
+        return 0;
+      }
+      throw std::runtime_error("invalid output mode");
     }
     verify_direct_aot(source);
     return 0;
