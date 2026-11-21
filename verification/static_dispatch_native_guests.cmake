@@ -114,10 +114,10 @@ endfunction()
 
 foreach(case IN ITEMS direct-42 direct-four-args direct-nested-calls
                       direct-lazy-branch direct-recursion-boundary
-                      direct-i64-boundary)
+                      direct-i64-boundary direct-step-budget-boundary)
   check_native_callable("${case}" FALSE)
 endforeach()
 foreach(case IN ITEMS trap-overflow trap-depth-limit trap-step-budget)
   check_native_callable("${case}" TRUE)
 endforeach()
-message(STATUS "FORGE_STAGE0_NATIVE_AOT=18_guest_executions; positive=12; sigill=6")
+message(STATUS "FORGE_STAGE0_NATIVE_AOT=20_guest_executions; positive=14; sigill=6")
