@@ -81,9 +81,12 @@ exit (Bash status 132); an unexpected return or unrelated failure is rejected.
   `direct-recursion-boundary`, `direct-i64-boundary`,
   and `direct-step-budget-boundary`.
 - Negative traps: `trap-overflow`, `trap-depth-limit`, and `trap-step-budget`.
-- **Per C++ compiler:** 14 successful native guest executions plus
-  six intentional native trap executions (20 total). With both compilers,
-  40 actual guest executions are required for this narrow native AOT gate.
+- **Per C++ compiler:** 14 successful native guest processes (each calls
+  `oresforge_entry()` twice) plus six intentional native trap processes
+  (20 processes total). Across GCC and Clang, this gate requires **40
+  native processes**: 56 successful independent entry invocations and 12
+  deliberate trap invocations. Double entry calls prove the private fuel
+  counter resets per invocation, including after a nearly exhausted budget.
 - IR hardening additionally rejects lexically valid but source-reserved
   function/parameter names and noncanonical numeric payloads injected into
   dispatch nodes. The source parser and external IR verifier share the
