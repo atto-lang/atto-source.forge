@@ -11,7 +11,7 @@
 #include <vector>
 
 namespace atto::forge::scalar {
-enum class Op { literal, add, sub, mul, div, rem, neg, band, bor, bxor, bnot, shl, lshr, ashr, seq };
+enum class Op { literal, add, sub, mul, div, rem, neg, band, bor, bxor, bnot, shl, lshr, ashr, seq, inline_task };
 struct Node {
   Op op;
   std::size_t left = 0, right = 0;
@@ -20,7 +20,8 @@ struct Node {
 enum class ParseError {
   none, lexical, syntax, literal_out_of_range, depth_limit, node_limit,
   io_direction_unsupported, unsupported_continuous_pipe,
-  ownership_bang_unsupported
+  ownership_bang_unsupported, task_unsupported, task_return_type,
+  reserved_sync
 };
 // Stable sanitized diagnostics; never echo user source bytes.
 [[nodiscard]] constexpr std::string_view parse_error_name(ParseError error) noexcept {
@@ -34,6 +35,9 @@ enum class ParseError {
     case ParseError::io_direction_unsupported: return "E_IO_DIRECTION_UNSUPPORTED";
     case ParseError::unsupported_continuous_pipe: return "E_UNSUPPORTED_CONTINUOUS_PIPE";
     case ParseError::ownership_bang_unsupported: return "E_OWNERSHIP_BANG_UNSUPPORTED";
+    case ParseError::task_unsupported: return "E_TASK_UNSUPPORTED";
+    case ParseError::task_return_type: return "E_TASK_RETURN_TYPE";
+    case ParseError::reserved_sync: return "E_RESERVED";
   }
   return "E_PARSE_UNKNOWN";
 }
@@ -71,6 +75,7 @@ inline constexpr int max_parse_depth = 24;
         break;
       case Op::neg:
       case Op::bnot:
+      case Op::inline_task:
         if (node.left >= index || node.right != 0) return false;
         pending.push_back(node.left);
         break;
@@ -275,6 +280,8 @@ class Parser {
       if (!take(Kind::rparen)) { fail(ParseError::syntax); return std::nullopt; }
       return inside;
     }
+    if (current().kind == Kind::name && text() == "sync")
+      return inline_task(depth + 1, false);
     if (current().kind == Kind::integer) {
       auto n = parse_decimal_i64(text());
       if (!n) { fail(ParseError::literal_out_of_range); return std::nullopt; }
@@ -283,6 +290,39 @@ class Parser {
     }
     fail(ParseError::syntax);
     return std::nullopt;
+  }
+  // Pure restricted task: same-frame, checked scalar execution. No child,
+  // suspension, future, cancellation or ambient actor capability is granted.
+  [[nodiscard]] std::optional<std::size_t> inline_task(int depth, bool discard) {
+    if (depth > max_parse_depth) { fail(ParseError::depth_limit); return std::nullopt; }
+    if (!name("sync") || !name("task")) {
+      fail(ParseError::syntax); return std::nullopt;
+    }
+    enum class Payload { inferred, integer, void_type };
+    Payload payload = Payload::inferred;
+    if (take(Kind::lt)) {
+      if (name("int")) payload = Payload::integer;
+      else if (name("void")) payload = Payload::void_type;
+      else { fail(ParseError::task_unsupported); return std::nullopt; }
+      if (!take(Kind::gt)) { fail(ParseError::task_unsupported); return std::nullopt; }
+    }
+    if (!take(Kind::lbrace)) { fail(ParseError::syntax); return std::nullopt; }
+    std::optional<std::size_t> body;
+    if (name("return")) {
+      if (current().kind != Kind::semicolon) body = expr(depth + 1);
+      if (out_.error != ParseError::none) return std::nullopt;
+      if (!take(Kind::semicolon)) { fail(ParseError::syntax); return std::nullopt; }
+    }
+    if (!take(Kind::rbrace)) { fail(ParseError::syntax); return std::nullopt; }
+    if ((discard && (payload == Payload::integer || body.has_value())) ||
+        (!discard && (payload == Payload::void_type || !body))) {
+      fail(ParseError::task_return_type); return std::nullopt;
+    }
+    // A typed void statement uses an unobservable scalar placeholder;
+    // the checker still requires all referenced child nodes to be reachable.
+    if (!body) body = append(Node{Op::literal, 0, 0, 0});
+    if (!body) return std::nullopt;
+    return append(Node{Op::inline_task, *body, 0, 0});
   }
 public:
   Parser(std::string_view source, Lexed lexed)
@@ -345,6 +385,19 @@ public:
         return std::move(out_);
       }
     }
+    // The only statement form added here is an in-frame, void-only
+    // 'do sync task'. Its completion precedes the final scalar return.
+    std::optional<std::size_t> before_return;
+    while (current().kind == Kind::name && text() == "do") {
+      (void)name("do");
+      auto t = inline_task(1, true);
+      if (!t) return std::move(out_);
+      (void)take(Kind::semicolon);
+      if (before_return) {
+        before_return = append(Node{Op::seq, *before_return, *t, 0});
+        if (!before_return) return std::move(out_);
+      } else before_return = *t;
+    }
     if (!(name("return") || take(Kind::caret_return))) {
       fail(ParseError::syntax);
       return std::move(out_);
@@ -372,6 +425,10 @@ public:
       fail(ParseError::syntax);
       return std::move(out_);
     }
+    if (before_return) {
+      root = append(Node{Op::seq, *before_return, *root, 0});
+      if (!root) return std::move(out_);
+    }
     out_.root = *root;
     return std::move(out_);
   }
@@ -379,18 +436,26 @@ public:
 
 [[nodiscard]] inline Parsed parse_source(std::string_view src) {
   Lexed lexed = tokenize(src);
-  // No checked actor transport ABI exists in stage 0: reject actual tokens,
-  // not keyword spellings hidden inside comments.
+  // Token-based reservations ignore text inside comments. Only the
+  // lexically adjacent 'sync task' form can create the checked inline node.
   if (lexed.ok()) {
-    for (const auto& token : lexed.tokens) {
-      if (token.kind != Kind::name) continue;
-      const auto word = src.substr(token.offset, token.length);
-      if (word == "pipe" || word == "rpipe") {
-        Parsed rejected;
+    auto word_at = [&](std::size_t i) -> std::string_view {
+      if (i >= lexed.tokens.size()) return {};
+      const auto& tok = lexed.tokens[i];
+      return tok.kind == Kind::name
+          ? src.substr(tok.offset, tok.length) : std::string_view{};
+    };
+    for (std::size_t i = 0; i < lexed.tokens.size(); ++i) {
+      const auto word = word_at(i);
+      Parsed rejected;
+      rejected.error_offset = lexed.tokens[i].offset;
+      if (word == "pipe" || word == "rpipe")
         rejected.error = ParseError::unsupported_continuous_pipe;
-        rejected.error_offset = token.offset;
-        return rejected;
-      }
+      else if (word == "sync" && word_at(i + 1) != "task")
+        rejected.error = ParseError::reserved_sync;
+      else if (word == "task" && (i == 0 || word_at(i - 1) != "sync"))
+        rejected.error = ParseError::task_unsupported;
+      if (rejected.error != ParseError::none) return rejected;
     }
   }
   return Parser(src, std::move(lexed)).parse();
