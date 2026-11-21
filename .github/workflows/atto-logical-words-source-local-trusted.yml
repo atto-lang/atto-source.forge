@@ -237,6 +237,13 @@ jobs:
           READ_ONLY_GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # The original checkout check is not enough: build scripts must not
+          # leave tracked compiler source changed when emitting a pass receipt.
+          # Ignore untracked out-of-tree CMake build directories only.
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$EXPECTED_TREE"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          echo "ATTO_FORGE_POST_TEST_TRACKED_SOURCE_UNCHANGED=$EXPECTED_TREE"
           python3 - <<'PY'
           import json, os, re, urllib.request
           REPO = "atto-lang/atto-source.forge"

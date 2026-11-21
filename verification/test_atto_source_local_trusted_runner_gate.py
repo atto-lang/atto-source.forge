@@ -113,6 +113,21 @@ def workflow_gates():
     if 'source_repo.get("private") is not True' not in source or \
             'base_repo.get("private") is not True' not in source:
         raise AssertionError("private source repo identity must be checked")
+    post_start = source.find("      - name: Reconfirm exact live head tree and approval after tests\n")
+    if post_start < 0:
+        raise AssertionError("post-test head/tree/source verification step missing")
+    post_tests = source[post_start:]
+    required_post = (
+        'test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"',
+        'test "$(git rev-parse \'HEAD^{tree}\')" = "$EXPECTED_TREE"',
+        'test -z "$(git status --porcelain --untracked-files=no)"',
+        'ATTO_FORGE_POST_TEST_TRACKED_SOURCE_UNCHANGED=',
+    )
+    for assertion in required_post:
+        if assertion not in post_tests.split("          python3 - <<'PY'", 1)[0]:
+            raise AssertionError("post-test tracked-source integrity check missing")
+    if post_tests.count("          python3 - <<'PY'") != 1:
+        raise AssertionError("post-test approval gate must remain last")
     if "ATTO_SOURCE_LOCAL_REVIEWED_HEAD=" not in source:
         raise AssertionError("source review gate is missing")
     if "git rev-parse 'HEAD^{tree}'" not in source:
@@ -227,6 +242,25 @@ class TrustedRunnerAdmissionTest(unittest.TestCase):
             with self.subTest(case=label), \
                     patch.object(Path, "read_text", return_value=changed), \
                     self.assertRaisesRegex(AssertionError, expected):
+                workflow_gates()
+
+    def test_post_test_tracked_source_integrity_is_mandatory(self):
+        original = PATH.read_text(encoding="utf-8")
+        post = "      - name: Reconfirm exact live head tree and approval after tests\n"
+        self.assertEqual(original.count(post), 1)
+        pre, suffix = original.split(post)
+        modifications = [
+            ("missing post head", 'test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"'),
+            ("missing post tree", 'test "$(git rev-parse \'HEAD^{tree}\')" = "$EXPECTED_TREE"'),
+            ("missing tracked clean", 'test -z "$(git status --porcelain --untracked-files=no)"'),
+            ("missing tracked proof", "ATTO_FORGE_POST_TEST_TRACKED_SOURCE_UNCHANGED="),
+        ]
+        for label, required in modifications:
+            self.assertIn(required, suffix, label)
+            altered = pre + post + suffix.replace(required, "echo SKIPPED", 1)
+            with self.subTest(case=label), \
+                    patch.object(Path, "read_text", return_value=altered), \
+                    self.assertRaisesRegex(AssertionError, "post-test tracked-source integrity"):
                 workflow_gates()
 
     def test_no_extra_jobs_or_job_permission_override(self):
