@@ -69,6 +69,30 @@ int main() {
       reject_diagnostic([&] { (void)parse_runtime_source(source_text); },
                         "VIRTUAL_ACTOR_BACKEND_UNSUPPORTED");
     }
+    // AttoLang ifnot/unless require Boolean typing and checked branch CFG.
+    // Forge scalar stage-0 must reject the *tokens* in both frontends,
+    // including unreachable functions, but not comments or longer names.
+    for (std::string_view guest : {
+      "fnc main():int{ifnot 1{return 0;}return 42;}",
+      "fnc main():int{unless 1{return 0;}return 42;}",
+      "fnc ifnot():int{return 42;}",
+      "fnc helper():int{unless 0{return 0;}return 1;} fnc main():int{return 42;}",
+      "fnc main():int{return unless;}"
+    }) {
+      reject_diagnostic([&] { (void)parse_source(guest); },
+                        "IFNOT_UNLESS_BACKEND_UNSUPPORTED");
+      reject_diagnostic([&] { (void)parse_runtime_source(guest); },
+                        "IFNOT_UNLESS_BACKEND_UNSUPPORTED");
+    }
+    for (std::string_view guest : {
+      "fnc main():int{/* nested /* ifnot */ unless */return 42;}",
+      "fnc unless_else():int{return 42;} fnc main():int{return unless_else();}"
+    }) {
+      ensure(interpret(parse_source(guest))==42,
+             "ifnot/unless token boundary positive control");
+      ensure(interpret(parse_runtime_source(guest))==42,
+             "ifnot/unless runtime token boundary positive control");
+    }
     // Guard is reserved across AttoLang even where Forge stage-0 cannot
     // compile its checked early-exit CFG. Rejection must be precise, and
     // must occur before verified IR or an executable is emitted.
