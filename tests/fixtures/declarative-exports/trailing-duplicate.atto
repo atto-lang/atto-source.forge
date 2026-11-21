@@ -1,0 +1,4 @@
+fnc helper(): int { return 42; }
+fnc main(): int { return helper(); }
+export pub helper;
+export pub[pkg] fnc helper;
