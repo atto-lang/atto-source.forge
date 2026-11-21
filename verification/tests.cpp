@@ -89,6 +89,23 @@ int main() {
     ensure(interpret(parse_source(
       "int <- main()\nbegin // comment\nreturn 42;\nend. // closer"))==42,
       "return-first comments are inert");
+    // Return-first must not admit tagged Option or omittable/default formals
+    // merely because its signature has the canonical type-first spelling.
+    for (const auto& entry : std::vector<std::pair<std::string_view,std::string_view>>{
+      {"int <- helper(int? x)\nbegin\nreturn 1;\nend\nint <- main()\nbegin\nreturn 42;\nend",
+       "E_OPTION_TYPE_ABI_UNSUPPORTED"},
+      {"int <- helper(int x?)\nbegin\nreturn 1;\nend\nint <- main()\nbegin\nreturn 42;\nend",
+       "E_OPTIONAL_FORMAL_ABI_UNSUPPORTED"},
+      {"int <- helper(x:int?)\nbegin\nreturn 1;\nend\nint <- main()\nbegin\nreturn 42;\nend",
+       "E_OPTION_TYPE_ABI_UNSUPPORTED"},
+      {"int <- helper(x?:int)\nbegin\nreturn 1;\nend\nint <- main()\nbegin\nreturn 42;\nend",
+       "E_OPTIONAL_FORMAL_ABI_UNSUPPORTED"},
+      {"int <- helper(int x=5)\nbegin\nreturn 1;\nend\nint <- main()\nbegin\nreturn 42;\nend",
+       "E_PARAMETER_DEFAULT_REQUIRES_NAME_QUESTION"}
+    }) {
+      reject_diagnostic([&] { (void)parse_source(entry.first); }, entry.second);
+      reject_diagnostic([&] { (void)parse_runtime_source(entry.first); }, entry.second);
+    }
     // Two-word contextual declarations are not executable stage-0 scalar
     // functions; every mode must reject with the correct semantic capability.
     for (std::string_view source_text : {
