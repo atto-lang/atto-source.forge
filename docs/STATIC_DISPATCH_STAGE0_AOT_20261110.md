@@ -54,3 +54,48 @@ links and runs the actual machine-code artifact.
   target architecture evidence and an independent review.
 - Measure O0/O2 guest execution, compile time, executable size and inlining
   separately; never label host-only C++ microbenchmarks as AttoLang gains.
+
+## Expanded source-local native guest acceptance (November 20, 2026)
+
+The existing draft-stage and ready-stage work remains in its original PR, not a new competing implementation. Run both named CTests against **the actual current PR commit** with GCC and Clang on Linux x86-64:
+
+```sh
+cmake -S . -B build-forge-aot-gcc -DBUILD_TESTING=ON -DCMAKE_CXX_COMPILER=g++
+cmake --build build-forge-aot-gcc --target oresforge_static_dispatch_aot_verifier -j2
+ctest --test-dir build-forge-aot-gcc --output-on-failure -V -R '^oresforge_static_dispatch_aot_(source_and_ir|compiled_native_guests)$'
+
+cmake -S . -B build-forge-aot-clang -DBUILD_TESTING=ON -DCMAKE_CXX_COMPILER=clang++
+cmake --build build-forge-aot-clang --target oresforge_static_dispatch_aot_verifier -j2
+ctest --test-dir build-forge-aot-clang --output-on-failure -V -R '^oresforge_static_dispatch_aot_(source_and_ir|compiled_native_guests)$'
+```
+
+The `verification/static_dispatch_native_guests.cmake` test calls the **actual**
+`oresforge_static_dispatch_aot_verifier` twice per source for deterministic
+assembly. For positive cases it also independently interprets the verified
+source (`--check-42`), then assembles/links native code and executes it at
+`-O0` and `-O2`. Negative cases require a genuine x86 `ud2` / `SIGILL`
+exit (Bash status 132); an unexpected return or unrelated failure is rejected.
+
+- Positive fixtures: `direct-42`, `direct-four-args`,
+  `direct-nested-calls`, `direct-lazy-branch`,
+  `direct-recursion-boundary`, and `direct-i64-boundary`.
+- Negative traps: `trap-overflow` and `trap-depth-limit`.
+- **Per C++ compiler:** 12 successful native guest executions plus
+  four intentional native trap executions (16 total). With both compilers,
+  32 actual guest executions are required for this narrow native AOT gate.
+- IR hardening additionally rejects lexically valid but source-reserved
+  function/parameter names and noncanonical numeric payloads injected into
+  dispatch nodes. The source parser and external IR verifier share the
+  same identifier rules.
+
+**Evidence boundary:** The CMake harness itself was exercised in the
+isolated development container against a **synthetic** small emitter with GCC
+and Clang. That checks script parsing, native assembly/link, SIGILL handling,
+and negative rejection of wrong results/indirect calls; it does **not** test
+the real Forge source compiler or certify these eight real fixtures.
+Source-org runner admission and exact-head executable GCC/Clang evidence
+remain mandatory. No private source is approved for cross-organization export.
+
+As before, this is stage-0 static, scalar, SysV x86-64 callable AOT—not
+general nominal/actor dispatch, TenantVM guest isolation, portable ARM64
+codegen, or Rust/Wasm backend equivalence.
