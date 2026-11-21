@@ -119,7 +119,7 @@ int main() {
     "fnc main(): int {return seq(1,2,42);}",
     "fnc main(): int {return (> 1,2,42);}",
     "fnc main(): int {return seq(1,(> 2,3),42);}",
-    "int\\xE2\\x80\\xA2 main()\\nbegin\\n^ seq(4,42);\\nend."
+    "int\xE2\x80\xA2 main()\nbegin\n^ seq(4,42);\nend."
   }) assert(parse_source(good).ok());
   for (const auto* bad_seq : {
     "fnc main(): int {return seq();}",
