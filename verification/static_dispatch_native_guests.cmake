@@ -3,11 +3,13 @@
 # Use source-local CTest on an exact authorized PR SHA (no cross-org transfer).
 cmake_minimum_required(VERSION 3.20)
 if(NOT DEFINED ROOT OR NOT DEFINED VERIFIER OR NOT DEFINED CXX OR
-   NOT DEFINED OUT_DIR)
+   NOT DEFINED OUT_DIR OR NOT DEFINED HOST_ARCH)
   message(FATAL_ERROR "missing native callable verification inputs")
 endif()
+# cmake -P does not populate CMAKE_HOST_SYSTEM_PROCESSOR on every host:
+# bind architecture from CMake configure through -DHOST_ARCH.
 if(NOT CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" OR
-   NOT CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
+   NOT HOST_ARCH MATCHES "^(x86_64|amd64|AMD64)$")
   message(FATAL_ERROR "the SysV x86_64 guest proof requires Linux x86_64")
 endif()
 file(MAKE_DIRECTORY "${OUT_DIR}")
