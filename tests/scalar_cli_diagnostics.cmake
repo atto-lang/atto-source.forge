@@ -43,3 +43,13 @@ check_diag(ownership_bang "fnc main(): int {return copy! 42;}" "E_OWNERSHIP_BANG
 string(REPEAT "/*" 129 too_deep_open)
 string(REPEAT "*/" 129 too_deep_close)
 check_diag(nested_comment_limit "fnc main(): int {return ${too_deep_open}42${too_deep_close};}" "E_PARSE_LEXICAL")
+
+# Exact diagnostic codes and stale-output cleanup for unsupported tasks.
+check_diag(task_spawn "fnc main(): int {return task<int> {return 42;};}" "E_TASK_UNSUPPORTED")
+check_diag(sync_reserved "fnc main(): int {return sync;}" "E_RESERVED")
+check_diag(sync_bad_value "fnc main(): int {return sync task<int> {return;};}" "E_TASK_RETURN_TYPE")
+check_diag(sync_bad_void "fnc main(): int {do sync task<void> {return 42;};return 42;}" "E_TASK_RETURN_TYPE")
+check_diag(sync_do_int "fnc main(): int {do sync task<int> {return 41;};return 42;}" "E_TASK_RETURN_TYPE")
+check_diag(sync_do_infer "fnc main(): int {do sync task {return 41;};return 42;}" "E_TASK_RETURN_TYPE")
+check_diag(sync_bare_void "fnc main(): int {sync task {} return 42;}" "E_PARSE_SYNTAX")
+check_diag(sync_bare_typed_void "fnc main(): int {sync task<void> {} return 42;}" "E_PARSE_SYNTAX")
