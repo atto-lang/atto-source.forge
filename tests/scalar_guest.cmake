@@ -146,3 +146,6 @@ verify_guest(infer_bare_prefix "0" "42\n" "")
 verify_guest(seq_scalar "0" "42\n" "")
 verify_guest(seq_divzero "71" "" "E_DIVZERO\n")
 verify_guest(seq_overflow "70" "" "E_OVERFLOW\n")
+
+# Nested comments are inert even when they conceal reserved words and I/O.
+verify_guest(nested_comments "0" "42\\n" "")
