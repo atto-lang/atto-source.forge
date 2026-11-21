@@ -17,6 +17,17 @@ This audit makes it reject noncanonical/invalid function identifiers and
 duplicate or malformed parameter names, rather than relying only on the
 source parser having run. The direct-call ABI is not changed.
 
+**Keyword name safety:** Both source parsing and the public Module IR verifier
+share one callable-name gate. It rejects `fnc`, `define`, `pub`, `int`,
+`return`, `if`, `then`, `else`, `http`, `serial`, `true`, and `false`
+as function or parameter names, rather than letting reserved source tokens
+become exported callable IR symbols. The source/IR test gate now includes
+48 keyword-specific negative cases (two source and two forged IR checks for
+each keyword), plus a positive control accepting safe prefixes such as
+`fnc_helper` and `http_flag`. These source-backed checks require execution
+on an admitted runner before the PR can merge.
+
+
 ## Executable evidence required
 
 1. Pin the exact PR source head and Git tree; a zero-step Actions run is
