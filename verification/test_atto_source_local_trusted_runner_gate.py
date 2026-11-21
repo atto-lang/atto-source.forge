@@ -133,8 +133,16 @@ def workflow_gates():
     required_post = (
         'test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"',
         'test "$(git rev-parse \'HEAD^{tree}\')" = "$EXPECTED_TREE"',
-        'test -z "$(git status --porcelain --untracked-files=no)"',
-        'ATTO_FORGE_POST_TEST_TRACKED_SOURCE_UNCHANGED=',
+        'git status --porcelain=v1 -z --untracked-files=all --ignored=matching',
+        "while IFS= read -r -d '' entry; do",
+        "'?? build-trusted-gcc/'*",
+        "'?? build-trusted-clang/'*",
+        "'?? build-trusted-sanitized/'*",
+        "'!! build-trusted-gcc/'*",
+        "'!! build-trusted-clang/'*",
+        "'!! build-trusted-sanitized/'*",
+        'ATTO_POST_BUILD_UNEXPECTED_SOURCE_CHANGE=',
+        'ATTO_FORGE_POST_TEST_SOURCE_TREE_CLEAN_EXCEPT_BUILD_DIRS=',
     )
     for assertion in required_post:
         if assertion not in post_tests.split("          python3 - <<'PY'", 1)[0]:
@@ -280,7 +288,7 @@ class TrustedRunnerAdmissionTest(unittest.TestCase):
                     self.assertRaisesRegex(AssertionError, "pre-build checked-out source integrity"):
                 workflow_gates()
 
-    def test_post_test_tracked_source_integrity_is_mandatory(self):
+    def test_post_test_whole_workspace_integrity_is_mandatory(self):
         original = PATH.read_text(encoding="utf-8")
         post = "      - name: Reconfirm exact live head tree and approval after tests\n"
         self.assertEqual(original.count(post), 1)
@@ -288,8 +296,17 @@ class TrustedRunnerAdmissionTest(unittest.TestCase):
         modifications = [
             ("missing post head", 'test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"'),
             ("missing post tree", 'test "$(git rev-parse \'HEAD^{tree}\')" = "$EXPECTED_TREE"'),
-            ("missing tracked clean", 'test -z "$(git status --porcelain --untracked-files=no)"'),
-            ("missing tracked proof", "ATTO_FORGE_POST_TEST_TRACKED_SOURCE_UNCHANGED="),
+            ("missing all-untracked inventory", "--untracked-files=all"),
+            ("missing ignored inventory", "--ignored=matching"),
+            ("missing NUL encoding", "--porcelain=v1 -z"),
+            ("missing tracked protection", 'ATTO_POST_BUILD_UNEXPECTED_SOURCE_CHANGE='),
+            ("missing GCC allowance", "'?? build-trusted-gcc/'*"),
+            ("missing Clang allowance", "'?? build-trusted-clang/'*"),
+            ("missing sanitizer allowance", "'?? build-trusted-sanitized/'*"),
+            ("missing ignored GCC allowance", "'!! build-trusted-gcc/'*"),
+            ("missing ignored Clang allowance", "'!! build-trusted-clang/'*"),
+            ("missing ignored sanitizer allowance", "'!! build-trusted-sanitized/'*"),
+            ("missing proof", "ATTO_FORGE_POST_TEST_SOURCE_TREE_CLEAN_EXCEPT_BUILD_DIRS="),
         ]
         for label, required in modifications:
             self.assertIn(required, suffix, label)

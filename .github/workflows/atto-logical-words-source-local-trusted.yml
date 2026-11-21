@@ -41,6 +41,8 @@ jobs:
       group: atto-forge-source-local-trusted
       labels: [self-hosted, linux, x64, atto-ci-trusted]
     timeout-minutes: 45
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
     steps:
       - name: Bind requested PR SHA and tree to independently approved live source
         shell: bash
@@ -237,13 +239,23 @@ jobs:
           READ_ONLY_GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # The original checkout check is not enough: build scripts must not
-          # leave tracked compiler source changed when emitting a pass receipt.
-          # Ignore untracked out-of-tree CMake build directories only.
+          # Reject tracked modifications and all unexpected untracked/ignored
+          # files. Only the three out-of-tree CMake build directories may be
+          # created. -z handles adversarial paths containing tabs/newlines.
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
           test "$(git rev-parse 'HEAD^{tree}')" = "$EXPECTED_TREE"
-          test -z "$(git status --porcelain --untracked-files=no)"
-          echo "ATTO_FORGE_POST_TEST_TRACKED_SOURCE_UNCHANGED=$EXPECTED_TREE"
+          status_file="$(mktemp)"
+          trap 'rm -f "$status_file"' EXIT
+          git status --porcelain=v1 -z --untracked-files=all --ignored=matching > "$status_file"
+          while IFS= read -r -d '' entry; do
+            case "$entry" in
+              '?? build-trusted-gcc/'*|'!! build-trusted-gcc/'*|\
+              '?? build-trusted-clang/'*|'!! build-trusted-clang/'*|\
+              '?? build-trusted-sanitized/'*|'!! build-trusted-sanitized/'*) ;;
+              *) printf 'ATTO_POST_BUILD_UNEXPECTED_SOURCE_CHANGE=%q\n' "$entry" >&2; exit 1 ;;
+            esac
+          done < "$status_file"
+          echo "ATTO_FORGE_POST_TEST_SOURCE_TREE_CLEAN_EXCEPT_BUILD_DIRS=$EXPECTED_TREE"
           python3 - <<'PY'
           import json, os, re, urllib.request
           REPO = "atto-lang/atto-source.forge"
