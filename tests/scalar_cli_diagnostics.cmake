@@ -33,3 +33,8 @@ foreach(i RANGE 1 70)
 endforeach()
 string(APPEND many ";}")
 check_diag(nodes "${many}" "E_PARSE_NODES")
+
+check_diag(io_write "fnc main(): int {return 1 << 2;}" "E_IO_DIRECTION_UNSUPPORTED")
+check_diag(io_read "fnc main(): int {return 1 >> 2;}" "E_IO_DIRECTION_UNSUPPORTED")
+check_diag(pipe "fnc main(): int {return pipe;}" "E_UNSUPPORTED_CONTINUOUS_PIPE")
+check_diag(rpipe "fnc main(): int {return rpipe;}" "E_UNSUPPORTED_CONTINUOUS_PIPE")
