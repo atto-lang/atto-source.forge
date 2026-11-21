@@ -78,11 +78,12 @@ exit (Bash status 132); an unexpected return or unrelated failure is rejected.
 
 - Positive fixtures: `direct-42`, `direct-four-args`,
   `direct-nested-calls`, `direct-lazy-branch`,
-  `direct-recursion-boundary`, and `direct-i64-boundary`.
+  `direct-recursion-boundary`, `direct-i64-boundary`,
+  and `direct-step-budget-boundary`.
 - Negative traps: `trap-overflow`, `trap-depth-limit`, and `trap-step-budget`.
-- **Per C++ compiler:** 12 successful native guest executions plus
-  six intentional native trap executions (18 total). With both compilers,
-  36 actual guest executions are required for this narrow native AOT gate.
+- **Per C++ compiler:** 14 successful native guest executions plus
+  six intentional native trap executions (20 total). With both compilers,
+  40 actual guest executions are required for this narrow native AOT gate.
 - IR hardening additionally rejects lexically valid but source-reserved
   function/parameter names and noncanonical numeric payloads injected into
   dispatch nodes. The source parser and external IR verifier share the
@@ -97,8 +98,15 @@ registers, so none uses or transfers the fuel register across a foreign
 ABI. Exhaustion traps through `.Lores_budget: ud2` without global mutable
 state, retaining safe isolation between independent invocations.
 
-The `trap-step-budget.atto` fixture uses exponentially branching direct
-recursion with depth below 128. The CMake suite checks that the real Forge
+The paired `direct-step-budget-boundary.atto` and `trap-step-budget.atto`
+fixtures use the same exponentially branching `grow(n)` function. Every
+base call consumes five AST visits; for larger inputs its exact visit count
+obeys `T(n) = 13 + T(n-1) + T(n-2)`. Thus `grow(20)` in the successful
+fixture consumes **197,021 visits** including `main`, stays just under the
+200,000-visit ceiling, and returns 42. `grow(21)` in the negative fixture
+would consume **318,787 visits** including `main` and must trap at the
+budget. Both stay far below the separate 128-frame depth limit and avoid
+i64 overflow. The negative fixture uses branching direct The CMake suite checks that the real Forge
 interpreter fails specifically with `callable execution budget exceeded`,
 then requires the compiled native guest to terminate by SIGILL (132) at
 `-O0` and `-O2`, both GCC and Clang. A separately compiled small x86-64
