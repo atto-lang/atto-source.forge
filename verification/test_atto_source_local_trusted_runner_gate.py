@@ -113,6 +113,19 @@ def workflow_gates():
     if 'source_repo.get("private") is not True' not in source or \
             'base_repo.get("private") is not True' not in source:
         raise AssertionError("private source repo identity must be checked")
+    pre_start = source.find("      - name: Verify exact checked-out commit/tree and clean source\n")
+    build_start = source.find("      - name: GCC full-source compiler build, CTest inventory and full suite\n")
+    if pre_start < 0 or build_start <= pre_start:
+        raise AssertionError("pre-build exact-source verification step missing")
+    pre_tests = source[pre_start:build_start]
+    required_pre = (
+        'test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"',
+        'test "$(git rev-parse \'HEAD^{tree}\')" = "$EXPECTED_TREE"',
+        'test -z "$(git status --porcelain)"',
+    )
+    for assertion in required_pre:
+        if assertion not in pre_tests:
+            raise AssertionError("pre-build checked-out source integrity check missing")
     post_start = source.find("      - name: Reconfirm exact live head tree and approval after tests\n")
     if post_start < 0:
         raise AssertionError("post-test head/tree/source verification step missing")
@@ -242,6 +255,29 @@ class TrustedRunnerAdmissionTest(unittest.TestCase):
             with self.subTest(case=label), \
                     patch.object(Path, "read_text", return_value=changed), \
                     self.assertRaisesRegex(AssertionError, expected):
+                workflow_gates()
+
+    def test_pre_build_checked_out_source_integrity_is_mandatory(self):
+        original = PATH.read_text(encoding="utf-8")
+        pre = "      - name: Verify exact checked-out commit/tree and clean source\n"
+        gcc = "      - name: GCC full-source compiler build, CTest inventory and full suite\n"
+        self.assertEqual(original.count(pre), 1)
+        self.assertEqual(original.count(gcc), 1)
+        start = original.index(pre)
+        end = original.index(gcc)
+        self.assertLess(start, end)
+        first, source_step, remaining = original[:start], original[start:end], original[end:]
+        requirements = [
+            ("pre head", 'test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"'),
+            ("pre tree", 'test "$(git rev-parse \'HEAD^{tree}\')" = "$EXPECTED_TREE"'),
+            ("pre clean", 'test -z "$(git status --porcelain)"'),
+        ]
+        for label, requirement in requirements:
+            self.assertIn(requirement, source_step, label)
+            altered = first + source_step.replace(requirement, "echo SKIPPED", 1) + remaining
+            with self.subTest(case=label), \
+                    patch.object(Path, "read_text", return_value=altered), \
+                    self.assertRaisesRegex(AssertionError, "pre-build checked-out source integrity"):
                 workflow_gates()
 
     def test_post_test_tracked_source_integrity_is_mandatory(self):
