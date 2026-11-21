@@ -30,6 +30,20 @@ function(check_native_callable name must_trap)
       message(FATAL_ERROR "${name}: real interpreter/IR oracle failed: ${check_rc}: ${check_err}")
     endif()
   endif()
+  if("${name}" STREQUAL "trap-step-budget")
+    # The interpreter rejects the *same* branching source via its existing
+    # bounded AST evaluation. The native guest must reject it by SIGILL too.
+    execute_process(
+      COMMAND "${VERIFIER}" "${src}" --check-42
+      RESULT_VARIABLE fuel_rc OUTPUT_VARIABLE fuel_stdout
+      ERROR_VARIABLE fuel_stderr TIMEOUT 20)
+    if(NOT "${fuel_rc}" STREQUAL "1" OR
+       NOT "${fuel_stdout}" STREQUAL "" OR
+       NOT "${fuel_stderr}" MATCHES "callable execution budget exceeded")
+      message(FATAL_ERROR
+        "trap-step-budget: interpreter must reject exhausted fuel: rc=[${fuel_rc}] stderr=[${fuel_stderr}]")
+    endif()
+  endif()
   execute_process(
     COMMAND "${VERIFIER}" "${src}" --asm
     RESULT_VARIABLE asm_rc OUTPUT_VARIABLE asm_text ERROR_VARIABLE asm_err
@@ -103,7 +117,7 @@ foreach(case IN ITEMS direct-42 direct-four-args direct-nested-calls
                       direct-i64-boundary)
   check_native_callable("${case}" FALSE)
 endforeach()
-foreach(case IN ITEMS trap-overflow trap-depth-limit)
+foreach(case IN ITEMS trap-overflow trap-depth-limit trap-step-budget)
   check_native_callable("${case}" TRUE)
 endforeach()
-message(STATUS "FORGE_STAGE0_NATIVE_AOT=16_guest_executions; positive=12; sigill=4")
+message(STATUS "FORGE_STAGE0_NATIVE_AOT=18_guest_executions; positive=12; sigill=6")
