@@ -77,7 +77,10 @@ function(check_native_callable name must_trap)
     else()
       file(WRITE "${driver}"
         "#include <cstdint>\nextern \"C\" std::int64_t oresforge_entry();\n"
-        "int main(){return oresforge_entry()==42 ? 0 : 17;}\n")
+        // Two independent entry invocations ensure the private native fuel
+        // counter is reset on every call; the near-budget positive guest
+        // would trap on the second entry if it reused leftover fuel.
+        "int main(){const auto first=oresforge_entry();const auto second=oresforge_entry();return first==42 && second==42 ? 0 : 17;}\n")
     endif()
     execute_process(
       COMMAND "${CXX}" "-${opt}" -std=c++20 -Wall -Wextra -Werror -pedantic
