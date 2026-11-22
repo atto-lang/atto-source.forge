@@ -111,6 +111,21 @@ int main() {
     "fnc main(): int { return task { return 42; }; }"
   }) assert(parse_source(source).error == ParseError::task_unsupported ||
             parse_source(source).error == ParseError::reserved_sync);
+  // TaskFuture get_ready/cancel_task/cooperate remain unsupported until the
+  // forge compiler has verified TaskSpawn, TaskScope, handle rights and real
+  // safe-point scheduling. Never reinterpret an unimplemented task as scalar.
+  for (const auto* source : {
+    "fnc main(): int { return task<int> { return 42; }.get_ready(); }",
+    "fnc main(): int { return task<int> { return 42; }.cancel_task(); }",
+    "fnc main(): int { return task<int> { return 42; }.cooperate(); }",
+    "fnc main(): int { return task<int> { return 42; }.get_ready().get_ready(); }",
+    "fnc main(): int { return await task<int> { return 42; }.get_ready(); }",
+    "fnc main(): int { return task<int> { return 42; }; }"
+  }) {
+    auto parsed = parse_source(source);
+    assert(!parsed.ok());
+    assert(parsed.error == ParseError::task_unsupported);
+  }
   for (const auto* source : {
     "fnc main(): int { return sync; }"
   }) assert(parse_source(source).error == ParseError::reserved_sync);
