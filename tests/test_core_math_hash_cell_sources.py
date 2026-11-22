@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SHA1 = {
     "math": "1bf48b53e8222c189e01d9172a379888a736690d",
     "hash": "03e621e383e7e51abd43c7dc65b3a10b90ce448e",
-    "cell": "752110144ca67c00d6df45d862c919d118a8171b"
+    "cell": "9d01059e9ea54460a0700ab3ed6225ec557222c2"
 }
 
 def step(s, b):
