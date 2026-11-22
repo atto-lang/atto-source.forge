@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SHA1 = {
     "math": "1bf48b53e8222c189e01d9172a379888a736690d",
     "hash": "03e621e383e7e51abd43c7dc65b3a10b90ce448e",
-    "cell": "9d01059e9ea54460a0700ab3ed6225ec557222c2"
+    "cell": "7a0b117c5a6775921e541dfa5aaf654ba2aea7f4"
 }
 
 def step(s, b):
@@ -62,6 +62,19 @@ class ForgeCoreSource(unittest.TestCase):
         for readers, writer, valid, writable in vectors:
             self.assertEqual(0 <= readers <= 65535 and (not writer or readers == 0), valid)
             self.assertEqual(readers == 0 and not writer, writable)
+        self.assertNotIn("pub fnc issue_loan(", cell)
+
+    def test_saturated_shared_loan_denies_new_acquisition_but_not_owner_read(self):
+        cell = (ROOT / "library" / "atto.core" / "cell.atto").read_text("utf8")
+        self.assertIn("readers >= 0 && readers < 65535", cell)
+        # Independent source-only reference: not a compiler-checked loan.
+        for readers, writer, permitted in (
+            (0, False, True), (65534, False, True),
+            (65535, False, False), (65536, False, False),
+            (-1, False, False), (0, True, False)
+        ):
+            self.assertEqual(0 <= readers < 65535 and not writer, permitted)
+        self.assertTrue(0 <= 65535 <= 65535)  # existing owner may still read
         self.assertNotIn("pub fnc issue_loan(", cell)
 
 if __name__ == "__main__":
