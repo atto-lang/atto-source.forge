@@ -15,3 +15,7 @@ Canonical `use namespace types;` file header plus public top-level functions; no
 ## Compiler-backed core/types admission gate
 
 An additional exact-head Actions job now invokes the **real forge compiler** directly on the unchanged backend-owned `core/types.atto`. It fails closed when namespace, type or multi-function lowering is unsupported; there is no source-only/fake-guest fallback. This deliberately exposes incomplete parity rather than reporting passing guest semantics. Stage-0 Forge parser/interpreter only. Native JIT/AOT and imported-file guest execution require separate proofs. No claim of compiler guest success is made without executed runner steps and independently verified output. Keep the PR draft until semantic positive/negative checks and target-appropriate runtime execution are proven.
+
+## Forge file-namespace compiler admission
+
+The stage-0 C++ frontend now admits one `use namespace types;` header before any source function, with explicit `FORGE_NAMESPACE_DUPLICATE` and `FORGE_NAMESPACE_HEADER_ORDER` rejection. Three backend-specific `.atto` compiler fixtures verify a positive return-64 guest and both negative errors through the real `oresforge check/run` executable. The unchanged 13-function `core/types.atto` remains a separate required compile gate and currently needs boolean/comparison/predicate lowering. Do not treat stage-0 interpreter success or header-only admission as full Forge JIT/native parity. All outcomes remain `NOT_EXECUTED` until observed in CI.

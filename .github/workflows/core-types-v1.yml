@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - 'core/types.atto'
+      - 'compiler/frontend.cpp'
       - 'tests/core-types-source.test.mjs'
       - 'tests/core-types-matrix-source.test.mjs'
       - 'tests/fixtures/core-types-v1/**'
@@ -58,6 +59,20 @@ jobs:
           set -euo pipefail
           cmake -G Ninja -S . -B "$RUNNER_TEMP/forge-core-types" -DBUILD_TESTING=OFF
           cmake --build "$RUNNER_TEMP/forge-core-types" --target oresforge --parallel 2
+          "$RUNNER_TEMP/forge-core-types/oresforge" check tests/fixtures/core-types-v1/forge-namespace-positive.atto
+          test "$("$RUNNER_TEMP/forge-core-types/oresforge" run tests/fixtures/core-types-v1/forge-namespace-positive.atto)" = "64"
+          for case in forge-namespace-duplicate-negative forge-namespace-late-negative; do
+            if "$RUNNER_TEMP/forge-core-types/oresforge" check "tests/fixtures/core-types-v1/$case.atto" >"$RUNNER_TEMP/$case.stdout" 2>"$RUNNER_TEMP/$case.stderr"; then
+              echo "$case unexpectedly compiled" >&2
+              exit 1
+            fi
+            case "$case" in
+              *duplicate*) grep -Fq FORGE_NAMESPACE_DUPLICATE "$RUNNER_TEMP/$case.stderr";;
+              *late*) grep -Fq FORGE_NAMESPACE_HEADER_ORDER "$RUNNER_TEMP/$case.stderr";;
+            esac
+          done
+          echo 'CORE_TYPES_FORGE_NAMESPACE_FRAGMENT=EXECUTED'
+          # The complete 13-function library is a separate, currently unsupported gate.
           "$RUNNER_TEMP/forge-core-types/oresforge" check core/types.atto
           "$RUNNER_TEMP/forge-core-types/oresforge" run core/types.atto > "$RUNNER_TEMP/core-types-forge.stdout"
           echo 'CORE_TYPES_FORGE_STAGE0=EXECUTED'
