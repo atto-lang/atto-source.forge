@@ -11,6 +11,17 @@ add_executable(oresforge compiler/main.cpp)
 target_link_libraries(oresforge PRIVATE oresforge_core)
 include(CTest)
 if(BUILD_TESTING)
+  # This executes the REAL Forge compiler frontend on the backend-owned Atto
+  # module and refuses a false-positive class/time compiler admission.
+  add_executable(oresforge_std_time_frontend_admission_test
+    tests/std_time_frontend_admission_test.cpp)
+  target_include_directories(oresforge_std_time_frontend_admission_test PRIVATE .)
+  target_link_libraries(oresforge_std_time_frontend_admission_test PRIVATE oresforge_core)
+  target_compile_features(oresforge_std_time_frontend_admission_test PRIVATE cxx_std_20)
+  add_test(NAME forge_std_time_frontend_admission
+    COMMAND oresforge_std_time_frontend_admission_test)
+  set_tests_properties(forge_std_time_frontend_admission PROPERTIES
+    TIMEOUT 15 WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
   # All Forge source frontends must deny raw ESC and DEL before lowering.
   # This adds execution coverage; source admission already resides in main.
   add_executable(oresforge_source_control_admission_test
