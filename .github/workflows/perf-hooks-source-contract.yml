@@ -4,6 +4,8 @@ on:
     paths:
       - 'stdlib/perf.atto'
       - 'core/perf_policy.atto'
+      - 'jit/perf_probes.hpp'
+      - 'tests/perf_probe_policy.cpp'
       - 'tests/perf_policy_source.test.mjs'
       - 'stdlib/perf_ids.atto'
       - 'stdlib/alloc/perf_trace_buffer.atto'
@@ -15,6 +17,8 @@ on:
     paths:
       - 'stdlib/perf.atto'
       - 'core/perf_policy.atto'
+      - 'jit/perf_probes.hpp'
+      - 'tests/perf_probe_policy.cpp'
       - 'tests/perf_policy_source.test.mjs'
       - 'stdlib/perf_ids.atto'
       - 'stdlib/alloc/perf_trace_buffer.atto'
@@ -44,3 +48,9 @@ jobs:
           set -euo pipefail
           node --version
           node --test tests/perf_source_contract.test.mjs tests/perf_policy_source.test.mjs
+      - name: Native C++17 AOT/JIT-independent fixed probe bank
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -Wall -Wextra -Werror -pedantic tests/perf_probe_policy.cpp -o /tmp/atto-perf-probe-policy
+          /tmp/atto-perf-probe-policy
