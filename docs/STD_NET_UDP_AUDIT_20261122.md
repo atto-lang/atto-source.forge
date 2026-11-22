@@ -30,3 +30,7 @@ The operator authorized token-free private exact-tree mirroring into an alternat
 - Verify .NET native host test and native AOT on a real .NET toolchain, Java JDK 25 + Truffle, native LLVM AOT, and Wasm guest runtime separately.
 - Re-test the **whole exact PR head/tree**, not only verified individual Git blobs, on a carrier with real runner jobs and nonzero steps.
 - Keep PRs Draft and do not promote from a source-only, host-only or zero-step result.
+
+## Follow-up 2026-11-22 — real native Forge CLI UDP admission guard
+
+Added `tests/udp_failclosed.cmake` and registered `scalar_udp_raw_socket_failclosed` in `CMakeLists.txt`. The check executes the actual `forge_scalar --check` frontend against an unlowered native UDP call and backend-owned `stdlib/net/udp.atto`; current restricted stage-0 compiler must fail with exit 2, a nonempty diagnostic and no standard-output success. The harness checks a preexisting generated-file sentinel stays untouched. This is **not** successful UDP guest compilation; it prevents host-source-model tests being mistaken for compiler parity. **Not executed** without the Forge compiler binary. Native guest import/lowering, actor-safe socket lifetime and AOT remain unsupported/unverified.
