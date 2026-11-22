@@ -607,3 +607,12 @@ add_test(NAME scalar_check_only
     "-DFORGE=$<TARGET_FILE:forge_scalar>"
     "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/scalar-check"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/scalar_check.cmake")
+
+# UDP source-model success is not a native socket lowering capability.
+# Compiler check-only must reject raw UDP and preserve generated outputs.
+add_test(NAME scalar_udp_raw_socket_failclosed
+  COMMAND "${CMAKE_COMMAND}"
+    "-DROOT=${CMAKE_CURRENT_SOURCE_DIR}"
+    "-DFORGE=$<TARGET_FILE:forge_scalar>"
+    "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/udp-failclosed"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/udp_failclosed.cmake")
