@@ -5,6 +5,7 @@
 #include "compiler/ir.hpp"
 #include <array>
 #include <iostream>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 #include <string_view>
