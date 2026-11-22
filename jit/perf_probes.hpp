@@ -29,6 +29,12 @@ constexpr bool should_sample(std::int64_t key, std::int64_t divisor) noexcept {
     return key >= 0 && divisor >= 1 && divisor <= 65536 && (key % divisor) == 0;
 }
 
+// Pure saturating increment makes both the fast path and the integer edge
+// directly testable without exposing mutable per-actor counter internals.
+constexpr std::uint64_t saturating_increment(std::uint64_t value) noexcept {
+    return value == std::numeric_limits<std::uint64_t>::max() ? value : value + 1;
+}
+
 enum class Outcome {
     disabled,
     unsampled,
@@ -50,7 +56,7 @@ public:
         const int slot = probe_slot(id);
         if (slot < 0) return Outcome::unknown_probe;
         auto& count = counters_[static_cast<std::size_t>(slot)];
-        if (count < std::numeric_limits<std::uint64_t>::max()) ++count;
+        count = saturating_increment(count);
         return Outcome::recorded;
     }
 
