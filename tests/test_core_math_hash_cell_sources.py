@@ -48,5 +48,21 @@ class ForgeCoreSource(unittest.TestCase):
         self.assertTrue("not* shared mutable storage" in cell)
         self.assertTrue("can_borrow_write" in cell)
 
+
+    def test_owner_operations_remain_non_authoritative_policy_only(self):
+        cell = (ROOT / "library" / "atto.core" / "cell.atto").read_text("utf8")
+        for operation in ("valid_loan_state", "can_owner_read", "can_owner_write",
+                          "can_move_owner", "can_suspend_unpinned"):
+            self.assertIn("pub fnc " + operation + "(", cell)
+        # Host reference is deliberately NOT compiler or guest execution.
+        vectors = ((0, False, True, True), (1, False, True, False),
+                   (65535, False, True, False), (65536, False, False, False),
+                   (-1, False, False, False), (0, True, True, False),
+                   (1, True, False, False))
+        for readers, writer, valid, writable in vectors:
+            self.assertEqual(0 <= readers <= 65535 and (not writer or readers == 0), valid)
+            self.assertEqual(readers == 0 and not writer, writable)
+        self.assertNotIn("pub fnc issue_loan(", cell)
+
 if __name__ == "__main__":
     unittest.main()
