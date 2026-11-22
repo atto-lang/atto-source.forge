@@ -52,5 +52,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          c++ -std=c++17 -Wall -Wextra -Werror -pedantic tests/perf_probe_policy.cpp -o /tmp/atto-perf-probe-policy
-          /tmp/atto-perf-probe-policy
+          for compiler in g++ clang++; do
+            "$compiler" -std=c++17 -O2 -DNDEBUG -Wall -Wextra -Werror -pedantic \
+              tests/perf_probe_policy.cpp -o /tmp/atto-perf-probe-policy-release
+            /tmp/atto-perf-probe-policy-release
+            "$compiler" -std=c++17 -O1 -g -Wall -Wextra -Werror -pedantic \
+              -fsanitize=address,undefined -fno-omit-frame-pointer \
+              tests/perf_probe_policy.cpp -o /tmp/atto-perf-probe-policy-sanitized
+            /tmp/atto-perf-probe-policy-sanitized
+          done
