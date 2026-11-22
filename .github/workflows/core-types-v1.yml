@@ -38,3 +38,29 @@ jobs:
       - name: Preserve evidence boundary
         if: always()
         run: echo 'This workflow runs a strict source-model oracle only; it neither compiles Atto nor proves NativeAOT/Wasm/JIT guest execution.' >> "$GITHUB_STEP_SUMMARY"
+  core-types-native-compiler-admission:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify exact head before native compiler execution
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          git rev-parse 'HEAD^{tree}'
+      - name: Build Forge compiler and admit unchanged core/types
+        run: |
+          set -euo pipefail
+          cmake -G Ninja -S . -B "$RUNNER_TEMP/forge-core-types" -DBUILD_TESTING=OFF
+          cmake --build "$RUNNER_TEMP/forge-core-types" --target oresforge --parallel 2
+          "$RUNNER_TEMP/forge-core-types/oresforge" check core/types.atto
+          "$RUNNER_TEMP/forge-core-types/oresforge" run core/types.atto > "$RUNNER_TEMP/core-types-forge.stdout"
+          echo 'CORE_TYPES_FORGE_STAGE0=EXECUTED'
+      - name: Evidence limitations
+        if: always()
+        run: echo 'Stage-0 Forge parser/interpreter only. Native JIT/AOT and imported-file guest execution require separate proofs. Zero actual runner steps means NOT_EXECUTED.' >> "$GITHUB_STEP_SUMMARY"
