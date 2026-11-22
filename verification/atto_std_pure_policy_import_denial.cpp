@@ -59,7 +59,7 @@ int main() {
       require_import_rejected(scalar, source, "scalar entry", true);
       require_import_rejected(runtime, source, "runtime entry", true);
       // Native callable stage is independent and must reject imports too.
-      require_import_rejected(callable, source, "callable entry", false);
+      require_import_rejected(callable, source, "callable entry", true);
     }
     // Positive compiler controls: strings inside comments are not imports.
     constexpr std::string_view clean =
