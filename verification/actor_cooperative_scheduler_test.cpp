@@ -230,6 +230,39 @@ int main() {
   rejected([&]{ActorCooperativeScheduler invalid(0);});
   rejected([&]{ActorCooperativeScheduler invalid(65537);});
 
+  // Actor Scheduling V1: this native stackful implementation is confined to
+  // its original carrier and never creates an elastic shared worker pool.
+  // Distinguish a real fixed-one pinned host profile from unsupported policy.
+  ActorCooperativeScheduler pinned(1, ActorSchedulingPolicyV1{
+    1, ActorCarrierAffinityV1::Pinned,
+    ActorCarrierDomainV1::TrustedSingleCarrier
+  });
+  assert(pinned.live_actors() == 0);
+  rejected([&]{ ActorCooperativeScheduler invalid(1, ActorSchedulingPolicyV1{
+    0, ActorCarrierAffinityV1::Pinned,
+    ActorCarrierDomainV1::TrustedSingleCarrier
+  }); });
+  rejected([&]{ ActorCooperativeScheduler invalid(1, ActorSchedulingPolicyV1{
+    2, ActorCarrierAffinityV1::Pinned,
+    ActorCarrierDomainV1::TrustedSingleCarrier
+  }); });
+  rejected([&]{ ActorCooperativeScheduler invalid(1, ActorSchedulingPolicyV1{
+    ActorSchedulingPolicyV1::PoolSize, ActorCarrierAffinityV1::Pinned,
+    ActorCarrierDomainV1::TrustedSingleCarrier
+  }); });
+  rejected([&]{ ActorCooperativeScheduler invalid(1, ActorSchedulingPolicyV1{
+    1, ActorCarrierAffinityV1::Sticky,
+    ActorCarrierDomainV1::TrustedSingleCarrier
+  }); });
+  rejected([&]{ ActorCooperativeScheduler invalid(1, ActorSchedulingPolicyV1{
+    1, ActorCarrierAffinityV1::Pinned,
+    ActorCarrierDomainV1::Untrusted
+  }); });
+  rejected([&]{ ActorCooperativeScheduler invalid(1, ActorSchedulingPolicyV1{
+    1, ActorCarrierAffinityV1::Dedicated,
+    ActorCarrierDomainV1::TrustedSingleCarrier
+  }); });
+
   // Constructor rejection after stack mapping refunds aggregate native quota.
   {
     ActorCooperativeScheduler invalid_mailbox(1);
