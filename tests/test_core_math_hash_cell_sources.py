@@ -29,10 +29,10 @@ class ForgeCoreSource(unittest.TestCase):
             self.assertLessEqual(len(data), 1048576)
             self.assertGreater(len(data), 0)
             self.assertEqual(hashlib.sha1(b"blob " + str(len(data)).encode()
-                                          + b"\\0" + data).hexdigest(), expected)
+                                          + b"\0" + data).hexdigest(), expected)
             source = data.decode("utf-8", errors="strict")
             self.assertTrue("define module " + name + " as" in source)
-            self.assertFalse("\\x00" in source or source.startswith("\\ufeff"))
+            self.assertFalse("\x00" in source or source.startswith("\ufeff"))
             self.assertFalse("java:" in source or "dotnet:" in source)
 
     def test_byte_fold_reference(self):
