@@ -15,3 +15,10 @@ The reviewed vector contract is `contracts/atto-std-pure-policy-parity-v1.json`.
 ## Promotion gate
 
 Keep this PR draft. Require a native backend guest fixture with imported trusted `std/path`, `std/sync`, `std/telemetry` modules, exact source/tree SHA, positive and negative behavior vectors, a stepful runner execution receipt, and independent review. A Node source-model pass or queued/zero-step GitHub Action must never count as parity.
+
+## Executable import-denial gate and future 134-vector guest
+
+- `verification/atto_std_pure_policy_import_denial.cpp` now calls the actual Forge scalar, runtime-entry and native-call C++ frontends: 8 unlinked import cases for each of 3 parser profiles (24 rejections required). The scalar/runtime parsers must emit the stable unsupported-module-graph diagnostic; the native-call parser must also deny imports. Three compiled positive controls keep ordinary/comment-only scalar programs legal.
+- `CMakeLists.txt` registers compiled CTest `oresforge_std_import_denial`; the exact-head workflow builds the test target and executes it. No synthetic success is substituted if CMake, CTest or a runner is missing.
+- `tests/fixtures/atto_std_pure_policy_guest_v1.atto` is the future complete 134-vector compiled guest. The Node source-only checker verifies every expression and sequential nonzero failure exit against the pinned shared JSON contract, including the single terminal `return 0`.
+- Until verified module graph linking exists, a real Forge compiler must **reject** these imports; a source-model PASS is **not** a native guest PASS. The imported guest fixture is deliberately staged but NOT_EXECUTED.
