@@ -17,14 +17,38 @@
 #include <vector>
 
 namespace oresforge::runtime {
+// Host-only explicit admission to the CURRENT single-owner, single-carrier
+// cooperative scheduler. This is not source @actor_schedule lowering and
+// cannot migrate guarded stackful frames across host threads.
+enum class ActorCarrierAffinityV1 : std::uint8_t {
+  None = 0, Sticky = 1, Pinned = 2, Dedicated = 3
+};
+enum class ActorCarrierDomainV1 : std::uint8_t {
+  TrustedSingleCarrier = 0, Shared = 1, Isolated = 2, Untrusted = 3
+};
+struct ActorSchedulingPolicyV1 {
+  static constexpr std::uint32_t PoolSize = UINT32_MAX;
+  std::uint32_t max_parallelism = 1;
+  ActorCarrierAffinityV1 affinity = ActorCarrierAffinityV1::Pinned;
+  ActorCarrierDomainV1 domain = ActorCarrierDomainV1::TrustedSingleCarrier;
+};
 class ActorCooperativeScheduler final {
  public:
   using Handler = std::function<void(ActorStackDomain&, std::span<const std::uint8_t>,
                                      std::uint64_t&)>;
-  explicit ActorCooperativeScheduler(std::size_t actor_limit = 1024)
+  explicit ActorCooperativeScheduler(
+      std::size_t actor_limit = 1024,
+      ActorSchedulingPolicyV1 policy = {})
       : owner_(std::this_thread::get_id()), actor_limit_(actor_limit) {
     if (!actor_limit || actor_limit > 65536)
       throw std::invalid_argument("invalid scheduler actor quota");
+    // Only an exact one-carrier, pinned trusted host policy is implemented.
+    // PoolSize and even Fixed(2) would otherwise be silently misrepresented
+    // by this thread-confined stackful continuation runtime.
+    if (policy.max_parallelism != 1 ||
+        policy.affinity != ActorCarrierAffinityV1::Pinned ||
+        policy.domain != ActorCarrierDomainV1::TrustedSingleCarrier)
+      throw std::invalid_argument("FORGE_ACTOR_ELASTIC_POLICY_UNSUPPORTED");
     runnable_.resize(actor_limit); // no allocation needed during wakeup
   }
   ActorCooperativeScheduler(const ActorCooperativeScheduler&) = delete;
