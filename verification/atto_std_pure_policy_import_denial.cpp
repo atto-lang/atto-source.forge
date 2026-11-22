@@ -70,8 +70,8 @@ int main() {
     // frontend's nested block-comment syntax. Keep its positive control
     // within the grammar it actually supports.
     constexpr std::string_view clean_callable =
-      "// import module ignored from \\"std/path\\";\\n"
-      "pub fnc main(): int { return 42; }\\n";
+      "// import module ignored from \"std/path\";\n"
+      "pub fnc main(): int { return 42; }\n";
     if (oresforge::interpret(oresforge::parse_source(clean)) != 42 ||
         oresforge::interpret(oresforge::parse_runtime_source(clean)) != 42 ||
         oresforge::calls::interpret(oresforge::calls::parse(clean_callable), {}) != 42)
