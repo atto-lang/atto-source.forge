@@ -3,6 +3,16 @@
 // Result<T,E>/Ok/Err are nominal ADTs; Err is not a thrown exception.
 // Match must consume at most one active payload with exact lifetime cleanup.
 define module result as
+  // Scoped read loan only; no affine Result payload may be transferred.
+  // Actual generic borrow lowering and guest admission still require proof.
+  pub fnc is_ok_borrowed<T, E>(borrow Result<T, E> value): bool {
+    return value.is_ok();
+  }
+
+  pub fnc is_err_borrowed<T, E>(borrow Result<T, E> value): bool {
+    return value.is_err();
+  }
+
   pub fnc flatten<T, E>(Result<Result<T, E>, E> value): Result<T, E> {
     return match value over
       on Ok(inner) -> inner,
