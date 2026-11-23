@@ -52,7 +52,21 @@ class Parser {
  public:
   explicit Parser(std::string_view text,bool runtime_entry=false): source_(text),runtime_entry_(runtime_entry) { next(); }
   Program parse() {
-    while (tok_.kind != Kind::End) definition();
+    // A file-scoped namespace is declaration metadata only; this stage-0
+    // bootstrap does not gain imports, packages or actor state by admitting it.
+    bool has_namespace = false;
+    if (take("use")) {
+      expect("namespace");
+      (void)identifier();
+      expect(";");
+      has_namespace = true;
+    }
+    while (tok_.kind != Kind::End) {
+      if (tok_.text=="use" || tok_.text=="namespace")
+        error(has_namespace ? "FORGE_NAMESPACE_DUPLICATE: duplicate file header" :
+              "FORGE_NAMESPACE_HEADER_ORDER: namespace must precede declarations");
+      definition();
+    }
     if (!functions_.contains("main")) error("missing main function");
     if (!runtime_entry_ && !functions_.at("main").parameters.empty())
       error("main must have zero parameters");
