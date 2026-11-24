@@ -108,6 +108,14 @@ and atto-platform-conformance#76.
 
 ## Restricted native scalar compiled guest (stage 0)
 
+The `forge_scalar` AOT emitter accepts nested and fallthrough
+`using telemetry.span("checkout") as span { ... }` scopes around a scalar
+return. Operation names use 1–256 printable ASCII bytes without quote or
+backslash escapes. Link scoped guests with a hosted provider of
+`ores_native_telemetry_span_begin` and `ores_native_telemetry_span_end`.
+Generated lexical guards close active scopes on normal return and checked
+arithmetic failure. The hosted provider controls recording.
+
 Build CMake and invoke `build/forge_scalar fixtures/scalar-v1/arithmetic.atto -o /tmp/atto-scalar.cpp`,
 then compile generated native C++ with `c++ -std=c++20 -I include /tmp/atto-scalar.cpp -o /tmp/atto-scalar`.
 The actual guest binary prints `34`. Signed overflow emits `E_OVERFLOW` and exits 70;
