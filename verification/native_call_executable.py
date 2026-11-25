@@ -14,7 +14,25 @@ import subprocess
 import sys
 import tempfile
 
+CANONICAL_GUARD = (Path(__file__).resolve().parent.parent /
+                   "contracts/guard-v1/canonical-scalar.atto").read_text(encoding="utf8")
+
 POSITIVE = (
+    ("guard-shared", CANONICAL_GUARD, ((42,),)),
+    ("guard-braced", "fnc main(int x):int{guard x>0 {return 1;} guard x<10, x neq 5 {^ 2;} return 42;}",
+     ((-1,1),(0,1),(1,42),(5,2),(10,2))),
+    ("guard-keyword", "fnc main(x:int):int{guard x>0 else ^ 1; end guard x<10, x neq 5 else return 2; end ^ 42;}",
+     ((-1,1),(0,1),(1,42),(5,2),(10,2))),
+    ("guard-lazy-predicate", "fnc main(x:int):int{guard x eq 0, 9223372036854775807+x eq 0 {return 7;} return 42;}",
+     ((0,7),(1,7),(-1,7))),
+    ("guard-lazy-continuation", "fnc main(x:int):int{guard x eq 0 {return 42;} return 9223372036854775807+x;}",
+     ((1,42),(0,9223372036854775807))),
+    ("guard-lazy-failure", "fnc main(x:int):int{guard x eq 1 {return 9223372036854775807+x;} return 42;}",
+     ((1,42),(0,9223372036854775807))),
+    ("guard-nested", "fnc main(x:int):int{guard x>0 else guard x eq 0 {^ 9;} ^ 7; end ^ 42;}",
+     ((-1,9),(0,7),(1,42))),
+    ("guard-call", "fnc predicate_input(int x):int{return x+1;} fnc main(int x):int{guard predicate_input(x) eq 1 {^ 7;} ^ 42;}",
+     ((0,42),(1,7))),
     ("factorial", "fnc fact(n:int):int{return if n<=1 then 1 else n*fact(n-1);}"
      " fnc main(n:int):int{return fact(n);}",
      ((0,1),(1,1),(5,120),(10,3628800),(20,2432902008176640000))),
@@ -62,6 +80,10 @@ POSITIVE = (
     ("no-args", "fnc main():int{return 42;}", ((42,),)),
 )
 TRAPS = (
+    ("guard-evaluates-rhs", "fnc main(x:int):int{guard x eq 1, 9223372036854775807+x eq 0 {return 7;} return 42;}",
+     (1,), "i64 add overflow"),
+    ("guard-executes-failure", "fnc main(x:int):int{guard x eq 0 {return 9223372036854775807+x;} return 42;}",
+     (1,), "i64 add overflow"),
     ("overflow-add", "fnc plus(n:int):int{return n+1;}"
      " fnc main(n:int):int{return plus(n);}",
      (9223372036854775807,), "i64 add overflow"),
@@ -79,6 +101,16 @@ TRAPS = (
      (1,), "call depth exceeded"),
 )
 INVALID = (
+    ("guard-int-condition", "fnc main():int{guard 1 {return 7;} return 42;}", "condition_not_bool"),
+    ("guard-int-comma", "fnc main():int{guard false, 1 {return 7;} return 42;}", "condition_not_bool"),
+    ("guard-empty-failure", "fnc main():int{guard true {} return 42;}", "E_GUARD_RETURN"),
+    ("guard-fallthrough", "fnc main():int{guard true else 7; end return 42;}", "E_GUARD_RETURN"),
+    ("guard-void-return", "fnc main():int{guard true {return;} return 42;}", "expected callable expression"),
+    ("guard-bool-return", "fnc main():int{guard true {return false;} return 42;}", "Boolean is not an int"),
+    ("guard-no-final-return", "fnc main():int{guard true {return 7;}}", "E_GUARD_RETURN"),
+    ("guard-wrong-closer", "fnc main():int{guard true else return 7; fi return 42;}", "unexpected token"),
+    ("guard-no-delimiter", "fnc main():int{guard true return 7; return 42;}", "E_GUARD_DELIMITER"),
+    ("guard-unknown-unused", "fnc hidden():int{guard true {return missing();} return 1;} fnc main():int{return 42;}", "unknown function"),
     ("logical-int-left", "fnc main():int{return 1 && true ? 42 : 7;}", "condition_not_bool"),
     ("logical-int-right", "fnc main():int{return false && 1 ? 42 : 7;}", "condition_not_bool"),
     ("logical-or-int-right", "fnc main():int{return true || 1 ? 42 : 7;}", "condition_not_bool"),
@@ -138,7 +170,7 @@ def require(value,message):
 
 def build(compiler,cc,root,label,source,param_count):
     file=root/"entry.atto"
-    file.write_text(source+"\n",encoding="utf8")
+    file.write_text(source if source.endswith("\n") else source+"\n",encoding="utf8")
     emit=execute([compiler,"emit-call-asm","x86_64",str(file)],root)
     require(emit.returncode==0 and not emit.stderr,
             "emit failed "+label+": "+emit.stderr.decode(errors="replace"))
@@ -198,7 +230,7 @@ def main():
             negatives+=1
         for label,source,diagnostic in INVALID:
             file=root/"bad.atto"
-            file.write_text(source+"\n",encoding="utf8")
+            file.write_text(source if source.endswith("\n") else source+"\n",encoding="utf8")
             for command in ((compiler,"run-calls",str(file)),(compiler,"emit-call-asm","x86_64",str(file))):
                 failure=execute(command,root)
                 require(failure.returncode==1 and failure.stdout==b"" and
