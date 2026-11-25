@@ -390,7 +390,7 @@ int main() {
     reject_diagnostic([] { parse_source("fnc main():int{return rt deref value;}"); },
                       "pointer-style runtime operation is not valid Oreslang source");
     reject_diagnostic([] { parse_source("fnc main():int{return rt borrow mut value;}"); },
-                      "legacy 'rt borrow mut' is not valid Oreslang");
+                      "runtime ownership operation requires typed lowering in Forge");
     reject_diagnostic([] { parse_source("fnc main():int{return rt mut borrow value;}"); },
                       "runtime ownership operation requires typed lowering in Forge");
     // Shared mutation cannot silently degrade to a scalar alias. The scalar
@@ -706,7 +706,7 @@ int main() {
     ensure(interpret(parse_source(arithmetic76))==76,
            "shared arithmetic-76 source execution");
     for (const auto& expression : {"3/2", "4/2", "5/0", "-9223372036854775808/-1"})
-      reject_diagnostic([&] { source(expression); }, "float result lowering");
+      reject_diagnostic([&] { source(expression); }, "FORGE_CHECKED_DIVISION_BACKEND_UNSUPPORTED");
     for (const auto& expression : {"0.125", "1e10", "1E-10", "123.456d", "123d"})
       reject_diagnostic([&] { source(expression); }, "typed numeric lowering");
     // Internal checked-i64 IR division is distinct from the source / operator.
