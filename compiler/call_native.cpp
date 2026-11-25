@@ -34,7 +34,7 @@ bool boolean_kind(Kind k) {
 }
 bool reserved_predicate_word(std::string_view s) {
   return s=="true" || s=="false" || s=="ifnot" || s=="unless" ||
-         s=="eq" || s=="neq" || s=="fi";
+         s=="eq" || s=="neq" || s=="fi" || s=="guard" || s=="end";
 }
 
 class Parser {
@@ -174,12 +174,14 @@ class Parser {
     expect("(");
     if (token_.text!=")") {
       do {
+        // The shared guard fixture uses type-first int x; retain name:int.
+        const bool type_first=take("int");
         const std::string param=identifier();
         if (param=="int"||param=="if"||param=="then"||param=="else"||
             param=="return"||param=="fnc"||
             std::find(current_->parameters.begin(),current_->parameters.end(),param)
             !=current_->parameters.end())fail("invalid or duplicate parameter");
-        expect(":");expect("int");
+        if (!type_first) { expect(":"); expect("int"); }
         current_->parameters.push_back(param);
         if(current_->parameters.size()>4)fail("function parameter budget exceeded");
         if (!take(","))break;
@@ -187,11 +189,44 @@ class Parser {
     }
     expect(")");
     if(!take(":"))expect("->");
-    expect("int");expect("{");if (!take("^")) expect("return");
-    current_->result=expr(0);
-    require_integer(current_->result);
+    expect("int");expect("{");
+    current_->result=guarded_body(0);
+    expect("}");
+  }
+  int explicit_return(std::size_t d) {
+    if (!take("^") && !take("return")) fail("E_GUARD_RETURN: explicit callable return required");
+    const int result=expr(d+1);
+    require_integer(result);
     if (token_.text=="^") fail("single caret is only a return statement; integer XOR uses ^^");
-    expect(";");expect("}");
+    expect(";");
+    return result;
+  }
+  // Restricted scalar body: a sequence of guards followed by an explicit
+  // return. Each failure arm must itself terminate through a checked return
+  // (or nested guards plus return). Lower to an owned, lazy If tree, so a
+  // failing guard skips every later guard and the success continuation.
+  int guarded_body(std::size_t d) {
+    depth(d);
+    std::vector<std::pair<int,int>> guards;
+    while (take("guard")) {
+      if (guards.size()>=32) fail("guard sequence budget exceeded");
+      int predicate=logical_or(d+1);
+      require_boolean(predicate);
+      while (take(",")) {
+        const int rhs=logical_or(d+1);
+        require_boolean(rhs);
+        predicate=add(Kind::And,0,{}, {predicate,rhs});
+      }
+      const bool braced=take("{");
+      if (!braced && !take("else")) fail("E_GUARD_DELIMITER: expected brace or else");
+      const int failure=guarded_body(d+1);
+      expect(braced ? "}" : "end");
+      guards.emplace_back(predicate,failure);
+    }
+    int result=explicit_return(d);
+    for (auto it=guards.rbegin();it!=guards.rend();++it)
+      result=add(Kind::If,0,{}, {it->first,result,it->second});
+    return result;
   }
   void depth(std::size_t n) {if(n>kMaxDepth)fail("callable expression nesting too deep");}
   int expr(std::size_t d) {
