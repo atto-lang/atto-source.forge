@@ -152,3 +152,7 @@ remain mandatory. No private source is approved for cross-organization export.
 As before, this is stage-0 static, scalar, SysV x86-64 callable AOT—not
 general nominal/actor dispatch, TenantVM guest isolation, portable ARM64
 codegen, or Rust/Wasm backend equivalence.
+
+### Explicit trusted-host scalar entry ABI
+
+The default `emit-call-asm x86_64 file.atto` still rejects parameterized main and exports only `oresforge_entry()`. The opt-in `emit-call-asm-args x86_64 file.atto N` requires an exact declaration arity of 1–4 i64 values and exports only `oresforge_entry_i64_N`; it must be linked by a trusted host using the matching C prototype. `run-calls` binds its actual argument count. This does not authorize arbitrary untrusted native guest entry or broaden the language subset.

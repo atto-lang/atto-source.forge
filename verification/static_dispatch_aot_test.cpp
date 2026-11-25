@@ -126,6 +126,22 @@ void verify_direct_aot(const std::string& source) {
     reject([&]{(void)oresforge::calls::emit_asm(bad,oresforge::Arch::X86_64);},
            "callable entry must have zero parameters");
   }
+  {
+    const auto typed=oresforge::calls::parse("fnc main(x:int):int{return x;}",1);
+    oresforge::calls::verify(typed,1);
+    const std::int64_t argument=42;
+    if(oresforge::calls::interpret(typed,std::span<const std::int64_t>(&argument,1))!=42)
+      throw std::runtime_error("explicit typed entry returned wrong value");
+    const auto asm_typed=oresforge::calls::emit_asm(typed,oresforge::Arch::X86_64,1);
+    if(asm_typed.find(".globl oresforge_entry_i64_1\n")==std::string::npos ||
+       asm_typed.find(".globl oresforge_entry\n")!=std::string::npos)
+      throw std::runtime_error("typed entry must have a distinct exported symbol");
+    reject([&]{oresforge::calls::verify(typed,2);},"callable entry arity mismatch");
+    reject([&]{(void)oresforge::calls::emit_asm(typed,oresforge::Arch::X86_64);},
+           "callable entry must have zero parameters");
+    reject([]{(void)oresforge::calls::parse("fnc main(x:int):int{return x;}",2);},
+           "callable entry arity mismatch");
+  }
   // These strings are lexically valid but source-reserved. Forged Module
   // objects must never bypass source admission by supplying them directly.
   {
