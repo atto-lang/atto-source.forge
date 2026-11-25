@@ -1,3 +1,6 @@
+#ifdef NDEBUG
+#undef NDEBUG // Keep admission assertions enabled in Release CMake builds.
+#endif
 #include "atto/scalar_parser.hpp"
 #include <cassert>
 #include <limits>
@@ -5,6 +8,9 @@
 using namespace atto::forge;
 using namespace atto::forge::scalar;
 int main() {
+  int assert_witness = 0;
+  assert(++assert_witness == 1);
+  if (assert_witness != 1) return 99; // Fail if assertions were compiled out.
   auto commented = parse_source(
       "/* module header */ fnc main(): int { // body\n"
       " return 8 / /* denominator */ 2; /* tail */ }");
@@ -96,5 +102,79 @@ int main() {
   many += ";}";
   auto budget = parse_source(many);
   assert(budget.error == ParseError::node_limit);
-  assert(parse_source(std::string(16385, 'a')).error == ParseError::lexical);
+  // Task and sync must not be mistaken for scalar functions or expressions.
+  // These are compiler admission tests, NOT guest Future/lock runtime support.
+  for (const auto* source : {
+    "fnc main(): int { return task<int> { return 42; }; }",
+    "fnc main(): int { do task<int> { return 42; }; return 0; }",
+    "fnc main(): int { return task /* comment */ <int> { return 42; }; }",
+    "fnc main(): int { return task { return 42; }; }"
+  }) assert(parse_source(source).error == ParseError::task_unsupported ||
+            parse_source(source).error == ParseError::reserved_sync);
+  // TaskFuture get_ready/cancel_task/cooperate remain unsupported until the
+  // forge compiler has verified TaskSpawn, TaskScope, handle rights and real
+  // safe-point scheduling. Never reinterpret an unimplemented task as scalar.
+  for (const auto* source : {
+    "fnc main(): int { return task<int> { return 42; }.get_ready(); }",
+    "fnc main(): int { return task<int> { return 42; }.cancel_task(); }",
+    "fnc main(): int { return task<int> { return 42; }.cooperate(); }",
+    "fnc main(): int { return task<int> { return 42; }.get_ready().get_ready(); }",
+    "fnc main(): int { return await task<int> { return 42; }.get_ready(); }",
+    "fnc main(): int { return task<int> { return 42; }; }"
+  }) {
+    auto parsed = parse_source(source);
+    assert(!parsed.ok());
+    // The stage-0 Forge lexer does not yet admit '.' member syntax.
+    // A lexical failure is correct until the typed TaskFuture parser lands;
+    // after member grammar is added, spawned tasks still MUST fail closed.
+    assert(parsed.error == ParseError::lexical ||
+           parsed.error == ParseError::task_unsupported);
+  }
+  for (const auto* source : {
+    "fnc main(): int { return sync; }"
+  }) assert(parse_source(source).error == ParseError::reserved_sync);
+  for (const auto* source : {
+    "fnc main(): int { return sync task<int> { return 42; }; }",
+    "fnc main(): int { return sync task { return 40+2; }; }",
+    "fnc main(): int { return 1 + sync task<int> { return 41; }; }",
+    "fnc main(): int { return sync task<int> { return sync task<int> {return 42;}; }; }",
+    "fnc main(): int { do sync task {} return 42; }",
+    "fnc main(): int { do sync task {return;} return 42; }",
+    "fnc main(): int { do sync task<void> {return;} return 42; }"
+  }) {
+    const auto parsed = parse_source(source);
+    assert(parsed.ok() && validate_ast(parsed));
+  }
+  for (const auto* source : {
+    "fnc main(): int { return sync task<int> {}; }",
+    "fnc main(): int { return sync task<void> {}; }",
+    "fnc main(): int { do sync task<int> {}; return 42; }",
+    "fnc main(): int { do sync task<int> {return 41;}; return 42; }",
+    "fnc main(): int { do sync task {return 41;}; return 42; }",
+    "fnc main(): int { sync task {} return 42; }",
+    "fnc main(): int { sync task<void> {} return 42; }",
+    "fnc main(): int { do sync task<void> {return 42;}; return 42; }",
+    "fnc main(): int { return sync task<int> {return;}; }",
+    "fnc main(): int { return sync task<bool> {return 42;}; }",
+    "fnc main(): int { return sync task<int> {return task<int> {return 42;};}; }",
+    "fnc main(): int { return sync task<int> {return await 42;}; }"
+  }) assert(!parse_source(source).ok());
+  // Distinguish void-only do form from bare-statement syntax errors.
+  assert(parse_source(
+    "fnc main(): int {do sync task<int> {return 1;};return 42;}"
+  ).error == ParseError::task_return_type);
+  assert(parse_source(
+    "fnc main(): int {do sync task {return 1;};return 42;}"
+  ).error == ParseError::task_return_type);
+  assert(parse_source(
+    "fnc main(): int {sync task {};return 42;}"
+  ).error == ParseError::sync_stmt_requires_do);
+  assert(parse_source(
+    "fnc main(): int {sync task<void> {};return 42;}"
+  ).error == ParseError::sync_stmt_requires_do);
+  const auto inert = parse_source(
+      "fnc main(): int { /* task<int> do sync task */ return 42; }");
+  assert(inert.ok());
+  assert(inert.error == ParseError::none);
+    assert(parse_source(std::string(16385, 'a')).error == ParseError::lexical);
 }

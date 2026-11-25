@@ -18,6 +18,14 @@ int main() {
   assert(bitwise->find("bit_and") != std::string::npos);
   assert(bitwise->find("bit_or") != std::string::npos);
   assert(bitwise->find("bit_xor") != std::string::npos);
+  const auto inlined = emit_cpp_source(
+    "fnc main(): int { do sync task {} return sync task<int> {return 42;}; }");
+  assert(inlined && inlined->find("std::printf") != std::string::npos);
+  assert(inlined->find("[[maybe_unused]]") != std::string::npos);
+  assert(inlined->find("TaskSpawn") == std::string::npos);
+  assert(inlined->find("Future<") == std::string::npos);
+  assert(!emit_cpp_source("fnc main(): int {return task<int> {return 42;};}"));
+  assert(!emit_cpp_source("fnc main(): int {return sync;}"));
   const auto traps = emit_cpp_source("fnc main(): int {return 3 / 0;}");
   assert(traps && traps->find("E_DIVZERO") != std::string::npos);
   assert(traps->find("return 71") != std::string::npos);

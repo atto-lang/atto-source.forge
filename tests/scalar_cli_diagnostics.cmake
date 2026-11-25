@@ -29,3 +29,16 @@ foreach(i RANGE 1 70)
 endforeach()
 string(APPEND many ";}")
 check_diag(nodes "${many}" "E_PARSE_NODES")
+
+# Task syntax must be admitted only for the pure scalar inline subset.
+# Failed task admissions must never leave stale or freshly emitted C++.
+check_diag(spawn "fnc main(): int {return task<int> {return 42;};}" "E_TASK_UNSUPPORTED")
+check_diag(sync_reserved "fnc main(): int {return sync;}" "E_RESERVED")
+check_diag(sync_bad_type "fnc main(): int {return sync task<int> {return;};}" "E_TASK_RETURN_TYPE")
+check_diag(sync_void_value "fnc main(): int {do sync task<void> {return 42;}; return 0;}" "E_TASK_RETURN_TYPE")
+
+# Atto spec #129: do-inline is void-only; void statement requires do.
+check_diag(sync_do_int_value "fnc main(): int {do sync task<int> {return 41;};return 42;}" "E_TASK_RETURN_TYPE")
+check_diag(sync_do_infer_value "fnc main(): int {do sync task {return 41;};return 42;}" "E_TASK_RETURN_TYPE")
+check_diag(sync_bare_void "fnc main(): int {sync task {} return 42;}" "E_SYNTAX")
+check_diag(sync_bare_explicit_void "fnc main(): int {sync task<void> {} return 42;}" "E_SYNTAX")

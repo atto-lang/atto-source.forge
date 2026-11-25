@@ -137,3 +137,10 @@ verify_guest(infer_arrow "0" "42\n" "")
 verify_guest(infer_block "0" "42\n" "")
 verify_guest(infer_prefix "0" "42\n" "")
 verify_guest(infer_bare_prefix "0" "42\n" "")
+
+# Inline sync tasks are a non-suspending checked-i64 subset. These are actual
+# compiled guests, not a claim of Future/TaskScope or cancellation support.
+verify_guest(sync_inline_discard "0" "42\n" "")
+verify_guest(sync_inline_nested "0" "42\n" "")
+verify_guest(sync_inline_trap "71" "" "E_DIVZERO\n")
+verify_guest(sync_inline_statement "0" "42\n" "")

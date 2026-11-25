@@ -26,7 +26,16 @@ int main() {
           : std::to_string(n.value);
       code += "  std::optional<atto::forge::i64> " + var(i) + "{" + value + "};\n";
     } else {
-      if (n.left >= i || (n.op != Op::neg && n.op != Op::bnot && n.right >= i)) return std::nullopt;
+      if (n.left >= i || (n.op != Op::neg && n.op != Op::bnot &&
+                          n.op != Op::inline_task && n.right >= i)) return std::nullopt;
+      if (n.op == Op::inline_task || n.op == Op::sequence) {
+        // Pure scalar InlineTaskEnter/Exit: executes in this caller's main()
+        // in source order; no child frame/Future/TaskSpawn and no suspension.
+        const auto result_index = n.op == Op::inline_task ? n.left : n.right;
+        code += "  [[maybe_unused]] auto " + var(i) + " = " + var(result_index) + ";\n";
+        if (code.size() > max_emitted_bytes) return std::nullopt;
+        continue;
+      }
       std::string call;
       switch (n.op) {
         case Op::bnot:
