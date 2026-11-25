@@ -522,6 +522,9 @@ int main() {
     auto forged_negation=calls::parse("fnc main():int{return unless true then 42 else 7 fi;}");
     forged_negation.functions[0].nodes[0].kind=calls::Kind::Constant;
     reject_diagnostic([&] { calls::verify(forged_negation); },"condition_not_bool");
+    auto forged_logical=calls::parse("fnc main():int{return true && false ? 42 : 7;}");
+    forged_logical.functions[0].nodes[1].kind=calls::Kind::Constant;
+    reject_diagnostic([&] { calls::verify(forged_logical); },"condition_not_bool");
     auto corrupt=calls::parse("fnc main(x:int):int{return x+1;}");
     corrupt.functions[0].nodes.back().children[0]=999;
     reject_diagnostic([&] { calls::verify(corrupt); },
