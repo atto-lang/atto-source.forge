@@ -36,6 +36,35 @@ int main() {
     accept("pub fnc main(): int { // % ^ ^^ in comment\n return 7; }");
     reject("pub fnc main(): int { return 7 % 3; }","legacy % operator is removed");
     reject("pub fnc main(): int { return 7%3; }","legacy % operator is removed");
+    // Both accepted spellings must lower to identical IR and real native
+    // assembly; the callable lane must not create a different call ABI.
+    const std::string ordinary="fnc helper(): int { return 41; } pub fnc main(): int { return helper() + 1; }";
+    const std::string caret="fnc helper(): int { ^ 41; } pub fnc main(): int { ^ helper() + 1; }";
+    const auto a=oresforge::parse_source(ordinary);
+    const auto b=oresforge::parse_source(caret);
+    if (oresforge::interpret(b)!=42 || oresforge::dump_ir(a)!=oresforge::dump_ir(b))
+      throw std::runtime_error("scalar caret IR/return mismatch");
+    const auto ca=oresforge::calls::parse(ordinary);
+    const auto cb=oresforge::calls::parse(caret);
+    if (oresforge::calls::interpret(cb,{})!=42)
+      throw std::runtime_error("callable caret return mismatch");
+    for (auto arch:{oresforge::Arch::X86_64,oresforge::Arch::ARM64}) {
+      if (oresforge::emit_asm(a,arch)!=oresforge::emit_asm(b,arch) ||
+          oresforge::calls::emit_asm(ca,arch)!=oresforge::calls::emit_asm(cb,arch))
+        throw std::runtime_error("caret native assembly mismatch");
+    }
+    auto reject_callable=[](std::string_view source,std::string_view expected) {
+      try { (void)oresforge::calls::parse(source); }
+      catch (const std::exception& e) {
+        if (std::string_view(e.what()).find(expected)!=std::string_view::npos) return;
+        throw;
+      }
+      throw std::runtime_error("unexpected callable source acceptance");
+    };
+    reject_callable("pub fnc main(): int { return 7 ^ 3; }","single caret is only a return statement");
+    reject_callable("pub fnc main(): int { return 7 ^^ 3; }","FORGE_XOR_BACKEND_UNSUPPORTED");
+    reject_callable("fnc hidden(): int { return 7 ^^ 3; } pub fnc main(): int { ^ 42; }","FORGE_XOR_BACKEND_UNSUPPORTED");
+    reject("pub fnc main(): int { return 5 / 2; }","FORGE_CHECKED_DIVISION_BACKEND_UNSUPPORTED");
     accept("pub fnc main(): int { ^ 42; }");
     accept("fnc helper(): int { ^ 41; } pub fnc main(): int { ^ helper() + 1; }");
     reject("pub fnc main(): int { return 7 ^ 3; }","single caret is only a return statement");
