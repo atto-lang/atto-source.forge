@@ -35,7 +35,7 @@ bool boolean_kind(Kind k) {
 bool reserved_predicate_word(std::string_view s) {
   return s=="true" || s=="false" || s=="ifnot" || s=="unless" ||
          s=="eq" || s=="neq" || s=="fi" || s=="guard" || s=="end" ||
-         s=="trap" || s=="trap!" || s=="Result" || s=="Error";
+         s=="trap" || s=="trap!" || s=="Result" || s=="Error" || s=="val";
 }
 
 class Parser {
@@ -50,13 +50,20 @@ class Parser {
     // Resolve every function, including unused ones. No partially linked IR.
     for (auto& fn:module_.functions) {
       for (auto& node:fn.nodes) {
-        if (node.kind != Kind::Call) continue;
+        if (node.kind != Kind::Call && node.kind != Kind::ResultCall) continue;
         const auto found=names_.find(node.name);
         if (found==names_.end()) fail("unknown function");
         node.callee=found->second;
         if (node.children.size()!=module_.functions.at(static_cast<std::size_t>(node.callee)).parameters.size())
           fail("function arity mismatch");
       }
+    }
+    for (auto& fn:module_.functions) for (auto& node:fn.nodes) {
+      if (node.kind!=Kind::Trap) continue;
+      auto& operand=fn.nodes.at(static_cast<std::size_t>(node.children.at(0)));
+      if (operand.kind==Kind::Call &&
+          module_.functions.at(static_cast<std::size_t>(operand.callee)).returns_scalar_result)
+        operand.kind=Kind::ResultCall;
     }
     verify(module_);
     return std::move(module_);
@@ -69,6 +76,8 @@ class Parser {
   std::map<std::string,int> names_;
   std::size_t node_count_=0;
   Function* current_=nullptr;
+  std::string local_name_;
+  int local_source_=-1;
 
   [[noreturn]] void fail(const char* message) const {
     throw std::runtime_error(std::string(message)+" at byte "+std::to_string(token_.offset));
@@ -174,6 +183,7 @@ class Parser {
     names_[name]=index;
     module_.functions.push_back({name,{},{}});
     current_=&module_.functions.back();
+    local_name_.clear(); local_source_=-1;
     expect("(");
     if (token_.text!=")") {
       do {
@@ -192,13 +202,26 @@ class Parser {
     expect(")");
     if(!take(":"))expect("->");
     if (take("Result")) {
-      if (name!="main") fail("scalar Result currently supported only at main entry");
       expect("<");expect("int");expect(",");expect("Error");expect(">");
       current_->returns_scalar_result=true;
       expect("{");
+      int binding=-1;
+      if (take("val")) {
+        const auto name_local=identifier();
+        if (std::find(current_->parameters.begin(),current_->parameters.end(),name_local)!=current_->parameters.end())
+          fail("Result binding shadows a parameter");
+        expect("=");
+        binding=factor(0);
+        if (current_->nodes.at(static_cast<std::size_t>(binding)).kind!=Kind::Call)
+          fail("postfix ? requires a Result callable");
+        current_->nodes.at(static_cast<std::size_t>(binding)).kind=Kind::ResultCall;
+        expect("?"); expect(";");
+        local_name_=name_local; local_source_=binding;
+      }
       if (!take("^")) expect("return");
-      current_->result=trapped_return(0);
+      const int terminal=trapped_return(0);
       expect(";");
+      current_->result=binding<0?terminal:add(Kind::BindResult,0,{}, {binding,terminal});
     } else {
       expect("int");expect("{");
       current_->result=terminal_body(0);
@@ -209,8 +232,13 @@ class Parser {
   // admission accepts repeated trap aliases as one flat capture boundary.
   int trapped_return(std::size_t d) {
     depth(d);
-    if (!take("trap") && !take("trap!"))
-      fail("scalar Result entry requires explicit trap or trap!");
+    if (!take("trap") && !take("trap!")) {
+      const int value=factor(d+1);
+      auto& n=current_->nodes.at(static_cast<std::size_t>(value));
+      if(n.kind!=Kind::Call) fail("scalar Result entry requires explicit trap or Result call");
+      n.kind=Kind::ResultCall;
+      return value;
+    }
     while (token_.text=="trap" || token_.text=="trap!") {
       depth(++d); next();
     }
@@ -384,6 +412,8 @@ class Parser {
     if (!token_.text.empty() && letter(token_.text.front())) {
       const std::string name=identifier();
       if (!take("(")) {
+        if(local_source_>=0 && name==local_name_)
+          return add(Kind::Local,local_source_);
         auto& params=current_->parameters;
         auto found=std::find(params.begin(),params.end(),name);
         if(found==params.end())fail("unknown parameter");
@@ -448,6 +478,7 @@ std::int64_t checked(Kind k,std::int64_t a,std::int64_t b) {
     default: throw std::runtime_error("invalid binary callable opcode");
   }
 }
+struct ResultFailure { ArithmeticStatus status; };
 struct Evaluator {
   const Module& m;
   std::size_t remaining=kMaxEvalSteps;
@@ -455,35 +486,53 @@ struct Evaluator {
     if (depth>=kMaxStackDepth)throw std::runtime_error("call depth exceeded");
     const auto& f=m.functions.at(id);
     if(args.size()!=f.parameters.size())throw std::runtime_error("runtime argument count mismatch");
-    return visit(f,f.result,args,depth);
+    std::int64_t local=0;
+    return visit(f,f.result,args,depth,local);
+  }
+  ArithmeticResult evaluate_result(std::size_t id,std::span<const std::int64_t> args,std::size_t depth) {
+    try { return {evaluate(id,args,depth),ArithmeticStatus::Ok}; }
+    catch(const ResultFailure& f) { return {0,f.status}; }
   }
   std::int64_t visit(const Function& fn,int id,std::span<const std::int64_t> args,
-                     std::size_t depth) {
+                     std::size_t depth,std::int64_t& local) {
     if (remaining--==0)throw std::runtime_error("callable execution budget exceeded");
     const auto& n=fn.nodes.at(static_cast<std::size_t>(id));
     if(n.kind==Kind::Constant||n.kind==Kind::Boolean)return n.value;
-    if(n.kind==Kind::Trap) return visit(fn,n.children[0],args,depth);
-    if(n.kind==Kind::Not)return !visit(fn,n.children[0],args,depth);
+    if(n.kind==Kind::Trap) {
+      try { return visit(fn,n.children[0],args,depth,local); }
+      catch(const ArithmeticFailure& f) { throw ResultFailure{f.status}; }
+    }
+    if(n.kind==Kind::Local)return local;
+    if(n.kind==Kind::BindResult) {
+      local=visit(fn,n.children[0],args,depth,local);
+      return visit(fn,n.children[1],args,depth,local);
+    }
+    if(n.kind==Kind::Not)return !visit(fn,n.children[0],args,depth,local);
     if(n.kind==Kind::And) {
-      if(!visit(fn,n.children[0],args,depth)) return 0;
-      return visit(fn,n.children[1],args,depth);
+      if(!visit(fn,n.children[0],args,depth,local)) return 0;
+      return visit(fn,n.children[1],args,depth,local);
     }
     if(n.kind==Kind::Or) {
-      if(visit(fn,n.children[0],args,depth)) return 1;
-      return visit(fn,n.children[1],args,depth);
+      if(visit(fn,n.children[0],args,depth,local)) return 1;
+      return visit(fn,n.children[1],args,depth,local);
     }
     if(n.kind==Kind::Parameter)return args[static_cast<std::size_t>(n.value)];
     if(n.kind==Kind::If||n.kind==Kind::Ternary) {
-      const auto pred=visit(fn,n.children[0],args,depth);
-      return visit(fn,n.children[pred ? 1u:2u],args,depth);
+      const auto pred=visit(fn,n.children[0],args,depth,local);
+      return visit(fn,n.children[pred ? 1u:2u],args,depth,local);
     }
-    if(n.kind==Kind::Call) {
+    if(n.kind==Kind::Call || n.kind==Kind::ResultCall) {
       std::vector<std::int64_t> vals;
-      for (int arg:n.children) vals.push_back(visit(fn,arg,args,depth));
+      for (int arg:n.children) vals.push_back(visit(fn,arg,args,depth,local));
+      if(n.kind==Kind::ResultCall) {
+        const auto result=evaluate_result(static_cast<std::size_t>(n.callee),vals,depth+1);
+        if(result.status!=ArithmeticStatus::Ok) throw ResultFailure{result.status};
+        return result.value;
+      }
       return evaluate(static_cast<std::size_t>(n.callee),vals,depth+1);
     }
-    const auto a=visit(fn,n.children.at(0),args,depth);
-    const auto b=visit(fn,n.children.at(1),args,depth);
+    const auto a=visit(fn,n.children.at(0),args,depth,local);
+    const auto b=visit(fn,n.children.at(1),args,depth,local);
     return checked(n.kind,a,b);
   }
 };
@@ -508,6 +557,11 @@ struct Native {
       out<<"  movabsq $"<<n.value<<", %rax\n";
     } else if(n.kind==Kind::Parameter) {
       out<<"  movq "<<parameter_slot(static_cast<int>(n.value))<<", %rax\n";
+    } else if(n.kind==Kind::Local) {
+      out<<"  movq "<<value_slot(static_cast<int>(n.value))<<", %rax\n";
+    } else if(n.kind==Kind::BindResult) {
+      emit_node(fn,n.children[0]);
+      emit_node(fn,n.children[1]);
     } else if(n.kind==Kind::Trap) {
       // The entry's status-return epilogue is the outermost trap boundary.
       // Child failures use the existing explicit propagation path; no JIT,
@@ -532,7 +586,7 @@ struct Native {
          <<".Lores_else_"<<tag<<":\n";
       emit_node(fn,n.children[2]);
       out<<".Lores_end_"<<tag<<":\n";
-    } else if(n.kind==Kind::Call) {
+    } else if(n.kind==Kind::Call||n.kind==Kind::ResultCall) {
       for (int child:n.children)emit_node(fn,child);
       for (std::size_t i=0;i<n.children.size();++i)
         out<<"  movq "<<value_slot(n.children[i])<<", "<<argument_reg(i)<<"\n";
@@ -645,14 +699,15 @@ void verify(const Module& m) {
       throw std::runtime_error("invalid callable return/root");
     const auto root_kind=fn.nodes[static_cast<std::size_t>(fn.result)].kind;
     if (fn.returns_scalar_result) {
-      if(fi!=static_cast<std::size_t>(m.entry) || root_kind!=Kind::Trap)
-        throw std::runtime_error("invalid scalar Result entry");
-    } else if (root_kind==Kind::Trap || boolean_kind(root_kind))
+      if(root_kind!=Kind::Trap && root_kind!=Kind::ResultCall && root_kind!=Kind::BindResult)
+        throw std::runtime_error("invalid scalar Result return");
+    } else if (root_kind==Kind::Trap || root_kind==Kind::BindResult || root_kind==Kind::ResultCall || boolean_kind(root_kind))
       throw std::runtime_error("callable int return cannot be Boolean or Result");
     // This stage-0 AST must be an owned tree, not an arbitrary dataflow DAG.
     // Otherwise a node on an untaken if-branch could be reused without ever
     // initializing its stack slot. Enforce one reachable parent per child.
     std::vector<unsigned> incoming(fn.nodes.size(),0);
+    std::vector<int> parent(fn.nodes.size(),-1);
     for(std::size_t i=0;i<fn.nodes.size();++i) {
       const auto& n=fn.nodes[i];
       switch(n.kind) {
@@ -661,31 +716,38 @@ void verify(const Module& m) {
         case Kind::Greater: case Kind::GreaterEqual: case Kind::Equal:
         case Kind::NotEqual: case Kind::If: case Kind::Call:
         case Kind::Boolean: case Kind::Not: case Kind::Ternary:
-         case Kind::And: case Kind::Or: case Kind::BooleanXor: case Kind::Div: case Kind::Trap: break;
+         case Kind::And: case Kind::Or: case Kind::BooleanXor: case Kind::Div: case Kind::Trap: case Kind::ResultCall: case Kind::BindResult: case Kind::Local: break;
         default: throw std::runtime_error("unknown callable opcode");
       }
-      if(n.kind!=Kind::Call && !n.name.empty())
+      if(n.kind!=Kind::Call && n.kind!=Kind::ResultCall && !n.name.empty())
         throw std::runtime_error("unexpected callable symbol payload");
       for(int arg:n.children) {
         if(arg<0 || static_cast<std::size_t>(arg)>=i)
           throw std::runtime_error("callable use before definition");
+        parent[static_cast<std::size_t>(arg)]=static_cast<int>(i);
         if(++incoming[static_cast<std::size_t>(arg)]!=1)
           throw std::runtime_error("callable AST shared node");
       }
       std::size_t size=2;
-      if(n.kind==Kind::Constant||n.kind==Kind::Boolean||n.kind==Kind::Parameter)size=0;
+      if(n.kind==Kind::Constant||n.kind==Kind::Boolean||n.kind==Kind::Parameter||n.kind==Kind::Local)size=0;
       else if(n.kind==Kind::Not||n.kind==Kind::Trap)size=1;
       else if(n.kind==Kind::If||n.kind==Kind::Ternary)size=3;
-      else if(n.kind==Kind::Call)size=n.children.size();
+      else if(n.kind==Kind::Call||n.kind==Kind::ResultCall)size=n.children.size();
       if(n.children.size()!=size)throw std::runtime_error("callable operand arity mismatch");
       if(n.kind==Kind::Boolean && n.value!=0 && n.value!=1)
         throw std::runtime_error("invalid Boolean literal");
       const auto child_bool=[&](std::size_t pos) {
         return boolean_kind(fn.nodes.at(static_cast<std::size_t>(n.children.at(pos))).kind);
       };
-      if(n.kind==Kind::Trap && (!fn.returns_scalar_result ||
-          i!=static_cast<std::size_t>(fn.result) || child_bool(0)))
-        throw std::runtime_error("scalar trap must be an int operand at Result entry root");
+      if(n.kind==Kind::Trap && (!fn.returns_scalar_result || child_bool(0)))
+        throw std::runtime_error("scalar trap must be an int or Result operand");
+      if(n.kind==Kind::BindResult) {
+        if(!fn.returns_scalar_result || i!=static_cast<std::size_t>(fn.result) ||
+           fn.nodes.at(static_cast<std::size_t>(n.children[0])).kind!=Kind::ResultCall ||
+           (fn.nodes.at(static_cast<std::size_t>(n.children[1])).kind!=Kind::Trap &&
+            fn.nodes.at(static_cast<std::size_t>(n.children[1])).kind!=Kind::ResultCall))
+          throw std::runtime_error("invalid scalar Result binding");
+      }
       if(n.kind==Kind::Not && !child_bool(0))
         throw std::runtime_error("condition_not_bool: negation requires bool");
       if(n.kind==Kind::If||n.kind==Kind::Ternary) {
@@ -707,18 +769,28 @@ void verify(const Module& m) {
                 n.kind==Kind::Less||n.kind==Kind::LessEqual||n.kind==Kind::Greater||
                 n.kind==Kind::GreaterEqual) {
         if(child_bool(0)||child_bool(1)) throw std::runtime_error("Boolean is not an int");
-      } else if(n.kind==Kind::Call) {
+      } else if(n.kind==Kind::Call||n.kind==Kind::ResultCall) {
         for(std::size_t j=0;j<n.children.size();++j)
           if(child_bool(j)) throw std::runtime_error("Boolean is not an int argument");
       }
       if(n.kind==Kind::Parameter && (n.value<0 ||
          static_cast<std::uint64_t>(n.value)>=fn.parameters.size()))
         throw std::runtime_error("invalid callable parameter");
-      if(n.kind==Kind::Call) {
+      if(n.kind==Kind::Call||n.kind==Kind::ResultCall) {
         if(n.callee<0 || static_cast<std::size_t>(n.callee)>=m.functions.size())
           throw std::runtime_error("invalid callable target");
-        if(m.functions[static_cast<std::size_t>(n.callee)].returns_scalar_result)
+        const auto& target=m.functions[static_cast<std::size_t>(n.callee)];
+        if(target.returns_scalar_result && n.callee==m.entry)
           throw std::runtime_error("calls to scalar Result entry are unsupported");
+        if(target.returns_scalar_result!=(n.kind==Kind::ResultCall))
+          throw std::runtime_error("scalar Result call type mismatch");
+        if(n.kind==Kind::ResultCall) {
+          for(int child:n.children) {
+            const auto k=fn.nodes[static_cast<std::size_t>(child)].kind;
+            if(k!=Kind::Constant && k!=Kind::Parameter && k!=Kind::Local)
+              throw std::runtime_error("Result call arguments require infallible scalar leaves");
+          }
+        }
         if(n.children.size()!=m.functions[static_cast<std::size_t>(n.callee)].parameters.size())
           throw std::runtime_error("function arity mismatch");
         if(n.name!=m.functions[static_cast<std::size_t>(n.callee)].name)
@@ -729,6 +801,20 @@ void verify(const Module& m) {
       const unsigned expected=(i==static_cast<std::size_t>(fn.result))?0u:1u;
       if(incoming[i]!=expected)
         throw std::runtime_error("callable AST unreachable node");
+      const auto& n=fn.nodes[i];
+      const auto parent_id=parent[i];
+      const auto* p=parent_id<0?nullptr:&fn.nodes[static_cast<std::size_t>(parent_id)];
+      if(n.kind==Kind::ResultCall && (!fn.returns_scalar_result ||
+         (p && p->kind!=Kind::Trap && p->kind!=Kind::BindResult)))
+        throw std::runtime_error("scalar Result value requires return or postfix propagation");
+      if(n.kind==Kind::Trap && p && (p->kind!=Kind::BindResult || p->children[1]!=static_cast<int>(i)))
+        throw std::runtime_error("scalar trap must be a terminal Result boundary");
+      if(n.kind==Kind::Local) {
+        const auto& root=fn.nodes[static_cast<std::size_t>(fn.result)];
+        if(root.kind!=Kind::BindResult || n.value!=root.children[0] ||
+           n.value<0 || static_cast<std::size_t>(n.value)>=i)
+          throw std::runtime_error("invalid scalar Result local use");
+      }
     }
   }
   if(m.functions[static_cast<std::size_t>(m.entry)].name!="main")
@@ -746,11 +832,7 @@ ArithmeticResult interpret_result(const Module& m,std::span<const std::int64_t> 
   if(!m.functions.at(static_cast<std::size_t>(m.entry)).returns_scalar_result)
     throw std::runtime_error("run-result-calls requires Result<int,Error> entry");
   Evaluator eval{m};
-  try {
-    return {eval.evaluate(static_cast<std::size_t>(m.entry),args,0),ArithmeticStatus::Ok};
-  } catch(const ArithmeticFailure& failure) {
-    return {0,failure.status};
-  }
+  return eval.evaluate_result(static_cast<std::size_t>(m.entry),args,0);
 }
 std::string emit_asm(const Module& m,Arch arch) {
   if(arch!=Arch::X86_64)
