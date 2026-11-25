@@ -55,7 +55,7 @@ struct Token { std::string_view text; std::size_t offset=0; };
 class Parser {
  public:
   explicit Parser(std::string_view text) : text_(text) { next(); }
-  Module parse() {
+  Module parse(std::size_t expected_entry_arity) {
     while (!token_.text.empty()) definition();
     for (std::size_t i=0; i<module_.functions.size(); ++i) {
       if (module_.functions[i].name=="main") module_.entry=static_cast<int>(i);
@@ -72,7 +72,7 @@ class Parser {
           fail("function arity mismatch");
       }
     }
-    verify(module_);
+    verify(module_,expected_entry_arity);
     return std::move(module_);
   }
  private:
@@ -411,9 +411,11 @@ struct Native {
     }
     out<<"  movq %rax, "<<value_slot(index)<<"\n";
   }
-  std::string build() {
-    out<<".text\n.globl oresforge_entry\n.type oresforge_entry, @function\n"
-       <<"oresforge_entry:\n  xorl %r8d, %r8d\n"
+  std::string build(std::size_t entry_arity) {
+    const std::string symbol=entry_arity==0 ? "oresforge_entry" :
+        "oresforge_entry_i64_"+std::to_string(entry_arity);
+    out<<".text\n.globl "<<symbol<<"\n.type "<<symbol<<", @function\n"
+       <<symbol<<":\n  xorl %r8d, %r8d\n"
        <<"  movq $"<<kMaxEvalSteps<<", %r9\n"
        <<"  jmp .Lores_fn_"<<program.entry<<"\n";
     for (std::size_t i=0;i<program.functions.size();++i) {
@@ -425,7 +427,7 @@ struct Native {
          <<"  jae .Lores_depth\n"
          <<"  pushq %rbp\n  movq %rsp, %rbp\n"
          <<"  subq $"<<bytes<<", %rsp\n";
-      for (std::size_t arg=0;arg<4;++arg)
+      for (std::size_t arg=0;arg<fn.parameters.size();++arg)
         out<<"  movq "<<argument_reg(arg)<<", "<<parameter_slot(static_cast<int>(arg))<<"\n";
       out<<"  movq %r8, -40(%rbp)\n";
       emit_node(fn,fn.result);
@@ -434,18 +436,19 @@ struct Native {
     out<<".Lores_depth:\n  ud2\n"
        <<".Lores_overflow:\n  ud2\n"
        <<".Lores_budget:\n  ud2\n"
-       <<".size oresforge_entry, .-oresforge_entry\n"
+       <<".size "<<symbol<<", .-"<<symbol<<"\n"
        <<".section .note.GNU-stack,\"\",@progbits\n";
     return out.str();
   }
 };
 }
-Module parse(std::string_view source) {
+Module parse(std::string_view source,std::size_t expected_entry_arity) {
   if (source.size()>kMaxSource)throw std::runtime_error("callable source budget exceeded");
   oresforge::source::validate_utf8(source);
-  return Parser(source).parse();
+  return Parser(source).parse(expected_entry_arity);
 }
-void verify(const Module& m) {
+void verify(const Module& m,std::size_t expected_entry_arity) {
+  if(expected_entry_arity>4)throw std::runtime_error("callable entry arity exceeds four i64 arguments");
   if(m.entry<0 || static_cast<std::size_t>(m.entry)>=m.functions.size())
     throw std::runtime_error("invalid callable main");
   if (m.functions.size()>kMaxFunctions)throw std::runtime_error("function count budget exceeded");
@@ -518,20 +521,23 @@ void verify(const Module& m) {
   }
   if(m.functions[static_cast<std::size_t>(m.entry)].name!="main")
     throw std::runtime_error("callable entry is not main");
-  // oresforge_entry is a C ABI zero-argument entrypoint. Accepting a
-  // parameterized main would read arbitrary incoming host register contents.
-  if(!m.functions[static_cast<std::size_t>(m.entry)].parameters.empty())
-    throw std::runtime_error("callable entry must have zero parameters");
+  // The default ABI cannot accept parameterized main. Explicit host entry
+  // profiles bind an exact argument count independently of the parsed IR.
+  const auto actual=m.functions[static_cast<std::size_t>(m.entry)].parameters.size();
+  if(actual!=expected_entry_arity) {
+    if(expected_entry_arity==0)throw std::runtime_error("callable entry must have zero parameters");
+    throw std::runtime_error("callable entry arity mismatch");
+  }
 }
 std::int64_t interpret(const Module& m,std::span<const std::int64_t> args) {
-  verify(m);
+  verify(m,args.size());
   Evaluator eval{m};
   return eval.evaluate(static_cast<std::size_t>(m.entry),args,0);
 }
-std::string emit_asm(const Module& m,Arch arch) {
+std::string emit_asm(const Module& m,Arch arch,std::size_t expected_entry_arity) {
   if(arch!=Arch::X86_64)
     throw std::runtime_error("native callable backend currently supports x86_64 only");
-  verify(m);
-  return Native{m}.build();
+  verify(m,expected_entry_arity);
+  return Native{m}.build(expected_entry_arity);
 }
 }

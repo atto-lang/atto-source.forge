@@ -46,17 +46,7 @@ jobs:
           cmake -S . -B "$RUNNER_TEMP/atto-forge-std-admission" -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Debug
           cmake --build "$RUNNER_TEMP/atto-forge-std-admission" --target oresforge_std_import_denial --parallel 2
           ctest --test-dir "$RUNNER_TEMP/atto-forge-std-admission" \
-            -R '^oresforge_std_import_denial
-        shell: bash
-        run: |
-          set -euo pipefail
-          if ATTO_REQUIRE_NATIVE_GUEST=1 \
-              node --test tests/atto-std-pure-policy-source.test.mjs > /dev/null 2>&1; then
-            echo "ERROR: source checker illegally attested a native guest"
-            exit 1
-          fi
-          echo "ATTO_BACKEND_STD_NATIVE_GUEST=NOT_EXECUTED"
- --output-on-failure
+            -R '^oresforge_std_import_denial$' --output-on-failure
           echo "ATTO_FORGE_NATIVE_FRONTEND_IMPORT_DENIAL=EXECUTED"
       - name: Source-only checker must reject forged native execution mode
         shell: bash

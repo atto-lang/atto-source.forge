@@ -48,8 +48,8 @@ int main(int argc,char** argv) {
     // A separate stage-0 callable profile: true SysV native calls and lazy
     // runtime branches. Legacy scalar and runtime-entry modes remain intact.
     if (argc>=3 && std::string(argv[1])=="run-calls") {
-      auto program=oresforge::calls::parse(read_file(argv[2]));
       std::vector<std::int64_t> args;
+      if(argc>7)throw std::runtime_error("callable entry arity exceeds four i64 arguments");
       for (int i=3;i<argc;++i) {
         const std::string_view text(argv[i]);
         std::int64_t value=0;
@@ -58,6 +58,7 @@ int main(int argc,char** argv) {
           throw std::runtime_error("invalid callable i64 argument");
         args.push_back(value);
       }
+      auto program=oresforge::calls::parse(read_file(argv[2]),args.size());
       std::cout<<oresforge::calls::interpret(program,args)<<'\n';
       std::cout.flush();
       return 0;
@@ -66,6 +67,19 @@ int main(int argc,char** argv) {
       const auto arch=oresforge::parse_arch(argv[2]);
       auto program=oresforge::calls::parse(read_file(argv[3]));
       std::cout<<oresforge::calls::emit_asm(program,arch);
+      std::cout.flush();
+      return 0;
+    }
+    // Separate host ABI: callers must request an exact nonzero i64 arity.
+    // The emitted symbol encodes that arity and never aliases oresforge_entry.
+    if (argc==5 && std::string(argv[1])=="emit-call-asm-args") {
+      const auto arch=oresforge::parse_arch(argv[2]);
+      const std::string_view text(argv[4]);
+      if(text.size()!=1 || text[0]<'1' || text[0]>'4')
+        throw std::runtime_error("explicit callable entry arity must be 1..4");
+      const auto arity=static_cast<std::size_t>(text[0]-'0');
+      auto program=oresforge::calls::parse(read_file(argv[3]),arity);
+      std::cout<<oresforge::calls::emit_asm(program,arch,arity);
       std::cout.flush();
       return 0;
     }
@@ -104,7 +118,7 @@ int main(int argc,char** argv) {
       std::cout.flush();
       return 0;
     }
-    std::cerr<<"usage: oresforge check <file.atto|file.ores> | run|ir <file.atto|file.ores> | emit-asm <arch> <file.atto|file.ores> | run-runtime <file.atto|file.ores> [i64-args...] | ir-runtime <file.atto|file.ores> | emit-runtime-asm <arch> <file.atto|file.ores> | run-calls <file.atto|file.ores> [i64-args...] | emit-call-asm x86_64 <file.atto|file.ores>\n";
+    std::cerr<<"usage: oresforge check <file.atto|file.ores> | run|ir <file.atto|file.ores> | emit-asm <arch> <file.atto|file.ores> | run-runtime <file.atto|file.ores> [i64-args...] | ir-runtime <file.atto|file.ores> | emit-runtime-asm <arch> <file.atto|file.ores> | run-calls <file.atto|file.ores> [i64-args...] | emit-call-asm x86_64 <file.atto|file.ores> | emit-call-asm-args x86_64 <file.atto|file.ores> <arity-1..4>\n";
     return 2;
   } catch (const std::exception& e) {
     std::cerr<<"oresforge: "<<e.what()<<'\n';
