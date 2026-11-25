@@ -41,12 +41,32 @@ int main() {
   const std::string nul("1\0" "2", 3);
   auto bad = tokenize(std::string_view(nul));
   assert(bad.error == LexError::unsupported_byte && bad.error_offset == 1);
-  const auto bits = tokenize("~1 & 2 | 3 ^ 4");
+  const auto bits = tokenize("~1 & 2 | 3 ^^ 4");
   assert(bits.ok());
   assert(bits.tokens[0].kind == Kind::tilde);
   assert(bits.tokens[2].kind == Kind::bit_and);
   assert(bits.tokens[4].kind == Kind::bit_or);
   assert(bits.tokens[6].kind == Kind::bit_xor);
+  assert(bits.tokens[6].length == 2);
+  const auto caret = tokenize("fnc main(): int { ^ 42; }");
+  assert(caret.ok());
+  bool saw_caret = false;
+  for (const auto& t : caret.tokens) {
+    if (t.kind == Kind::caret_return) { saw_caret = true; assert(t.length == 1); }
+  }
+  assert(saw_caret);
+  const auto bullet = tokenize("int\xE2\x80\xA2 main()\nbegin\n^ 42;\nend.");
+  assert(bullet.ok());
+  bool saw_bullet = false, saw_period = false;
+  for (const auto& t : bullet.tokens) {
+    if (t.kind == Kind::left_arrow && t.length == 3) saw_bullet = true;
+    if (t.kind == Kind::period) saw_period = true;
+  }
+  assert(saw_bullet && saw_period);
+  const auto split = tokenize("1 ^ /* not contiguous */ ^ 2");
+  assert(split.ok());
+  for (const auto& t : split.tokens) assert(t.kind != Kind::bit_xor);
+  assert(tokenize("int\xE2\x80\xA3 main()").error == LexError::unsupported_byte);
   assert(tokenize("\xC3\xA9").error == LexError::unsupported_byte);
   assert(tokenize(std::string(max_source_bytes + 1, 'a')).error == LexError::source_too_large);
   assert(tokenize(std::string(max_tokens + 1, '+')).error == LexError::token_limit);

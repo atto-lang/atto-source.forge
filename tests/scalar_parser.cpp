@@ -19,6 +19,15 @@ int main() {
     "pub fnc int <- main() {return 42;}",
     "pub fnc main() -> int {return 42;}"
   }) assert(parse_source(signature).ok());
+  for (const auto* begin_body : {
+    "fnc main(): int\nbegin\n^ 42;\nend",
+    "fnc main(): int\nbegin\nreturn 42;\nend;",
+    "int <- main()\nbegin\n^ 42;\nend.",
+    "fnc int <- main()\nbegin\nreturn 42;\nend;",
+    "int\xE2\x80\xA2 main()\nbegin\n^ 40+2;\nend.",
+    "fnc int\xE2\x80\xA2 main()\nbegin\nreturn 42;\nend"
+  }) assert(parse_source(begin_body).ok());
+  assert(parse_source("fnc main(): int { ^ 40 + 2; }").ok());
   for (const auto* inferred : {
     "fnc main(): infer {return 40+2;}",
     "fnc main() -> infer {return 6*7;}",
@@ -46,7 +55,7 @@ int main() {
   auto a = parse_source("pub fnc main(): int { return 4 + 5 * (6 - 1); }");
   assert(a.ok() && a.nodes[a.root].op == Op::add);
   assert(a.nodes.size() == 7);
-  auto ops = parse_source("fnc main(): int {return ~0 & 15 | 1 ^ 2;}");
+  auto ops = parse_source("fnc main(): int {return ~0 & 15 | 1 ^^ 2;}");
   assert(ops.ok() && ops.nodes[ops.root].op == Op::bor);
   auto b = parse_source("fnc main(): int {return -9223372036854775808;}");
   assert(b.ok() && b.nodes[b.root].value == std::numeric_limits<i64>::min());
@@ -68,6 +77,15 @@ int main() {
     "fnc main(): int {return x;}",
     "fnc main(): int {return 42 == 42;}",
     "fnc main(): int {return 2 ** 3;}",
+    "fnc main(): int {return 6 ^ 3;}",
+    "fnc main(): int {return ^ 42;}",
+    "fnc main(): int {^ 6 ^ 3;}",
+    "fnc main(): int {return 6 ^^^ 3;}",
+    "fnc main(): int {return 6 ^ /* split */ ^ 3;}",
+    "fnc main(): int begin\n^ 42;\nend",
+    "fnc main(): int\nbegin ^ 42;\nend",
+    "fnc main(): int\nbegin\n^ 42;\nend junk",
+    "fnc main(): int\nbegin\n^ 42;\nend..",
     "fnc main(): int {return (1;}",
     "fnc main(): int {return 1;}\nfnc evil():int{return 2;}",
     "fnc main(): int {return @;}"

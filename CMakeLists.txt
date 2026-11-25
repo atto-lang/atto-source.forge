@@ -631,3 +631,72 @@ add_test(NAME scalar_check_only
     "-DFORGE=$<TARGET_FILE:forge_scalar>"
     "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/scalar-check"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/scalar_check.cmake")
+
+# Integration candidate for #103: admission, evaluator and emitter agree.
+add_executable(scalar_integration_v1_test tests/scalar_integration_v1.cpp)
+target_link_libraries(scalar_integration_v1_test PRIVATE atto_forge_checked_i64)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(scalar_integration_v1_test PRIVATE -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(scalar_integration_v1_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(scalar_integration_v1_test PRIVATE -fsanitize=address,undefined)
+  endif()
+endif()
+add_test(NAME scalar_integration_v1_test COMMAND scalar_integration_v1_test)
+
+# Issue #103: stepful compiled native guest and negative artifact matrix.
+add_test(NAME scalar_integration_native_guests
+  COMMAND "${CMAKE_COMMAND}"
+    "-DROOT=${CMAKE_CURRENT_SOURCE_DIR}"
+    "-DCXX=${CMAKE_CXX_COMPILER}"
+    "-DSANITIZERS=${ATTO_FORGE_SANITIZERS}"
+    "-DFORGE=$<TARGET_FILE:forge_scalar>"
+    "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/scalar-integration-guests"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/scalar_integration_guests.cmake")
+
+# Issue #103: retained exact-blob regression from existing Forge PRs.
+add_executable(pointer_local_typed_test tests/pointer_local_typed.cpp)
+target_link_libraries(pointer_local_typed_test PRIVATE atto_forge_checked_i64)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(pointer_local_typed_test PRIVATE -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(pointer_local_typed_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(pointer_local_typed_test PRIVATE -fsanitize=address,undefined)
+  endif()
+endif()
+add_test(NAME pointer_local_typed_test COMMAND pointer_local_typed_test)
+
+# Issue #103: retained exact-blob regression from existing Forge PRs.
+add_executable(directed_pipe_plan_test tests/directed_pipe_plan.cpp)
+target_link_libraries(directed_pipe_plan_test PRIVATE atto_forge_checked_i64)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(directed_pipe_plan_test PRIVATE -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(directed_pipe_plan_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(directed_pipe_plan_test PRIVATE -fsanitize=address,undefined)
+  endif()
+endif()
+add_test(NAME directed_pipe_plan_test COMMAND directed_pipe_plan_test)
+
+# Issue #103: retained exact-blob regression from existing Forge PRs.
+add_executable(scalar_lexer_parser_fuzz_test tests/scalar_lexer_parser_fuzz.cpp)
+target_link_libraries(scalar_lexer_parser_fuzz_test PRIVATE atto_forge_checked_i64)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(scalar_lexer_parser_fuzz_test PRIVATE -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(scalar_lexer_parser_fuzz_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(scalar_lexer_parser_fuzz_test PRIVATE -fsanitize=address,undefined)
+  endif()
+endif()
+add_test(NAME scalar_lexer_parser_fuzz_test COMMAND scalar_lexer_parser_fuzz_test)
+
+# All four pointer guests, exact canonical PRL-001/002 SHA gates,
+# 24 reject fixtures and 24 caller-owned-output preservation checks.
+add_test(NAME pointer_local_native_guest
+  COMMAND "${CMAKE_COMMAND}"
+    "-DROOT=${CMAKE_CURRENT_SOURCE_DIR}"
+    "-DCXX=${CMAKE_CXX_COMPILER}"
+    "-DFORGE=$<TARGET_FILE:forge_scalar>"
+    "-DSANITIZERS=${ATTO_FORGE_SANITIZERS}"
+    "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/pointer-native-guests"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/pointer_local_guest.cmake")

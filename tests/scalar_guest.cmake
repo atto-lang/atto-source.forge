@@ -41,15 +41,19 @@ file(WRITE "${invalid}" "fnc main(): int {return os.read_env(\"HOME\");}")
 file(WRITE "${stale}" "stale source")
 execute_process(COMMAND "${FORGE}" "${invalid}" -o "${stale}"
   RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
-if(NOT "${rc}" STREQUAL "2" OR EXISTS "${stale}")
-  message(FATAL_ERROR "invalid source published or stale output retained")
+file(READ "${stale}" preserved_bytes)
+if(NOT "${rc}" STREQUAL "2" OR
+   NOT "${preserved_bytes}" STREQUAL "stale source")
+  message(FATAL_ERROR "invalid source altered caller-owned output")
 endif()
 string(REPEAT "1" 17000 huge)
 file(WRITE "${OUT_DIR}/huge.atto" "${huge}")
 execute_process(COMMAND "${FORGE}" "${OUT_DIR}/huge.atto" -o "${stale}"
   RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
-if(NOT "${rc}" STREQUAL "2" OR EXISTS "${stale}")
-  message(FATAL_ERROR "source-size budget violated")
+file(READ "${stale}" preserved_bytes)
+if(NOT "${rc}" STREQUAL "2" OR
+   NOT "${preserved_bytes}" STREQUAL "stale source")
+  message(FATAL_ERROR "source-size rejection altered caller-owned output")
 endif()
 
 # Guard output and temp-path direct symlink clobber.
@@ -93,6 +97,10 @@ file(REMOVE "${link_temp}")
 
 verify_guest(bitwise "0" "15\n" "")
 verify_guest(bitwise_precedence "0" "1\n" "")
+verify_guest(caret_return "0" "42\n" "")
+verify_guest(caret_xor "0" "5\n" "")
+verify_guest(return_arrow_begin "0" "42\n" "")
+verify_guest(return_bullet_begin "0" "42\n" "")
 
 verify_guest(shift_logical "0" "9223372036854775807\n" "")
 verify_guest(shift_arithmetic "0" "-1\n" "")
@@ -137,3 +145,13 @@ verify_guest(infer_arrow "0" "42\n" "")
 verify_guest(infer_block "0" "42\n" "")
 verify_guest(infer_prefix "0" "42\n" "")
 verify_guest(infer_bare_prefix "0" "42\n" "")
+
+# Retained exact source fixtures from #42 and #52; no silent compilation
+# of nonvoid `do sync task` is permitted in these corrected fixtures.
+verify_guest(seq_scalar "0" "42\n" "")
+verify_guest(seq_divzero "71" "" "E_DIVZERO\n")
+verify_guest(seq_overflow "70" "" "E_OVERFLOW\n")
+verify_guest(sync_inline_discard "0" "42\n" "")
+verify_guest(sync_inline_nested "0" "42\n" "")
+verify_guest(sync_inline_statement "0" "42\n" "")
+verify_guest(sync_inline_trap "71" "" "E_DIVZERO\n")

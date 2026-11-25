@@ -8,10 +8,12 @@
 namespace atto::forge::scalar {
 enum class Kind {
   name, integer, lparen, rparen, lbrace, rbrace, colon, semicolon,
-  plus, minus, star, slash, percent, bit_and, bit_or, bit_xor, tilde, shl, lshr, arrow, left_arrow, end
+  comma, period, plus, minus, star, slash, percent, bit_and, bit_or,
+  bit_xor, caret_return, tilde, shl, lshr, io_write, io_read,
+  arrow, left_arrow, assign, lt, gt, bang, end
 };
 struct Token { Kind kind; std::size_t offset; std::size_t length; };
-enum class LexError { none, source_too_large, token_limit, unsupported_byte, unterminated_comment };
+enum class LexError { none, source_too_large, token_limit, unsupported_byte, unterminated_comment, comment_nesting_limit, ownership_bang_unsupported };
 struct Lexed {
   std::vector<Token> tokens;
   LexError error = LexError::none;
@@ -50,16 +52,26 @@ inline constexpr std::size_t max_tokens = 256;
     if (c == '/' && i + 1 < src.size() && src[i + 1] == '*') {
       const std::size_t opening = i;
       i += 2;
-      bool closed = false;
-      while (i + 1 < src.size()) {
-        if (src[i] == '*' && src[i + 1] == '/') {
+      std::size_t depth = 1;
+      // Nested comments are inert. Bound nesting before incrementing;
+      // otherwise the first interior */ can expose source inside a comment.
+      while (i < src.size() && depth != 0) {
+        if (i + 1 < src.size() && src[i] == '/' && src[i + 1] == '*') {
+          if (depth >= 128) {
+            out.error = LexError::comment_nesting_limit;
+            out.error_offset = i;
+            return out;
+          }
+          ++depth;
           i += 2;
-          closed = true;
-          break;
+        } else if (i + 1 < src.size() && src[i] == '*' && src[i + 1] == '/') {
+          --depth;
+          i += 2;
+        } else {
+          ++i;
         }
-        ++i;
       }
-      if (!closed) {
+      if (depth != 0) {
         out.error = LexError::unterminated_comment;
         out.error_offset = opening;
         return out;
@@ -76,6 +88,28 @@ inline constexpr std::size_t max_tokens = 256;
     if (is_name_start(c)) {
       kind = Kind::name;
       do { ++i; } while (i < src.size() && is_name(src[i]));
+      // Only these operations are unlowered in the scalar and bounded
+      // pointer profile. Crucially, ref!/deref!/unref! are NOT rejected
+      // here: the typed local_pointer parser admits their verified subset.
+      const auto word = src.substr(start, i - start);
+      const bool unlowered_ownership =
+          word == "copy" || word == "take" || word == "borrow" ||
+          word == "share" || word == "pin" || word == "drop" ||
+          word == "freeze" || word == "weak";
+      // Distinguish !eq and != comparisons. Treat a non-ASCII byte
+      // after !eq as potentially identifier-like, never as punctuation.
+      const bool eq_boundary = i + 3 == src.size() ||
+          (i + 3 < src.size() &&
+           static_cast<unsigned char>(src[i + 3]) < 0x80 &&
+           !is_name(src[i + 3]));
+      const bool comparison = src.substr(i, 2) == "!=" ||
+          (src.substr(i, 3) == "!eq" && eq_boundary);
+      if (unlowered_ownership && i < src.size() && src[i] == '!' &&
+          !comparison) {
+        out.error = LexError::ownership_bang_unsupported;
+        out.error_offset = start;
+        return out;
+      }
     } else if (c == '-' && src.substr(i, 2) == "->") {
       kind = Kind::arrow;
       i += 2;
@@ -87,6 +121,20 @@ inline constexpr std::size_t max_tokens = 256;
       i += 3;
     } else if (c == '>' && src.substr(i, 3) == ">>>") {
       kind = Kind::lshr;
+      i += 3;
+    } else if (c == '<' && src.substr(i, 2) == "<<") {
+      kind = Kind::io_write; // typed channel I/O, not a numeric shift
+      i += 2;
+    } else if (c == '>' && src.substr(i, 2) == ">>") {
+      kind = Kind::io_read; // typed channel I/O, not a numeric shift
+      i += 2;
+    } else if (c == '^' && src.substr(i, 2) == "^^") {
+      kind = Kind::bit_xor; // exactly two adjacent carets, int XOR
+      i += 2;
+    } else if (static_cast<unsigned char>(c) == 0xE2 &&
+               src.substr(i, 3) == "\xE2\x80\xA2") {
+      // Exact UTF-8 bullet callable marker: no general Unicode admission.
+      kind = Kind::left_arrow;
       i += 3;
     } else if (is_digit(c)) {
       kind = Kind::integer;
@@ -100,6 +148,8 @@ inline constexpr std::size_t max_tokens = 256;
         case '}': kind = Kind::rbrace; break;
         case ':': kind = Kind::colon; break;
         case ';': kind = Kind::semicolon; break;
+        case ',': kind = Kind::comma; break;
+        case '.': kind = Kind::period; break;
         case '+': kind = Kind::plus; break;
         case '-': kind = Kind::minus; break;
         case '*': kind = Kind::star; break;
@@ -107,8 +157,12 @@ inline constexpr std::size_t max_tokens = 256;
         case '%': kind = Kind::percent; break;
         case '&': kind = Kind::bit_and; break;
         case '|': kind = Kind::bit_or; break;
-        case '^': kind = Kind::bit_xor; break;
+        case '^': kind = Kind::caret_return; break;
         case '~': kind = Kind::tilde; break;
+        case '=': kind = Kind::assign; break;
+        case '<': kind = Kind::lt; break;
+        case '>': kind = Kind::gt; break;
+        case '!': kind = Kind::bang; break;
         default:
           out.error = LexError::unsupported_byte;
           out.error_offset = start;

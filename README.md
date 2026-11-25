@@ -114,13 +114,13 @@ The actual guest binary prints `34`. Signed overflow emits `E_OVERFLOW` and exit
 division by zero emits `E_DIVZERO` and exits 71.
 The C++ frontend and test harness contain no Python. The CMake integration test
 compiles and executes four source fixtures on GCC and Clang and denies malformed
-or over-budget sources while removing a stale output artifact.
+or over-budget sources without deleting an existing caller-owned output artifact.
 
 Scope: one scalar main function with literals, parentheses, unary arithmetic
 and checked i64 operators. This is not a general Forge JIT/AOT compiler, actor
 runtime, library/package system or cross-backend parity proof.
 
-Restricted scalar arithmetic additionally supports signed bitwise `&`, `|`, `^`, and unary `~`, with precedence `~` > multiplicative > additive > `&` > `^` > `|`. Bit patterns are preserved via C++20 `std::bit_cast` rather than implementation-defined signed casts.
+Restricted scalar arithmetic additionally supports signed bitwise `&`, `|`, contiguous integer XOR `^^`, and unary `~`, with precedence `~` > multiplicative > additive > `&` > `^^` > `|`. Single `^` is a statement-leading return alias, **not** a binary operator. Bit patterns are preserved via C++20 `std::bit_cast` rather than implementation-defined signed casts.
 
 Restricted scalar shift syntax: `<<<` bitwise left, `>>>` zero-fill right, `ashr` sign-preserving right, with signed shift counts masked to low six bits. `<<` and `>>` are reserved for channel operations. The shift tier is left associative and between addition and bitwise AND.
 
@@ -128,7 +128,7 @@ Restricted decimal scalar literals permit leading zeros in the signed `INT64_MIN
 
 The native Forge tests compile and execute an additional 29-case `.atto` scalar conformance corpus, including signed arithmetic, bitwise precedence, masked shifts, INT64_MIN, overflow and division-by-zero exits. When `ATTO_FORGE_SANITIZERS=ON`, **generated guest binaries** themselves are built under ASan/UBSan, as well as the Forge frontend. This validates only the restricted stage-0 compiled scalar subset, not the full Forge JIT/AOT or actor runtime.
 
-The native Forge CLI now reports sanitized parse codes (`E_PARSE_LEXICAL`, `E_PARSE_SYNTAX`, `E_PARSE_RANGE`, `E_PARSE_DEPTH`, `E_PARSE_NODES`) with source byte offsets, without echoing source text. Invalid source removes stale emitted artifacts and exits 2.
+The native Forge CLI now reports sanitized parse codes (`E_PARSE_LEXICAL`, `E_PARSE_SYNTAX`, `E_PARSE_RANGE`, `E_PARSE_DEPTH`, `E_PARSE_NODES`) with source byte offsets, without echoing source text. Invalid source exits 2 without creating a new artifact or deleting/overwriting pre-existing caller-owned output files.
 
 Restricted Forge CLI output-path preflight rejects symlinked ancestor directories, symlinked output files, and preexisting staging paths, including dangling symlinks; it also requires destination parent directories to exist. This is not a proof against adversarial concurrent filesystem races: production sandboxing must use OS-level capabilities and descriptor-relative atomic publication.
 
@@ -136,7 +136,7 @@ Native GCC/Clang checked-i64 primitives are additionally validated against indep
 
 A separate executed native scalar reproducibility suite compiles 48 deterministic signed-expression `.atto` fixtures twice each to separate output filenames, hashes both emitted C++ files for byte equality, verifies source paths are absent, then compiles and runs each guest with ASan/UBSan under GCC and Clang and compares output to a separately evaluated CMake integer oracle. This is independent of full Forge JIT/AOT or actor parity.
 
-Restricted scalar `.atto` source accepts `//` line comments and `/* ... */` non-nested block comments between tokens. Unterminated block comments fail lexically at the opening byte offset. Comments do not count against the 256-token limit but the 16 KiB source limit remains enforced. Native guest execution is tested with both kinds of comments.
+Restricted scalar `.atto` source accepts `//` line comments and nested `/* ... */` block comments between tokens, with 128 levels admitted and the 129th rejected. Unterminated block comments fail lexically at the opening byte offset. Comments do not count against the 256-token limit but the 16 KiB source limit remains enforced. Native guest execution is tested with both kinds of comments.
 
 The restricted native `.atto` scalar frontend accepts equivalent `int` return-signature variants: `fnc main(): int { ... }`, `fnc main() -> int { ... }`, `fnc main(): int -> { ... }`, `fnc int <- main() { ... }`, and `int <- main() { ... }`. Other return types remain outside this scalar slice. All variants compile and execute as native guests.
 
@@ -145,3 +145,9 @@ For restricted scalar parsing, the 24-level nesting budget measures actual paren
 For tooling and CI, `forge_scalar --check path/to/file.atto` performs bounded lexical/AST admission without creating or deleting output files; returns 0 on supported scalar source or 2 with sanitized diagnostics. This is not a full language type checker.
 
 For the restricted integer-only scalar frontend, all expressions have the i64 result type; `infer` return annotations are therefore accepted in the same colon, arrow, block-arrow, and prefix signatures as `int` and lower to the same native i64 implementation. This is not general language-wide type inference: strings, booleans, effects, and noninteger functions remain unsupported.
+
+## Draft scalar integration workstream (issue #103)
+
+The source-local integration branch reconciles the existing #42/#44/#49/#50/#52/#102 compiler slices and does not claim complete language support. The canonical `^` is a statement return and contiguous `^^` is integer XOR. A bounded 128-level nested-comment lexer and restricted checked `Pointer<int>` loan profile coexist with ordered scalar `seq(...)`/ `(> ...)` sequences and the pure inline `sync task<int>` expression. Standalone `do sync task` is void-only; unsupported spawned tasks, channel directions and continuous pipes fail closed. These are restricted stage-0 profiles, not actor, scheduler, full ownership or TenantVM execution.
+
+Failed compiler admission **must not delete or overwrite a pre-existing caller-owned output file**. No newly generated `.cpp` artifact is permissible on invalid source. Native compiler/guest/sanitizer evidence on this exact branch is **NOT EXECUTED** until source-local stepful CI can run and independent governance allows review. The older tests that expected deletion of caller-owned output are intentionally migrated to preservation assertions.

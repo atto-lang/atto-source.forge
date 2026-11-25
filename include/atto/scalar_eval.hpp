@@ -25,7 +25,8 @@ struct Evaluated {
       values.push_back(node.value);
       continue;
     }
-    if (node.left >= i || (node.op != Op::neg && node.op != Op::bnot && node.right >= i))
+    if (node.left >= i || (node.op != Op::neg && node.op != Op::bnot &&
+                           node.op != Op::inline_task && node.right >= i))
       return {{}, EvalError::invalid_ast};
     const i64 lhs = values[node.left];
     std::optional<i64> result;
@@ -35,6 +36,12 @@ struct Evaluated {
         break;
       case Op::neg:
         result = checked_neg(lhs);
+        break;
+      case Op::inline_task:
+        result = lhs;
+        break;
+      case Op::sequence:
+        result = values[node.right]; // both dependencies evaluated in order
         break;
       case Op::add:
         result = checked_add(lhs, values[node.right]);
