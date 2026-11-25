@@ -535,7 +535,7 @@ target_include_directories(forge_error_arena_test PRIVATE "${CMAKE_CURRENT_SOURC
 target_compile_features(forge_error_arena_test PRIVATE cxx_std_20)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(forge_error_arena_test PRIVATE -Wall -Wextra -Werror -pedantic -UNDEBUG)
-  if(ORESFORGE_SANITIZERS)
+  if(ATTO_FORGE_SANITIZERS)
     target_compile_options(forge_error_arena_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
     target_link_options(forge_error_arena_test PRIVATE -fsanitize=address,undefined)
   endif()
