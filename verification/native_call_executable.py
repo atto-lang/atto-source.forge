@@ -13,6 +13,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import hashlib
 
 POSITIVE = (
     ("factorial", "fnc fact(n:int):int{return if n<=1 then 1 else n*fact(n-1);}"
@@ -59,8 +60,29 @@ POSITIVE = (
      ((0,42),(1,7),(2,7))),
     ("logical-nested", "fnc main(a:int):int{return ifnot (a eq 0 || a eq 1) && true then 42 else 7 fi;}",
      ((0,7),(1,7),(2,42))),
+    ("guard-brace-continue", "// Same semantic behavior as keyword-continue.atto.\npub fnc main(): int {\n  guard true { return 0; }\n  return 42;\n}", ((42,),)),
+    ("guard-brace-failure", "// False guard executes terminal failure block.\npub fnc main(): int {\n  guard false { return 0; }\n  return 42;\n}", ((0,),)),
+    ("guard-keyword-continue", "// Same semantic behavior as brace-continue.atto.\npub fnc main(): int {\n  guard true else\n    return 0;\n  end\n  return 42;\n}", ((42,),)),
+    ("guard-keyword-failure", "// False guard executes terminal failure block.\npub fnc main(): int {\n  guard false else\n    return 0;\n  end\n  return 42;\n}", ((0,),)),
+    ("guard-canonical-scalar", "// Canonical AttoLang guard v1: successful guest exit status must be 42.\nfnc bounded(int x): int {\n  guard x > 0 { return 1; }\n  guard x < 10, x neq 5 { return 2; }\n  return 42;\n}\n\npub fnc main(): int {\n  return bounded(3);\n}", ((42,),)),
+    ("guard-runtime", "fnc main(int a):int{guard a>0 {^ 1;} guard a<10, a neq 5 else return 2; end return 42;}",
+     ((0,1),(3,42),(5,2),(11,2),(-1,1))),
+    ("guard-lazy-checks", "fnc main(a:int):int{guard a eq 0, 9223372036854775807+a eq 0 {return 7;} return 42;}",
+     ((0,7),(1,7),(-1,7))),
+    ("guard-lazy-failure", "fnc main(a:int):int{guard a eq 1 {return 9223372036854775807+a;} return 42;}",
+     ((1,42),(0,9223372036854775807))),
+    ("guard-lazy-continuation", "fnc main(a:int):int{guard a eq 0 else return 42; end return 9223372036854775807+a;}",
+     ((1,42),(0,9223372036854775807))),
     ("no-args", "fnc main():int{return 42;}", ((42,),)),
 )
+# Exact shared Git blobs, including the final newline added by build().
+GUARD_FIXTURE_BLOBS = {
+    "guard-brace-continue": "fa9dd0394a3ef08f0ecb4ff010e94cc72a859126",
+    "guard-brace-failure": "f4cdcada6b147c77a1f0f6ae6469a31ee44f2603",
+    "guard-keyword-continue": "82a2afa93e827f387407d0530febf328254599dc",
+    "guard-keyword-failure": "13f41e961534f8b93895c224b04df77feb286793",
+    "guard-canonical-scalar": "e2344e360ac643e25df7ca14eb01432929cecbe5",
+}
 TRAPS = (
     ("overflow-add", "fnc plus(n:int):int{return n+1;}"
      " fnc main(n:int):int{return plus(n);}",
@@ -83,6 +105,16 @@ INVALID = (
     ("logical-int-right", "fnc main():int{return false && 1 ? 42 : 7;}", "condition_not_bool"),
     ("logical-or-int-right", "fnc main():int{return true || 1 ? 42 : 7;}", "condition_not_bool"),
     ("logical-bool-return", "fnc main():int{return true && false;}", "Boolean is not an int"),
+    ("guard-int-condition", "fnc main():int{guard 1 {return 0;} return 42;}", "condition_not_bool"),
+    ("guard-int-second-check", "fnc main():int{guard false, 1 else return 0; end return 42;}", "condition_not_bool"),
+    ("guard-fallthrough", "fnc main():int{guard false {} return 42;}", "guard_failure_requires_return"),
+    ("guard-break", "fnc main():int{guard false else break; end return 42;}", "guard_failure_requires_return"),
+    ("guard-throw", "fnc main():int{guard false {throw 1;} return 42;}", "guard_failure_requires_return"),
+    ("guard-void-return", "fnc main():int{guard false {return;} return 42;}", "expected expression"),
+    ("guard-bool-return", "fnc main():int{guard false {return true;} return 42;}", "Boolean is not an int"),
+    ("guard-missing-tail", "fnc main():int{guard true {return 1;}}", "unexpected token"),
+    ("guard-wrong-closer", "fnc main():int{guard true else return 1; fi return 42;}", "unexpected token"),
+    ("guard-reserved-formal", "fnc helper(guard:int):int{return 42;} fnc main():int{return 42;}", "reserved predicate word"),
     ("integer-condition", "fnc main():int{return if 1 then 2 else 3;}", "condition_not_bool"),
     ("integer-ternary", "fnc main():int{return 1 ? 2 : 3;}", "condition_not_bool"),
     ("integer-unless", "fnc main():int{return unless 1 then 2 else 3 fi;}", "condition_not_bool"),
@@ -173,6 +205,10 @@ def main():
         for label,source,cases in POSITIVE:
             number=len(cases[0])-1
             file,exe,asm=build(compiler,cc,root,label,source,number)
+            if label in GUARD_FIXTURE_BLOBS:
+                data=file.read_bytes()
+                blob=hashlib.sha1(b"blob "+str(len(data)).encode("ascii")+b"\0"+data).hexdigest()
+                require(blob==GUARD_FIXTURE_BLOBS[label],"shared guard fixture drift "+label)
             if label in ("factorial","fibonacci","mutual","nested"):
                 require(asm.count("  call .Lores_fn_")>=1,"missing real native call "+label)
             if label in ("factorial","lazy"):
