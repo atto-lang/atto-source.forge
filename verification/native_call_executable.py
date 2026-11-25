@@ -33,6 +33,24 @@ POSITIVE = (
      ((-5,-105),(0,0),(5,105))),
     ("signed-comparisons", "fnc main(a:int,b:int):int{return if a<b then 1 else if a>=b then 2 else 3;}",
      ((-9223372036854775808,9223372036854775807,1),(2,2,2),(10,2,2))),
+    ("typed-equality", "fnc main(a:int,b:int):int{^ a eq b ? 42 : 7;}",
+     ((0,0,42),(1,2,7),(-9223372036854775808,-9223372036854775808,42))),
+    ("typed-neq", "fnc main(a:int,b:int):int{return if a neq b then 42 else 7;}",
+     ((1,2,42),(2,2,7))),
+    ("typed-bang-eq", "fnc main(a:int,b:int):int{return a !eq b ? 42 : 7;}",
+     ((1,2,42),(2,2,7))),
+    ("ifnot", "fnc main(a:int):int{return ifnot a eq 0 then 42 else 7 fi;}",
+     ((-1,42),(0,7),(1,42))),
+    ("unless", "fnc main(a:int):int{return unless a eq 0 then 42 else 7 fi;}",
+     ((-1,42),(0,7),(1,42))),
+    ("lazy-ternary", "fnc main(a:int):int{return a eq 0 ? 42 : 9223372036854775807+a;}",
+     ((0,42),(-1,9223372036854775806))),
+    ("lazy-negated", "fnc main(a:int):int{return unless a eq 1 then 42 else 9223372036854775807+a fi;}",
+     ((2,42),(0,42))),
+    ("bool-equality", "fnc main(a:int):int{return (a eq 0) eq true ? 42 : 7;}",
+     ((0,42),(1,7))),
+    ("nested-ternary", "fnc main(a:int):int{return a eq 0 ? 42 : a eq 1 ? 7 : 9;}",
+     ((0,42),(1,7),(2,9))),
     ("no-args", "fnc main():int{return 42;}", ((42,),)),
 )
 TRAPS = (
@@ -49,6 +67,18 @@ TRAPS = (
      (1,), "call depth exceeded"),
 )
 INVALID = (
+    ("integer-condition", "fnc main():int{return if 1 then 2 else 3;}", "condition_not_bool"),
+    ("integer-ternary", "fnc main():int{return 1 ? 2 : 3;}", "condition_not_bool"),
+    ("integer-unless", "fnc main():int{return unless 1 then 2 else 3 fi;}", "condition_not_bool"),
+    ("bool-return", "fnc main():int{return true;}", "Boolean is not an int"),
+    ("bool-arithmetic", "fnc main():int{return true+1;}", "Boolean is not an int"),
+    ("bool-ordered", "fnc main():int{return true<false ? 2 : 3;}", "Boolean is not an int"),
+    ("mixed-equality", "fnc main():int{return true eq 1 ? 2 : 3;}", "comparison operand type mismatch"),
+    ("bool-arg", "fnc f(n:int):int{return n;} fnc main():int{return f(true);}", "Boolean is not an int"),
+    ("bool-arm", "fnc main():int{return true ? false : 3;}", "Boolean is not an int"),
+    ("negated-missing-fi", "fnc main():int{return unless true then 2 else 3;}", "unexpected token"),
+    ("neq-boundary", "fnc main():int{return 1 !equation 2 ? 3 : 4;}", "invalid character"),
+    ("unreachable-type-error", "fnc hidden():int{return true;} fnc main():int{return 42;}", "Boolean is not an int"),
     ("wrong-arity", "fnc f(n:int):int{return n;} fnc main():int{return f(1,2);}", "function arity mismatch"),
     ("unknown-target", "fnc main():int{return absent(1);}", "unknown function"),
     ("unreachable-invalid", "fnc bad():int{return absent();} fnc main():int{return 1;}", "unknown function"),
@@ -91,7 +121,7 @@ def require(value,message):
     if not value:raise RuntimeError(message)
 
 def build(compiler,cc,root,label,source,param_count):
-    file=root/"entry.ores"
+    file=root/"entry.atto"
     file.write_text(source+"\n",encoding="utf8")
     emit=execute([compiler,"emit-call-asm","x86_64",str(file)],root)
     require(emit.returncode==0 and not emit.stderr,
@@ -151,7 +181,7 @@ def main():
                     "native overflow/depth failed to trap "+label+": "+str(native.returncode))
             negatives+=1
         for label,source,diagnostic in INVALID:
-            file=root/"bad.ores"
+            file=root/"bad.atto"
             file.write_text(source+"\n",encoding="utf8")
             for command in ((compiler,"run-calls",str(file)),(compiler,"emit-call-asm","x86_64",str(file))):
                 failure=execute(command,root)
