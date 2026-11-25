@@ -113,6 +113,12 @@ POSITIVE = (
     ("trap-ok-passthrough", "fnc main(a:int):int{return match<int> trap Ok(a) over on Ok(n):int -> n, on Err():int -> 7, end;}", ((42,42),(0,0))),
     ("trap-no-stale-status", "fnc main(a:int):int{return (match<int> trap! (84/a) over on Ok(n):int -> n, on Err():int -> 41, end)+1;}", ((0,42),(2,43))),
     ("trap-nested", "fnc main(a:int):int{return match<int> trap! (match<int> trap! (84/a) over on Ok(n):int -> n, on Err():int -> 42, end) over on Ok(m):int -> m, on Err():int -> 7, end;}", ((0,42),(2,42))),
+    ("result-return", "fnc check(a:int):Result<int,Error>{return trap! (84/a);} fnc main(a:int):int{return match<int> check(a) over on Ok(n):int -> n, on Err():int -> 7, end;}", ((2,42),(0,7),(-2,-42))),
+    ("result-forward", "fnc main(a:int):int{return match<int> outer(a) over on Err():int -> 7, on Ok(n):int -> n, end;} fnc outer(a:int):Result<int,Error>{return check(a);} fnc check(a:int):Result<int,Error>{return trap! (84/a);}", ((2,42),(0,7))),
+    ("result-passthrough", "fnc check(a:int):Result<int,Error>{return trap! (84/a);} fnc main(a:int):int{return match<int> trap! check(a) over on Ok(n):int -> n, on Err():int -> 7, end;}", ((2,42),(0,7))),
+    ("result-outer-catches", "fnc check(a:int):Result<int,Error>{return Ok(84/a);} fnc main(a:int):int{return match<int> trap! check(a) over on Ok(n):int -> n, on Err():int -> 7, end;}", ((2,42),(0,7))),
+    ("result-nested-passthrough", "fnc checked(a:int):Result<int,Error>{return trap! (84/a);} fnc wrapped(a:int):Result<int,Error>{return trap! checked(a);} fnc main(a:int):int{return match<int> wrapped(a) over on Ok(n):int -> n, on Err():int -> 42, end;}", ((2,42),(0,42))),
+    ("result-full-payload", "fnc checked(a:int):Result<int,Error>{return Ok(a);} fnc main(a:int):int{return match<int> checked(a) over on Ok(n):int -> n, on Err():int -> 7, end;}", ((-9223372036854775808,-9223372036854775808),(9223372036854775807,9223372036854775807),(0,0))),
     ("no-args", "fnc main():int{return 42;}", ((42,),)),
 )
 # Exact shared Git blobs, including the final newline added by build().
@@ -130,6 +136,7 @@ TRAPS = (
     ("division-left-error-first", "fnc main(a:int):int{return (1/a)+(9223372036854775807+1);}", (0,), "i64 division by zero"),
     ("option-payload-division-error", "fnc value(a:int):Option<int>{return Some(42/a);} fnc main(a:int):int{return match<int> value(a) over on Some(n):int -> n, on None:int -> 7, end;}", (0,), "i64 division by zero"),
     ("option-payload-overflow", "fnc value(a:int):Option<int>{return Some(9223372036854775807+a);} fnc main(a:int):int{return match<int> value(a) over on Some(n):int -> n, on None:int -> 7, end;}", (1,), "i64 add overflow"),
+    ("result-untrapped-fault", "fnc checked(a:int):Result<int,Error>{return Ok(84/a);} fnc main(a:int):int{return match<int> checked(a) over on Ok(n):int -> n, on Err():int -> 42, end;}", (0,), "i64 division by zero"),
     ("overflow-add", "fnc plus(n:int):int{return n+1;}"
      " fnc main(n:int):int{return plus(n);}",
      (9223372036854775807,), "i64 add overflow"),
@@ -185,6 +192,11 @@ INVALID = (
     ("trap-error-binding", "fnc main():int{return match<int> trap! (1/0) over on Ok(n):int -> n, on Err(e):int -> 42, end;}", "guest Error object binding is unsupported"),
     ("trap-option-rejection", "fnc v():Option<int>{return None;} fnc main():int{return match<int> trap v() over on Ok(n):int -> n, on Err():int -> 42, end;}", "callable Option result type mismatch"),
     ("trap-bool-rejection", "fnc main():int{return match<int> trap true over on Ok(n):int -> n, on Err():int -> 42, end;}", "Boolean is not an int"),
+    ("result-scalar-confusion", "fnc checked():Result<int,Error>{return Ok(42);} fnc main():int{return checked();}", "callable Result type mismatch"),
+    ("result-option-confusion", "fnc checked():Result<int,Error>{return Ok(42);} fnc main():int{return match<int> checked() over on Some(n):int -> n, on None:int -> 0, end;}", "callable Option result type mismatch"),
+    ("scalar-result-confusion", "fnc checked():int{return 42;} fnc main():int{return match<int> checked() over on Ok(n):int -> n, on Err():int -> 0, end;}", "callable Result type mismatch"),
+    ("result-entry", "fnc main():Result<int,Error>{return Ok(42);}", "native entry must return int"),
+    ("result-error-type", "fnc checked():Result<int,string>{return Ok(42);} fnc main():int{return 42;}", "unexpected token"),
     ("integer-condition", "fnc main():int{return if 1 then 2 else 3;}", "condition_not_bool"),
     ("integer-ternary", "fnc main():int{return 1 ? 2 : 3;}", "condition_not_bool"),
     ("integer-unless", "fnc main():int{return unless 1 then 2 else 3 fi;}", "condition_not_bool"),
