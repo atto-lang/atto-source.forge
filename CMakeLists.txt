@@ -643,3 +643,28 @@ add_test(NAME scalar_check_only
     "-DFORGE=$<TARGET_FILE:forge_scalar>"
     "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/scalar-check"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/scalar_check.cmake")
+
+
+# Proxy actor receipt semantics: isolated native HOST MODEL, not guest IPC.
+add_executable(proxy_receipt_gate_v1_test tests/proxy_receipt_gate_v1.cpp)
+target_link_libraries(proxy_receipt_gate_v1_test PRIVATE atto_forge_checked_i64)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(proxy_receipt_gate_v1_test PRIVATE -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(proxy_receipt_gate_v1_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(proxy_receipt_gate_v1_test PRIVATE -fsanitize=address,undefined)
+  endif()
+endif()
+add_test(NAME proxy_receipt_gate_v1_test COMMAND proxy_receipt_gate_v1_test)
+
+# Per-message mailbox ticket stress: trusted HOST MODEL only.
+add_executable(proxy_mailbox_ticket_v1_test tests/proxy_mailbox_ticket_v1.cpp)
+target_link_libraries(proxy_mailbox_ticket_v1_test PRIVATE atto_forge_checked_i64 Threads::Threads)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(proxy_mailbox_ticket_v1_test PRIVATE -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(proxy_mailbox_ticket_v1_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(proxy_mailbox_ticket_v1_test PRIVATE -fsanitize=address,undefined)
+  endif()
+endif()
+add_test(NAME proxy_mailbox_ticket_v1_test COMMAND proxy_mailbox_ticket_v1_test)
