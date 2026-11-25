@@ -29,3 +29,8 @@ foreach(i RANGE 1 70)
 endforeach()
 string(APPEND many ";}")
 check_diag(nodes "${many}" "E_PARSE_NODES")
+
+check_diag(infix_caret "fnc main(): int {return 12 ^ 10;}" "E_PARSE_SYNTAX")
+check_diag(split_xor "fnc main(): int {return 12 ^ ^ 10;}" "E_PARSE_SYNTAX")
+check_diag(double_return "fnc main(): int {^^ 42;}" "E_PARSE_SYNTAX")
+check_diag(boolean_xor "fnc main(): int {return true ^^ false;}" "E_PARSE_SYNTAX")
