@@ -47,7 +47,7 @@ int main(int argc,char** argv) {
     }
     // A separate stage-0 callable profile: true SysV native calls and lazy
     // runtime branches. Legacy scalar and runtime-entry modes remain intact.
-    if (argc>=3 && (std::string(argv[1])=="run-calls" || std::string(argv[1])=="run-result-calls")) {
+    if (argc>=3 && (std::string(argv[1])=="run-calls" || std::string(argv[1])=="run-result-calls" || std::string(argv[1])=="run-option-calls")) {
       auto program=oresforge::calls::parse(read_file(argv[2]));
       std::vector<std::int64_t> args;
       for (int i=3;i<argc;++i) {
@@ -61,6 +61,9 @@ int main(int argc,char** argv) {
       if(std::string(argv[1])=="run-result-calls") {
         const auto result=oresforge::calls::interpret_result(program,args);
         std::cout<<result.value<<' '<<static_cast<std::uint64_t>(result.status)<<'\n';
+      } else if(std::string(argv[1])=="run-option-calls") {
+        const auto result=oresforge::calls::interpret_option(program,args);
+        std::cout<<result.value<<' '<<result.tag<<'\n';
       } else std::cout<<oresforge::calls::interpret(program,args)<<'\n';
       std::cout.flush();
       return 0;
@@ -107,7 +110,7 @@ int main(int argc,char** argv) {
       std::cout.flush();
       return 0;
     }
-    std::cerr<<"usage: oresforge check <file.atto|file.ores> | run|ir <file.atto|file.ores> | emit-asm <arch> <file.atto|file.ores> | run-runtime <file.atto|file.ores> [i64-args...] | ir-runtime <file.atto|file.ores> | emit-runtime-asm <arch> <file.atto|file.ores> | run-calls|run-result-calls <file.atto|file.ores> [i64-args...] | emit-call-asm x86_64 <file.atto|file.ores>\n";
+    std::cerr<<"usage: oresforge check <file.atto|file.ores> | run|ir <file.atto|file.ores> | emit-asm <arch> <file.atto|file.ores> | run-runtime <file.atto|file.ores> [i64-args...] | ir-runtime <file.atto|file.ores> | emit-runtime-asm <arch> <file.atto|file.ores> | run-calls|run-result-calls|run-option-calls <file.atto|file.ores> [i64-args...] | emit-call-asm x86_64 <file.atto|file.ores>\n";
     return 2;
   } catch (const std::exception& e) {
     std::cerr<<"oresforge: "<<e.what()<<'\n';
