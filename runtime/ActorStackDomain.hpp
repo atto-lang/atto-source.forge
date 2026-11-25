@@ -21,12 +21,23 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-#if defined(__SANITIZE_ADDRESS__) || (defined(__has_feature) && __has_feature(address_sanitizer))
+// GCC does not define Clang's function-like __has_feature intrinsic.
+// Never parse an undefined function-like macro in a #if expression.
+#if defined(__SANITIZE_ADDRESS__)
 #define ORESFORGE_ACTOR_ASAN 1
-extern "C" void __sanitizer_start_switch_fiber(void**, const void*, std::size_t);
-extern "C" void __sanitizer_finish_switch_fiber(void*, const void**, std::size_t*);
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define ORESFORGE_ACTOR_ASAN 1
 #else
 #define ORESFORGE_ACTOR_ASAN 0
+#endif
+#else
+#define ORESFORGE_ACTOR_ASAN 0
+#endif
+
+#if ORESFORGE_ACTOR_ASAN
+extern "C" void __sanitizer_start_switch_fiber(void**, const void*, std::size_t);
+extern "C" void __sanitizer_finish_switch_fiber(void*, const void**, std::size_t*);
 #endif
 
 namespace oresforge::runtime {

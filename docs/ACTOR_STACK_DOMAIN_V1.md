@@ -29,6 +29,20 @@ Java/LLVM semantic parity.
 
 ## Tests and limitations
 
+**Negative containment baseline:** overflowing a real native actor stack
+currently hits a guard page and triggers SIGSEGV, terminating the whole
+process if run in-process. The guard regression therefore forks a child
+process and checks SIGSEGV from the parent. Even with a separate healthy
+actor present in that child, this is **NOT actor-only containment**.
+The parent-process survival test demonstrates only OS process isolation.
+A normal C++ callback throw is recoverable after unwinding and leaves an
+independent actor's private heap intact, but that is distinct from stack
+overflow. Compiled guest recursion must use an actor-owned checked depth/frame
+budget and raise a typed, terminal actor PANIC before any guard-page fault.
+Its parent supervisor CONTROL notice must remain independent of any local
+`on_panic` observer. Neither `on_raise` nor lexical `recover` may consume
+physical process faults.
+
 `verification/actor_stack_domain_test.cpp` covers actual callback stack
 addresses, distinct actor stacks, per-actor persisted heap state, foreign
 handle and nested dispatch rejection, out-of-bounds access, stale handle
