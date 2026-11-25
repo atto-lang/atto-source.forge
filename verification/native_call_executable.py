@@ -16,6 +16,19 @@ import tempfile
 import hashlib
 
 RESULT_CASES = (
+    ("result-helper-propagate", "fnc divide(int a,int b):Result<int,Error>{return trap! (a/b);} fnc main(int a,int b):Result<int,Error>{val q=divide(a,b)?; return trap! (q*2);}",
+     ((84,2,84,0),(-5,2,-4,0),(42,0,0,65538),(-9223372036854775808,-1,0,65537),(9223372036854775807,1,0,65537))),
+    ("result-forward-call", "fnc main(a:int,b:int):Result<int,Error>{return divide(a,b);} fnc divide(a:int,b:int):Result<int,Error>{return trap (a/b);}",
+     ((5,2,2,0),(1,0,0,65538),(-9223372036854775808,-1,0,65537))),
+    ("result-flat-helper", "fnc divide(a:int,b:int):Result<int,Error>{return trap! (a/b);} fnc main(a:int,b:int):Result<int,Error>{return trap! divide(a,b);}",
+     ((5,2,2,0),(1,0,0,65538),(-9223372036854775808,-1,0,65537))),
+    ("result-local-multiple-use", "fnc divide(a:int,b:int):Result<int,Error>{return trap! (a/b);} fnc main(a:int,b:int):Result<int,Error>{val q=divide(a,b)?; return trap! (q+q);}",
+     ((6,3,4,0),(1,0,0,65538),(9223372036854775807,1,0,65537))),
+    ("result-skip-continuation", "fnc divide(a:int,b:int):Result<int,Error>{return trap! (a/b);} fnc main(a:int,b:int):Result<int,Error>{val q=divide(a,b)?; return trap! (9223372036854775807+1);}",
+     ((1,0,0,65538),(1,1,0,65537))),
+    ("result-multiple-frames", "fnc divide(a:int,b:int):Result<int,Error>{return trap! (a/b);} fnc twice(a:int,b:int):Result<int,Error>{val q=divide(a,b)?; return trap! (q*2);} fnc main(a:int,b:int):Result<int,Error>{val q=twice(a,b)?; return trap! (q+1);}",
+     ((6,3,5,0),(1,0,0,65538),(-9223372036854775808,-1,0,65537))),
+
     ("trap-bang", "fnc main(a:int,b:int):Result<int,Error>{return trap! (a/b);}",
      ((5,2,2,0),(-5,2,-2,0),(42,0,0,65538),(-9223372036854775808,-1,0,65537))),
     ("trap-bare", "fnc main(a:int,b:int):Result<int,Error>{^ trap (a/b);}",
@@ -33,7 +46,12 @@ RESULT_INVALID = (
     ("trap-bool", "fnc main():Result<int,Error>{return trap! true;}", "Boolean is not an int"),
     ("trap-int-return", "fnc main():int{return trap! 42;}", "reserved predicate word"),
     ("result-unwrapped", "fnc main():Result<int,Error>{return 42;}", "requires explicit trap"),
-    ("result-helper", "fnc f():Result<int,Error>{return trap! 42;} fnc main():int{return 1;}", "only at main entry"),
+    ("result-to-int", "fnc f():Result<int,Error>{return trap! 42;} fnc main():int{return f();}", "scalar Result call type mismatch"),
+    ("result-bind-int", "fnc f():int{return 42;} fnc main():Result<int,Error>{val q=f()?; return trap! q;}", "scalar Result call type mismatch"),
+    ("result-bind-noncall", "fnc main():Result<int,Error>{val q=42?; return trap! q;}", "postfix ? requires a Result callable"),
+    ("result-argument-effect", "fnc f(a:int):Result<int,Error>{return trap! a;} fnc main(a:int):Result<int,Error>{val q=f(a+1)?; return trap! q;}", "Result call arguments require infallible scalar leaves"),
+    ("result-unbound-local", "fnc f(a:int):Result<int,Error>{return trap! a;} fnc main():Result<int,Error>{val q=f(q)?; return trap! q;}", "unknown parameter"),
+    ("result-shadow-param", "fnc f():Result<int,Error>{return trap! 1;} fnc main(q:int):Result<int,Error>{val q=f()?; return trap! q;}", "Result binding shadows a parameter"),
     ("result-recursive", "fnc main():Result<int,Error>{return trap! main();}", "calls to scalar Result entry are unsupported"),
     ("trap-unary-precedence", "fnc main():Result<int,Error>{return trap! 5/2;}", "unexpected token"),
 )
