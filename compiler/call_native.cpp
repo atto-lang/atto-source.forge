@@ -33,7 +33,7 @@ bool boolean_kind(Kind k) {
          k==Kind::GreaterEqual || k==Kind::Equal || k==Kind::NotEqual;
 }
 // Private native callable ABI: Option<int> returns payload in rax and
-// tag in rdx (0=None, 1=Some). All i64 bit patterns remain valid payloads.
+// tag in r9 (0=None, 1=Some); rdx is reserved for arithmetic status. All i64 bit patterns remain valid payloads.
 bool option_kind(Kind k) {
   return k==Kind::OptionSome || k==Kind::OptionNone || k==Kind::OptionCall;
 }
@@ -114,7 +114,7 @@ class Parser {
     } else if (c=='^' && at_<text_.size() && text_[at_]=='^') {
       token_={text_.substr(begin,2),begin};
       fail("FORGE_XOR_BACKEND_UNSUPPORTED: integer ^^ requires native bitwise lowering");
-    } else if (std::string_view("()+-*{};:,<>=^?").find(c)==std::string_view::npos) {
+    } else if (std::string_view("()+-*/{};:,<>=^?").find(c)==std::string_view::npos) {
       at_=begin;
       fail("invalid character");
     }
@@ -398,11 +398,12 @@ class Parser {
   int term(std::size_t d) {
     depth(d);
     int left=factor(d+1);
-    while (token_.text=="*") {
+    while (token_.text=="*" || token_.text=="/") {
+      const bool multiply=token_.text=="*";
       next();
       const int right=factor(d+1);
       require_integer(left); require_integer(right);
-      left=add(Kind::Mul,0,{}, {left,right});
+      left=add(multiply?Kind::Mul:Kind::Div,0,{}, {left,right});
     }
     return left;
   }
@@ -486,6 +487,11 @@ std::int64_t checked(Kind k,std::int64_t a,std::int64_t b) {
     case Kind::Mul:
       if(__builtin_mul_overflow(a,b,&out))throw std::runtime_error("i64 mul overflow");
       return out;
+    case Kind::Div:
+      if(b==0) throw std::runtime_error("i64 division by zero");
+      if(a==std::numeric_limits<std::int64_t>::min() && b==-1)
+        throw std::runtime_error("i64 division overflow");
+      return a/b;
     case Kind::Less: return a<b;
     case Kind::LessEqual: return a<=b;
     case Kind::Greater: return a>b;
@@ -584,15 +590,15 @@ struct Native {
       out<<"  movq "<<parameter_slot(static_cast<int>(n.value))<<", %rax\n";
     } else if(n.kind==Kind::OptionSome) {
       emit_node(fn,n.children[0]);
-      out<<"  movq $1, %rdx\n";
+      out<<"  movq $1, %r9\n";
     } else if(n.kind==Kind::OptionNone) {
-      out<<"  xorq %rax, %rax\n  xorq %rdx, %rdx\n";
+      out<<"  xorq %rax, %rax\n  xorq %r9, %r9\n";
     } else if(n.kind==Kind::OptionPayload) {
       out<<"  movq "<<value_slot(static_cast<int>(n.value))<<", %rax\n";
     } else if(n.kind==Kind::OptionMatch) {
       const auto tag=label++;
       emit_node(fn,n.children[0]);
-      out<<"  cmpq $0, %rdx\n  je .Lores_none_"<<tag<<"\n";
+      out<<"  cmpq $0, %r9\n  je .Lores_none_"<<tag<<"\n";
       emit_node(fn,n.children[1]);
       out<<"  jmp .Lores_option_end_"<<tag<<"\n.Lores_none_"<<tag<<":\n";
       emit_node(fn,n.children[2]);
@@ -622,7 +628,19 @@ struct Native {
         out<<"  movq "<<value_slot(n.children[i])<<", "<<argument_reg(i)<<"\n";
       out<<"  movq -40(%rbp), %r8\n"
          <<"  addq $1, %r8\n"
-         <<"  call .Lores_fn_"<<n.callee<<"\n";
+         <<"  call .Lores_fn_"<<n.callee<<"\n"
+         <<"  testq %rdx, %rdx\n  jne .Lores_return_error\n";
+    } else if(n.kind==Kind::Div) {
+      emit_node(fn,n.children[0]);
+      emit_node(fn,n.children[1]);
+      const auto tag=label++;
+      out<<"  movq "<<value_slot(n.children[1])<<", %r11\n"
+         <<"  testq %r11, %r11\n  je .Lores_divzero\n"
+         <<"  movq "<<value_slot(n.children[0])<<", %rax\n"
+         <<"  cmpq $-1, %r11\n  jne .Lores_div_safe_"<<tag<<"\n"
+         <<"  movabsq $-9223372036854775808, %r10\n"
+         <<"  cmpq %r10, %rax\n  je .Lores_overflow\n"
+         <<".Lores_div_safe_"<<tag<<":\n  cqto\n  idivq %r11\n";
     } else {
       emit_node(fn,n.children[0]);
       emit_node(fn,n.children[1]);
@@ -653,8 +671,15 @@ struct Native {
     out<<"  movq %rax, "<<value_slot(index)<<"\n";
   }
   std::string build() {
+    // Keep the historic scalar entry's terminal fault behavior, and expose
+    // an explicit value/status entry for the new checked ABI. Internal calls
+    // always use the checked convention and propagate arithmetic failures.
     out<<".text\n.globl oresforge_entry\n.type oresforge_entry, @function\n"
-       <<"oresforge_entry:\n  xorl %r8d, %r8d\n"
+       <<"oresforge_entry:\n  subq $8, %rsp\n  call oresforge_entry_checked\n"
+       <<"  addq $8, %rsp\n  testq %rdx, %rdx\n  jne .Lores_legacy_fault\n  ret\n"
+       <<".size oresforge_entry, .-oresforge_entry\n"
+       <<".globl oresforge_entry_checked\n.type oresforge_entry_checked, @function\n"
+       <<"oresforge_entry_checked:\n  xorl %r8d, %r8d\n"
        <<"  jmp .Lores_fn_"<<program.entry<<"\n";
     for (std::size_t i=0;i<program.functions.size();++i) {
       const auto& fn=program.functions[i];
@@ -669,11 +694,15 @@ struct Native {
         out<<"  movq "<<argument_reg(arg)<<", "<<parameter_slot(static_cast<int>(arg))<<"\n";
       out<<"  movq %r8, -40(%rbp)\n";
       emit_node(fn,fn.result);
-      out<<"  leave\n  ret\n";
+      out<<"  xorl %edx, %edx\n  leave\n  ret\n";
     }
     out<<".Lores_depth:\n  ud2\n"
-       <<".Lores_overflow:\n  ud2\n"
-       <<".size oresforge_entry, .-oresforge_entry\n"
+       <<".Lores_legacy_fault:\n  ud2\n"
+       <<".Lores_overflow:\n  movl $"<<static_cast<std::uint64_t>(ArithmeticStatus::Overflow)<<", %edx\n"
+       <<"  jmp .Lores_return_error\n"
+       <<".Lores_divzero:\n  movl $"<<static_cast<std::uint64_t>(ArithmeticStatus::DivisionByZero)<<", %edx\n"
+       <<".Lores_return_error:\n  xorl %eax, %eax\n  leave\n  ret\n"
+       <<".size oresforge_entry_checked, .-oresforge_entry_checked\n"
        <<".section .note.GNU-stack,\"\",@progbits\n";
     return out.str();
   }
@@ -723,7 +752,7 @@ void verify(const Module& m) {
         case Kind::Boolean: case Kind::Not: case Kind::Ternary:
          case Kind::And: case Kind::Or: case Kind::BooleanXor:
          case Kind::OptionSome: case Kind::OptionNone: case Kind::OptionCall:
-         case Kind::OptionMatch: case Kind::OptionPayload: break;
+         case Kind::OptionMatch: case Kind::OptionPayload: case Kind::Div: break;
         default: throw std::runtime_error("unknown callable opcode");
       }
       if(!call_kind(n.kind) && !n.name.empty())
@@ -773,7 +802,7 @@ void verify(const Module& m) {
           throw std::runtime_error("Boolean Xor intrinsic is shadowed by a source declaration");
       } else if(n.kind==Kind::Equal||n.kind==Kind::NotEqual) {
         if(child_bool(0)!=child_bool(1)) throw std::runtime_error("comparison operand type mismatch");
-      } else if(n.kind==Kind::Add||n.kind==Kind::Sub||n.kind==Kind::Mul||
+      } else if(n.kind==Kind::Add||n.kind==Kind::Sub||n.kind==Kind::Mul||n.kind==Kind::Div||
                 n.kind==Kind::Less||n.kind==Kind::LessEqual||n.kind==Kind::Greater||
                 n.kind==Kind::GreaterEqual) {
         if(child_bool(0)||child_bool(1)) throw std::runtime_error("Boolean is not an int");
