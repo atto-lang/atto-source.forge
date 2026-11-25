@@ -46,7 +46,12 @@ int main() {
   auto a = parse_source("pub fnc main(): int { return 4 + 5 * (6 - 1); }");
   assert(a.ok() && a.nodes[a.root].op == Op::add);
   assert(a.nodes.size() == 7);
-  auto ops = parse_source("fnc main(): int {return ~0 & 15 | 1 ^ 2;}");
+  assert(parse_source("fnc main(): int { ^ 12 ^^ 10; }").ok());
+  for (const auto* bad_caret : {"fnc main(): int {return 12 ^ 10;}",
+       "fnc main(): int {return 12 ^ ^ 10;}", "fnc main(): int {^^ 42;}",
+       "fnc main(): int {return true ^^ false;}"})
+    assert(!parse_source(bad_caret).ok());
+  auto ops = parse_source("fnc main(): int {return ~0 & 15 | 1 ^^ 2;}");
   assert(ops.ok() && ops.nodes[ops.root].op == Op::bor);
   auto b = parse_source("fnc main(): int {return -9223372036854775808;}");
   assert(b.ok() && b.nodes[b.root].value == std::numeric_limits<i64>::min());
