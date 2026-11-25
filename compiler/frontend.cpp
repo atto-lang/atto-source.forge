@@ -148,6 +148,20 @@ class Parser {
         ++at_;
       }
       tok_={Kind::Word,source_.substr(start,at_-start),start};
+      // Require whitespace after the complete contextual bang keyword.
+      if ((tok_.text=="trap" || tok_.text=="throw" || tok_.text=="raise" ||
+           tok_.text=="panic" || tok_.text=="copy" || tok_.text=="take" ||
+           tok_.text=="borrow" || tok_.text=="share" || tok_.text=="pin" ||
+           tok_.text=="drop" || tok_.text=="pipe" || tok_.text=="rpipe" ||
+           tok_.text=="stop" || tok_.text=="expand") &&
+          at_<source_.size() && source_[at_]=='!' &&
+          source_.substr(at_,2)!="!=" &&
+          !(source_.substr(at_,3)=="!eq" && (at_+3==source_.size() ||
+             (!ascii_alnum(static_cast<unsigned char>(source_[at_+3])) && source_[at_+3]!='_')))) {
+        const auto after=at_+((tok_.text=="copy" && source_.substr(at_,2)=="!!") ? 2 : 1);
+        if (after>=source_.size() || !ascii_space(static_cast<unsigned char>(source_[after])))
+          error("E_BANG_KEYWORD_WHITESPACE: whitespace required after bang keyword");
+      }
       // A contextual ownership operator requires the verb immediately next
       // to '!'. The stage-0 scalar IR has no ownership kind or runtime loan
       // authority; never reinterpret copy!/take!/borrow!/share! as a call.

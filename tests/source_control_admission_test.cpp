@@ -43,12 +43,12 @@ int main() {
     }
 
     // 18 canonical lexical boundary vectors (atto-spec #146). Forge's
-    // scalar-only compiler must fail closed on all six exceptional effects
+    // scalar-only compiler must fail closed on spaced exceptional effects
     // and never misclassify twelve other punctuation/trivia forms.
     for (const char* expr : {
-      "trap! parse_id(\"42\")", "trap!parse_id(\"42\")",
+      "trap! parse_id(\"42\")",
       "throw! Error(\"bad\")", "raise! Error(\"bad\")",
-      "panic! Error(\"bad\")", "throw!Error(\"bad\")"
+      "panic! Error(\"bad\")"
     }) {
       auto source = std::string("fnc main():int{return ") + expr + ";}";
       bool correctly_denied = false;
@@ -84,6 +84,18 @@ int main() {
         if (std::string_view(error.what()).find("EXCEPTION_BANG_BACKEND_UNSUPPORTED")
             != std::string_view::npos)
           throw std::runtime_error("Forge reclassified quoted/trivia exceptional keywords");
+      }
+    }
+    for (const char* keyword : {"trap!", "throw!", "raise!", "panic!", "copy!",
+        "copy!!", "take!", "borrow!", "share!", "pin!", "drop!", "pipe!", "rpipe!", "stop!", "expand!"}) {
+      for (const char* tail : {"value", "(42)", "/*comment*/ value", ""}) {
+        auto source = std::string("fnc main():int{return ") + keyword + tail + ";}";
+        bool rejected=false;
+        try { (void)oresforge::parse_source(source); }
+        catch (const std::runtime_error& e) {
+          rejected=std::string_view(e.what()).find("E_BANG_KEYWORD_WHITESPACE")!=std::string_view::npos;
+        }
+        if (!rejected) throw std::runtime_error("compact keyword not rejected: "+source);
       }
     }
     oresforge::source::validate_utf8("fnc main():int{\r\n\treturn 42;\r\n}");
