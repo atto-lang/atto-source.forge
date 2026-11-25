@@ -1,0 +1,4 @@
+// The untaken branch must not evaluate overflowing native guest code.
+fnc bomb():int{return 9223372036854775807+1;}
+fnc good(value:int):int{return value;}
+fnc main():int{return if 0 then bomb() else good(42);}

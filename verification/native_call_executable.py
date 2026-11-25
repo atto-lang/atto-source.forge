@@ -93,7 +93,8 @@ def require(value,message):
 def build(compiler,cc,root,label,source,param_count):
     file=root/"entry.ores"
     file.write_text(source+"\n",encoding="utf8")
-    emit=execute([compiler,"emit-call-asm","x86_64",str(file)],root)
+    command = [compiler,"emit-call-asm","x86_64",str(file)] if param_count == 0 else [compiler,"emit-call-asm-args","x86_64",str(file),str(param_count)]
+    emit=execute(command,root)
     require(emit.returncode==0 and not emit.stderr,
             "emit failed "+label+": "+emit.stderr.decode(errors="replace"))
     asm=emit.stdout.decode("ascii")
@@ -104,7 +105,11 @@ def build(compiler,cc,root,label,source,param_count):
     (root/"entry.s").write_text(asm,encoding="ascii")
     signature=", ".join("int64_t" for _ in range(param_count)) or "void"
     arguments=", ".join("v[%d]"%i for i in range(param_count))
-    driver=DRIVER.replace("PARAMS",signature).replace("COUNT",str(param_count)).replace("ARGS",arguments)
+    symbol = "oresforge_entry" if param_count == 0 else f"oresforge_entry_i64_{param_count}"
+    require(f".globl {symbol}\n" in asm, "entry ABI symbol mismatch: "+label)
+    if param_count:
+        require(".globl oresforge_entry\n" not in asm, "typed entry aliased zero-argument symbol")
+    driver=DRIVER.replace("oresforge_entry",symbol).replace("PARAMS",signature).replace("COUNT",str(param_count)).replace("ARGS",arguments)
     (root/"driver.c").write_text(driver,encoding="ascii")
     executable=root/"native"
     link=execute([cc,"-std=c11","-Wall","-Wextra","-Werror",

@@ -1,0 +1,4 @@
+// Preserve argument evaluation and stack slots across sibling direct calls.
+fnc plus(a:int,b:int):int{return a+b;}
+fnc diff(a:int,b:int):int{return a-b;}
+fnc main():int{return plus(diff(55,14),plus(0,1));}

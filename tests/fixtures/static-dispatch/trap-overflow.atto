@@ -1,0 +1,3 @@
+// Overflow is a checked native UD2 trap, never signed-overflow UB.
+fnc increment(value:int):int{return value+1;}
+fnc main():int{return increment(9223372036854775807);}

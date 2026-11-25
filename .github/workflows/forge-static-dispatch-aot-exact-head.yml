@@ -1,0 +1,90 @@
+name: Forge static dispatch - exact-head native AOT callable guest
+on:
+  pull_request:
+    paths:
+      - .github/workflows/forge-static-dispatch-aot-exact-head.yml
+      - compiler/call_native.cpp
+      - compiler/call_native.hpp
+      - codegen/native.hpp
+      - CMakeLists.txt
+      - verification/static_dispatch_aot_test.cpp
+      - verification/static_dispatch_native_guests.cmake
+      - tests/fixtures/static-dispatch/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  forge-stage0-direct-aot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact PR head with no persisted credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify source head and tree before compiler execution
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test -z "$(git status --porcelain)"
+          echo "FORGE_STATIC_AOT_HEAD=$(git rev-parse HEAD)"
+          echo "FORGE_STATIC_AOT_TREE=$(git rev-parse 'HEAD^{tree}')"
+          g++ --version | sed -n '1p'
+          cmake --version | sed -n '1p'
+      - name: Compile and run real Forge source/IR dispatch CTest
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S . -B build-static-dispatch -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+          cmake --build build-static-dispatch \
+            --target oresforge_static_dispatch_aot_verifier --parallel 2
+          ctest --test-dir build-static-dispatch --output-on-failure -V \
+            -R '^oresforge_static_dispatch_aot_(source_and_ir|compiled_native_guests)$'
+      - name: Execute Clang-built verifier and native AOT guest matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v clang++
+          cmake -S . -B build-static-dispatch-clang -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON -DCMAKE_CXX_COMPILER=clang++
+          cmake --build build-static-dispatch-clang \
+            --target oresforge_static_dispatch_aot_verifier --parallel 2
+          ctest --test-dir build-static-dispatch-clang --output-on-failure -V \
+            -R '^oresforge_static_dispatch_aot_(source_and_ir|compiled_native_guests)$'
+      - name: Link and execute real x86_64 AOT call sequence at O0 and O2
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture="$PWD/tests/fixtures/static-dispatch/direct-42.atto"
+          binary="$PWD/build-static-dispatch/oresforge_static_dispatch_aot_verifier"
+          "$binary" "$fixture" --asm > "$RUNNER_TEMP/direct-42.s"
+          grep -Fq '  call .Lores_fn_0' "$RUNNER_TEMP/direct-42.s"
+          grep -Fq '  call .Lores_fn_1' "$RUNNER_TEMP/direct-42.s"
+          if grep -Eq '^[[:space:]]+(call|jmp)[[:space:]]+\*' "$RUNNER_TEMP/direct-42.s"; then
+            echo "Closed Forge direct-call fixture emitted an indirect branch" >&2
+            exit 1
+          fi
+          cat > "$RUNNER_TEMP/driver.cpp" <<'DRIVER'
+          #include <cstdint>
+          extern "C" std::int64_t oresforge_entry();
+          int main() { return oresforge_entry() == 42 ? 0 : 1; }
+          DRIVER
+          for opt in O0 O2; do
+            g++ "-$opt" -no-pie \
+              "$RUNNER_TEMP/direct-42.s" "$RUNNER_TEMP/driver.cpp" \
+              -o "$RUNNER_TEMP/forge-stage0-$opt"
+            "$RUNNER_TEMP/forge-stage0-$opt"
+            sha256sum "$RUNNER_TEMP/forge-stage0-$opt"
+            echo "FORGE_STAGE0_DIRECT_AOT_EXECUTED|opt=$opt|result=42|source_head=$(git rev-parse HEAD)"
+          done
+      - name: Record strict scope of the AOT receipt
+        shell: bash
+        run: |
+          echo "Forge stage-0 scalar callable direct-native assembly: executed." >> "$GITHUB_STEP_SUMMARY"
+          echo "No claim of Forge class/trait/actor dispatch or complete AttoLang feature parity." >> "$GITHUB_STEP_SUMMARY"

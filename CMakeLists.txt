@@ -22,6 +22,40 @@ if(BUILD_TESTING)
     COMMAND oresforge_std_time_frontend_admission_test)
   set_tests_properties(forge_std_time_frontend_admission PROPERTIES
     TIMEOUT 15 WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+
+  # Real source -> verified Forge callable IR -> direct native x86_64 call
+  # admission. Separate from arbitrary nominal/trait/actor dispatch.
+  add_executable(oresforge_static_dispatch_aot_verifier
+    verification/static_dispatch_aot_test.cpp)
+  target_link_libraries(oresforge_static_dispatch_aot_verifier PRIVATE oresforge_core)
+  target_compile_features(oresforge_static_dispatch_aot_verifier PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_static_dispatch_aot_verifier PRIVATE
+      -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+  endif()
+  add_test(NAME oresforge_static_dispatch_aot_source_and_ir
+    COMMAND oresforge_static_dispatch_aot_verifier
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/static-dispatch/direct-42.atto")
+  set_tests_properties(oresforge_static_dispatch_aot_source_and_ir
+    PROPERTIES TIMEOUT 20)
+
+  # Real .atto -> callable IR -> x86_64 SysV assembly -> linked/executed
+  # native guests at O0 and O2. Linux-only signal assertions are deliberate.
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+     CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" AND
+     CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    add_test(NAME oresforge_static_dispatch_aot_compiled_native_guests
+      COMMAND "${CMAKE_COMMAND}"
+        "-DROOT=${CMAKE_CURRENT_SOURCE_DIR}"
+        "-DVERIFIER=$<TARGET_FILE:oresforge_static_dispatch_aot_verifier>"
+        "-DCXX=${CMAKE_CXX_COMPILER}"
+        "-DHOST_ARCH=${CMAKE_SYSTEM_PROCESSOR}"
+        "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/static-dispatch-native-guests"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/verification/static_dispatch_native_guests.cmake")
+    set_tests_properties(oresforge_static_dispatch_aot_compiled_native_guests
+      PROPERTIES TIMEOUT 180)
+  endif()
+
   # All Forge source frontends must deny raw ESC and DEL before lowering.
   # This adds execution coverage; source admission already resides in main.
   add_executable(oresforge_source_control_admission_test

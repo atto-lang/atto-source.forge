@@ -476,17 +476,17 @@ int main() {
     // Unlike the scalar profile, these helpers compile to real native calls.
     auto fact=calls::parse(
       "fnc fact(n:int):int{return if n<=1 then 1 else n*fact(n-1);}"
-      " fnc main(n:int):int{return fact(n);}");
+      " fnc main(n:int):int{return fact(n);}",1);
     ensure(calls::interpret(fact,std::array<std::int64_t,1>{5})==120,
            "bounded direct recursion and lazy branch");
     ensure(calls::interpret(fact,std::array<std::int64_t,1>{10})==3628800,
            "recursive checked i64 return");
-    ensure(calls::emit_asm(fact,Arch::X86_64).find("  call .Lores_fn_")!=std::string::npos,
+    ensure(calls::emit_asm(fact,Arch::X86_64,1).find("  call .Lores_fn_")!=std::string::npos,
            "real native call emitted");
     auto mutually_recursive=calls::parse(
       "fnc even(n:int):int{return if n==0 then 1 else odd(n-1);}"
       " fnc odd(n:int):int{return if n==0 then 0 else even(n-1);}"
-      " fnc main(n:int):int{return even(n);}");
+      " fnc main(n:int):int{return even(n);}",1);
     ensure(calls::interpret(mutually_recursive,std::array<std::int64_t,1>{7})==0,
            "mutual recursion supported");
     ensure(calls::interpret(mutually_recursive,std::array<std::int64_t,1>{8})==1,
@@ -500,9 +500,9 @@ int main() {
     reject_diagnostic([] { calls::parse(
       "fnc other(x:int):int{return x;}"
       " fnc main():int{return other();}"); },"function arity mismatch");
-    auto corrupt=calls::parse("fnc main(x:int):int{return x+1;}");
+    auto corrupt=calls::parse("fnc main(x:int):int{return x+1;}",1);
     corrupt.functions[0].nodes.back().children[0]=999;
-    reject_diagnostic([&] { calls::verify(corrupt); },
+    reject_diagnostic([&] { calls::verify(corrupt,1); },
                       "callable use before definition");
 
     auto reused=calls::parse("fnc main():int{return 2+3;}");
@@ -521,7 +521,7 @@ int main() {
 
     auto endless=calls::parse(
       "fnc forever(n:int):int{return forever(n);}"
-      " fnc main(n:int):int{return forever(n);}");
+      " fnc main(n:int):int{return forever(n);}",1);
     reject_diagnostic([&] {
       calls::interpret(endless,std::array<std::int64_t,1>{1});
     },"call depth exceeded");
@@ -751,7 +751,13 @@ int main() {
       "fnc main():int{do match 1 over on structural {x:int} v when true -> {return 1;} on _ -> {return 0;} end}",
       "fnc main():int{do match 1 over on _ -> {return 1;} end}"
     }) {
-      reject_diagnostic([&] { (void)parse_source(candidate); }, "expected");
+      const std::string_view input(candidate);
+      reject_diagnostic([&] { (void)parse_source(candidate); },
+                        input.find("match")!=std::string_view::npos &&
+                        input.find("do match")==std::string_view::npos
+                          ? "MATCH_DEFAULT_BACKEND_UNSUPPORTED" :
+                        input.find("do match")!=std::string_view::npos
+                          ? "unexpected token" : "unexpected token");
     }
     reject_diagnostic([] {
       (void)parse_source("@structural\nfnc main():int{return 1;}");
@@ -770,13 +776,13 @@ int main() {
            "annotation-looking text in comments is not source metadata");
     reject_diagnostic([] {
       parse_source("structural fnc main():int{return 1;}");
-    }, "expected");
+    }, "unexpected token");
     reject_diagnostic([] {
       parse_source("fnc main(structural Shape value):int{return 1;}");
     }, "tuple-v2 parameter requires typed ownership/ABI lowering");
     reject_diagnostic([] {
       parse_source("fnc main():int{match 1 over on _ -> {return 1;} end}");
-    }, "expected");
+    }, "MATCH_DEFAULT_BACKEND_UNSUPPORTED");
     // Task 70: structural and row syntax must fail closed across declaration,
     // parameter, projection and pattern surfaces. The scalar bootstrap has
     // neither row layout witnesses nor borrow/mutable-field capability checks.

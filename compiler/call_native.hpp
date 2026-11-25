@@ -1,5 +1,6 @@
 #pragma once
 #include "codegen/native.hpp"
+#include <cstddef>
 #include <cstdint>
 #include <span>
 #include <string>
@@ -30,8 +31,10 @@ struct Module {
   std::vector<Function> functions;
   int entry = -1;
 };
-Module parse(std::string_view source);
-void verify(const Module& program);
+// Default entry is strictly zero-argument. A trusted host may opt into an
+// exact i64 arity (1..4), exported under a distinct ABI symbol.
+Module parse(std::string_view source, std::size_t expected_entry_arity=0);
+void verify(const Module& program, std::size_t expected_entry_arity=0);
 std::int64_t interpret(const Module& program, std::span<const std::int64_t> args);
-std::string emit_asm(const Module& program, Arch arch);
+std::string emit_asm(const Module& program, Arch arch, std::size_t expected_entry_arity=0);
 }

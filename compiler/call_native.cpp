@@ -22,13 +22,40 @@ constexpr std::size_t kMaxStackDepth = 128;
 constexpr std::size_t kMaxEvalSteps = 200000;
 bool letter(char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_'; }
 bool digit(char c) { return c >= '0' && c <= '9'; }
+// The source parser admits only this identifier alphabet. The public verify()
+// entrypoint also accepts compiler-generated Module IR; it must reject forged
+// or rewritten labels before either interpretation or native AOT emission.
+bool valid_identifier(std::string_view name) {
+  return !name.empty() && letter(name.front()) &&
+         std::all_of(name.begin()+1,name.end(),
+                     [](char c) { return letter(c)||digit(c); });
+}
+// The callable subset must not repurpose source-language keywords as ABI
+// symbols or argument names. Parse and verify share this one admission gate
+// so externally supplied Module IR cannot bypass the lexer/parser policy.
+bool valid_callable_name(std::string_view name) {
+  if (!valid_identifier(name)) return false;
+  constexpr std::string_view kReserved[] = {
+      "fnc", "define", "pub", "int", "return", "if", "then", "else",
+      "http", "serial", "true", "false"
+  };
+  for (const auto keyword : kReserved)
+    if (name == keyword) return false;
+  return true;
+}
+bool valid_function_name(std::string_view name) {
+  return valid_callable_name(name);
+}
+bool valid_parameter_name(std::string_view name) {
+  return valid_callable_name(name);
+}
 bool space(char c) { return c == ' ' || c == '\r' || c == '\n' || c == '\t' || c == '\v' || c == '\f'; }
 struct Token { std::string_view text; std::size_t offset=0; };
 
 class Parser {
  public:
   explicit Parser(std::string_view text) : text_(text) { next(); }
-  Module parse() {
+  Module parse(std::size_t expected_entry_arity) {
     while (!token_.text.empty()) definition();
     for (std::size_t i=0; i<module_.functions.size(); ++i) {
       if (module_.functions[i].name=="main") module_.entry=static_cast<int>(i);
@@ -45,7 +72,7 @@ class Parser {
           fail("function arity mismatch");
       }
     }
-    verify(module_);
+    verify(module_,expected_entry_arity);
     return std::move(module_);
   }
  private:
@@ -133,8 +160,7 @@ class Parser {
     }
     expect("fnc");
     const std::string name=identifier();
-    if (name=="int"||name=="return"||name=="if"||name=="else"||name=="then")
-      fail("reserved function name");
+    if (!valid_function_name(name)) fail("reserved function name");
     if (names_.contains(name))fail("duplicate function");
     if (module_.functions.size()>=kMaxFunctions)fail("function count budget exceeded");
     const int index=static_cast<int>(module_.functions.size());
@@ -145,8 +171,7 @@ class Parser {
     if (token_.text!=")") {
       do {
         const std::string param=identifier();
-        if (param=="int"||param=="if"||param=="then"||param=="else"||
-            param=="return"||param=="fnc"||
+        if (!valid_parameter_name(param) ||
             std::find(current_->parameters.begin(),current_->parameters.end(),param)
             !=current_->parameters.end())fail("invalid or duplicate parameter");
         expect(":");expect("int");
@@ -320,6 +345,7 @@ struct Native {
   const Module& program;
   std::ostringstream out;
   std::size_t label=0;
+  explicit Native(const Module& m) : program(m) {}
   std::string value_slot(int id) const {
     return "-"+std::to_string(8u*(static_cast<std::size_t>(id)+6u))+"(%rbp)";
   }
@@ -328,6 +354,14 @@ struct Native {
   }
   void emit_node(const Function& fn,int index) {
     const auto& n=fn.nodes.at(static_cast<std::size_t>(index));
+    // The interpreter spends one unit before visiting each AST node. Native
+    // execution must enforce the same limit even for exponentially branching
+    // recursion. %r9 is a private in-module fuel register: all callable
+    // targets are locally emitted labels and use at most four SysV arguments.
+    // No external calls or user-controlled indirect branches are admitted.
+    out<<"  testq %r9, %r9\n"
+       <<"  je .Lores_budget\n"
+       <<"  decq %r9\n";
     if(n.kind==Kind::Constant) {
       out<<"  movabsq $"<<n.value<<", %rax\n";
     } else if(n.kind==Kind::Parameter) {
@@ -377,9 +411,12 @@ struct Native {
     }
     out<<"  movq %rax, "<<value_slot(index)<<"\n";
   }
-  std::string build() {
-    out<<".text\n.globl oresforge_entry\n.type oresforge_entry, @function\n"
-       <<"oresforge_entry:\n  xorl %r8d, %r8d\n"
+  std::string build(std::size_t entry_arity) {
+    const std::string symbol=entry_arity==0 ? "oresforge_entry" :
+        "oresforge_entry_i64_"+std::to_string(entry_arity);
+    out<<".text\n.globl "<<symbol<<"\n.type "<<symbol<<", @function\n"
+       <<symbol<<":\n  xorl %r8d, %r8d\n"
+       <<"  movq $"<<kMaxEvalSteps<<", %r9\n"
        <<"  jmp .Lores_fn_"<<program.entry<<"\n";
     for (std::size_t i=0;i<program.functions.size();++i) {
       const auto& fn=program.functions[i];
@@ -390,7 +427,7 @@ struct Native {
          <<"  jae .Lores_depth\n"
          <<"  pushq %rbp\n  movq %rsp, %rbp\n"
          <<"  subq $"<<bytes<<", %rsp\n";
-      for (std::size_t arg=0;arg<4;++arg)
+      for (std::size_t arg=0;arg<fn.parameters.size();++arg)
         out<<"  movq "<<argument_reg(arg)<<", "<<parameter_slot(static_cast<int>(arg))<<"\n";
       out<<"  movq %r8, -40(%rbp)\n";
       emit_node(fn,fn.result);
@@ -398,18 +435,20 @@ struct Native {
     }
     out<<".Lores_depth:\n  ud2\n"
        <<".Lores_overflow:\n  ud2\n"
-       <<".size oresforge_entry, .-oresforge_entry\n"
+       <<".Lores_budget:\n  ud2\n"
+       <<".size "<<symbol<<", .-"<<symbol<<"\n"
        <<".section .note.GNU-stack,\"\",@progbits\n";
     return out.str();
   }
 };
 }
-Module parse(std::string_view source) {
+Module parse(std::string_view source,std::size_t expected_entry_arity) {
   if (source.size()>kMaxSource)throw std::runtime_error("callable source budget exceeded");
   oresforge::source::validate_utf8(source);
-  return Parser(source).parse();
+  return Parser(source).parse(expected_entry_arity);
 }
-void verify(const Module& m) {
+void verify(const Module& m,std::size_t expected_entry_arity) {
+  if(expected_entry_arity>4)throw std::runtime_error("callable entry arity exceeds four i64 arguments");
   if(m.entry<0 || static_cast<std::size_t>(m.entry)>=m.functions.size())
     throw std::runtime_error("invalid callable main");
   if (m.functions.size()>kMaxFunctions)throw std::runtime_error("function count budget exceeded");
@@ -417,9 +456,15 @@ void verify(const Module& m) {
   std::size_t total=0;
   for (std::size_t fi=0;fi<m.functions.size();++fi) {
     const auto& fn=m.functions[fi];
-    if(fn.name.empty() || !names.emplace(fn.name,fi).second)
+    if(!valid_function_name(fn.name) || !names.emplace(fn.name,fi).second)
       throw std::runtime_error("duplicate or invalid function");
     if(fn.parameters.size()>4)throw std::runtime_error("function parameter budget exceeded");
+    std::map<std::string,bool> source_parameter_slots;
+    for(const auto& parameter : fn.parameters) {
+      if(!valid_parameter_name(parameter) ||
+         !source_parameter_slots.emplace(parameter,true).second)
+        throw std::runtime_error("invalid or duplicate callable parameter");
+    }
     if(fn.nodes.empty() || fn.nodes.size()>kMaxNodesPerFunction)
       throw std::runtime_error("invalid callable function body");
     total+=fn.nodes.size();
@@ -441,6 +486,10 @@ void verify(const Module& m) {
       }
       if(n.kind!=Kind::Call && !n.name.empty())
         throw std::runtime_error("unexpected callable symbol payload");
+      // The only meaningful numeric payloads are a Constant literal or a
+      // Parameter slot. Anything else is forged/unlowered IR, not authority.
+      if(n.kind!=Kind::Constant && n.kind!=Kind::Parameter && n.value!=0)
+        throw std::runtime_error("unexpected callable numeric payload");
       for(int arg:n.children) {
         if(arg<0 || static_cast<std::size_t>(arg)>=i)
           throw std::runtime_error("callable use before definition");
@@ -472,16 +521,23 @@ void verify(const Module& m) {
   }
   if(m.functions[static_cast<std::size_t>(m.entry)].name!="main")
     throw std::runtime_error("callable entry is not main");
+  // The default ABI cannot accept parameterized main. Explicit host entry
+  // profiles bind an exact argument count independently of the parsed IR.
+  const auto actual=m.functions[static_cast<std::size_t>(m.entry)].parameters.size();
+  if(actual!=expected_entry_arity) {
+    if(expected_entry_arity==0)throw std::runtime_error("callable entry must have zero parameters");
+    throw std::runtime_error("callable entry arity mismatch");
+  }
 }
 std::int64_t interpret(const Module& m,std::span<const std::int64_t> args) {
-  verify(m);
+  verify(m,args.size());
   Evaluator eval{m};
   return eval.evaluate(static_cast<std::size_t>(m.entry),args,0);
 }
-std::string emit_asm(const Module& m,Arch arch) {
+std::string emit_asm(const Module& m,Arch arch,std::size_t expected_entry_arity) {
   if(arch!=Arch::X86_64)
     throw std::runtime_error("native callable backend currently supports x86_64 only");
-  verify(m);
-  return Native{m}.build();
+  verify(m,expected_entry_arity);
+  return Native{m}.build(expected_entry_arity);
 }
 }
