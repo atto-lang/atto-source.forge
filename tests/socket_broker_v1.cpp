@@ -86,6 +86,13 @@ int main() {
     assert(c);
     assert(broker.adopt_connected_tcp(*c, cb.adopted,
         rights(SocketRight::read)).status == SocketStatus::denied);
+    // An alias of an admitted socket must remain caller-owned and denied.
+    const int alias = ::dup(cb.adopted);
+    assert(alias >= 0);
+    assert(broker.adopt_connected_tcp(*c, alias, rights(SocketRight::read)).status ==
+           SocketStatus::denied);
+    assert(::fcntl(alias, F_GETFD, 0) >= 0);
+    close_if_valid(alias);
     int unix_pair[2];
     assert(::socketpair(AF_UNIX, SOCK_STREAM, 0, unix_pair) == 0);
     assert(broker.adopt_connected_tcp(*c, unix_pair[0], rights(SocketRight::read)).status ==

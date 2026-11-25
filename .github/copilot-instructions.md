@@ -1,0 +1,3 @@
+# AttoLang forge contributor instructions
+
+Follow [AGENTS.md](../AGENTS.md) and [full AOT / zero-GC directive](../docs/AOT_ZERO_GC_DYNAMISM.md). Sealed guest AOT cannot use runtime eval/class generation, arbitrary reflection or JIT/interpreter fallback. Generate proxy wrappers/dispatch metadata at build time. Require explicit ownership and deterministic cleanup for actors, closures, suspended task frames and hot-generation retirement; distinguish guest memory guarantees from host process GC. Add positive and negative `.atto` tests with real exact-head, stepful guest execution; zero-step jobs are NOT_EXECUTED. Preserve security and Rust-only tools.

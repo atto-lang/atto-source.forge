@@ -5,7 +5,7 @@ This C++20 POSIX component is not a hostile guest sandbox. It supports adopting 
 ## Security contract
 
 - start_tenant mints a host-only TenantAuthority; a guest-provided tenant ID must never grant authority. Each retired tenant restart gets a new generation. Guest handles contain only logical, non-FD IDs; every operation additionally authenticates the host-owned TenantAuthority and socket rights.
-- adopt_connected_tcp rejects foreign/stale authorities, invalid rights, quotas, non-TCP descriptor families, duplicate exact descriptor IDs and unconnected sockets. FD ownership transfers to the broker only on success. A trusted caller must prohibit dup() aliases (not detectable portably), verify actual peer/protocol/IP/port/DNS/TLS and enforce endpoint permission before admission. This initial adapter does not independently prove endpoint allowlisting.
+- adopt_connected_tcp rejects foreign/stale authorities, invalid rights, quotas, non-TCP descriptor families, duplicate descriptors and aliases with the same live device/inode identity, non-TCP protocols and unconnected sockets. FD ownership transfers to the broker only on success. Admission fails closed when SO_PROTOCOL or usable socket identity is unavailable. A trusted caller must retain exclusive control of the descriptor lifecycle, verify actual peer/IP/port/DNS/TLS and enforce endpoint permission before admission. This initial adapter does not independently prove endpoint allowlisting.
 - Reads and writes use nonblocking socket operations, bounded requests (64 KiB), per-tenant charged bytes and rights checks. Descriptor close-on-exec and SIGPIPE protection are enabled. Close/retirement serialize against I/O and reject stale handles.
 - Input/output spans are trusted-host memory. A future guest call gate must validate bounded linear memory and copy data. Never pass raw guest pointers, guest-provided TenantAuthority or OS FDs directly to this API.
 - No host reactor/cancellation queue, connection policy, untrusted code confinement or actual compiled Atto actor integration exists. Untrusted in-process admission stays DENIED/UNSUPPORTED until independently verified.
@@ -16,7 +16,7 @@ This C++20 POSIX component is not a hostile guest sandbox. It supports adopting 
     cmake --build build --target socket_broker_v1_test
     ctest --test-dir build -R '^socket_broker_v1_test$' --output-on-failure
 
-The tests use real loopback TCP sockets to check read-only vs write-only tenants, cross-tenant denial, FD duplicate rejection, AF_UNIX denial, byte and handle quotas, nonblocking/CLOEXEC, physical close, generation fencing and retirement-versus-I/O races. These are HOST_ONLY tests; they do not certify real malicious guest execution.
+The tests use real loopback TCP sockets to check read-only vs write-only tenants, cross-tenant denial, FD duplicate and alias rejection, AF_UNIX denial, byte and handle quotas, nonblocking/CLOEXEC, physical close, generation fencing and retirement-versus-I/O races. These are HOST_ONLY tests; they do not certify real malicious guest execution.
 
 ## Overlap review
 

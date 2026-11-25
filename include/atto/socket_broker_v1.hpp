@@ -15,9 +15,11 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <netinet/in.h>
 #include <optional>
 #include <span>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 #include <unordered_map>
@@ -74,6 +76,8 @@ class SocketBroker final {
     struct SocketState final {
         std::shared_ptr<const TenantAuthority::Key> owner;
         int fd;
+        dev_t device;
+        ino_t inode;
         unsigned granted_rights;
     };
     std::mutex mutex_;
@@ -95,6 +99,15 @@ class SocketBroker final {
         socklen_t type_size = sizeof(type);
         if (::getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &type_size) != 0 ||
             type_size != sizeof(type) || type != SOCK_STREAM) return false;
+#if defined(SO_PROTOCOL)
+        int protocol = 0;
+        socklen_t protocol_size = sizeof(protocol);
+        if (::getsockopt(fd, SOL_SOCKET, SO_PROTOCOL, &protocol, &protocol_size) != 0 ||
+            protocol_size != sizeof(protocol) || protocol != IPPROTO_TCP) return false;
+#else
+        // The host reference must not infer TCP merely from SOCK_STREAM.
+        return false;
+#endif
         sockaddr_storage local{};
         sockaddr_storage peer{};
         socklen_t local_size = sizeof(local), peer_size = sizeof(peer);
@@ -191,16 +204,22 @@ public:
         if (tenant->open_sockets >= tenant->limits.max_sockets)
             return {SocketStatus::quota, {}};
         if (!valid_connected_tcp(fd)) return {SocketStatus::unsupported, {}};
-        // A host bug must not register the same descriptor under two tenants.
-        // Distinct dup() aliases must still be forbidden by host admission.
+        // Bind admission to the underlying socket object, not just its fd.
+        // Refuse platforms that cannot provide a usable socket identity.
+        struct stat identity{};
+        if (::fstat(fd, &identity) != 0 || !S_ISSOCK(identity.st_mode) ||
+            identity.st_ino == 0) return {SocketStatus::unsupported, {}};
         for (const auto& [id, socket] : sockets_) {
             (void)id;
-            if (socket.fd == fd) return {SocketStatus::denied, {}};
+            if (socket.fd == fd || (socket.device == identity.st_dev &&
+                                    socket.inode == identity.st_ino))
+                return {SocketStatus::denied, {}};
         }
         if (next_socket_id_ == UINT64_MAX || !configure_fd(fd))
             return {SocketStatus::io_error, {}};
         const std::uint64_t id = next_socket_id_++;
-        sockets_.emplace(id, SocketState{tenant->key, fd, granted_rights});
+        sockets_.emplace(id, SocketState{tenant->key, fd, identity.st_dev,
+                                         identity.st_ino, granted_rights});
         ++tenant->open_sockets;
         return {SocketStatus::ok, {id}};
     }

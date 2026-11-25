@@ -1,0 +1,1 @@
+pub define fnc main():int { return -9223372036854775808; }
