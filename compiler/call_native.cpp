@@ -37,9 +37,9 @@ bool boolean_kind(Kind k) {
 bool option_kind(Kind k) {
   return k==Kind::OptionSome || k==Kind::OptionNone || k==Kind::OptionCall;
 }
-bool result_kind(Kind k) { return k==Kind::ResultTrap || k==Kind::ResultOk; }
+bool result_kind(Kind k) { return k==Kind::ResultTrap || k==Kind::ResultOk || k==Kind::ResultCall; }
 bool match_kind(Kind k) { return k==Kind::OptionMatch || k==Kind::ResultMatch; }
-bool call_kind(Kind k) { return k==Kind::Call || k==Kind::OptionCall; }
+bool call_kind(Kind k) { return k==Kind::Call || k==Kind::OptionCall || k==Kind::ResultCall; }
 bool reserved_predicate_word(std::string_view s) {
   return s=="true" || s=="false" || s=="ifnot" || s=="unless" ||
          s=="eq" || s=="neq" || s=="fi" || s=="guard" || s=="end" ||
@@ -65,6 +65,17 @@ class Parser {
         node.callee=found->second;
         if (node.children.size()!=module_.functions.at(static_cast<std::size_t>(node.callee)).parameters.size())
           fail("function arity mismatch");
+      }
+    }
+    // Only direct call operands of trap may switch from scalar to Result.
+    // Other calls retain their syntactically expected type and are verified.
+    for(auto& fn:module_.functions) {
+      for(const auto& node:fn.nodes) {
+        if(node.kind!=Kind::ResultTrap)continue;
+        auto& operand=fn.nodes.at(static_cast<std::size_t>(node.children[0]));
+        if(operand.kind==Kind::Call &&
+           module_.functions.at(static_cast<std::size_t>(operand.callee)).returns_result_int)
+          operand.kind=Kind::ResultCall;
       }
     }
     verify(module_);
@@ -209,6 +220,15 @@ class Parser {
       expect("{");if(!take("^"))expect("return");
       current_->result=option_expr(0);
       expect(";");
+    } else if(take("Result")) {
+      expect("<");expect("int");expect(",");expect("Error");expect(">");
+      current_->returns_result_int=true;
+      expect("{");if(!take("^"))expect("return");
+      const int root=sum_expr(0);
+      auto& value=current_->nodes.at(static_cast<std::size_t>(root));
+      if(value.kind==Kind::OptionCall)value.kind=Kind::ResultCall;
+      current_->result=root;
+      expect(";");
     } else {
       expect("int");expect("{");
       current_->result=terminal_body(0);
@@ -275,9 +295,8 @@ class Parser {
     expect(")");
     return add(Kind::OptionCall,0,name,std::move(args));
   }
-  int option_match(std::size_t d) {
+  int sum_expr(std::size_t d) {
     depth(d);
-    expect("<");expect("int");expect(">");
     const bool trapped=take("trap")||take("trap!");
     int subject;
     if(trapped) {
@@ -300,11 +319,24 @@ class Parser {
       expect(")");
       subject=add(Kind::ResultOk,0,{}, {payload});
     } else subject=option_expr(d+1);
-    const bool result_family=result_kind(current_->nodes.at(static_cast<std::size_t>(subject)).kind);
+    return subject;
+  }
+  int option_match(std::size_t d) {
+    depth(d);
+    expect("<");expect("int");expect(">");
+    const int subject=sum_expr(d+1);
+    bool result_family=false;
     expect("over");
     int some=-1,none=-1;
     for(int arm=0;arm<2;++arm) {
       expect("on");
+      if(arm==0) {
+        result_family=token_.text=="Ok"||token_.text=="Err";
+        auto& value=current_->nodes.at(static_cast<std::size_t>(subject));
+        if(result_family&&value.kind==Kind::OptionCall)value.kind=Kind::ResultCall;
+        if(result_family?!result_kind(value.kind):!option_kind(value.kind))
+          fail("tagged match family mismatch");
+      }
       const bool is_some=take(result_family?"Ok":"Some");
       if(!is_some) expect(result_family?"Err":"None");
       if((is_some?some:none)>=0) fail(result_family?"duplicate Result match arm":"duplicate Option match arm");
@@ -570,7 +602,7 @@ struct Evaluator {
         return {false,static_cast<std::int64_t>(fault.status)};
       }
     }
-    if(n.kind==Kind::OptionCall) {
+    if(n.kind==Kind::OptionCall||n.kind==Kind::ResultCall) {
       std::vector<std::int64_t> vals;
       for(int arg:n.children)vals.push_back(visit(fn,arg,args,depth,frame));
       return evaluate_option(static_cast<std::size_t>(n.callee),vals,depth+1);
@@ -795,10 +827,10 @@ void verify(const Module& m) {
     const auto root_kind=fn.nodes[static_cast<std::size_t>(fn.result)].kind;
     if(fn.returns_option_int!=option_kind(root_kind))
       throw std::runtime_error("callable Option result type mismatch");
-    if(result_kind(root_kind))throw std::runtime_error("Result return ABI unsupported");
+    if(fn.returns_result_int!=result_kind(root_kind))throw std::runtime_error("callable Result type mismatch");
     if(boolean_kind(root_kind))
       throw std::runtime_error("callable int return cannot be Boolean");
-    if(static_cast<int>(fi)==m.entry && fn.returns_option_int)
+    if(static_cast<int>(fi)==m.entry && (fn.returns_option_int||fn.returns_result_int))
       throw std::runtime_error("native entry must return int");
     // This stage-0 AST must be an owned tree, not an arbitrary dataflow DAG.
     // Otherwise a node on an untaken if-branch could be reused without ever
@@ -816,7 +848,7 @@ void verify(const Module& m) {
          case Kind::And: case Kind::Or: case Kind::BooleanXor:
          case Kind::OptionSome: case Kind::OptionNone: case Kind::OptionCall:
          case Kind::OptionMatch: case Kind::OptionPayload: case Kind::Div:
-         case Kind::ResultTrap: case Kind::ResultMatch: case Kind::ResultOk: break;
+         case Kind::ResultTrap: case Kind::ResultMatch: case Kind::ResultOk: case Kind::ResultCall: break;
         default: throw std::runtime_error("unknown callable opcode");
       }
       if(!call_kind(n.kind) && !n.name.empty())
@@ -890,6 +922,8 @@ void verify(const Module& m) {
           throw std::runtime_error("callable target/name mismatch");
         if((n.kind==Kind::OptionCall)!=m.functions[static_cast<std::size_t>(n.callee)].returns_option_int)
           throw std::runtime_error("callable Option result type mismatch");
+        if((n.kind==Kind::ResultCall)!=m.functions[static_cast<std::size_t>(n.callee)].returns_result_int)
+          throw std::runtime_error("callable Result type mismatch");
       } else if(n.callee!=-1)throw std::runtime_error("unexpected callable target");
     }
     for(std::size_t i=0;i<fn.nodes.size();++i) {
