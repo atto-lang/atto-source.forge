@@ -34,7 +34,7 @@ bool boolean_kind(Kind k) {
 }
 bool reserved_predicate_word(std::string_view s) {
   return s=="true" || s=="false" || s=="ifnot" || s=="unless" ||
-         s=="eq" || s=="neq" || s=="fi";
+         s=="eq" || s=="neq" || s=="fi" || s=="guard" || s=="end";
 }
 
 class Parser {
@@ -174,12 +174,13 @@ class Parser {
     expect("(");
     if (token_.text!=")") {
       do {
+        const bool type_first=take("int");
         const std::string param=identifier();
         if (param=="int"||param=="if"||param=="then"||param=="else"||
             param=="return"||param=="fnc"||
             std::find(current_->parameters.begin(),current_->parameters.end(),param)
             !=current_->parameters.end())fail("invalid or duplicate parameter");
-        expect(":");expect("int");
+        if(!type_first) { expect(":");expect("int"); }
         current_->parameters.push_back(param);
         if(current_->parameters.size()>4)fail("function parameter budget exceeded");
         if (!take(","))break;
@@ -187,11 +188,40 @@ class Parser {
     }
     expect(")");
     if(!take(":"))expect("->");
-    expect("int");expect("{");if (!take("^")) expect("return");
-    current_->result=expr(0);
-    require_integer(current_->result);
+    expect("int");expect("{");
+    current_->result=terminal_body(0);
+    expect("}");
+  }
+  // This scalar subset has no local state, effects, or general statements.
+  // Every admitted guard failure body is exactly one explicit typed return.
+  // Reuse the verified lazy If tree: true continues, false returns early.
+  int terminal_body(std::size_t d) {
+    depth(d);
+    if (!take("guard")) return terminal_return(d+1);
+    int condition=logical_or(d+1);
+    require_boolean(condition);
+    while (take(",")) {
+      const int next_check=logical_or(d+1);
+      require_boolean(next_check);
+      condition=add(Kind::And,0,{}, {condition,next_check});
+    }
+    const bool braced=take("{");
+    if(!braced) expect("else");
+    if(token_.text!="return" && token_.text!="^")
+      fail("guard_failure_requires_return: scalar guard failure must return from callable");
+    const int failure=terminal_return(d+1);
+    expect(braced?"}":"end");
+    const int continuation=terminal_body(d+1);
+    return add(Kind::If,0,{}, {condition,continuation,failure});
+  }
+  int terminal_return(std::size_t d) {
+    depth(d);
+    if (!take("^")) expect("return");
+    const int value=expr(d+1);
+    require_integer(value);
     if (token_.text=="^") fail("single caret is only a return statement; integer XOR uses ^^");
-    expect(";");expect("}");
+    expect(";");
+    return value;
   }
   void depth(std::size_t n) {if(n>kMaxDepth)fail("callable expression nesting too deep");}
   int expr(std::size_t d) {
