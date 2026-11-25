@@ -187,6 +187,11 @@ int main(int argc,char **argv) {
  }
  if (checked) {
   const struct result_pair result=oresforge_entry_checked(ARGS);
+  /* Repeated invocation in the same process must not retain error state. */
+  for (int iteration=0; iteration<8; ++iteration) {
+   const struct result_pair again=oresforge_entry_checked(ARGS);
+   if (again.value!=result.value || again.status!=result.status) return 6;
+  }
   if(printf("%" PRId64 " %" PRIu64 "\n",result.value,result.status)<0)return 4;
   return fflush(stdout)==0?0:5;
  }
