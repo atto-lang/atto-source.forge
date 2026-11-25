@@ -13,7 +13,7 @@ namespace oresforge::calls {
 // legacy scalar IR; no misleading claims about the general Oreslang ABI.
 enum class Kind {
   Constant, Parameter, Add, Sub, Mul, Less, LessEqual, Greater,
-  GreaterEqual, Equal, NotEqual, If, Call, Boolean, Not, Ternary, And, Or, BooleanXor, Div, Trap
+  GreaterEqual, Equal, NotEqual, If, Call, Boolean, Not, Ternary, And, Or, BooleanXor, Div, Trap, ResultCall, BindResult, Local
 };
 // Provisional scalar native status ABI. Two INTEGER-class eightbytes on
 // SysV x86-64: value in RAX, error code in RDX. No heap allocation.
