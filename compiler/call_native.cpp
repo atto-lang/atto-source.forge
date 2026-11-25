@@ -86,7 +86,10 @@ class Parser {
       ++at_;
     } else if (c=='-' && at_<text_.size() && text_[at_]=='>') {
       ++at_;
-    } else if (std::string_view("()+-*{};:,<>=").find(c)==std::string_view::npos) {
+    } else if (c=='^' && at_<text_.size() && text_[at_]=='^') {
+      token_={text_.substr(begin,2),begin};
+      fail("FORGE_XOR_BACKEND_UNSUPPORTED: integer ^^ requires native bitwise lowering");
+    } else if (std::string_view("()+-*{};:,<>=^").find(c)==std::string_view::npos) {
       at_=begin;
       fail("invalid character");
     }
@@ -157,8 +160,9 @@ class Parser {
     }
     expect(")");
     if(!take(":"))expect("->");
-    expect("int");expect("{");expect("return");
+    expect("int");expect("{");if (!take("^")) expect("return");
     current_->result=expr(0);
+    if (token_.text=="^") fail("single caret is only a return statement; integer XOR uses ^^");
     expect(";");expect("}");
   }
   void depth(std::size_t n) {if(n>kMaxDepth)fail("callable expression nesting too deep");}

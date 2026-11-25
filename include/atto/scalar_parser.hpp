@@ -315,7 +315,7 @@ class Parser {
       if (out_.error != ParseError::none) return std::nullopt;
       if (!root) out_.trace_steps.emplace_back(std::nullopt);
     }
-    if (name("return")) {
+    if (name("return") || take(Kind::caret)) {
       const auto previous_size = out_.nodes.size();
       auto value = expr(0);
       if (!value || !take(Kind::semicolon)) {

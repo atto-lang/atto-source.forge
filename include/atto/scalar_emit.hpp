@@ -59,6 +59,10 @@ struct SpanScope {
     } else {
       if (n.left >= i || (n.op != Op::neg && n.op != Op::bnot && n.right >= i)) return std::nullopt;
       std::string call;
+      if (n.op == Op::shl || n.op == Op::lshr || n.op == Op::ashr) {
+        code += "  if (*" + var(n.right) + " < 0 || *" + var(n.right) +
+            " > 63) { std::fputs(\"E_SHIFT_DISTANCE\\n\", stderr); return 72; }\n";
+      }
       switch (n.op) {
         case Op::bnot:
           call = "bit_not(*" + var(n.left) + ")";
