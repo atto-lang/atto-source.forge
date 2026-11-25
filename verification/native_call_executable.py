@@ -15,7 +15,35 @@ import sys
 import tempfile
 import hashlib
 
+OPTION_CASES = (
+    ("option-some", "fnc main(a:int):Option<int>{return Some(a);}",
+     ((0,0,1),(-9223372036854775808,-9223372036854775808,1),(9223372036854775807,9223372036854775807,1))),
+    ("option-none", "fnc main():Option<int>{return None;}", ((0,0),)),
+    ("option-choice", "fnc main(a:int):Option<int>{return if a eq 0 then None else Some(a) fi;}",
+     ((0,0,0),(-7,-7,1),(42,42,1))),
+    ("option-forward", "fnc main(a:int):Option<int>{return find(a);} fnc find(a:int):Option<int>{return if a neq 5 then Some(a) else None fi;}",
+     ((0,0,1),(5,0,0),(-5,-5,1))),
+    ("option-multiframe", "fnc find(a:int):Option<int>{return Some(a);} fnc wrap(a:int):Option<int>{return find(a);} fnc main(a:int):Option<int>{return if a<0 then None else wrap(a) fi;}",
+     ((-1,0,0),(0,0,1),(42,42,1))),
+)
+OPTION_INVALID = (
+    ("option-int", "fnc main():Option<int>{return 42;}", "Option return requires"),
+    ("option-bool", "fnc main():Option<int>{return Some(true);}", "Boolean is not an int"),
+    ("option-effect", "fnc main(a:int):Option<int>{return Some(a+1);}", "Option body requires infallible"),
+    ("option-condition-effect", "fnc main(a:int):Option<int>{return if a+1 eq 0 then None else Some(a) fi;}", "Option body requires infallible"),
+    ("option-int-condition", "fnc main():Option<int>{return if 1 then None else Some(0) fi;}", "condition_not_bool"),
+    ("option-to-int", "fnc find():Option<int>{return None;} fnc main():int{return find();}", "scalar Option call type mismatch"),
+    ("option-from-int", "fnc find():int{return 0;} fnc main():Option<int>{return find();}", "scalar Option call type mismatch"),
+    ("option-trap-nesting", "fnc find():Option<int>{return None;} fnc main():Result<int,Error>{return trap! find();}", "scalar Option call type mismatch"),
+    ("option-none-call", "fnc main():Option<int>{return None();}", "unexpected token"),
+    ("option-nested", "fnc main():Option<Option<int>>{return None;}", "unexpected token"),
+)
 RESULT_CASES = (
+    ("result-ok", "fnc main(a:int):Result<int,Error>{return Ok(a);}", ((0,0,0),(-7,-7,0),(42,42,0))),
+    ("result-ok-propagate", "fnc divide(a:int,b:int):Result<int,Error>{return trap! (a/b);} fnc main(a:int,b:int):Result<int,Error>{val q=divide(a,b)?; return Ok(q);}",
+     ((84,2,42,0),(1,0,0,65538),(-9223372036854775808,-1,0,65537))),
+    ("result-ok-flat", "fnc f(a:int):Result<int,Error>{return Ok(a);} fnc main(a:int):Result<int,Error>{return trap! f(a);}", ((0,0,0),(42,42,0))),
+
     ("result-helper-propagate", "fnc divide(int a,int b):Result<int,Error>{return trap! (a/b);} fnc main(int a,int b):Result<int,Error>{val q=divide(a,b)?; return trap! (q*2);}",
      ((84,2,84,0),(-5,2,-4,0),(42,0,0,65538),(-9223372036854775808,-1,0,65537),(9223372036854775807,1,0,65537))),
     ("result-forward-call", "fnc main(a:int,b:int):Result<int,Error>{return divide(a,b);} fnc divide(a:int,b:int):Result<int,Error>{return trap (a/b);}",
@@ -43,6 +71,10 @@ RESULT_CASES = (
      ((0,0,65538),(1,0,65537))),
 )
 RESULT_INVALID = (
+    ("ok-effect", "fnc main(a:int):Result<int,Error>{return Ok(a+1);}", "constructor requires infallible int payload"),
+    ("ok-bool", "fnc main():Result<int,Error>{return Ok(false);}", "Boolean is not an int"),
+    ("err-numeric", "fnc main():Result<int,Error>{return Err(65538);}", "Err requires typed Error payload lowering"),
+
     ("trap-bool", "fnc main():Result<int,Error>{return trap! true;}", "Boolean is not an int"),
     ("trap-int-return", "fnc main():int{return trap! 42;}", "reserved predicate word"),
     ("result-unwrapped", "fnc main():Result<int,Error>{return 42;}", "requires explicit trap"),
@@ -253,7 +285,7 @@ def execute(args,cwd,timeout=10):
 def require(value,message):
     if not value:raise RuntimeError(message)
 
-def build(compiler,cc,root,label,source,param_count,result_entry=False):
+def build(compiler,cc,root,label,source,param_count,result_entry=False,option_entry=False):
     file=root/"entry.atto"
     file.write_text(source+"\n",encoding="utf8")
     emit=execute([compiler,"emit-call-asm","x86_64",str(file)],root)
@@ -268,13 +300,16 @@ def build(compiler,cc,root,label,source,param_count,result_entry=False):
     signature=", ".join("int64_t" for _ in range(param_count)) or "void"
     arguments=", ".join("v[%d]"%i for i in range(param_count))
     driver=DRIVER
-    if result_entry:
-        require(".globl oresforge_entry_result\n" in asm and
+    if result_entry or option_entry:
+        symbol="oresforge_entry_option" if option_entry else "oresforge_entry_result"
+        other="oresforge_entry_result" if option_entry else "oresforge_entry_option"
+        require(".globl "+symbol+"\n" in asm and
+                ".globl "+other+"\n" not in asm and
                 ".globl oresforge_entry\n" not in asm and
                 ".globl oresforge_entry_checked\n" not in asm,
-                "Result entry must not expose scalar ABI "+label)
+                "tagged entry must not expose an incompatible ABI "+label)
         driver=driver.replace("extern int64_t oresforge_entry(PARAMS);","")
-        driver=driver.replace("oresforge_entry_checked","oresforge_entry_result")
+        driver=driver.replace("oresforge_entry_checked",symbol)
         driver=driver.replace("const int64_t result=oresforge_entry(ARGS);","const int64_t result=0;")
     driver=driver.replace("PARAMS",signature).replace("COUNT",str(param_count)).replace("ARGS",arguments)
     (root/"driver.c").write_text(driver,encoding="ascii")
@@ -296,6 +331,30 @@ def main():
     positives=negatives=0
     with tempfile.TemporaryDirectory(prefix="oresforge-native-calls-") as tmp:
         root=Path(tmp)
+        for label,source,cases in OPTION_CASES:
+            count=len(cases[0])-2
+            file,exe,_=build(compiler,cc,root,label,source,count,option_entry=True)
+            for row in cases:
+                inp=row[:-2]
+                expected=(str(row[-2])+" "+str(row[-1])+"\n").encode()
+                host=execute([compiler,"run-option-calls",str(file),*map(str,inp)],root)
+                native=execute([str(exe),"--checked",*map(str,inp)],root)
+                require((host.returncode,host.stdout,host.stderr)==(0,expected,b""),
+                        "scalar Option host mismatch "+label)
+                require((native.returncode,native.stdout,native.stderr)==(0,expected,b""),
+                        "scalar Option native mismatch "+label)
+                for mode in ("run-calls","run-result-calls"):
+                    wrong=execute([compiler,mode,str(file),*map(str,inp)],root)
+                    require(wrong.returncode==1 and not wrong.stdout,
+                            "Option must not leak through wrong typed host API")
+                positives+=1
+        for label,source,diagnostic in OPTION_INVALID:
+            file=root/"option-invalid.atto"
+            file.write_text(source+"\n",encoding="utf8")
+            failure=execute([compiler,"emit-call-asm","x86_64",str(file)],root)
+            require(failure.returncode==1 and not failure.stdout and diagnostic.encode() in failure.stderr,
+                    "invalid Option emitted assembly "+label+": "+failure.stderr.decode(errors="replace"))
+            negatives+=1
         for label,source,cases in RESULT_CASES:
             count=len(cases[0])-2
             file,exe,_=build(compiler,cc,root,label,source,count,result_entry=True)
