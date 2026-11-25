@@ -30,6 +30,25 @@ bool valid_identifier(std::string_view name) {
          std::all_of(name.begin()+1,name.end(),
                      [](char c) { return letter(c)||digit(c); });
 }
+// The callable subset must not repurpose source-language keywords as ABI
+// symbols or argument names. Parse and verify share this one admission gate
+// so externally supplied Module IR cannot bypass the lexer/parser policy.
+bool valid_callable_name(std::string_view name) {
+  if (!valid_identifier(name)) return false;
+  constexpr std::string_view kReserved[] = {
+      "fnc", "define", "pub", "int", "return", "if", "then", "else",
+      "http", "serial", "true", "false"
+  };
+  for (const auto keyword : kReserved)
+    if (name == keyword) return false;
+  return true;
+}
+bool valid_function_name(std::string_view name) {
+  return valid_callable_name(name);
+}
+bool valid_parameter_name(std::string_view name) {
+  return valid_callable_name(name);
+}
 bool space(char c) { return c == ' ' || c == '\r' || c == '\n' || c == '\t' || c == '\v' || c == '\f'; }
 struct Token { std::string_view text; std::size_t offset=0; };
 
@@ -99,6 +118,12 @@ class Parser {
       fail("invalid character");
     }
     token_={text_.substr(begin,at_-begin),begin};
+    // The native-call profile has no trusted module graph, typed symbol table,
+    // or verified compiler-owned std module bindings. Reject imports at the
+    // token boundary, including inside unreachable declarations, instead of
+    // misreporting them as malformed scalar function definitions.
+    if (token_.text=="import")
+      fail("source imports require verified module graph lowering");
   }
   bool take(std::string_view s) {
     if (token_.text!=s) return false;
@@ -124,10 +149,18 @@ class Parser {
       if (take("define")) {if(defining)fail("duplicate define");defining=true;}
       else if (take("pub")) {if(public_)fail("duplicate pub");public_=true;}
     }
+    // This independent native-call frontend must reject the same HTTP actor
+    // forms as the scalar Forge parser, before any callable IR is produced.
+    if (token_.text=="http")
+      fail("HTTP_ACTOR_BACKEND_UNSUPPORTED: Forge native-call source has no HTTP actor scheduling or physical shutdown lowering");
+    if (take("serial")) {
+      if (token_.text=="http")
+        fail("HTTP_ACTOR_BACKEND_UNSUPPORTED: Forge native-call source has no HTTP actor scheduling or physical shutdown lowering");
+      fail("SERIAL_ACTOR_BACKEND_UNSUPPORTED: Forge native-call compiler has no source serial actor lowering");
+    }
     expect("fnc");
     const std::string name=identifier();
-    if (name=="int"||name=="return"||name=="if"||name=="else"||name=="then")
-      fail("reserved function name");
+    if (!valid_function_name(name)) fail("reserved function name");
     if (names_.contains(name))fail("duplicate function");
     if (module_.functions.size()>=kMaxFunctions)fail("function count budget exceeded");
     const int index=static_cast<int>(module_.functions.size());
@@ -138,8 +171,7 @@ class Parser {
     if (token_.text!=")") {
       do {
         const std::string param=identifier();
-        if (param=="int"||param=="if"||param=="then"||param=="else"||
-            param=="return"||param=="fnc"||
+        if (!valid_parameter_name(param) ||
             std::find(current_->parameters.begin(),current_->parameters.end(),param)
             !=current_->parameters.end())fail("invalid or duplicate parameter");
         expect(":");expect("int");
@@ -322,6 +354,14 @@ struct Native {
   }
   void emit_node(const Function& fn,int index) {
     const auto& n=fn.nodes.at(static_cast<std::size_t>(index));
+    // The interpreter spends one unit before visiting each AST node. Native
+    // execution must enforce the same limit even for exponentially branching
+    // recursion. %r9 is a private in-module fuel register: all callable
+    // targets are locally emitted labels and use at most four SysV arguments.
+    // No external calls or user-controlled indirect branches are admitted.
+    out<<"  testq %r9, %r9\n"
+       <<"  je .Lores_budget\n"
+       <<"  decq %r9\n";
     if(n.kind==Kind::Constant) {
       out<<"  movabsq $"<<n.value<<", %rax\n";
     } else if(n.kind==Kind::Parameter) {
@@ -374,6 +414,7 @@ struct Native {
   std::string build() {
     out<<".text\n.globl oresforge_entry\n.type oresforge_entry, @function\n"
        <<"oresforge_entry:\n  xorl %r8d, %r8d\n"
+       <<"  movq $"<<kMaxEvalSteps<<", %r9\n"
        <<"  jmp .Lores_fn_"<<program.entry<<"\n";
     for (std::size_t i=0;i<program.functions.size();++i) {
       const auto& fn=program.functions[i];
@@ -392,6 +433,7 @@ struct Native {
     }
     out<<".Lores_depth:\n  ud2\n"
        <<".Lores_overflow:\n  ud2\n"
+       <<".Lores_budget:\n  ud2\n"
        <<".size oresforge_entry, .-oresforge_entry\n"
        <<".section .note.GNU-stack,\"\",@progbits\n";
     return out.str();
@@ -411,12 +453,12 @@ void verify(const Module& m) {
   std::size_t total=0;
   for (std::size_t fi=0;fi<m.functions.size();++fi) {
     const auto& fn=m.functions[fi];
-    if(!valid_identifier(fn.name) || !names.emplace(fn.name,fi).second)
+    if(!valid_function_name(fn.name) || !names.emplace(fn.name,fi).second)
       throw std::runtime_error("duplicate or invalid function");
     if(fn.parameters.size()>4)throw std::runtime_error("function parameter budget exceeded");
     std::map<std::string,bool> source_parameter_slots;
     for(const auto& parameter : fn.parameters) {
-      if(!valid_identifier(parameter) ||
+      if(!valid_parameter_name(parameter) ||
          !source_parameter_slots.emplace(parameter,true).second)
         throw std::runtime_error("invalid or duplicate callable parameter");
     }
@@ -441,6 +483,10 @@ void verify(const Module& m) {
       }
       if(n.kind!=Kind::Call && !n.name.empty())
         throw std::runtime_error("unexpected callable symbol payload");
+      // The only meaningful numeric payloads are a Constant literal or a
+      // Parameter slot. Anything else is forged/unlowered IR, not authority.
+      if(n.kind!=Kind::Constant && n.kind!=Kind::Parameter && n.value!=0)
+        throw std::runtime_error("unexpected callable numeric payload");
       for(int arg:n.children) {
         if(arg<0 || static_cast<std::size_t>(arg)>=i)
           throw std::runtime_error("callable use before definition");
@@ -472,6 +518,10 @@ void verify(const Module& m) {
   }
   if(m.functions[static_cast<std::size_t>(m.entry)].name!="main")
     throw std::runtime_error("callable entry is not main");
+  // oresforge_entry is a C ABI zero-argument entrypoint. Accepting a
+  // parameterized main would read arbitrary incoming host register contents.
+  if(!m.functions[static_cast<std::size_t>(m.entry)].parameters.empty())
+    throw std::runtime_error("callable entry must have zero parameters");
 }
 std::int64_t interpret(const Module& m,std::span<const std::int64_t> args) {
   verify(m);

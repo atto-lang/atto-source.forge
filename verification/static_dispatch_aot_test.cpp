@@ -51,6 +51,14 @@ void verify_direct_aot(const std::string& source) {
   if(asmText.find("  call *")!=std::string::npos ||
      asmText.find("  jmp *")!=std::string::npos)
     throw std::runtime_error("closed scalar callable emitted indirect branch");
+  // Fuel must be initialized once per exported entry and decremented for
+  // every evaluated AST node, including work reached by recursive direct calls.
+  // Without this, bounded call depth still permits exponential native work.
+  if(asmText.find("  movq $200000, %r9\n")==std::string::npos ||
+     asmText.find("  testq %r9, %r9\n  je .Lores_budget\n  decq %r9\n")
+       ==std::string::npos ||
+     asmText.find(".Lores_budget:\n  ud2\n")==std::string::npos)
+    throw std::runtime_error("native callable execution-fuel budget missing");
 
   {
     Module bad=admitted;
@@ -79,6 +87,25 @@ void verify_direct_aot(const std::string& source) {
     bad.functions[0].parameters.push_back("n");
     reject([&]{oresforge::calls::verify(bad);},"invalid or duplicate callable parameter");
   }
+  {
+    Module bad=admitted;
+    bad.entry=0; // entry index is not authority to execute an arbitrary function
+    reject([&]{oresforge::calls::verify(bad);},"callable entry is not main");
+    reject([&]{(void)oresforge::calls::emit_asm(bad,oresforge::Arch::X86_64);},
+           "callable entry is not main");
+  }
+  {
+    Module bad=admitted;
+    inc_call(bad).name="twice"; // same valid symbol but wrong compiler-owned slot
+    reject([&]{oresforge::calls::verify(bad);},"callable target/name mismatch");
+  }
+  {
+    Module bad=admitted;
+    auto& call=inc_call(bad);
+    const int shared=call.children.front();
+    call.children.push_back(shared); // shared AST node + invalid arity
+    reject([&]{oresforge::calls::verify(bad);},"callable AST shared node");
+  }
   reject([]{(void)oresforge::calls::parse("fnc main():int{return unknown();}");},
          "unknown function");
   reject([]{(void)oresforge::calls::parse(
@@ -87,8 +114,88 @@ void verify_direct_aot(const std::string& source) {
   reject([]{(void)oresforge::calls::parse(
       "fnc main():int{return 42;}fnc main():int{return 1;}");},
          "duplicate function");
+  // The exported C ABI symbol oresforge_entry() has zero parameters.
+  // A parameterized main must be rejected in both parser and forged IR.
+  reject([]{(void)oresforge::calls::parse("fnc main(x:int):int{return x;}");},
+         "callable entry must have zero parameters");
+  {
+    Module bad=admitted;
+    bad.functions[static_cast<std::size_t>(bad.entry)].parameters.push_back("forged");
+    reject([&]{oresforge::calls::verify(bad);},
+           "callable entry must have zero parameters");
+    reject([&]{(void)oresforge::calls::emit_asm(bad,oresforge::Arch::X86_64);},
+           "callable entry must have zero parameters");
+  }
+  // These strings are lexically valid but source-reserved. Forged Module
+  // objects must never bypass source admission by supplying them directly.
+  {
+    Module bad=admitted;
+    bad.functions[0].name="int";
+    reject([&]{oresforge::calls::verify(bad);},"duplicate or invalid function");
+  }
+  {
+    Module bad=admitted;
+    bad.functions[0].parameters[0]="return";
+    reject([&]{oresforge::calls::verify(bad);},
+           "invalid or duplicate callable parameter");
+  }
+  {
+    Module bad=admitted;
+    inc_call(bad).value=42;
+    reject([&]{oresforge::calls::verify(bad);},
+           "unexpected callable numeric payload");
+    reject([&]{(void)oresforge::calls::emit_asm(bad,oresforge::Arch::X86_64);},
+           "unexpected callable numeric payload");
+  }
+  {
+    Module bad=admitted;
+    auto& inc=bad.functions[0];
+    inc.nodes[static_cast<std::size_t>(inc.result)].value=42;
+    reject([&]{oresforge::calls::verify(bad);},
+           "unexpected callable numeric payload");
+  }
+  reject([]{(void)oresforge::calls::parse(
+      "fnc int():int{return 42;}fnc main():int{return 0;}");
+  },"reserved function name");
+  reject([]{(void)oresforge::calls::parse(
+      "fnc helper(return:int):int{return 42;}fnc main():int{return 0;}");
+  },"invalid or duplicate parameter");
+  // Twelve source keywords must be rejected identically in source parsing
+  // and the public verifier (which also accepts externally constructed IR).
+  // This yields 4 independently checked rejection paths per keyword.
+  for (const std::string_view word : {
+         "fnc", "define", "pub", "int", "return", "if", "then", "else",
+         "http", "serial", "true", "false"}) {
+    const std::string symbol(word);
+    reject([&]{(void)oresforge::calls::parse(
+        "fnc "+symbol+"():int{return 42;}fnc main():int{return 0;}");
+    },"reserved function name");
+    reject([&]{(void)oresforge::calls::parse(
+        "fnc helper("+symbol+":int):int{return 42;}fnc main():int{return 0;}");
+    },"invalid or duplicate parameter");
+    {
+      Module forged=admitted;
+      forged.functions[0].name=symbol;
+      reject([&]{oresforge::calls::verify(forged);},
+             "duplicate or invalid function");
+    }
+    {
+      Module forged=admitted;
+      forged.functions[0].parameters[0]=symbol;
+      reject([&]{oresforge::calls::verify(forged);},
+             "invalid or duplicate callable parameter");
+    }
+  }
+  // Prefixes of reserved tokens remain legal, preventing overbroad bans.
+  const auto names=oresforge::calls::parse(
+      "fnc fnc_helper(http_flag:int):int{return http_flag;}"
+      "fnc main():int{return fnc_helper(42);}");
+  if (oresforge::calls::interpret(names,std::span<const std::int64_t>{})!=42)
+    throw std::runtime_error("valid identifier prefixes were rejected");
+  std::cout<<"FORGE_STATIC_DISPATCH_AOT_RESERVED_KEYWORDS|rejections=48|"
+              "prefix_control=42\n";
   std::cout<<"FORGE_STATIC_DISPATCH_AOT_SOURCE_PROOF|functions=3|direct_calls=2|"
-              "interpreter=42|negative_ir_cases=8\n";
+              "interpreter=42|negative_source_ir_cases=19\n";
 }
 }
 
@@ -101,10 +208,30 @@ int main(int argc,char** argv) {
     const std::string source(std::istreambuf_iterator<char>{in},
                              std::istreambuf_iterator<char>{});
     if(argc==3) {
-      if(std::string(argv[2])!="--asm")throw std::runtime_error("invalid output mode");
+      const std::string mode(argv[2]);
       const auto verified=oresforge::calls::parse(source);
-      std::cout<<oresforge::calls::emit_asm(verified,oresforge::Arch::X86_64);
-      return 0;
+      if(mode=="--check-42") {
+        // Independent host interpreter oracle for the same source that the
+        // native guest script later assembles, links, and actually executes.
+        if(oresforge::calls::interpret(
+             verified,std::span<const std::int64_t>{})!=42)
+          throw std::runtime_error("callable guest oracle expected exactly 42");
+        const auto native=oresforge::calls::emit_asm(
+            verified,oresforge::Arch::X86_64);
+        if(native.find("  call .Lores_fn_")==std::string::npos ||
+           native.find("  call *")!=std::string::npos ||
+           native.find("  jmp *")!=std::string::npos)
+          throw std::runtime_error("native callable dispatch must be direct");
+        std::cout<<"FORGE_STAGE0_NATIVE_CALL_ORACLE|value=42|functions="
+                 <<verified.functions.size()<<'\n';
+        return 0;
+      }
+      if(mode=="--asm") {
+        std::cout<<oresforge::calls::emit_asm(
+            verified,oresforge::Arch::X86_64);
+        return 0;
+      }
+      throw std::runtime_error("invalid output mode");
     }
     verify_direct_aot(source);
     return 0;

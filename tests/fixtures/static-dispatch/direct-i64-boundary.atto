@@ -1,0 +1,4 @@
+// Arithmetic at signed i64 boundaries must not overflow during direct dispatch.
+fnc maximum():int{return 9223372036854775807;}
+fnc minimum():int{return -9223372036854775808;}
+fnc main():int{return maximum()+minimum()+43;}

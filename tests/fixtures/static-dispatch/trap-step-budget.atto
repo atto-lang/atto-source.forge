@@ -1,0 +1,5 @@
+// The same branching function as direct-step-budget-boundary exceeds
+// 200000 AST visits with grow(21), while recursion stays far below 128
+// frames and all values fit signed i64. Only the fuel gate should trap.
+fnc grow(n:int):int{return if n<=1 then 1 else grow(n-1)+grow(n-2);}
+fnc main():int{return grow(21);}
