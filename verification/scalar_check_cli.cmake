@@ -29,6 +29,6 @@ endfunction()
 
 assert_scalar_check("${VALID}" 0 "")
 assert_scalar_check("${OVERFLOW}" 1 "i64 add overflow")
-assert_scalar_check("${UNSUPPORTED}" 1 "division requires float result lowering")
+assert_scalar_check("${UNSUPPORTED}" 1 "FORGE_CHECKED_DIVISION_BACKEND_UNSUPPORTED")
 assert_scalar_check("${VALID}.missing" 1 "cannot open source")
 message(STATUS "FORGE_SCALAR_CHECK_CLI_PASS positive=1 negative=3")
