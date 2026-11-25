@@ -107,6 +107,12 @@ POSITIVE = (
      ((84,2,0,42),(84,2,7,49))),
     ("option-lazy-divide", "fnc main(a:int):int{return match<int> None over on Some(n):int -> n/a, on None:int -> 42, end;}",
      ((0,42),(1,42))),
+    ("trap-scalar", "fnc main(a:int):int{return match<int> trap! (84/a) over on Ok(n):int -> n, on Err():int -> 7, end;}", ((2,42),(0,7),(-2,-42))),
+    ("trap-callee", "fnc div(a:int):int{return 84/a;} fnc main(a:int):int{return match<int> trap div(a) over on Err():int -> 7, on Ok(n):int -> n, end;}", ((2,42),(0,7))),
+    ("trap-overflow", "fnc main(a:int):int{return match<int> trap! (9223372036854775807+a) over on Ok(n):int -> n, on Err():int -> 42, end;}", ((0,9223372036854775807),(1,42))),
+    ("trap-ok-passthrough", "fnc main(a:int):int{return match<int> trap Ok(a) over on Ok(n):int -> n, on Err():int -> 7, end;}", ((42,42),(0,0))),
+    ("trap-no-stale-status", "fnc main(a:int):int{return (match<int> trap! (84/a) over on Ok(n):int -> n, on Err():int -> 41, end)+1;}", ((0,42),(2,43))),
+    ("trap-nested", "fnc main(a:int):int{return match<int> trap! (match<int> trap! (84/a) over on Ok(n):int -> n, on Err():int -> 42, end) over on Ok(m):int -> m, on Err():int -> 7, end;}", ((0,42),(2,42))),
     ("no-args", "fnc main():int{return 42;}", ((42,),)),
 )
 # Exact shared Git blobs, including the final newline added by build().
@@ -142,6 +148,7 @@ TRAPS = (
      (1,), "i64 add overflow"),
     ("bool-xor-left-before-right", "fnc main(a:int):int{return Xor(9223372036854775807+a eq 0,9223372036854775807*a*2 eq 0) ? 42 : 7;}",
      (1,), "i64 add overflow"),
+    ("trap-depth-bypass", "fnc forever(a:int):int{return forever(a);} fnc main(a:int):int{return match<int> trap! forever(a) over on Ok(n):int -> n, on Err():int -> 42, end;}", (1,), "call depth exceeded"),
     ("unbounded-recursion", "fnc always(n:int):int{return always(n);}"
      " fnc main(n:int):int{return always(n);}",
      (1,), "call depth exceeded"),
@@ -175,6 +182,9 @@ INVALID = (
     ("option-duplicate", "fnc main():int{return match<int> None over on None:int -> 1, on None:int -> 2, end;}", "duplicate Option match arm"),
     ("option-payload-outside-arm", "fnc main():int{return match<int> Some(42) over on Some(n):int -> n, on None:int -> n, end;}", "unknown parameter"),
     ("option-payload-not-callable", "fnc main():int{return match<int> Some(42) over on Some(n):int -> n(), on None:int -> 0, end;}", "Option payload is not callable"),
+    ("trap-error-binding", "fnc main():int{return match<int> trap! (1/0) over on Ok(n):int -> n, on Err(e):int -> 42, end;}", "guest Error object binding is unsupported"),
+    ("trap-option-rejection", "fnc v():Option<int>{return None;} fnc main():int{return match<int> trap v() over on Ok(n):int -> n, on Err():int -> 42, end;}", "callable Option result type mismatch"),
+    ("trap-bool-rejection", "fnc main():int{return match<int> trap true over on Ok(n):int -> n, on Err():int -> 42, end;}", "Boolean is not an int"),
     ("integer-condition", "fnc main():int{return if 1 then 2 else 3;}", "condition_not_bool"),
     ("integer-ternary", "fnc main():int{return 1 ? 2 : 3;}", "condition_not_bool"),
     ("integer-unless", "fnc main():int{return unless 1 then 2 else 3 fi;}", "condition_not_bool"),
