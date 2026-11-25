@@ -1,5 +1,5 @@
 #pragma once
-// Restricted native Atto scalar parser: one main() with one return expression.
+// Restricted native Atto scalar parser: one main() with a scalar return.
 #include "atto/scalar_lexer.hpp"
 #include "atto/decimal_i64.hpp"
 #include <cstdint>
@@ -18,7 +18,7 @@ struct Node {
   i64 value = 0;
 };
 enum class ParseError {
-  none, lexical, syntax, literal_out_of_range, depth_limit, node_limit
+  none, lexical, syntax, literal_out_of_range, depth_limit, node_limit, telemetry
 };
 // Stable sanitized diagnostics; never echo user source bytes.
 [[nodiscard]] constexpr std::string_view parse_error_name(ParseError error) noexcept {
@@ -29,6 +29,7 @@ enum class ParseError {
     case ParseError::literal_out_of_range: return "E_PARSE_RANGE";
     case ParseError::depth_limit: return "E_PARSE_DEPTH";
     case ParseError::node_limit: return "E_PARSE_NODES";
+    case ParseError::telemetry: return "E_TELEMETRY_SCOPE";
   }
   return "E_PARSE_UNKNOWN";
 }
@@ -38,12 +39,24 @@ struct Parsed {
   std::size_t root = 0;
   ParseError error = ParseError::none;
   std::size_t error_offset = 0;
+  // Named entries open a scope. Empty entries close the innermost scope.
+  // Remaining scopes close with the terminal scalar result or checked error.
+  std::vector<std::optional<std::string>> trace_steps;
   [[nodiscard]] bool ok() const noexcept {
     return error == ParseError::none && !nodes.empty() && root < nodes.size();
   }
 };
 inline constexpr std::size_t max_nodes = 128;
 inline constexpr int max_parse_depth = 24;
+inline constexpr std::size_t max_trace_depth = 16;
+
+[[nodiscard]] inline bool valid_operation(std::string_view operation) {
+  if (operation.empty() || operation.size() > 256) return false;
+  for (unsigned char byte : operation) {
+    if (byte < 32 || byte > 126 || byte == '"' || byte == '\\') return false;
+  }
+  return true;
+}
 
 // Verify all untrusted or externally constructed ASTs before evaluation or
 // code emission. A valid postorder AST has the root as its final node,
@@ -51,6 +64,16 @@ inline constexpr int max_parse_depth = 24;
 [[nodiscard]] inline bool validate_ast(const Parsed& p) {
   if (!p.ok() || p.nodes.size() > max_nodes ||
       p.root != p.nodes.size() - 1) return false;
+  if (p.trace_steps.size() > max_tokens) return false;
+  std::size_t trace_depth = 0;
+  for (const auto& operation : p.trace_steps) {
+    if (operation) {
+      if (!valid_operation(*operation) || ++trace_depth > max_trace_depth) return false;
+    } else {
+      if (trace_depth == 0) return false;
+      --trace_depth;
+    }
+  }
   std::vector<unsigned char> reachable(p.nodes.size(), 0);
   std::vector<std::size_t> pending{p.root};
   while (!pending.empty()) {
@@ -257,6 +280,59 @@ class Parser {
     fail(ParseError::syntax);
     return std::nullopt;
   }
+  [[nodiscard]] std::optional<std::size_t> body(std::vector<std::string_view>& aliases) {
+    std::optional<std::size_t> root;
+    while (name("using")) {
+      if (root || aliases.size() == max_trace_depth ||
+          !name("telemetry") || !take(Kind::dot) || !name("span") ||
+          !take(Kind::lparen) || current().kind != Kind::quoted) {
+        fail(ParseError::telemetry);
+        return std::nullopt;
+      }
+      const auto operation = text().substr(1, text().size() - 2);
+      ++pos_;
+      if (!valid_operation(operation) || !take(Kind::rparen) ||
+          !name("as") || current().kind != Kind::name) {
+        fail(ParseError::telemetry);
+        return std::nullopt;
+      }
+      const auto alias = text();
+      ++pos_;
+      if (alias == "_" || alias == "self" || !take(Kind::lbrace)) {
+        fail(ParseError::telemetry);
+        return std::nullopt;
+      }
+      for (const auto& active_alias : aliases) {
+        if (active_alias == alias) {
+          fail(ParseError::telemetry);
+          return std::nullopt;
+        }
+      }
+      out_.trace_steps.emplace_back(operation);
+      aliases.push_back(alias);
+      root = body(aliases);
+      aliases.pop_back();
+      if (out_.error != ParseError::none) return std::nullopt;
+      if (!root) out_.trace_steps.emplace_back(std::nullopt);
+    }
+    if (name("return")) {
+      const auto previous_size = out_.nodes.size();
+      auto value = expr(0);
+      if (!value || !take(Kind::semicolon)) {
+        fail(ParseError::syntax);
+        return std::nullopt;
+      }
+      if (root) {
+        // Parse the unreachable fallback after a terminal scope, then
+        // discard those unreachable scalar nodes.
+        out_.nodes.resize(previous_size);
+      } else {
+        root = value;
+      }
+    }
+    if (!take(Kind::rbrace)) fail(ParseError::syntax);
+    return root;
+  }
 public:
   Parser(std::string_view source, Lexed lexed)
       : source_(source), tokens_(std::move(lexed.tokens)) {
@@ -284,14 +360,13 @@ public:
         signature_ok = scalar_return_type();
       }
     }
-    if (!signature_ok || !take(Kind::lbrace) || !name("return")) {
+    if (!signature_ok || !take(Kind::lbrace)) {
       fail(ParseError::syntax);
       return std::move(out_);
     }
-    auto root = expr(0);
-    if (!root) return std::move(out_);
-    if (!take(Kind::semicolon) || !take(Kind::rbrace) ||
-        current().kind != Kind::end) {
+    std::vector<std::string_view> aliases;
+    auto root = body(aliases);
+    if (!root || current().kind != Kind::end) {
       fail(ParseError::syntax);
       return std::move(out_);
     }

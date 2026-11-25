@@ -17,7 +17,7 @@ function(verify_guest fixture want_rc want_out want_err)
     message(FATAL_ERROR "${fixture}: frontend failed: ${rc}: ${err}")
   endif()
   execute_process(COMMAND "${CXX}" -std=c++20 -Wall -Wextra -Werror
-    ${guest_flags} "-I${ROOT}/include" "${cpp}" -o "${binary}"
+    ${guest_flags} "-I${ROOT}/include" "${cpp}" ${ARGN} -o "${binary}"
     RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
   if(NOT "${rc}" STREQUAL "0")
     message(FATAL_ERROR "${fixture}: generated C++ build failed: ${err}")
@@ -34,6 +34,15 @@ verify_guest(arithmetic "0" "34\n" "")
 verify_guest(overflow "70" "" "E_OVERFLOW\n")
 verify_guest(divzero "71" "" "E_DIVZERO\n")
 verify_guest(minimum "0" "-9223372036854775808\n" "")
+
+set(scope_host "${ROOT}/tests/scalar_telemetry_runtime.cpp")
+unset(ENV{ATTO_TEST_SCOPE_COUNT})
+verify_guest(scoped-return "0" "42\n" "" "${scope_host}")
+set(ENV{ATTO_TEST_SCOPE_COUNT} 3)
+verify_guest(scoped-return "0" "42\n" "" "${scope_host}")
+set(ENV{ATTO_TEST_SCOPE_COUNT} 1)
+verify_guest(scoped-overflow "70" "" "E_OVERFLOW\n" "${scope_host}")
+unset(ENV{ATTO_TEST_SCOPE_COUNT})
 
 set(invalid "${OUT_DIR}/invalid.atto")
 set(stale "${OUT_DIR}/invalid.cpp")

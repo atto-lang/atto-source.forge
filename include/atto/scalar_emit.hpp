@@ -15,8 +15,39 @@ inline constexpr std::size_t max_emitted_bytes = 64 * 1024;
 #include <cstdint>
 #include <limits>
 #include <optional>
-int main() {
 )";
+  if (!p.trace_steps.empty()) {
+    code += R"(extern "C" std::uint64_t ores_native_telemetry_span_begin(const char*, std::uint64_t);
+extern "C" void ores_native_telemetry_span_end(std::uint64_t);
+namespace {
+struct SpanScope {
+  const std::uint64_t token;
+  ~SpanScope() { ores_native_telemetry_span_end(token); }
+};
+}
+)";
+  }
+  code += "int main() {\n";
+  std::size_t open_spans = 0;
+  if (!p.trace_steps.empty()) {
+    code += "  atto::forge::i64 answer = 0;\n";
+    for (const auto& operation : p.trace_steps) {
+      if (!operation) {
+        code += "  }\n";
+        --open_spans;
+        continue;
+      }
+      ++open_spans;
+      code += "  {\n  const SpanScope span{ores_native_telemetry_span_begin(\"";
+      constexpr char hex[] = "0123456789abcdef";
+      for (unsigned char byte : *operation) {
+        code += "\\x";
+        code += hex[byte >> 4];
+        code += hex[byte & 15];
+      }
+      code += "\", " + std::to_string(operation->size()) + ")};\n";
+    }
+  }
   auto var = [](std::size_t n) { return "v" + std::to_string(n); };
   for (std::size_t i = 0; i < p.nodes.size(); ++i) {
     const auto& n = p.nodes[i];
@@ -78,8 +109,14 @@ int main() {
     }
     if (code.size() > max_emitted_bytes) return std::nullopt;
   }
-  code += "  std::printf(\"%lld\\n\", static_cast<long long>(*" + var(p.root) +
-          "));\n  return 0;\n}\n";
+  if (p.trace_steps.empty()) {
+    code += "  std::printf(\"%lld\\n\", static_cast<long long>(*" + var(p.root) + "));\n";
+  } else {
+    code += "  answer = *" + var(p.root) + ";\n";
+    for (std::size_t i = 0; i < open_spans; ++i) code += "  }\n";
+    code += "  std::printf(\"%lld\\n\", static_cast<long long>(answer));\n";
+  }
+  code += "  return 0;\n}\n";
   if (code.size() > max_emitted_bytes) return std::nullopt;
   return code;
 }
