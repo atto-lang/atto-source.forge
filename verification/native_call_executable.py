@@ -16,6 +16,13 @@ import tempfile
 import hashlib
 
 POSITIVE = (
+    ("signed-division", "fnc main(a:int,b:int):int{return a/b;}",
+     ((5,2,2),(-5,2,-2),(5,-2,-2),(-5,-2,2),(9007199254740993,1,9007199254740993),
+      (-9223372036854775808,1,-9223372036854775808),(9223372036854775807,3,3074457345618258602))),
+    ("division-precedence", "fnc main(a:int):int{return 2+a/3*4;}", ((8,10),(-8,-6))),
+    ("division-lazy", "fnc main(a:int):int{return a eq 0 ? 42 : 84/a;}", ((0,42),(2,42),(-2,-42))),
+    ("division-third-argument", "fnc q(a:int,b:int,c:int):int{return a/b+c;} fnc main(a:int,b:int,c:int):int{return q(a,b,c);}",
+     ((84,2,7,49),(-5,2,42,40))),
     ("factorial", "fnc fact(n:int):int{return if n<=1 then 1 else n*fact(n-1);}"
      " fnc main(n:int):int{return fact(n);}",
      ((0,1),(1,1),(5,120),(10,3628800),(20,2432902008176640000))),
@@ -94,6 +101,12 @@ POSITIVE = (
      ((1,1),(2,2))),
     ("option-nested", "fnc main(a:int):int{return match<int> Some(a) over on Some(n):int -> (match<int> Some(n+1) over on Some(m):int -> m+n, on None:int -> 0, end), on None:int -> 7, end;}",
      ((20,41),(0,1))),
+    ("option-divide-payload", "fnc value(a:int,b:int):Option<int>{return Some(a/b);} fnc main(a:int,b:int):int{return match<int> value(a,b) over on Some(n):int -> n, on None:int -> 7, end;}",
+     ((84,2,42),(-5,2,-2),(0,2,0))),
+    ("option-tag-survives-return", "fnc value(a:int,b:int,c:int):Option<int>{return Some(a/b+c);} fnc main(a:int,b:int,c:int):int{return match<int> value(a,b,c) over on Some(n):int -> n, on None:int -> 7, end;}",
+     ((84,2,0,42),(84,2,7,49))),
+    ("option-lazy-divide", "fnc main(a:int):int{return match<int> None over on Some(n):int -> n/a, on None:int -> 42, end;}",
+     ((0,42),(1,42))),
     ("no-args", "fnc main():int{return 42;}", ((42,),)),
 )
 # Exact shared Git blobs, including the final newline added by build().
@@ -105,6 +118,12 @@ GUARD_FIXTURE_BLOBS = {
     "guard-canonical-scalar": "e2344e360ac643e25df7ca14eb01432929cecbe5",
 }
 TRAPS = (
+    ("division-zero", "fnc main(a:int,b:int):int{return a/b;}", (42,0), "i64 division by zero"),
+    ("division-overflow", "fnc main(a:int,b:int):int{return a/b;}", (-9223372036854775808,-1), "i64 division overflow"),
+    ("division-propagates", "fnc q(a:int,b:int):int{return a/b;} fnc wrap(a:int,b:int):int{return q(a,b)+9223372036854775807;} fnc main(a:int,b:int):int{return wrap(a,b);}", (42,0), "i64 division by zero"),
+    ("division-left-error-first", "fnc main(a:int):int{return (1/a)+(9223372036854775807+1);}", (0,), "i64 division by zero"),
+    ("option-payload-division-error", "fnc value(a:int):Option<int>{return Some(42/a);} fnc main(a:int):int{return match<int> value(a) over on Some(n):int -> n, on None:int -> 7, end;}", (0,), "i64 division by zero"),
+    ("option-payload-overflow", "fnc value(a:int):Option<int>{return Some(9223372036854775807+a);} fnc main(a:int):int{return match<int> value(a) over on Some(n):int -> n, on None:int -> 7, end;}", (1,), "i64 add overflow"),
     ("overflow-add", "fnc plus(n:int):int{return n+1;}"
      " fnc main(n:int):int{return plus(n);}",
      (9223372036854775807,), "i64 add overflow"),
@@ -128,6 +147,8 @@ TRAPS = (
      (1,), "call depth exceeded"),
 )
 INVALID = (
+    ("division-bool-left", "fnc main():int{return true/2;}", "Boolean is not an int"),
+    ("division-bool-right", "fnc main():int{return 2/false;}", "Boolean is not an int"),
     ("logical-int-left", "fnc main():int{return 1 && true ? 42 : 7;}", "condition_not_bool"),
     ("logical-int-right", "fnc main():int{return false && 1 ? 42 : 7;}", "condition_not_bool"),
     ("logical-or-int-right", "fnc main():int{return true || 1 ? 42 : 7;}", "condition_not_bool"),
@@ -178,8 +199,13 @@ DRIVER = r"""#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 extern int64_t oresforge_entry(PARAMS);
+struct result_pair { int64_t value; uint64_t status; };
+extern struct result_pair oresforge_entry_checked(PARAMS);
 int main(int argc,char **argv) {
+ int checked = argc>1 && strcmp(argv[1],"--checked")==0;
+ if (checked) { --argc; ++argv; }
  if (argc!=COUNT+1)return 2;
  int64_t v[4]={0,0,0,0};
  (void)v; /* zero-argument native entries do not consume the array */
@@ -188,6 +214,16 @@ int main(int argc,char **argv) {
   const long long val=strtoll(argv[i+1],&end,10);
   if(errno||!*argv[i+1]||*end)return 3;
   v[i]=(int64_t)val;
+ }
+ if (checked) {
+  const struct result_pair result=oresforge_entry_checked(ARGS);
+  /* Repeated invocation in the same process must not retain error state. */
+  for (int iteration=0; iteration<8; ++iteration) {
+   const struct result_pair again=oresforge_entry_checked(ARGS);
+   if (again.value!=result.value || again.status!=result.status) return 6;
+  }
+  if(printf("%" PRId64 " %" PRIu64 "\n",result.value,result.status)<0)return 4;
+  return fflush(stdout)==0?0:5;
  }
  const int64_t result=oresforge_entry(ARGS);
  if(printf("%" PRId64 "\n",result)<0)return 4;
@@ -261,6 +297,10 @@ def main():
                         "interpreter returned wrong result "+label+"/"+repr(inp))
                 require((native.returncode,native.stdout,native.stderr)==(0,expected,b""),
                         "native call returned wrong result "+label+"/"+repr(inp))
+                native_checked=execute([str(exe),"--checked",*map(str,inp)],root)
+                require((native_checked.returncode,native_checked.stdout,native_checked.stderr)==
+                        (0,(str(row[-1])+" 0\n").encode(),b""),
+                        "checked ABI success mismatch "+label+"/"+repr(inp))
                 positives+=1
         for label,source,inp,diagnostic in TRAPS:
             file,exe,_=build(compiler,cc,root,label,source,len(inp))
@@ -270,6 +310,15 @@ def main():
             native=execute([str(exe),*map(str,inp)],root)
             require(native.returncode==-signal.SIGILL and native.stdout==b"",
                     "native overflow/depth failed to trap "+label+": "+str(native.returncode))
+            native_checked=execute([str(exe),"--checked",*map(str,inp)],root)
+            if diagnostic=="call depth exceeded":
+                require(native_checked.returncode==-signal.SIGILL and native_checked.stdout==b"",
+                        "depth must remain a non-arithmetic terminal fault")
+            else:
+                code=65538 if diagnostic=="i64 division by zero" else 65537
+                require((native_checked.returncode,native_checked.stdout,native_checked.stderr)==
+                        (0,("0 "+str(code)+"\n").encode(),b""),
+                        "checked ABI failure identity mismatch "+label)
             negatives+=1
         for label,source,diagnostic in INVALID:
             file=root/"bad.atto"
