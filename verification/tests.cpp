@@ -562,7 +562,7 @@ int main() {
     auto bad_ok=calls::parse("fnc main(x:int):Result<int,Error>{return Ok(x);}");
     bad_ok.functions[0].nodes[0].kind=calls::Kind::Boolean;
     bad_ok.functions[0].nodes[0].value=1;
-    reject_diagnostic([&] { calls::verify(bad_ok); },"constructor requires infallible int payload");
+    reject_diagnostic([&] { calls::verify(bad_ok); },"constructor requires int payload");
     auto corrupt=calls::parse("fnc main(x:int):int{return x+1;}");
     corrupt.functions[0].nodes.back().children[0]=999;
     reject_diagnostic([&] { calls::verify(corrupt); },
