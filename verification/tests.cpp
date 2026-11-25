@@ -538,6 +538,19 @@ int main() {
     auto bad_xor=calls::parse("fnc main():int{return Xor(true,false) ? 42 : 7;}");
     bad_xor.functions[0].nodes[1].kind=calls::Kind::Constant;
     reject_diagnostic([&] { calls::verify(bad_xor); },"Boolean Xor requires two bool operands");
+    auto result_bind=calls::parse("fnc divide(a:int,b:int):Result<int,Error>{return trap! (a/b);} fnc main(a:int,b:int):Result<int,Error>{val q=divide(a,b)?;return trap! (q+q);}");
+    const auto rb_ok=calls::interpret_result(result_bind,std::array<std::int64_t,2>{6,3});
+    const auto rb_err=calls::interpret_result(result_bind,std::array<std::int64_t,2>{1,0});
+    ensure(rb_ok.value==4 && rb_ok.status==calls::ArithmeticStatus::Ok,"Result local success");
+    ensure(rb_err.status==calls::ArithmeticStatus::DivisionByZero,"Result propagation retains code");
+    auto forged_local=result_bind;
+    for(auto& node:forged_local.functions[1].nodes)
+      if(node.kind==calls::Kind::Local) node.value=-1;
+    reject_diagnostic([&] { calls::verify(forged_local); },"invalid scalar Result local use");
+    auto forged_result=result_bind;
+    for(auto& node:forged_result.functions[1].nodes)
+      if(node.kind==calls::Kind::ResultCall) node.kind=calls::Kind::Call;
+    reject_diagnostic([&] { calls::verify(forged_result); },"scalar Result call type mismatch");
     auto corrupt=calls::parse("fnc main(x:int):int{return x+1;}");
     corrupt.functions[0].nodes.back().children[0]=999;
     reject_diagnostic([&] { calls::verify(corrupt); },
