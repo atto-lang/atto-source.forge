@@ -543,6 +543,12 @@ int main() {
     auto invalid_payload=calls::parse("fnc main():int{return match<int> Some(42) over on Some(n):int -> n, on None:int -> 0, end;}");
     std::swap(invalid_payload.functions[0].nodes.back().children[1],invalid_payload.functions[0].nodes.back().children[2]);
     reject_diagnostic([&] { calls::verify(invalid_payload); },"Option payload outside Some arm");
+    auto result_call=calls::parse("fnc checked(x:int):Result<int,Error>{return trap! (84/x);} fnc main(x:int):int{return match<int> trap checked(x) over on Ok(n):int -> n, on Err():int -> 7, end;}");
+    ensure(calls::interpret(result_call,std::array<std::int64_t,1>{2})==42,"Result call preserves success");
+    ensure(calls::interpret(result_call,std::array<std::int64_t,1>{0})==7,"Result call preserves returned failure");
+    auto bad_result=calls::parse("fnc checked():Result<int,Error>{return Ok(42);} fnc main():int{return match<int> checked() over on Ok(n):int -> n, on Err():int -> 0, end;}");
+    bad_result.functions[0].returns_result_int=false;
+    reject_diagnostic([&] { calls::verify(bad_result); },"callable Result type mismatch");
     auto corrupt=calls::parse("fnc main(x:int):int{return x+1;}");
     corrupt.functions[0].nodes.back().children[0]=999;
     reject_diagnostic([&] { calls::verify(corrupt); },
