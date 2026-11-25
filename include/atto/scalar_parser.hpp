@@ -157,7 +157,30 @@ class Parser {
   // Flat precedence tiers do not consume the nesting depth budget.
   // Only actual parenthesized or unary nesting increments depth.
   [[nodiscard]] std::optional<std::size_t> expr(int depth) {
-    return parse_or(depth);
+    auto result = parse_or(depth);
+    if (!result) return std::nullopt;
+    while (name("as")) {
+      if (!cast_target()) return std::nullopt;
+    }
+    return result;
+  }
+  // All admitted expressions are signed i64. These casts validate the
+  // carrier and preserve the existing node, including checked arithmetic.
+  // Reject every other carrier and unit; no unchecked erasure.
+  [[nodiscard]] bool cast_target() {
+    if (name("int") || name("i64")) return true;
+    fail(ParseError::syntax);
+    return false;
+  }
+  [[nodiscard]] std::optional<std::size_t> postfix(std::optional<std::size_t> result) {
+    if (!result) return std::nullopt;
+    while (take(Kind::double_colon)) {
+      if (!take(Kind::lt) || !cast_target() || !take(Kind::gt)) {
+        fail(ParseError::syntax);
+        return std::nullopt;
+      }
+    }
+    return result;
   }
   [[nodiscard]] std::optional<std::size_t> parse_or(int depth) {
     auto lhs = parse_xor(depth);
@@ -240,6 +263,12 @@ class Parser {
   }
   [[nodiscard]] std::optional<std::size_t> unary(int depth) {
     if (depth > max_parse_depth) { fail(ParseError::depth_limit); return std::nullopt; }
+    if (take(Kind::lt)) {
+      if (!cast_target() || !take(Kind::gt)) {
+        fail(ParseError::syntax); return std::nullopt;
+      }
+      return unary(depth + 1);
+    }
     if (take(Kind::plus)) return unary(depth + 1);
     if (take(Kind::tilde)) {
       auto rhs = unary(depth + 1);
@@ -258,7 +287,7 @@ class Parser {
         const auto minimum = parse_decimal_i64(signed_digits);
         if (minimum && *minimum == std::numeric_limits<i64>::min()) {
           ++pos_;
-          return append(Node{Op::literal, 0, 0, *minimum});
+          return postfix(append(Node{Op::literal, 0, 0, *minimum}));
         }
       }
       auto rhs = unary(depth + 1);
@@ -269,13 +298,13 @@ class Parser {
       auto inside = expr(depth + 1);
       if (!inside) return std::nullopt;
       if (!take(Kind::rparen)) { fail(ParseError::syntax); return std::nullopt; }
-      return inside;
+      return postfix(inside);
     }
     if (current().kind == Kind::integer) {
       auto n = parse_decimal_i64(text());
       if (!n) { fail(ParseError::literal_out_of_range); return std::nullopt; }
       ++pos_;
-      return append(Node{Op::literal, 0, 0, *n});
+      return postfix(append(Node{Op::literal, 0, 0, *n}));
     }
     fail(ParseError::syntax);
     return std::nullopt;
