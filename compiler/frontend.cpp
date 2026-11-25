@@ -257,20 +257,19 @@ class Parser {
     }
     if (source_.substr(at_,3)=="...")
       error("tuple-v2 explicit spread requires single-evaluation checked lowering");
-    // Canonical AttoLang exposes named Integer.rem/mod/pow/bitXor APIs,
-    // never the legacy percent or caret operators. Report the actual byte
-    // offset before generic punctuation handling, including unreachable
-    // helper definitions: these characters cannot become silent aliases.
+    // Canonical AttoLang uses named Integer.rem/mod/pow APIs and a
+    // statement-position caret return alias. Integer ^^ requires a
+    // checked bitwise IR operation; reject it before artifact emission.
     if (c=='~')
       throw std::runtime_error("TILDE_AGGREGATE_BACKEND_UNSUPPORTED: Map/Record needs typed aggregate AST, ownership and atomic constructor lowering at byte "+
                                std::to_string(start));
     if (c=='%')
       throw std::runtime_error("legacy % operator is removed; use Integer.rem/mod at byte "+
                                std::to_string(start));
-    if (c=='^')
-      throw std::runtime_error("legacy ^/^^ operators are removed; use Integer.pow/bitXor at byte "+
+    if (source_.substr(at_,2)=="^^")
+      throw std::runtime_error("FORGE_XOR_BACKEND_UNSUPPORTED: integer ^^ requires native bitwise lowering at byte "+
                                std::to_string(start));
-    if (std::string_view("()+-*/{};:,?").find(static_cast<char>(c)) ==
+    if (std::string_view("()+-*/{};:,?^").find(static_cast<char>(c)) ==
         std::string_view::npos) error("invalid character");
     ++at_;
     tok_={Kind::Punct,source_.substr(start,1),start};
@@ -380,8 +379,9 @@ class Parser {
     expect("{");
     if (tok_.text=="guard")
       error("GUARD_BACKEND_UNSUPPORTED: early-exit CFG and ownership lowering required");
-    expect("return");
+    if (!take("^")) expect("return");
     fn.body=expression(0);
+    if (tok_.text=="^") error("single caret is only a return statement; integer XOR uses ^^");
     expect(";"); expect("}");
     if (functions_.contains(name)) error("duplicate function");
     functions_.emplace(name,std::move(fn));
@@ -406,7 +406,7 @@ class Parser {
     auto a=factor(depth+1);
     while (tok_.text=="*" || tok_.text=="/") {
       if (tok_.text=="/")
-        error("division requires float result lowering; unsupported in the i64 source subset");
+        error("FORGE_CHECKED_DIVISION_BACKEND_UNSUPPORTED: signed i64 quotient requires typed arithmetic error lowering");
       next();
       a=binary(Expr::Tag::Mul,std::move(a),factor(depth+1));
     }
