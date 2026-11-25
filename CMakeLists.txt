@@ -395,6 +395,57 @@ if(BUILD_TESTING)
   set_tests_properties(oresforge_tenant_isolate_host_admission PROPERTIES TIMEOUT 30)
 endif()
 
+# Explicit tenant-memory zeroization test: optimizer-resistant erasure under
+# normal retirement and abnormal owning-State destruction, not a sandbox.
+if(BUILD_TESTING)
+  add_executable(oresforge_secure_erase_test verification/secure_erase_test.cpp)
+  target_include_directories(oresforge_secure_erase_test PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/runtime")
+  target_compile_features(oresforge_secure_erase_test PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_secure_erase_test PRIVATE
+      -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+  endif()
+  add_test(NAME oresforge_secure_erase_host_only COMMAND oresforge_secure_erase_test)
+  set_tests_properties(oresforge_secure_erase_host_only PROPERTIES TIMEOUT 15)
+endif()
+
+# Source-span overlap denial: protect the trusted host's std::copy path
+# against accidental aliases into the tenant's private memory allocation.
+if(BUILD_TESTING)
+  add_executable(oresforge_memory_overlap_test
+    verification/checked_memory_overlap_test.cpp)
+  target_include_directories(oresforge_memory_overlap_test PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_memory_overlap_test PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_memory_overlap_test PRIVATE
+      -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+  endif()
+  add_test(NAME oresforge_memory_overlap_host_only
+    COMMAND oresforge_memory_overlap_test)
+  set_tests_properties(oresforge_memory_overlap_host_only PROPERTIES TIMEOUT 15)
+endif()
+
+# Host-only checked tenant memory region. This test exercises the C++ host
+# authority, not compiled untrusted Forge code or a real native sandbox.
+if(BUILD_TESTING)
+  add_executable(oresforge_tenant_memory_region_test
+    verification/tenant_memory_region_test.cpp)
+  target_include_directories(oresforge_tenant_memory_region_test PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_tenant_memory_region_test PRIVATE cxx_std_20)
+  find_package(Threads REQUIRED)
+  target_link_libraries(oresforge_tenant_memory_region_test PRIVATE Threads::Threads)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_tenant_memory_region_test PRIVATE
+      -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+  endif()
+  add_test(NAME oresforge_tenant_memory_region_host_only
+    COMMAND oresforge_tenant_memory_region_test)
+  set_tests_properties(oresforge_tenant_memory_region_host_only PROPERTIES TIMEOUT 30)
+endif()
+
 # First verified native Forge IsolateVM bridge: compile .ores to actual
 # runtime-argument x86-64 assembly, link with an independent C++ host driver,
 # run two tenant states against the same guest machine code.

@@ -9,10 +9,17 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <span>
+#include <vector>
+#include "runtime/tenant_memory_region.hpp"
 
 namespace oresforge::runtime {
 // Host-side accounting only. Native Forge machine code is NOT sandboxed.
 enum class IsolatePhase { Created, Running, Quiescing, Stopped };
+// The native executable path is trusted until compiler-verified memory
+// confinement and actual protected TenantVM execution are proven. Never
+// map ProtectedNative to the trusted registry as a fallback.
+enum class TenantIsolationMode { TrustedNative, ProtectedNative };
 class OresVM final {
   struct State final {
     explicit State(std::string t, std::uint64_t g, std::size_t max_actors)
@@ -23,6 +30,9 @@ class OresVM final {
     IsolatePhase phase = IsolatePhase::Created;
     std::unordered_map<std::uint64_t, std::uint64_t> actors;
     std::unordered_map<std::uint64_t, std::size_t> actor_pins;
+    // Native host-owned storage, scoped by actor ID and tenant generation.
+    // No raw guest pointer or compiler-generated load is authorized by this map.
+    std::unordered_map<std::uint64_t, std::unique_ptr<TenantMemoryRegion>> actor_memory;
     std::uint64_t next_actor_epoch = 1;
     std::size_t pinned_operations = 0;
     std::size_t active_guest_calls = 0;
@@ -37,8 +47,6 @@ public:
     explicit IsolateHandle(std::shared_ptr<State> s) : state_(s), epoch_(s->generation) {}
   public: IsolateHandle()=default;
   };
-  // Canonical opaque per-tenant generation handle. No new trust mode.
-  using TenantVMHandle = IsolateHandle;
   class ActorTicket final {
     friend class OresVM;
     std::weak_ptr<State> state_;
@@ -62,17 +70,20 @@ public:
     OperationPin& operator=(OperationPin&&)=delete;
     ~OperationPin()=default; // MUST NOT automatically release physical I/O leases.
   };
-  explicit OresVM(std::size_t max_tenants=32):max_tenants_(max_tenants){
+  explicit OresVM(std::size_t max_tenants=32,
+                  std::size_t max_actor_memory_bytes=16u*1024u*1024u)
+    :max_tenants_(max_tenants), max_actor_memory_bytes_(max_actor_memory_bytes){
     if(max_tenants_==0||max_tenants_>1024)throw std::invalid_argument("tenant quota");
+    if(max_actor_memory_bytes_ < ActorMemoryBytes ||
+       max_actor_memory_bytes_ > 256u*1024u*1024u)
+      throw std::invalid_argument("actor memory budget");
   }
   OresVM(const OresVM&)=delete;OresVM& operator=(const OresVM&)=delete;
-  // Canonical name for the existing TRUSTED host admission only.
-  // Native Forge machine code remains unsandboxed.
-  TenantVMHandle create_tenant_vm(std::string tenant,std::size_t max_actors){
-    return create_isolate(std::move(tenant),max_actors);
-  }
-  IsolateHandle create_isolate(std::string tenant,std::size_t max_actors){
-    const bool invalid_tenant = tenant.empty() || tenant=="." || tenant==".." || tenant.size()>128 ||
+  IsolateHandle create_isolate(std::string tenant,std::size_t max_actors,
+                                TenantIsolationMode isolation=TenantIsolationMode::TrustedNative){
+    if (isolation != TenantIsolationMode::TrustedNative)
+      throw std::logic_error("protected native TenantVM not wired; untrusted guest admission denied");
+    const bool invalid_tenant = tenant.empty() || tenant.size()>128 ||
       !std::all_of(tenant.begin(),tenant.end(),[](unsigned char c){
         return (c>='a'&&c<='z') || (c>='A'&&c<='Z') ||
                (c>='0'&&c<='9') || c=='-' || c=='_' || c=='.';
@@ -95,7 +106,25 @@ public:
     if(s->phase!=IsolatePhase::Running||id==0||s->actors.count(id)||s->actors.size()>=s->actor_limit)
       throw std::logic_error("actor admission denied");
     if(s->next_actor_epoch==std::numeric_limits<std::uint64_t>::max())throw std::overflow_error("actor epoch");
-    auto e=s->next_actor_epoch++;s->actors.emplace(id,e);s->actor_pins.emplace(id,0);return ActorTicket{s,id,e};
+    // A single process-root aggregate budget prevents N tenants with large
+    // actor quotas from overcommitting their independent 4 KiB arenas.
+    if(actor_memory_bytes_ > max_actor_memory_bytes_ - ActorMemoryBytes)
+      throw std::logic_error("host actor memory quota exhausted");
+    auto memory=std::make_unique<TenantMemoryRegion>(ActorMemoryBytes);
+    const auto e=s->next_actor_epoch;
+    // Exception safety: either all three actor registries publish atomically
+    // under mu_, or none is visible and no memory quota is consumed.
+    try {
+      s->actor_memory.emplace(id,std::move(memory));
+      s->actors.emplace(id,e);
+      s->actor_pins.emplace(id,0);
+    } catch (...) {
+      s->actor_pins.erase(id); s->actors.erase(id); s->actor_memory.erase(id);
+      throw;
+    }
+    ++s->next_actor_epoch;
+    actor_memory_bytes_ += ActorMemoryBytes;
+    return ActorTicket{s,id,e};
   }
   std::unique_ptr<OperationPin> pin_operation(const IsolateHandle& h,const ActorTicket& a){
     std::lock_guard lock(mu_);auto s=checked(h);check_actor(s,a);
@@ -114,7 +143,32 @@ public:
   void retire_actor(const IsolateHandle& h,const ActorTicket& a){
     std::lock_guard lock(mu_);auto s=checked(h);check_actor(s,a);
     if(s->actor_pins.at(a.actor_id_)!=0)throw std::logic_error("outstanding actor operation");
+    auto& memory=s->actor_memory.at(a.actor_id_);
+    memory->retire();
+    s->actor_memory.erase(a.actor_id_);
+    actor_memory_bytes_ -= ActorMemoryBytes;
     s->actors.erase(a.actor_id_);s->actor_pins.erase(a.actor_id_);
+  }
+  // Trusted host-only arena operations. Each call authenticates BOTH the
+  // generation-fenced tenant handle and the actor incarnation ticket.
+  // Holding mu_ through the bounded copy prevents STOP/free races. This is
+  // NOT a guest memory ABI and does not sandbox raw native guest pointers.
+  std::vector<std::uint8_t> read_actor_memory(const IsolateHandle& h,
+       const ActorTicket& actor, std::uint32_t offset, std::uint32_t length) const {
+    std::lock_guard lock(mu_);
+    auto s=checked(h); check_actor(s,actor);
+    if(s->phase!=IsolatePhase::Running)throw std::logic_error("actor memory admission closed");
+    auto& memory=*s->actor_memory.at(actor.actor_id_);
+    return memory.read(memory.grant(offset,length,false),0,length);
+  }
+  void write_actor_memory(const IsolateHandle& h, const ActorTicket& actor,
+      std::uint32_t offset, std::span<const std::uint8_t> bytes) {
+    std::lock_guard lock(mu_);
+    auto s=checked(h); check_actor(s,actor);
+    if(s->phase!=IsolatePhase::Running)throw std::logic_error("actor memory admission closed");
+    if(bytes.size()>ActorMemoryBytes)throw std::out_of_range("actor memory write quota");
+    auto& memory=*s->actor_memory.at(actor.actor_id_);
+    memory.write(memory.grant(offset,static_cast<std::uint32_t>(bytes.size()),true),0,bytes);
   }
   // Trusted scalar source-to-native path. The emitted Forge symbol takes
   // (old, delta) and returns i64. It gets NO OresVM pointer and uses one
@@ -195,9 +249,12 @@ private:
     if(a.state_.lock()!=s||a.isolate_epoch_!=s->generation||it==s->actors.end()||it->second!=a.actor_epoch_)
       throw std::logic_error("stale or foreign actor");
   }
+  static constexpr std::uint32_t ActorMemoryBytes = 4096;
   mutable std::mutex mu_;
   std::unordered_map<std::string,std::shared_ptr<State>> states_;
   const std::size_t max_tenants_;
+  const std::size_t max_actor_memory_bytes_;
+  std::size_t actor_memory_bytes_=0; // guarded by mu_
   std::uint64_t next_epoch_=1;
 };
 }
