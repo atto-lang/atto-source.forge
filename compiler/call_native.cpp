@@ -767,10 +767,17 @@ void verify(const Module& m) {
     if(fn.result<0||static_cast<std::size_t>(fn.result)!=fn.nodes.size()-1)
       throw std::runtime_error("invalid callable return/root");
     const auto root_kind=fn.nodes[static_cast<std::size_t>(fn.result)].kind;
+    const auto option_kind=[](Kind k) {
+      return k==Kind::Some||k==Kind::None||k==Kind::OptionIf||k==Kind::OptionCall;
+    };
+    if(fn.returns_scalar_result && fn.returns_scalar_option)
+      throw std::runtime_error("conflicting scalar return types");
     if (fn.returns_scalar_result) {
-      if(root_kind!=Kind::Trap && root_kind!=Kind::ResultCall && root_kind!=Kind::BindResult)
+      if(root_kind!=Kind::Trap && root_kind!=Kind::ResultCall && root_kind!=Kind::BindResult && root_kind!=Kind::Ok)
         throw std::runtime_error("invalid scalar Result return");
-    } else if (root_kind==Kind::Trap || root_kind==Kind::BindResult || root_kind==Kind::ResultCall || boolean_kind(root_kind))
+    } else if(fn.returns_scalar_option) {
+      if(!option_kind(root_kind)) throw std::runtime_error("invalid scalar Option return");
+    } else if (root_kind==Kind::Trap || root_kind==Kind::BindResult || root_kind==Kind::ResultCall || root_kind==Kind::Ok || option_kind(root_kind) || boolean_kind(root_kind))
       throw std::runtime_error("callable int return cannot be Boolean or Result");
     // This stage-0 AST must be an owned tree, not an arbitrary dataflow DAG.
     // Otherwise a node on an untaken if-branch could be reused without ever
@@ -785,10 +792,10 @@ void verify(const Module& m) {
         case Kind::Greater: case Kind::GreaterEqual: case Kind::Equal:
         case Kind::NotEqual: case Kind::If: case Kind::Call:
         case Kind::Boolean: case Kind::Not: case Kind::Ternary:
-         case Kind::And: case Kind::Or: case Kind::BooleanXor: case Kind::Div: case Kind::Trap: case Kind::ResultCall: case Kind::BindResult: case Kind::Local: break;
+         case Kind::And: case Kind::Or: case Kind::BooleanXor: case Kind::Div: case Kind::Trap: case Kind::ResultCall: case Kind::BindResult: case Kind::Local: case Kind::Ok: case Kind::Some: case Kind::None: case Kind::OptionIf: case Kind::OptionCall: break;
         default: throw std::runtime_error("unknown callable opcode");
       }
-      if(n.kind!=Kind::Call && n.kind!=Kind::ResultCall && !n.name.empty())
+      if(n.kind!=Kind::Call && n.kind!=Kind::ResultCall && n.kind!=Kind::OptionCall && !n.name.empty())
         throw std::runtime_error("unexpected callable symbol payload");
       for(int arg:n.children) {
         if(arg<0 || static_cast<std::size_t>(arg)>=i)
@@ -798,23 +805,41 @@ void verify(const Module& m) {
           throw std::runtime_error("callable AST shared node");
       }
       std::size_t size=2;
-      if(n.kind==Kind::Constant||n.kind==Kind::Boolean||n.kind==Kind::Parameter||n.kind==Kind::Local)size=0;
-      else if(n.kind==Kind::Not||n.kind==Kind::Trap)size=1;
-      else if(n.kind==Kind::If||n.kind==Kind::Ternary)size=3;
-      else if(n.kind==Kind::Call||n.kind==Kind::ResultCall)size=n.children.size();
+      if(n.kind==Kind::Constant||n.kind==Kind::Boolean||n.kind==Kind::Parameter||n.kind==Kind::Local||n.kind==Kind::None)size=0;
+      else if(n.kind==Kind::Not||n.kind==Kind::Trap||n.kind==Kind::Some||n.kind==Kind::Ok)size=1;
+      else if(n.kind==Kind::If||n.kind==Kind::Ternary||n.kind==Kind::OptionIf)size=3;
+      else if(n.kind==Kind::Call||n.kind==Kind::ResultCall||n.kind==Kind::OptionCall)size=n.children.size();
       if(n.children.size()!=size)throw std::runtime_error("callable operand arity mismatch");
       if(n.kind==Kind::Boolean && n.value!=0 && n.value!=1)
         throw std::runtime_error("invalid Boolean literal");
       const auto child_bool=[&](std::size_t pos) {
         return boolean_kind(fn.nodes.at(static_cast<std::size_t>(n.children.at(pos))).kind);
       };
+      // This stage has no separate escaping-error channel for Option or
+      // explicit Ok constructors. Admit only infallible scalar payloads,
+      // comparisons/logical predicates, and typed Option forwarding.
+      if(fn.returns_scalar_option && !option_kind(n.kind) &&
+         n.kind!=Kind::Constant && n.kind!=Kind::Parameter &&
+         !boolean_kind(n.kind))
+        throw std::runtime_error("Option body requires infallible scalar expressions");
+      if(n.kind==Kind::Some||n.kind==Kind::Ok) {
+        const auto k=fn.nodes.at(static_cast<std::size_t>(n.children[0])).kind;
+        if(k!=Kind::Constant && k!=Kind::Parameter && k!=Kind::Local)
+          throw std::runtime_error("constructor requires infallible int payload");
+      }
+      if(n.kind==Kind::OptionIf) {
+        if(!child_bool(0)||!option_kind(fn.nodes.at(static_cast<std::size_t>(n.children[1])).kind)||
+           !option_kind(fn.nodes.at(static_cast<std::size_t>(n.children[2])).kind))
+          throw std::runtime_error("Option conditional requires bool and Option arms");
+      }
       if(n.kind==Kind::Trap && (!fn.returns_scalar_result || child_bool(0)))
         throw std::runtime_error("scalar trap must be an int or Result operand");
       if(n.kind==Kind::BindResult) {
         if(!fn.returns_scalar_result || i!=static_cast<std::size_t>(fn.result) ||
            fn.nodes.at(static_cast<std::size_t>(n.children[0])).kind!=Kind::ResultCall ||
            (fn.nodes.at(static_cast<std::size_t>(n.children[1])).kind!=Kind::Trap &&
-            fn.nodes.at(static_cast<std::size_t>(n.children[1])).kind!=Kind::ResultCall))
+            fn.nodes.at(static_cast<std::size_t>(n.children[1])).kind!=Kind::ResultCall &&
+            fn.nodes.at(static_cast<std::size_t>(n.children[1])).kind!=Kind::Ok))
           throw std::runtime_error("invalid scalar Result binding");
       }
       if(n.kind==Kind::Not && !child_bool(0))
@@ -838,14 +863,14 @@ void verify(const Module& m) {
                 n.kind==Kind::Less||n.kind==Kind::LessEqual||n.kind==Kind::Greater||
                 n.kind==Kind::GreaterEqual) {
         if(child_bool(0)||child_bool(1)) throw std::runtime_error("Boolean is not an int");
-      } else if(n.kind==Kind::Call||n.kind==Kind::ResultCall) {
+      } else if(n.kind==Kind::Call||n.kind==Kind::ResultCall||n.kind==Kind::OptionCall) {
         for(std::size_t j=0;j<n.children.size();++j)
           if(child_bool(j)) throw std::runtime_error("Boolean is not an int argument");
       }
       if(n.kind==Kind::Parameter && (n.value<0 ||
          static_cast<std::uint64_t>(n.value)>=fn.parameters.size()))
         throw std::runtime_error("invalid callable parameter");
-      if(n.kind==Kind::Call||n.kind==Kind::ResultCall) {
+      if(n.kind==Kind::Call||n.kind==Kind::ResultCall||n.kind==Kind::OptionCall) {
         if(n.callee<0 || static_cast<std::size_t>(n.callee)>=m.functions.size())
           throw std::runtime_error("invalid callable target");
         const auto& target=m.functions[static_cast<std::size_t>(n.callee)];
@@ -853,7 +878,11 @@ void verify(const Module& m) {
           throw std::runtime_error("calls to scalar Result entry are unsupported");
         if(target.returns_scalar_result!=(n.kind==Kind::ResultCall))
           throw std::runtime_error("scalar Result call type mismatch");
-        if(n.kind==Kind::ResultCall) {
+        if(target.returns_scalar_option!=(n.kind==Kind::OptionCall))
+          throw std::runtime_error("scalar Option call type mismatch");
+        if(n.kind==Kind::OptionCall && n.callee==m.entry)
+          throw std::runtime_error("calls to scalar Option entry are unsupported");
+        if(n.kind==Kind::ResultCall||n.kind==Kind::OptionCall) {
           for(int child:n.children) {
             const auto k=fn.nodes[static_cast<std::size_t>(child)].kind;
             if(k!=Kind::Constant && k!=Kind::Parameter && k!=Kind::Local)
@@ -873,6 +902,12 @@ void verify(const Module& m) {
       const auto& n=fn.nodes[i];
       const auto parent_id=parent[i];
       const auto* p=parent_id<0?nullptr:&fn.nodes[static_cast<std::size_t>(parent_id)];
+      if(option_kind(n.kind) && (!fn.returns_scalar_option ||
+         (p && (p->kind!=Kind::OptionIf || p->children[0]==static_cast<int>(i)))))
+        throw std::runtime_error("scalar Option value requires typed terminal return");
+      if(n.kind==Kind::Ok && (!fn.returns_scalar_result ||
+         (p && (p->kind!=Kind::BindResult || p->children[1]!=static_cast<int>(i)))))
+        throw std::runtime_error("Ok requires terminal Result return");
       if(n.kind==Kind::ResultCall && (!fn.returns_scalar_result ||
          (p && p->kind!=Kind::Trap && p->kind!=Kind::BindResult)))
         throw std::runtime_error("scalar Result value requires return or postfix propagation");
