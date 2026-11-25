@@ -11,7 +11,16 @@ namespace oresforge::calls {
 // legacy scalar IR; no misleading claims about the general Oreslang ABI.
 enum class Kind {
   Constant, Parameter, Add, Sub, Mul, Less, LessEqual, Greater,
-  GreaterEqual, Equal, NotEqual, If, Call, Boolean, Not, Ternary, And, Or, BooleanXor
+  GreaterEqual, Equal, NotEqual, If, Call, Boolean, Not, Ternary, And, Or, BooleanXor, Div
+};
+// Provisional scalar native status ABI. Two INTEGER-class eightbytes on
+// SysV x86-64: value in RAX, error code in RDX. No heap allocation.
+enum class ArithmeticStatus : std::uint64_t {
+  Ok=0, Overflow=65537, DivisionByZero=65538
+};
+struct ArithmeticResult {
+  std::int64_t value;
+  ArithmeticStatus status;
 };
 struct Node {
   Kind kind;
