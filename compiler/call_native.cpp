@@ -32,9 +32,16 @@ bool boolean_kind(Kind k) {
          k==Kind::Less || k==Kind::LessEqual || k==Kind::Greater ||
          k==Kind::GreaterEqual || k==Kind::Equal || k==Kind::NotEqual;
 }
+// Private native callable ABI: Option<int> returns payload in rax and
+// tag in rdx (0=None, 1=Some). All i64 bit patterns remain valid payloads.
+bool option_kind(Kind k) {
+  return k==Kind::OptionSome || k==Kind::OptionNone || k==Kind::OptionCall;
+}
+bool call_kind(Kind k) { return k==Kind::Call || k==Kind::OptionCall; }
 bool reserved_predicate_word(std::string_view s) {
   return s=="true" || s=="false" || s=="ifnot" || s=="unless" ||
-         s=="eq" || s=="neq" || s=="fi" || s=="guard" || s=="end";
+         s=="eq" || s=="neq" || s=="fi" || s=="guard" || s=="end" ||
+         s=="Option" || s=="Some" || s=="None" || s=="match" || s=="over" || s=="on";
 }
 
 class Parser {
@@ -49,7 +56,7 @@ class Parser {
     // Resolve every function, including unused ones. No partially linked IR.
     for (auto& fn:module_.functions) {
       for (auto& node:fn.nodes) {
-        if (node.kind != Kind::Call) continue;
+        if (!call_kind(node.kind)) continue;
         const auto found=names_.find(node.name);
         if (found==names_.end()) fail("unknown function");
         node.callee=found->second;
@@ -68,6 +75,7 @@ class Parser {
   std::map<std::string,int> names_;
   std::size_t node_count_=0;
   Function* current_=nullptr;
+  std::vector<std::pair<std::string,int>> payload_bindings_;
 
   [[noreturn]] void fail(const char* message) const {
     throw std::runtime_error(std::string(message)+" at byte "+std::to_string(token_.offset));
@@ -142,6 +150,8 @@ class Parser {
   }
   void require_integer(int id) const {
     if (is_boolean(id)) fail("Boolean is not an int in the Forge callable subset");
+    if (option_kind(current_->nodes.at(static_cast<std::size_t>(id)).kind))
+      fail("Option is not an int in the Forge callable subset");
   }
   void require_boolean(int id) const {
     if (!is_boolean(id)) fail("condition_not_bool: conditional requires bool");
@@ -188,8 +198,16 @@ class Parser {
     }
     expect(")");
     if(!take(":"))expect("->");
-    expect("int");expect("{");
-    current_->result=terminal_body(0);
+    if(take("Option")) {
+      expect("<");expect("int");expect(">");
+      current_->returns_option_int=true;
+      expect("{");if(!take("^"))expect("return");
+      current_->result=option_expr(0);
+      expect(";");
+    } else {
+      expect("int");expect("{");
+      current_->result=terminal_body(0);
+    }
     expect("}");
   }
   // This scalar subset has no local state, effects, or general statements.
@@ -224,6 +242,68 @@ class Parser {
     return value;
   }
   void depth(std::size_t n) {if(n>kMaxDepth)fail("callable expression nesting too deep");}
+  int option_expr(std::size_t d) {
+    depth(d);
+    if(take("None")) return add(Kind::OptionNone);
+    if(take("Some")) {
+      expect("(");
+      const int payload=expr(d+1);
+      require_integer(payload);
+      expect(")");
+      return add(Kind::OptionSome,0,{}, {payload});
+    }
+    const std::string name=identifier();
+    if(std::find(current_->parameters.begin(),current_->parameters.end(),name)!=current_->parameters.end() ||
+       std::any_of(payload_bindings_.begin(),payload_bindings_.end(),
+                   [&](const auto& binding){return binding.first==name;}))
+      fail("Option callable is shadowed by a scalar binding");
+    expect("(");
+    std::vector<int> args;
+    if(token_.text!=")") {
+      do {
+        const int arg=expr(d+1);
+        require_integer(arg);
+        args.push_back(arg);
+        if(args.size()>4)fail("call argument budget exceeded");
+      }while(take(","));
+    }
+    expect(")");
+    return add(Kind::OptionCall,0,name,std::move(args));
+  }
+  int option_match(std::size_t d) {
+    depth(d);
+    expect("<");expect("int");expect(">");
+    const int subject=option_expr(d+1);
+    expect("over");
+    int some=-1,none=-1;
+    for(int arm=0;arm<2;++arm) {
+      expect("on");
+      const bool is_some=take("Some");
+      if(!is_some) expect("None");
+      if((is_some?some:none)>=0) fail("duplicate Option match arm");
+      bool bound=false;
+      if(is_some) {
+        expect("(");
+        if(token_.text!=")") {
+          std::string name=identifier();
+          if(name=="Xor")fail("unsupported Option payload binding name");
+          payload_bindings_.emplace_back(std::move(name),subject);
+          bound=true;
+        }
+        expect(")");
+      }
+      if(take(":"))expect("int");
+      expect("->");
+      const int result=expr(d+1);
+      require_integer(result);
+      if(bound)payload_bindings_.pop_back();
+      if(is_some)some=result;else none=result;
+      if(arm==0)expect(",");else take(",");
+    }
+    expect("end");
+    if(some<0||none<0)fail("nonexhaustive Option match");
+    return add(Kind::OptionMatch,0,{}, {subject,some,none});
+  }
   int expr(std::size_t d) {
     depth(d);
     if (token_.text=="if" || token_.text=="ifnot" || token_.text=="unless") {
@@ -344,6 +424,7 @@ class Parser {
       return x;
     }
     if (token_.text=="if" || token_.text=="ifnot" || token_.text=="unless") return expr(d+1);
+    if (take("match")) return option_match(d+1);
     if (take("true")) return add(Kind::Boolean,1);
     if (take("false")) return add(Kind::Boolean,0);
     if (!token_.text.empty() && digit(token_.text.front())) {
@@ -356,6 +437,11 @@ class Parser {
     }
     if (!token_.text.empty() && letter(token_.text.front())) {
       const std::string name=identifier();
+      for(auto it=payload_bindings_.rbegin();it!=payload_bindings_.rend();++it) {
+        if(it->first!=name)continue;
+        if(token_.text=="(")fail("Option payload is not callable");
+        return add(Kind::OptionPayload,it->second);
+      }
       if (!take("(")) {
         auto& params=current_->parameters;
         auto found=std::find(params.begin(),params.end(),name);
@@ -416,34 +502,62 @@ struct Evaluator {
     if (depth>=kMaxStackDepth)throw std::runtime_error("call depth exceeded");
     const auto& f=m.functions.at(id);
     if(args.size()!=f.parameters.size())throw std::runtime_error("runtime argument count mismatch");
-    return visit(f,f.result,args,depth);
+    std::vector<std::int64_t> frame(f.nodes.size());
+    return visit(f,f.result,args,depth,frame);
+  }
+  struct OptionValue { bool some; std::int64_t payload; };
+  OptionValue evaluate_option(std::size_t id,std::span<const std::int64_t> args,std::size_t depth) {
+    if(depth>=kMaxStackDepth)throw std::runtime_error("call depth exceeded");
+    const auto& f=m.functions.at(id);
+    if(args.size()!=f.parameters.size())throw std::runtime_error("runtime argument count mismatch");
+    std::vector<std::int64_t> frame(f.nodes.size());
+    return option(f,f.result,args,depth,frame);
+  }
+  OptionValue option(const Function& fn,int id,std::span<const std::int64_t> args,
+                     std::size_t depth,std::span<std::int64_t> frame) {
+    if(remaining--==0)throw std::runtime_error("callable execution budget exceeded");
+    const auto& n=fn.nodes.at(static_cast<std::size_t>(id));
+    if(n.kind==Kind::OptionNone)return {false,0};
+    if(n.kind==Kind::OptionSome)return {true,visit(fn,n.children[0],args,depth,frame)};
+    if(n.kind==Kind::OptionCall) {
+      std::vector<std::int64_t> vals;
+      for(int arg:n.children)vals.push_back(visit(fn,arg,args,depth,frame));
+      return evaluate_option(static_cast<std::size_t>(n.callee),vals,depth+1);
+    }
+    throw std::runtime_error("invalid Option opcode");
   }
   std::int64_t visit(const Function& fn,int id,std::span<const std::int64_t> args,
-                     std::size_t depth) {
+                     std::size_t depth,std::span<std::int64_t> frame) {
     if (remaining--==0)throw std::runtime_error("callable execution budget exceeded");
     const auto& n=fn.nodes.at(static_cast<std::size_t>(id));
+    if(n.kind==Kind::OptionPayload)return frame[static_cast<std::size_t>(n.value)];
+    if(n.kind==Kind::OptionMatch) {
+      const auto value=option(fn,n.children[0],args,depth,frame);
+      if(value.some)frame[static_cast<std::size_t>(n.children[0])]=value.payload;
+      return visit(fn,n.children[value.some?1u:2u],args,depth,frame);
+    }
     if(n.kind==Kind::Constant||n.kind==Kind::Boolean)return n.value;
-    if(n.kind==Kind::Not)return !visit(fn,n.children[0],args,depth);
+    if(n.kind==Kind::Not)return !visit(fn,n.children[0],args,depth,frame);
     if(n.kind==Kind::And) {
-      if(!visit(fn,n.children[0],args,depth)) return 0;
-      return visit(fn,n.children[1],args,depth);
+      if(!visit(fn,n.children[0],args,depth,frame)) return 0;
+      return visit(fn,n.children[1],args,depth,frame);
     }
     if(n.kind==Kind::Or) {
-      if(visit(fn,n.children[0],args,depth)) return 1;
-      return visit(fn,n.children[1],args,depth);
+      if(visit(fn,n.children[0],args,depth,frame)) return 1;
+      return visit(fn,n.children[1],args,depth,frame);
     }
     if(n.kind==Kind::Parameter)return args[static_cast<std::size_t>(n.value)];
     if(n.kind==Kind::If||n.kind==Kind::Ternary) {
-      const auto pred=visit(fn,n.children[0],args,depth);
-      return visit(fn,n.children[pred ? 1u:2u],args,depth);
+      const auto pred=visit(fn,n.children[0],args,depth,frame);
+      return visit(fn,n.children[pred ? 1u:2u],args,depth,frame);
     }
     if(n.kind==Kind::Call) {
       std::vector<std::int64_t> vals;
-      for (int arg:n.children) vals.push_back(visit(fn,arg,args,depth));
+      for (int arg:n.children) vals.push_back(visit(fn,arg,args,depth,frame));
       return evaluate(static_cast<std::size_t>(n.callee),vals,depth+1);
     }
-    const auto a=visit(fn,n.children.at(0),args,depth);
-    const auto b=visit(fn,n.children.at(1),args,depth);
+    const auto a=visit(fn,n.children.at(0),args,depth,frame);
+    const auto b=visit(fn,n.children.at(1),args,depth,frame);
     return checked(n.kind,a,b);
   }
 };
@@ -468,6 +582,21 @@ struct Native {
       out<<"  movabsq $"<<n.value<<", %rax\n";
     } else if(n.kind==Kind::Parameter) {
       out<<"  movq "<<parameter_slot(static_cast<int>(n.value))<<", %rax\n";
+    } else if(n.kind==Kind::OptionSome) {
+      emit_node(fn,n.children[0]);
+      out<<"  movq $1, %rdx\n";
+    } else if(n.kind==Kind::OptionNone) {
+      out<<"  xorq %rax, %rax\n  xorq %rdx, %rdx\n";
+    } else if(n.kind==Kind::OptionPayload) {
+      out<<"  movq "<<value_slot(static_cast<int>(n.value))<<", %rax\n";
+    } else if(n.kind==Kind::OptionMatch) {
+      const auto tag=label++;
+      emit_node(fn,n.children[0]);
+      out<<"  cmpq $0, %rdx\n  je .Lores_none_"<<tag<<"\n";
+      emit_node(fn,n.children[1]);
+      out<<"  jmp .Lores_option_end_"<<tag<<"\n.Lores_none_"<<tag<<":\n";
+      emit_node(fn,n.children[2]);
+      out<<".Lores_option_end_"<<tag<<":\n";
     } else if(n.kind==Kind::Not) {
       emit_node(fn,n.children[0]);
       out<<"  xorq $1, %rax\n";
@@ -487,7 +616,7 @@ struct Native {
          <<".Lores_else_"<<tag<<":\n";
       emit_node(fn,n.children[2]);
       out<<".Lores_end_"<<tag<<":\n";
-    } else if(n.kind==Kind::Call) {
+    } else if(call_kind(n.kind)) {
       for (int child:n.children)emit_node(fn,child);
       for (std::size_t i=0;i<n.children.size();++i)
         out<<"  movq "<<value_slot(n.children[i])<<", "<<argument_reg(i)<<"\n";
@@ -572,12 +701,18 @@ void verify(const Module& m) {
     if(total>kMaxNodes)throw std::runtime_error("callable AST node budget exceeded");
     if(fn.result<0||static_cast<std::size_t>(fn.result)!=fn.nodes.size()-1)
       throw std::runtime_error("invalid callable return/root");
-    if (boolean_kind(fn.nodes[static_cast<std::size_t>(fn.result)].kind))
+    const auto root_kind=fn.nodes[static_cast<std::size_t>(fn.result)].kind;
+    if(fn.returns_option_int!=option_kind(root_kind))
+      throw std::runtime_error("callable Option result type mismatch");
+    if(boolean_kind(root_kind))
       throw std::runtime_error("callable int return cannot be Boolean");
+    if(static_cast<int>(fi)==m.entry && fn.returns_option_int)
+      throw std::runtime_error("native entry must return int");
     // This stage-0 AST must be an owned tree, not an arbitrary dataflow DAG.
     // Otherwise a node on an untaken if-branch could be reused without ever
     // initializing its stack slot. Enforce one reachable parent per child.
     std::vector<unsigned> incoming(fn.nodes.size(),0);
+    std::vector<int> parent(fn.nodes.size(),-1);
     for(std::size_t i=0;i<fn.nodes.size();++i) {
       const auto& n=fn.nodes[i];
       switch(n.kind) {
@@ -586,23 +721,32 @@ void verify(const Module& m) {
         case Kind::Greater: case Kind::GreaterEqual: case Kind::Equal:
         case Kind::NotEqual: case Kind::If: case Kind::Call:
         case Kind::Boolean: case Kind::Not: case Kind::Ternary:
-         case Kind::And: case Kind::Or: case Kind::BooleanXor: break;
+         case Kind::And: case Kind::Or: case Kind::BooleanXor:
+         case Kind::OptionSome: case Kind::OptionNone: case Kind::OptionCall:
+         case Kind::OptionMatch: case Kind::OptionPayload: break;
         default: throw std::runtime_error("unknown callable opcode");
       }
-      if(n.kind!=Kind::Call && !n.name.empty())
+      if(!call_kind(n.kind) && !n.name.empty())
         throw std::runtime_error("unexpected callable symbol payload");
       for(int arg:n.children) {
         if(arg<0 || static_cast<std::size_t>(arg)>=i)
           throw std::runtime_error("callable use before definition");
         if(++incoming[static_cast<std::size_t>(arg)]!=1)
           throw std::runtime_error("callable AST shared node");
+        parent[static_cast<std::size_t>(arg)]=static_cast<int>(i);
       }
       std::size_t size=2;
-      if(n.kind==Kind::Constant||n.kind==Kind::Boolean||n.kind==Kind::Parameter)size=0;
-      else if(n.kind==Kind::Not)size=1;
-      else if(n.kind==Kind::If||n.kind==Kind::Ternary)size=3;
-      else if(n.kind==Kind::Call)size=n.children.size();
+      if(n.kind==Kind::Constant||n.kind==Kind::Boolean||n.kind==Kind::Parameter||
+         n.kind==Kind::OptionNone||n.kind==Kind::OptionPayload)size=0;
+      else if(n.kind==Kind::Not||n.kind==Kind::OptionSome)size=1;
+      else if(n.kind==Kind::If||n.kind==Kind::Ternary||n.kind==Kind::OptionMatch)size=3;
+      else if(call_kind(n.kind))size=n.children.size();
       if(n.children.size()!=size)throw std::runtime_error("callable operand arity mismatch");
+      for(std::size_t j=0;j<n.children.size();++j) {
+        const bool tagged=option_kind(fn.nodes[static_cast<std::size_t>(n.children[j])].kind);
+        if(tagged!=(n.kind==Kind::OptionMatch && j==0))
+          throw std::runtime_error("Option value used outside typed match subject");
+      }
       if(n.kind==Kind::Boolean && n.value!=0 && n.value!=1)
         throw std::runtime_error("invalid Boolean literal");
       const auto child_bool=[&](std::size_t pos) {
@@ -610,7 +754,11 @@ void verify(const Module& m) {
       };
       if(n.kind==Kind::Not && !child_bool(0))
         throw std::runtime_error("condition_not_bool: negation requires bool");
-      if(n.kind==Kind::If||n.kind==Kind::Ternary) {
+      if(n.kind==Kind::OptionSome) {
+        if(child_bool(0))throw std::runtime_error("Option<int> payload must be int");
+      } else if(n.kind==Kind::OptionMatch) {
+        if(child_bool(1)||child_bool(2))throw std::runtime_error("Option match result must be int");
+      } else if(n.kind==Kind::If||n.kind==Kind::Ternary) {
         if(!child_bool(0)) throw std::runtime_error("condition_not_bool: conditional requires bool");
         if(child_bool(1)||child_bool(2)) throw std::runtime_error("conditional branch is not int");
       } else if(n.kind==Kind::And||n.kind==Kind::Or) {
@@ -629,26 +777,42 @@ void verify(const Module& m) {
                 n.kind==Kind::Less||n.kind==Kind::LessEqual||n.kind==Kind::Greater||
                 n.kind==Kind::GreaterEqual) {
         if(child_bool(0)||child_bool(1)) throw std::runtime_error("Boolean is not an int");
-      } else if(n.kind==Kind::Call) {
+      } else if(call_kind(n.kind)) {
         for(std::size_t j=0;j<n.children.size();++j)
           if(child_bool(j)) throw std::runtime_error("Boolean is not an int argument");
       }
       if(n.kind==Kind::Parameter && (n.value<0 ||
          static_cast<std::uint64_t>(n.value)>=fn.parameters.size()))
         throw std::runtime_error("invalid callable parameter");
-      if(n.kind==Kind::Call) {
+      if(call_kind(n.kind)) {
         if(n.callee<0 || static_cast<std::size_t>(n.callee)>=m.functions.size())
           throw std::runtime_error("invalid callable target");
         if(n.children.size()!=m.functions[static_cast<std::size_t>(n.callee)].parameters.size())
           throw std::runtime_error("function arity mismatch");
         if(n.name!=m.functions[static_cast<std::size_t>(n.callee)].name)
           throw std::runtime_error("callable target/name mismatch");
+        if((n.kind==Kind::OptionCall)!=m.functions[static_cast<std::size_t>(n.callee)].returns_option_int)
+          throw std::runtime_error("callable Option result type mismatch");
       } else if(n.callee!=-1)throw std::runtime_error("unexpected callable target");
     }
     for(std::size_t i=0;i<fn.nodes.size();++i) {
       const unsigned expected=(i==static_cast<std::size_t>(fn.result))?0u:1u;
       if(incoming[i]!=expected)
         throw std::runtime_error("callable AST unreachable node");
+      const auto& n=fn.nodes[i];
+      if(n.kind==Kind::OptionPayload) {
+        if(n.value<0||static_cast<std::uint64_t>(n.value)>=i ||
+           !option_kind(fn.nodes[static_cast<std::size_t>(n.value)].kind))
+          throw std::runtime_error("invalid Option payload binding");
+        bool authorized=false;
+        int child=static_cast<int>(i);
+        for(int p=parent[i];p>=0;child=p,p=parent[static_cast<std::size_t>(p)]) {
+          const auto& owner=fn.nodes[static_cast<std::size_t>(p)];
+          if(owner.kind==Kind::OptionMatch && owner.children[0]==n.value &&
+             owner.children[1]==child) { authorized=true;break; }
+        }
+        if(!authorized)throw std::runtime_error("Option payload outside Some arm");
+      }
     }
   }
   if(m.functions[static_cast<std::size_t>(m.entry)].name!="main")
