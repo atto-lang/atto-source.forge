@@ -538,6 +538,11 @@ int main() {
     auto bad_xor=calls::parse("fnc main():int{return Xor(true,false) ? 42 : 7;}");
     bad_xor.functions[0].nodes[1].kind=calls::Kind::Constant;
     reject_diagnostic([&] { calls::verify(bad_xor); },"Boolean Xor requires two bool operands");
+    auto opt=calls::parse("fnc value(x:int):Option<int>{return Some(x);} fnc main(x:int):int{return match<int> value(x) over on Some(n):int -> n, on None:int -> 0, end;}");
+    ensure(calls::interpret(opt,std::array<std::int64_t,1>{std::numeric_limits<std::int64_t>::min()})==std::numeric_limits<std::int64_t>::min(),"Option preserves full i64 payload");
+    auto invalid_payload=calls::parse("fnc main():int{return match<int> Some(42) over on Some(n):int -> n, on None:int -> 0, end;}");
+    std::swap(invalid_payload.functions[0].nodes.back().children[1],invalid_payload.functions[0].nodes.back().children[2]);
+    reject_diagnostic([&] { calls::verify(invalid_payload); },"Option payload outside Some arm");
     auto corrupt=calls::parse("fnc main(x:int):int{return x+1;}");
     corrupt.functions[0].nodes.back().children[0]=999;
     reject_diagnostic([&] { calls::verify(corrupt); },
