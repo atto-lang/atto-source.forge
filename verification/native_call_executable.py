@@ -110,7 +110,7 @@ INVALID = (
     ("guard-fallthrough", "fnc main():int{guard false {} return 42;}", "guard_failure_requires_return"),
     ("guard-break", "fnc main():int{guard false else break; end return 42;}", "guard_failure_requires_return"),
     ("guard-throw", "fnc main():int{guard false {throw 1;} return 42;}", "guard_failure_requires_return"),
-    ("guard-void-return", "fnc main():int{guard false {return;} return 42;}", "expected expression"),
+    ("guard-void-return", "fnc main():int{guard false {return;} return 42;}", "expected callable expression"),
     ("guard-bool-return", "fnc main():int{guard false {return true;} return 42;}", "Boolean is not an int"),
     ("guard-missing-tail", "fnc main():int{guard true {return 1;}}", "unexpected token"),
     ("guard-wrong-closer", "fnc main():int{guard true else return 1; fi return 42;}", "unexpected token"),
