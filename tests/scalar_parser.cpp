@@ -97,4 +97,63 @@ int main() {
   auto budget = parse_source(many);
   assert(budget.error == ParseError::node_limit);
   assert(parse_source(std::string(16385, 'a')).error == ParseError::lexical);
+  // Compiler backend parity target: BOTH whole-Entry ascriptions are
+  // recognized as unlowered typed constructs, never a scalar i64 value.
+  // These are negative admission checks, not positive guest execution.
+  for (const auto* src : {
+    R"(let entry1 = ("foo" => 5) as Entry<string,int>;
+        let entry2 = "foo" => 5 (as Entry<string,int>);
+        pub fnc main():int {
+          let mut Map<string,int> x = {"foo" => 5};
+          x.set("foo",6); x["foo"] = 3;
+          x.add(entry1); x.add(entry2);
+          return x.get("foo").unwrap();
+        })",
+    R"(pub fnc main():int { let e = "foo" => 5 (as Entry<string,int>); return 0; })",
+    R"(pub fnc main():int { return 1 => 2; })",
+  }) {
+    auto blocked = parse_source(src);
+    assert(!blocked.ok() && blocked.error == ParseError::unsupported_map_entry);
+  }
+  auto record = parse_source(
+      R"(pub fnc main():int { let mut Record r = {foo:1}; r["foo"] = 3; return 0; })");
+  assert(record.error == ParseError::unsupported_record);
+  auto nominal = parse_source(
+      R"(define struct Point as int foo; end pub fnc main():int { p["foo"] = 3; return 0; })");
+  assert(nominal.error == ParseError::unsupported_index);
+  auto commented_collection = parse_source(
+      "// Entry<string,int> => Map[foo] is comment only\n"
+      "/* Record r[foo] = 3; */ pub fnc main():int { return 42; }");
+  assert(commented_collection.ok());
+  assert(commented_collection.nodes[commented_collection.root].value == 42);
+  // Typed error effects are not scalar i64 expressions. This frontend must
+  // reject them without exposing pseudo-values or claiming execution.
+  for (const auto* source : {
+    R"(pub fnc main():Result<int,Error>{return Ok(42);})",
+    R"(pub fnc main():int{return int.parse("42");})",
+    R"(pub fnc main():int{return trap explode();})",
+    R"(pub fnc main():int{return fail()?;})",
+    R"(fnc main(): Option<int> { return None; })",
+    R"(pub fnc main():int{throw Error("bad");})"
+  }) {
+    const auto rejected = parse_source(source);
+    assert(!rejected.ok() &&
+           rejected.error == ParseError::unsupported_result_effects);
+  }
+  const auto effect_comment = parse_source(
+    "// Result<int,Error> ? trap int.parse(42)\n"
+    "pub fnc main():int{return 42;}");
+  assert(effect_comment.ok());
+  const auto effect_string = parse_source(
+    R"(pub fnc main():int{return "Result<int,Error> ? trap";})");
+  assert(effect_string.error == ParseError::syntax);
+  assert(parse_error_name(ParseError::unsupported_result_effects) ==
+         "E_UNSUPPORTED_RESULT_EFFECTS");
+
+  auto quoted_name = parse_source(R"(fnc main():int { return "Entry Map => Record[foo]"; })");
+  assert(quoted_name.error == ParseError::syntax);
+  assert(parse_error_name(ParseError::unsupported_map_entry) == "E_UNSUPPORTED_MAP_ENTRY");
+  assert(parse_error_name(ParseError::unsupported_record) == "E_UNSUPPORTED_RECORD");
+  assert(parse_error_name(ParseError::unsupported_index) == "E_UNSUPPORTED_INDEX_WRITE");
+
 }
