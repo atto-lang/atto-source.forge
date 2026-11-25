@@ -35,7 +35,8 @@ bool boolean_kind(Kind k) {
 bool reserved_predicate_word(std::string_view s) {
   return s=="true" || s=="false" || s=="ifnot" || s=="unless" ||
          s=="eq" || s=="neq" || s=="fi" || s=="guard" || s=="end" ||
-         s=="trap" || s=="trap!" || s=="Result" || s=="Error" || s=="val";
+         s=="trap" || s=="trap!" || s=="Result" || s=="Error" || s=="val" ||
+         s=="Option" || s=="Some" || s=="None" || s=="Ok" || s=="Err";
 }
 
 class Parser {
@@ -50,7 +51,7 @@ class Parser {
     // Resolve every function, including unused ones. No partially linked IR.
     for (auto& fn:module_.functions) {
       for (auto& node:fn.nodes) {
-        if (node.kind != Kind::Call && node.kind != Kind::ResultCall) continue;
+        if (node.kind != Kind::Call && node.kind != Kind::ResultCall && node.kind != Kind::OptionCall) continue;
         const auto found=names_.find(node.name);
         if (found==names_.end()) fail("unknown function");
         node.callee=found->second;
@@ -222,16 +223,48 @@ class Parser {
       const int terminal=trapped_return(0);
       expect(";");
       current_->result=binding<0?terminal:add(Kind::BindResult,0,{}, {binding,terminal});
+    } else if (take("Option")) {
+      expect("<");expect("int");expect(">");
+      current_->returns_scalar_option=true;
+      expect("{");
+      if (!take("^")) expect("return");
+      current_->result=option_return(0);
+      expect(";");
     } else {
       expect("int");expect("{");
       current_->result=terminal_body(0);
     }
     expect("}");
   }
+  int option_return(std::size_t d) {
+    depth(d);
+    if (take("Some")) {
+      expect("("); const int v=expr(d+1); require_integer(v); expect(")");
+      return add(Kind::Some,0,{}, {v});
+    }
+    if (take("None")) return add(Kind::None);
+    if (take("if")) {
+      const int pred=logical_or(d+1); require_boolean(pred);
+      expect("then"); const int yes=option_return(d+1);
+      expect("else"); const int no=option_return(d+1);
+      expect("fi");
+      return add(Kind::OptionIf,0,{}, {pred,yes,no});
+    }
+    const int v=factor(d+1);
+    auto& node=current_->nodes.at(static_cast<std::size_t>(v));
+    if(node.kind!=Kind::Call) fail("Option return requires Some, None or Option call");
+    node.kind=Kind::OptionCall;
+    return v;
+  }
   // Java parses trap as a unary operator. This terminal Result
   // admission accepts repeated trap aliases as one flat capture boundary.
   int trapped_return(std::size_t d) {
     depth(d);
+    if (take("Ok")) {
+      expect("("); const int v=expr(d+1); require_integer(v); expect(")");
+      return add(Kind::Ok,0,{}, {v});
+    }
+    if (token_.text=="Err") fail("Err requires typed Error payload lowering");
     if (!take("trap") && !take("trap!")) {
       const int value=factor(d+1);
       auto& n=current_->nodes.at(static_cast<std::size_t>(value));
@@ -495,6 +528,30 @@ struct Evaluator {
     try { return {evaluate(id,args,depth),ArithmeticStatus::Ok}; }
     catch(const ResultFailure& f) { return {0,f.status}; }
   }
+  ScalarOption evaluate_option(std::size_t id,std::span<const std::int64_t> args,std::size_t depth) {
+    if(depth>=kMaxStackDepth)throw std::runtime_error("call depth exceeded");
+    const auto& fn=m.functions.at(id);
+    if(args.size()!=fn.parameters.size())throw std::runtime_error("runtime argument count mismatch");
+    std::int64_t local=0;
+    return option_visit(fn,fn.result,args,depth,local);
+  }
+  ScalarOption option_visit(const Function& fn,int id,std::span<const std::int64_t> args,
+                            std::size_t depth,std::int64_t& local) {
+    if(remaining--==0)throw std::runtime_error("callable execution budget exceeded");
+    const auto& n=fn.nodes.at(static_cast<std::size_t>(id));
+    if(n.kind==Kind::None)return {0,0};
+    if(n.kind==Kind::Some)return {visit(fn,n.children[0],args,depth,local),1};
+    if(n.kind==Kind::OptionIf) {
+      const auto pred=visit(fn,n.children[0],args,depth,local);
+      return option_visit(fn,n.children[pred?1u:2u],args,depth,local);
+    }
+    if(n.kind==Kind::OptionCall) {
+      std::vector<std::int64_t> vals;
+      for(int child:n.children) vals.push_back(visit(fn,child,args,depth,local));
+      return evaluate_option(static_cast<std::size_t>(n.callee),vals,depth+1);
+    }
+    throw std::runtime_error("invalid scalar Option opcode");
+  }
   std::int64_t visit(const Function& fn,int id,std::span<const std::int64_t> args,
                      std::size_t depth,std::int64_t& local) {
     if (remaining--==0)throw std::runtime_error("callable execution budget exceeded");
@@ -504,6 +561,7 @@ struct Evaluator {
       try { return visit(fn,n.children[0],args,depth,local); }
       catch(const ArithmeticFailure& f) { throw ResultFailure{f.status}; }
     }
+    if(n.kind==Kind::Ok)return visit(fn,n.children[0],args,depth,local);
     if(n.kind==Kind::Local)return local;
     if(n.kind==Kind::BindResult) {
       local=visit(fn,n.children[0],args,depth,local);
@@ -559,6 +617,11 @@ struct Native {
       out<<"  movabsq $"<<n.value<<", %rax\n";
     } else if(n.kind==Kind::Parameter) {
       out<<"  movq "<<parameter_slot(static_cast<int>(n.value))<<", %rax\n";
+    } else if(n.kind==Kind::Some||n.kind==Kind::Ok) {
+      emit_node(fn,n.children[0]);
+      if(n.kind==Kind::Some) out<<"  movl $1, %edx\n";
+    } else if(n.kind==Kind::None) {
+      out<<"  xorl %eax, %eax\n  xorl %edx, %edx\n";
     } else if(n.kind==Kind::Local) {
       out<<"  movq "<<value_slot(static_cast<int>(n.value))<<", %rax\n";
     } else if(n.kind==Kind::BindResult) {
@@ -579,7 +642,7 @@ struct Native {
          <<" .Lores_logical_end_"<<tag<<"\n";
       emit_node(fn,n.children[1]);
       out<<".Lores_logical_end_"<<tag<<":\n";
-    } else if(n.kind==Kind::If||n.kind==Kind::Ternary) {
+    } else if(n.kind==Kind::If||n.kind==Kind::Ternary||n.kind==Kind::OptionIf) {
       const auto tag=label++;
       emit_node(fn,n.children[0]);
       out<<"  cmpq $0, %rax\n  je .Lores_else_"<<tag<<"\n";
@@ -588,14 +651,15 @@ struct Native {
          <<".Lores_else_"<<tag<<":\n";
       emit_node(fn,n.children[2]);
       out<<".Lores_end_"<<tag<<":\n";
-    } else if(n.kind==Kind::Call||n.kind==Kind::ResultCall) {
+    } else if(n.kind==Kind::Call||n.kind==Kind::ResultCall||n.kind==Kind::OptionCall) {
       for (int child:n.children)emit_node(fn,child);
       for (std::size_t i=0;i<n.children.size();++i)
         out<<"  movq "<<value_slot(n.children[i])<<", "<<argument_reg(i)<<"\n";
       out<<"  movq -40(%rbp), %r8\n"
          <<"  addq $1, %r8\n"
-         <<"  call .Lores_fn_"<<n.callee<<"\n"
-         <<"  testq %rdx, %rdx\n  jne .Lores_return_error\n";
+         <<"  call .Lores_fn_"<<n.callee<<"\n";
+      if(n.kind!=Kind::OptionCall)
+        out<<"  testq %rdx, %rdx\n  jne .Lores_return_error\n";
     } else if(n.kind==Kind::Div) {
       emit_node(fn,n.children[0]);
       emit_node(fn,n.children[1]);
@@ -641,9 +705,11 @@ struct Native {
     // an explicit value/status entry for the new checked ABI. Internal calls
     // always use the checked convention and propagate arithmetic failures.
     const bool result_entry=program.functions.at(static_cast<std::size_t>(program.entry)).returns_scalar_result;
-    const char* entry_symbol=result_entry?"oresforge_entry_result":"oresforge_entry_checked";
+    const bool option_entry=program.functions.at(static_cast<std::size_t>(program.entry)).returns_scalar_option;
+    const char* entry_symbol=option_entry?"oresforge_entry_option":
+        (result_entry?"oresforge_entry_result":"oresforge_entry_checked");
     out<<".text\n";
-    if(!result_entry) out<<".globl oresforge_entry\n.type oresforge_entry, @function\n"
+    if(!result_entry && !option_entry) out<<".globl oresforge_entry\n.type oresforge_entry, @function\n"
        <<"oresforge_entry:\n  subq $8, %rsp\n  call oresforge_entry_checked\n"
        <<"  addq $8, %rsp\n  testq %rdx, %rdx\n  jne .Lores_legacy_fault\n  ret\n"
        <<".size oresforge_entry, .-oresforge_entry\n";
@@ -663,7 +729,8 @@ struct Native {
         out<<"  movq "<<argument_reg(arg)<<", "<<parameter_slot(static_cast<int>(arg))<<"\n";
       out<<"  movq %r8, -40(%rbp)\n";
       emit_node(fn,fn.result);
-      out<<"  xorl %edx, %edx\n  leave\n  ret\n";
+      if(!fn.returns_scalar_option) out<<"  xorl %edx, %edx\n";
+      out<<"  leave\n  ret\n";
     }
     out<<".Lores_depth:\n  ud2\n"
        <<".Lores_legacy_fault:\n  ud2\n"
@@ -826,6 +893,8 @@ std::int64_t interpret(const Module& m,std::span<const std::int64_t> args) {
   verify(m);
   if(m.functions.at(static_cast<std::size_t>(m.entry)).returns_scalar_result)
     throw std::runtime_error("scalar Result requires run-result-calls");
+  if(m.functions.at(static_cast<std::size_t>(m.entry)).returns_scalar_option)
+    throw std::runtime_error("scalar Option requires run-option-calls");
   Evaluator eval{m};
   return eval.evaluate(static_cast<std::size_t>(m.entry),args,0);
 }
@@ -835,6 +904,13 @@ ArithmeticResult interpret_result(const Module& m,std::span<const std::int64_t> 
     throw std::runtime_error("run-result-calls requires Result<int,Error> entry");
   Evaluator eval{m};
   return eval.evaluate_result(static_cast<std::size_t>(m.entry),args,0);
+}
+ScalarOption interpret_option(const Module& m,std::span<const std::int64_t> args) {
+  verify(m);
+  if(!m.functions.at(static_cast<std::size_t>(m.entry)).returns_scalar_option)
+    throw std::runtime_error("run-option-calls requires Option<int> entry");
+  Evaluator eval{m};
+  return eval.evaluate_option(static_cast<std::size_t>(m.entry),args,0);
 }
 std::string emit_asm(const Module& m,Arch arch) {
   if(arch!=Arch::X86_64)
