@@ -31,7 +31,7 @@ RESULT_CASES = (
 )
 RESULT_INVALID = (
     ("trap-bool", "fnc main():Result<int,Error>{return trap! true;}", "Boolean is not an int"),
-    ("trap-int-return", "fnc main():int{return trap! 42;}", "expected callable expression"),
+    ("trap-int-return", "fnc main():int{return trap! 42;}", "reserved predicate word"),
     ("result-unwrapped", "fnc main():Result<int,Error>{return 42;}", "requires explicit trap"),
     ("result-helper", "fnc f():Result<int,Error>{return trap! 42;} fnc main():int{return 1;}", "only at main entry"),
     ("result-recursive", "fnc main():Result<int,Error>{return trap! main();}", "calls to scalar Result entry are unsupported"),
