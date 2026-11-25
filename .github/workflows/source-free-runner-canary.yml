@@ -1,0 +1,62 @@
+name: Source-free runner admission canary
+
+on:
+  # Manual runner admission re-probe; this workflow cannot read or export source.
+  workflow_dispatch: {}
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/source-free-runner-canary.yml
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/source-free-runner-canary.yml
+
+permissions: {}
+
+jobs:
+  admission:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Prove runner admission without repository checkout
+        shell: bash
+        env:
+          EXPECTED_REPOSITORY: ${{ github.repository }}
+          EXPECTED_REPOSITORY_ID: ${{ github.repository_id }}
+          EXPECTED_RUN_ID: ${{ github.run_id }}
+          EXPECTED_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          test -n "${RUNNER_NAME:-}"
+          test -n "${RUNNER_OS:-}"
+          test "$GITHUB_REPOSITORY" = "$EXPECTED_REPOSITORY"
+          [[ "$EXPECTED_REPOSITORY_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$EXPECTED_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$EXPECTED_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          test "$GITHUB_RUN_ID" = "$EXPECTED_RUN_ID"
+          test "$GITHUB_RUN_ATTEMPT" = "$EXPECTED_RUN_ATTEMPT"
+          [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$GITHUB_SHA" = "${{ github.sha }}"
+          # Source-free known-answer checks; no checkout, token, or secrets.
+          test "${RUNNER_OS:-}" = Linux
+          test "${GITHUB_ACTIONS:-}" = true
+          valid_id() { [[ "$1" =~ ^[1-9][0-9]*$ ]]; }
+          if valid_id 0 || valid_id bad || valid_id "1/2"; then
+            echo '::error::source-free admission negative cases failed'
+            exit 1
+          fi
+          actual="$(printf '%s' oreslang-source-free-runner-admission-v1 | sha256sum | cut -d ' ' -f1)"
+          test "$actual" = 4a35cbaad4c7ea93615312c3e39ee83cae0405a29bdf9540094fb89524266b1e
+          echo "SOURCE_FREE_RUNNER_ADMISSION=EXECUTED"
+          echo "SOURCE_FREE_RUNNER_CLASSIFICATION=RUNNER_ONLY_NOT_COMPILER_OR_GUEST_PARITY"
+          echo "SOURCE_FREE_RUNNER_SOURCE_CHECKOUT=NONE"
+          echo "SOURCE_FREE_RUNNER_CROSS_ORG_TRANSFER=NONE"
+          printf 'SOURCE_FREE_RUNNER_CANARY=EXECUTED repository=%s repository_id=%s run_id=%s attempt=%s runner_name=%s runner_os=%s\n' \
+            "$EXPECTED_REPOSITORY" "$EXPECTED_REPOSITORY_ID" "$EXPECTED_RUN_ID" \
+            "$EXPECTED_RUN_ATTEMPT" "$RUNNER_NAME" "$RUNNER_OS"
+          printf 'SOURCE_FREE_PROBE_METADATA=OBSERVED event=%s sha=%s ref=%s\n' "$GITHUB_EVENT_NAME" "$GITHUB_SHA" "$GITHUB_REF"
+          echo "This canary proves command execution only; external API evidence must verify runner_id > 0."
+          echo "It does not certify compiler execution, compiled .ores guest execution, artifacts, or backend parity."

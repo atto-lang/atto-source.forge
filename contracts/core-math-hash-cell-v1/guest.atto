@@ -1,0 +1,11 @@
+// Planned Forge AOT guest — deliberately unverified.
+// Not a stage-0 scalar-pass fixture until compiler module imports exist.
+import module math from "atto.core/math";
+import module hash from "atto.core/hash";
+import module cell from "atto.core/cell";
+pub fnc main(): int {
+  if math.max_int(40, 42) != 42; do return 1; fi
+  if hash.two_bytes(42, 7) != 17646; do return 2; fi
+  if cell.can_borrow_write(2, false); do return 3; fi
+  return 42;
+}
