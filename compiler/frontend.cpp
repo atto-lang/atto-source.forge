@@ -204,6 +204,8 @@ class Parser {
         error("private abstract hooks require typed native vtables and superclass-only dispatch");
       if (tok_.text=="actor" && previousToken=="virtual")
         error("VIRTUAL_ACTOR_BACKEND_UNSUPPORTED: logical key and activation fencing required");
+      if (tok_.text=="actor" && previousToken=="serial")
+        error("SERIAL_ACTOR_BACKEND_UNSUPPORTED: Forge lacks source serial actor lowering");
       if (tok_.text=="class" || tok_.text=="actor")
         error("class/actor methods require typed native lowering");
       if (tok_.text=="InvertedArray")

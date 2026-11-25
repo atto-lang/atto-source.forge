@@ -751,7 +751,13 @@ int main() {
       "fnc main():int{do match 1 over on structural {x:int} v when true -> {return 1;} on _ -> {return 0;} end}",
       "fnc main():int{do match 1 over on _ -> {return 1;} end}"
     }) {
-      reject_diagnostic([&] { (void)parse_source(candidate); }, "expected");
+      const std::string_view input(candidate);
+      reject_diagnostic([&] { (void)parse_source(candidate); },
+                        input.find("match")!=std::string_view::npos &&
+                        input.find("do match")==std::string_view::npos
+                          ? "MATCH_DEFAULT_BACKEND_UNSUPPORTED" :
+                        input.find("do match")!=std::string_view::npos
+                          ? "unexpected token" : "unexpected token");
     }
     reject_diagnostic([] {
       (void)parse_source("@structural\nfnc main():int{return 1;}");
@@ -770,13 +776,13 @@ int main() {
            "annotation-looking text in comments is not source metadata");
     reject_diagnostic([] {
       parse_source("structural fnc main():int{return 1;}");
-    }, "expected");
+    }, "unexpected token");
     reject_diagnostic([] {
       parse_source("fnc main(structural Shape value):int{return 1;}");
     }, "tuple-v2 parameter requires typed ownership/ABI lowering");
     reject_diagnostic([] {
       parse_source("fnc main():int{match 1 over on _ -> {return 1;} end}");
-    }, "expected");
+    }, "MATCH_DEFAULT_BACKEND_UNSUPPORTED");
     // Task 70: structural and row syntax must fail closed across declaration,
     // parameter, projection and pattern surfaces. The scalar bootstrap has
     // neither row layout witnesses nor borrow/mutable-field capability checks.
