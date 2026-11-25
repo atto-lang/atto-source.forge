@@ -72,6 +72,7 @@ class ForgeBigIntExactReferenceTest(unittest.TestCase):
         raw = path.read_bytes()
         assert git_blob_sha(raw) == "b49c7a7d9395f7298e5534c4a6e5b90d4a2a518c"
         cls.contract = json.loads(raw)
+        cls.backend = json.loads(BACKEND.read_text(encoding="utf-8"))
 
     def test_div_rem_reference_and_fail_closed_backend(self):
         self.assertEqual("oreslang.bigint-exact.v1", self.contract["contract"])
@@ -101,6 +102,7 @@ class ForgeDecimalPrecisionReferenceTest(unittest.TestCase):
         raw = path.read_bytes()
         assert git_blob_sha(raw) == "3bbb44277f3816add53da40a1e161e466ab162b1"
         cls.contract = json.loads(raw)
+        cls.backend = json.loads(BACKEND.read_text(encoding="utf-8"))
 
     def test_decimal_reference_and_backend_fail_closed(self):
         self.assertEqual("oreslang.decimal-precision.v1", self.contract["contract"])
