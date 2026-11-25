@@ -12,6 +12,8 @@ This C++20 POSIX component is not a hostile guest sandbox. It supports adopting 
 
 ## Host tests
 
+The positive native CTest profile is Linux; other hosts are not certified and admission rejects if socket protocol or identity cannot be checked.
+
     cmake -S . -B build -DATTO_FORGE_SANITIZERS=ON
     cmake --build build --target socket_broker_v1_test
     ctest --test-dir build -R '^socket_broker_v1_test$' --output-on-failure

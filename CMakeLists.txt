@@ -671,8 +671,9 @@ add_test(NAME proxy_mailbox_ticket_v1_test COMMAND proxy_mailbox_ticket_v1_test)
 
 
 # Host-only SocketBroker proof: real local TCP sockets, no guest admission.
-# POSIX only; never expose this trusted interface through unverified guest FFI.
-if(UNIX)
+# Linux is the tested SO_PROTOCOL/socket identity profile; never expose
+# this trusted interface through unverified guest FFI.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   add_executable(socket_broker_v1_test tests/socket_broker_v1.cpp)
   target_link_libraries(socket_broker_v1_test PRIVATE atto_forge_checked_i64 Threads::Threads)
   if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
