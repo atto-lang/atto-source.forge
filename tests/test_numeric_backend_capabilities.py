@@ -16,7 +16,13 @@ BASE_SHA = "cb28b5678d380f02c5e4e43bd763da04bdb996fe"
 FEATURES = frozenset((
     "source_i64", "checked_i64_overflow", "binary64_ordering",
     "binary32_arithmetic", "bigint_exact", "decimal_exact",
-    "complex_binary64", "decimal_matrix", "source_division_to_float"))
+    "complex_binary64", "decimal_matrix", "source_division_to_float",
+    "math_i64_unary", "binary64_unary", "bigint_unary", "decimal_unary",
+    "bigint_div_rem", "bigint_to_i64_checked", "bigint_to_f64_exact",
+    "bigint_to_f64_nearest", "decimal_round_context", "decimal_to_f64_exact",
+    "decimal_to_f64_nearest", "binary64_strict_profile", "binary64_next_after",
+    "binary64_ulp", "binary64_approx_eq", "binary64_fma", "binary64_sqrt",
+    "binary64_transcendentals"))
 STATUSES = frozenset((
     "unsupported_explicit", "delegated_unverified",
     "implemented_unverified", "reference_only", "blocked_unsound",
@@ -72,7 +78,14 @@ class NumericParityAdmissionTest(unittest.TestCase):
                 self.assertIsInstance(proof, dict)
                 # A manifest, URL and case counts from this same PR cannot
                 # attest to their own compiler execution.
-                check_claim_is_not_self_attested(status, proof)
+                if set(proof) == {"scope"}:
+                    # Documentary scope is not execution evidence.
+                    self.assertEqual(status, "unsupported_explicit")
+                    self.assertIsInstance(proof["scope"], str)
+                    self.assertTrue(proof["scope"].strip())
+                    check_claim_is_not_self_attested(status, {})
+                else:
+                    check_claim_is_not_self_attested(status, proof)
 
     def test_forged_compiled_status_and_proofs_are_refused(self):
         # Synthetic malicious/self-reported metadata must never promote a
