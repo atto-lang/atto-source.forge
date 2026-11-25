@@ -517,6 +517,18 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 add_test(NAME decimal_i64_test COMMAND decimal_i64_test)
 
+# Host-only Result/Error parsing foundation, NOT compiled .atto guest evidence.
+add_executable(result_int_parse_v1_test tests/result_int_parse_v1.cpp)
+target_link_libraries(result_int_parse_v1_test PRIVATE atto_forge_checked_i64)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(result_int_parse_v1_test PRIVATE -Wall -Wextra -Werror -pedantic)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(result_int_parse_v1_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(result_int_parse_v1_test PRIVATE -fsanitize=address,undefined)
+  endif()
+endif()
+add_test(NAME result_int_parse_v1_test COMMAND result_int_parse_v1_test)
+
 # Restricted native lexer has no Python or borrowed source buffers.
 add_executable(scalar_lexer_test tests/scalar_lexer.cpp)
 target_link_libraries(scalar_lexer_test PRIVATE atto_forge_checked_i64)
