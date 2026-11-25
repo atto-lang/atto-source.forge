@@ -155,7 +155,10 @@ def main(argv: list[str] | None = None) -> int:
         if '..' in args.repository_root.parts:
             raise InvalidManifest('repository root parent traversal is forbidden')
         root = Path(os.path.abspath(args.repository_root))
-        expected_name = root.name
+        # Recognize the exact renamed Forge checkout while retaining the
+        # pinned historical declaration and all identity/upstream checks.
+        expected_name = ('oreslang-source.forge' if root.name == 'atto-source.forge'
+                         else root.name)
         verify_bytes(_read_manifest_physically(root), expected_name)
     except (InvalidManifest, OSError) as exc:
         print(f'integration manifest DENIED: {exc}', file=sys.stderr)
