@@ -27,6 +27,12 @@ int main() {
       code += "  std::optional<atto::forge::i64> " + var(i) + "{" + value + "};\n";
     } else {
       if (n.left >= i || (n.op != Op::neg && n.op != Op::bnot && n.right >= i)) return std::nullopt;
+      // Prefix and tail already emitted in checked source order.
+      if (n.op == Op::seq) {
+        code += "  auto " + var(i) + " = " + var(n.right) + ";\n";
+        if (code.size() > max_emitted_bytes) return std::nullopt;
+        continue;
+      }
       std::string call;
       switch (n.op) {
         case Op::bnot:

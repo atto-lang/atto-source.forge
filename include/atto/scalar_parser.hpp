@@ -11,14 +11,15 @@
 #include <vector>
 
 namespace atto::forge::scalar {
-enum class Op { literal, add, sub, mul, div, rem, neg, band, bor, bxor, bnot, shl, lshr, ashr };
+enum class Op { literal, add, sub, mul, div, rem, neg, band, bor, bxor, bnot, shl, lshr, ashr, seq };
 struct Node {
   Op op;
   std::size_t left = 0, right = 0;
   i64 value = 0;
 };
 enum class ParseError {
-  none, lexical, syntax, literal_out_of_range, depth_limit, node_limit
+  none, lexical, syntax, literal_out_of_range, depth_limit, node_limit,
+  io_direction_unsupported
 };
 // Stable sanitized diagnostics; never echo user source bytes.
 [[nodiscard]] constexpr std::string_view parse_error_name(ParseError error) noexcept {
@@ -29,6 +30,7 @@ enum class ParseError {
     case ParseError::literal_out_of_range: return "E_PARSE_RANGE";
     case ParseError::depth_limit: return "E_PARSE_DEPTH";
     case ParseError::node_limit: return "E_PARSE_NODES";
+    case ParseError::io_direction_unsupported: return "E_IO_DIRECTION_UNSUPPORTED";
   }
   return "E_PARSE_UNKNOWN";
 }
@@ -80,6 +82,7 @@ inline constexpr int max_parse_depth = 24;
       case Op::shl:
       case Op::lshr:
       case Op::ashr:
+      case Op::seq:
         if (node.left >= index || node.right >= index) return false;
         pending.push_back(node.left);
         pending.push_back(node.right);
@@ -215,6 +218,23 @@ class Parser {
     }
     return lhs;
   }
+  // Restricted scalar sequences: each prefix remains an AST dependency on
+  // the tail, preserving checked traps and source order; max 16 elements.
+  [[nodiscard]] std::optional<std::size_t> sequence_body(int depth) {
+    if (depth > max_parse_depth) { fail(ParseError::depth_limit); return std::nullopt; }
+    auto last = expr(depth + 1);
+    if (!last) return std::nullopt;
+    std::size_t count = 1;
+    while (take(Kind::comma)) {
+      if (++count > 16) { fail(ParseError::node_limit); return std::nullopt; }
+      auto next = expr(depth + 1);
+      if (!next) return std::nullopt;
+      last = append(Node{Op::seq, *last, *next, 0});
+      if (!last) return std::nullopt;
+    }
+    if (!take(Kind::rparen)) { fail(ParseError::syntax); return std::nullopt; }
+    return last;
+  }
   [[nodiscard]] std::optional<std::size_t> unary(int depth) {
     if (depth > max_parse_depth) { fail(ParseError::depth_limit); return std::nullopt; }
     if (take(Kind::plus)) return unary(depth + 1);
@@ -242,7 +262,12 @@ class Parser {
       if (!rhs) return std::nullopt;
       return append(Node{Op::neg, *rhs, 0, 0});
     }
+    if (name("seq")) {
+      if (!take(Kind::lparen)) { fail(ParseError::syntax); return std::nullopt; }
+      return sequence_body(depth + 1);
+    }
     if (take(Kind::lparen)) {
+      if (take(Kind::greater)) return sequence_body(depth + 1);
       auto inside = expr(depth + 1);
       if (!inside) return std::nullopt;
       if (!take(Kind::rparen)) { fail(ParseError::syntax); return std::nullopt; }
@@ -263,6 +288,19 @@ public:
     if (!lexed.ok()) {
       out_.error = ParseError::lexical;
       out_.error_offset = lexed.error_offset;
+    }
+    // Directional << and >> are lexically distinct from <<< / >>> scalar
+    // shifts, but this backend has only an i64 AST. Fail before scalar
+    // evaluation/code emission: neither a checked receive nor a fallible
+    // bounded write can be represented as an integer shift.
+    if (out_.error == ParseError::none) {
+      for (const auto& token : tokens_) {
+        if (token.kind == Kind::io_write || token.kind == Kind::io_read) {
+          out_.error = ParseError::io_direction_unsupported;
+          out_.error_offset = token.offset;
+          break;
+        }
+      }
     }
   }
   [[nodiscard]] Parsed parse() {

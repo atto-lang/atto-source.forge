@@ -43,6 +43,24 @@ int main() {
     "fnc main() -> string {return 42;}",
     "int -> main() {return 42;}"
   }) assert(!parse_source(bad_signature).ok());
+  // Channel direction syntax must never lower as i64 shifts or a
+  // synthetic scalar read; preserve a deterministic error before guest emit.
+  for (const auto* io : {
+    "fnc main(): int { return 1 >>; }",
+    "fnc main(): int { return (1 >>); }",
+    "fnc main(): int { return 1 << 2; }",
+    "fnc main(): int { return 1 >> 2; }",
+    "fnc main(): int { return << 1; }"
+  }) {
+    const auto denied = parse_source(io);
+    assert(!denied.ok());
+    assert(denied.error == ParseError::io_direction_unsupported);
+    assert(parse_error_name(denied.error) == "E_IO_DIRECTION_UNSUPPORTED");
+  }
+  // Numeric triple-angle shifts remain normal scalar i64 operations.
+  const auto numeric_shift = parse_source(
+      "fnc main(): int { return 1 <<< 3 | 8 >>> 2; }");
+  assert(numeric_shift.ok());
   auto a = parse_source("pub fnc main(): int { return 4 + 5 * (6 - 1); }");
   assert(a.ok() && a.nodes[a.root].op == Op::add);
   assert(a.nodes.size() == 7);
@@ -97,4 +115,34 @@ int main() {
   auto budget = parse_source(many);
   assert(budget.error == ParseError::node_limit);
   assert(parse_source(std::string(16385, 'a')).error == ParseError::lexical);
+  for (const auto* src : {
+    "fnc main(): int {return seq(1);}",
+    "fnc main(): int {return seq(1,2,42);}",
+    "fnc main(): int {return (> 1,2,42);}",
+    "fnc main(): int {return seq(1,(> 2,3),42);}",
+    "fnc main(): int {return seq(1,2)+40;}",
+    "fnc main(): int {return seq(1, // comment\n42);}"
+  }) assert(parse_source(src).ok());
+  for (const auto* src : {
+    "fnc main(): int {return seq();}",
+    "fnc main(): int {return seq(1,);}",
+    "fnc main(): int {return seq(,1);}",
+    "fnc main(): int {return seq(1;2);}",
+    "fnc main(): int {return seq(1 2);}",
+    "fnc main(): int {return (1,2);}",
+    "fnc main(): int {return (>);}",
+    "fnc main(): int {return (> 1,);}",
+    "fnc main(): int {return seq 1,2;}"
+  }) assert(!parse_source(src).ok());
+  auto forged_seq = parse_source("fnc main(): int {return seq(1,42);}");
+  assert(forged_seq.ok());
+  forged_seq.nodes.back().right = forged_seq.nodes.size();
+  assert(!validate_ast(forged_seq));
+
+  // A scalar comparison is still invalid even though standalone '>' is
+  // recognized for scoped (> ...) sequences.
+  assert(!parse_source("fnc main(): int {return 1 > 2;}").ok());
+  // No channel directions are permitted inside a scalar sequence.
+  assert(parse_source("fnc main(): int {return seq(1 >> 2,42);}").error == ParseError::io_direction_unsupported);
+
 }
