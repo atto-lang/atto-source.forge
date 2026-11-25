@@ -19,7 +19,8 @@ constexpr std::size_t kMaxNodes = 4096;
 constexpr std::size_t kMaxNodesPerFunction = 256;
 constexpr std::size_t kMaxDepth = 128;
 constexpr std::size_t kMaxStackDepth = 128;
-constexpr std::size_t kMaxEvalSteps = 200000;
+constexpr std::size_t kMaxEvalSteps = 3000000; // bounded nested-argument tail evaluation
+constexpr std::size_t kMaxNativeSteps = 1000000;
 bool letter(char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_'; }
 bool digit(char c) { return c >= '0' && c <= '9'; }
 bool space(char c) { return c == ' ' || c == '\r' || c == '\n' || c == '\t' || c == '\v' || c == '\f'; }
@@ -287,9 +288,29 @@ struct Evaluator {
   std::size_t remaining=kMaxEvalSteps;
   std::int64_t evaluate(std::size_t id,std::span<const std::int64_t> args,std::size_t depth) {
     if (depth>=kMaxStackDepth)throw std::runtime_error("call depth exceeded");
-    const auto& f=m.functions.at(id);
-    if(args.size()!=f.parameters.size())throw std::runtime_error("runtime argument count mismatch");
-    return visit(f,f.result,args,depth);
+    std::vector<std::int64_t> values(args.begin(),args.end());
+    while (true) {
+      const auto& f=m.functions.at(id);
+      if(values.size()!=f.parameters.size())
+        throw std::runtime_error("runtime argument count mismatch");
+      // A returned call, or a selected branch ending in one, reuses this
+      // activation. Nested argument calls remain ordinary stack calls.
+      int result=f.result;
+      while(f.nodes.at(static_cast<std::size_t>(result)).kind==Kind::If) {
+        if(remaining--==0)throw std::runtime_error("callable execution budget exceeded");
+        const auto& branch=f.nodes.at(static_cast<std::size_t>(result));
+        const auto pred=visit(f,branch.children[0],values,depth);
+        result=branch.children[pred?1u:2u];
+      }
+      const auto& tail=f.nodes.at(static_cast<std::size_t>(result));
+      if(tail.kind!=Kind::Call)return visit(f,result,values,depth);
+      if(remaining--==0)throw std::runtime_error("callable execution budget exceeded");
+      std::vector<std::int64_t> next;
+      next.reserve(tail.children.size());
+      for(int child:tail.children)next.push_back(visit(f,child,values,depth));
+      id=static_cast<std::size_t>(tail.callee);
+      values=std::move(next);
+    }
   }
   std::int64_t visit(const Function& fn,int id,std::span<const std::int64_t> args,
                      std::size_t depth) {
@@ -326,7 +347,7 @@ struct Native {
   std::string parameter_slot(int id) const {
     return "-"+std::to_string(8u*(static_cast<std::size_t>(id)+1u))+"(%rbp)";
   }
-  void emit_node(const Function& fn,int index) {
+  void emit_node(const Function& fn,int index,bool tail_position=false) {
     const auto& n=fn.nodes.at(static_cast<std::size_t>(index));
     if(n.kind==Kind::Constant) {
       out<<"  movabsq $"<<n.value<<", %rax\n";
@@ -336,18 +357,28 @@ struct Native {
       const auto tag=label++;
       emit_node(fn,n.children[0]);
       out<<"  cmpq $0, %rax\n  je .Lores_else_"<<tag<<"\n";
-      emit_node(fn,n.children[1]);
+      emit_node(fn,n.children[1],tail_position);
       out<<"  jmp .Lores_end_"<<tag<<"\n"
          <<".Lores_else_"<<tag<<":\n";
-      emit_node(fn,n.children[2]);
+      emit_node(fn,n.children[2],tail_position);
       out<<".Lores_end_"<<tag<<":\n";
     } else if(n.kind==Kind::Call) {
       for (int child:n.children)emit_node(fn,child);
       for (std::size_t i=0;i<n.children.size();++i)
         out<<"  movq "<<value_slot(n.children[i])<<", "<<argument_reg(i)<<"\n";
-      out<<"  movq -40(%rbp), %r8\n"
-         <<"  addq $1, %r8\n"
-         <<"  call .Lores_fn_"<<n.callee<<"\n";
+      if(tail_position) {
+        // Argument registers are ready before this frame is reclaimed;
+        // preserve the caller's return address across same-ABI tail hops.
+        // A nested argument call may have overwritten caller-saved %r8.
+        // Restore this activation's physical depth before transferring:
+        // tail hops must not inherit the depth of argument evaluation.
+        out<<"  movq -40(%rbp), %r8\n"
+           <<"  leave\n  jmp .Lores_fn_"<<n.callee<<"\n";
+      } else {
+        out<<"  movq -40(%rbp), %r8\n"
+           <<"  addq $1, %r8\n"
+           <<"  call .Lores_fn_"<<n.callee<<"\n";
+      }
     } else {
       emit_node(fn,n.children[0]);
       emit_node(fn,n.children[1]);
@@ -380,12 +411,15 @@ struct Native {
   std::string build() {
     out<<".text\n.globl oresforge_entry\n.type oresforge_entry, @function\n"
        <<"oresforge_entry:\n  xorl %r8d, %r8d\n"
+       <<"  movq $"<<kMaxNativeSteps<<", %r9\n"
        <<"  jmp .Lores_fn_"<<program.entry<<"\n";
     for (std::size_t i=0;i<program.functions.size();++i) {
       const auto& fn=program.functions[i];
       const std::size_t slots=5u+fn.nodes.size();
       const std::size_t bytes=((slots*8u+15u)/16u)*16u;
       out<<".Lores_fn_"<<i<<":\n"
+         <<"  subq $1, %r9\n"
+         <<"  jz .Lores_fuel\n"
          <<"  cmpq $"<<kMaxStackDepth<<", %r8\n"
          <<"  jae .Lores_depth\n"
          <<"  pushq %rbp\n  movq %rsp, %rbp\n"
@@ -393,10 +427,11 @@ struct Native {
       for (std::size_t arg=0;arg<4;++arg)
         out<<"  movq "<<argument_reg(arg)<<", "<<parameter_slot(static_cast<int>(arg))<<"\n";
       out<<"  movq %r8, -40(%rbp)\n";
-      emit_node(fn,fn.result);
+      emit_node(fn,fn.result,true);
       out<<"  leave\n  ret\n";
     }
     out<<".Lores_depth:\n  ud2\n"
+       <<".Lores_fuel:\n  ud2\n"
        <<".Lores_overflow:\n  ud2\n"
        <<".size oresforge_entry, .-oresforge_entry\n"
        <<".section .note.GNU-stack,\"\",@progbits\n";

@@ -491,6 +491,44 @@ int main() {
            "mutual recursion supported");
     ensure(calls::interpret(mutually_recursive,std::array<std::int64_t,1>{8})==1,
            "mutual recursion parity");
+
+    // This is the strict stage-0 x86-64 integer-only ABI, NOT general
+    // Cranelift/AttoLang guest parity. Returned calls reuse the native frame.
+    auto self_tail=calls::parse(
+      "fnc down(n:int):int{return if n==0 then 0 else down(n-1);}"
+      " fnc main(n:int):int{return down(n);}");
+    ensure(calls::interpret(self_tail,std::array<std::int64_t,1>{100000})==0,
+           "100k self tail hops stay bounded in stage-0 interpreter");
+    ensure(calls::interpret(mutually_recursive,std::array<std::int64_t,1>{100000})==1,
+           "100k mutual tail hops stay bounded in stage-0 interpreter");
+    const auto tail_asm=calls::emit_asm(self_tail,Arch::X86_64);
+    ensure(tail_asm.find("  movq -40(%rbp), %r8\n  leave\n  jmp .Lores_fn_")
+           !=std::string::npos,
+           "native tail transfer restores physical depth after argument evaluation");
+    auto nested_before_tail=calls::parse(
+      "fnc identity(n:int):int{return n;}"
+      " fnc prior(n:int):int{return 1+identity(n-1);}"
+      " fnc walk(n:int):int{return if n==0 then 0 else walk(prior(n-1));}"
+      " fnc main(n:int):int{return walk(n);}");
+    ensure(calls::interpret(nested_before_tail,std::array<std::int64_t,1>{100000})==0,
+           "deep tail loop with non-tail argument helper stays bounded");
+    ensure(calls::emit_asm(nested_before_tail,Arch::X86_64).find(
+           "  movq -40(%rbp), %r8\n  leave\n  jmp .Lores_fn_")
+           !=std::string::npos,
+           "depth register restored before nested-argument tail jump");
+    ensure(tail_asm.find("  subq $1, %r9\n")!=std::string::npos &&
+           tail_asm.find(".Lores_fuel:\n  ud2\n")!=std::string::npos,
+           "native tail jumps retain bounded execution fuel");
+    ensure(calls::emit_asm(fact,Arch::X86_64).find("  call .Lores_fn_")
+           !=std::string::npos,
+           "non-tail factorial retains real native stack calls");
+    auto nested_non_tail=calls::parse(
+      "fnc deep(n:int):int{return if n==0 then 0 else 1+deep(n-1);}"
+      " fnc main(n:int):int{return deep(n);}");
+    reject_diagnostic([&] {
+      calls::interpret(nested_non_tail,std::array<std::int64_t,1>{1000});
+    },"call depth exceeded");
+
     reject_diagnostic([&] { calls::interpret(fact,std::array<std::int64_t,1>{21}); },
                       "i64 mul overflow");
     reject_diagnostic([&] { calls::emit_asm(fact,Arch::ARM64); },
@@ -524,7 +562,7 @@ int main() {
       " fnc main(n:int):int{return forever(n);}");
     reject_diagnostic([&] {
       calls::interpret(endless,std::array<std::int64_t,1>{1});
-    },"call depth exceeded");
+    },"callable execution budget exceeded");
 
 
     // Separate runtime-entry profile lowers parameter IR rather than folding
