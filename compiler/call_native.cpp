@@ -118,6 +118,12 @@ class Parser {
       fail("invalid character");
     }
     token_={text_.substr(begin,at_-begin),begin};
+    // The native-call profile has no trusted module graph, typed symbol table,
+    // or verified compiler-owned std module bindings. Reject imports at the
+    // token boundary, including inside unreachable declarations, instead of
+    // misreporting them as malformed scalar function definitions.
+    if (token_.text=="import")
+      fail("source imports require verified module graph lowering");
   }
   bool take(std::string_view s) {
     if (token_.text!=s) return false;

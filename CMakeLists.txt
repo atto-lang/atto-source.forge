@@ -11,6 +11,18 @@ add_executable(oresforge compiler/main.cpp)
 target_link_libraries(oresforge PRIVATE oresforge_core)
 include(CTest)
 if(BUILD_TESTING)
+  # This executes the REAL Forge compiler frontend on the backend-owned Atto
+  # module and refuses a false-positive class/time compiler admission.
+  add_executable(oresforge_std_time_frontend_admission_test
+    tests/std_time_frontend_admission_test.cpp)
+  target_include_directories(oresforge_std_time_frontend_admission_test PRIVATE .)
+  target_link_libraries(oresforge_std_time_frontend_admission_test PRIVATE oresforge_core)
+  target_compile_features(oresforge_std_time_frontend_admission_test PRIVATE cxx_std_20)
+  add_test(NAME forge_std_time_frontend_admission
+    COMMAND oresforge_std_time_frontend_admission_test)
+  set_tests_properties(forge_std_time_frontend_admission PROPERTIES
+    TIMEOUT 15 WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+
   # Real source -> verified Forge callable IR -> direct native x86_64 call
   # admission. Separate from arbitrary nominal/trait/actor dispatch.
   add_executable(oresforge_static_dispatch_aot_verifier
@@ -129,6 +141,19 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_BINARY_DIR}/http-actor-v1/${atto_http_fixture}"
       COPYONLY)
   endforeach()
+  # Real Forge C++ parser and native-call frontend guard. Until verified
+  # std library graph linking exists, imports MUST fail, never fake guest PASS.
+  add_executable(oresforge_std_import_denial
+    verification/atto_std_pure_policy_import_denial.cpp)
+  target_link_libraries(oresforge_std_import_denial PRIVATE oresforge_core)
+  target_compile_features(oresforge_std_import_denial PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_std_import_denial PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME oresforge_std_import_denial
+    COMMAND oresforge_std_import_denial)
+  set_tests_properties(oresforge_std_import_denial PROPERTIES TIMEOUT 15)
   add_executable(oresforge_tests verification/tests.cpp)
   add_dependencies(oresforge_tests oresforge_numeric_i64_cases oresforge_numeric_overflow_cases)
   target_include_directories(oresforge_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
