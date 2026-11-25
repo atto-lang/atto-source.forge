@@ -35,7 +35,7 @@ bool boolean_kind(Kind k) {
 bool reserved_predicate_word(std::string_view s) {
   return s=="true" || s=="false" || s=="ifnot" || s=="unless" ||
          s=="eq" || s=="neq" || s=="fi" || s=="guard" || s=="end" ||
-         s=="trap" || s=="Result" || s=="Error";
+         s=="trap" || s=="trap!" || s=="Result" || s=="Error";
 }
 
 class Parser {
