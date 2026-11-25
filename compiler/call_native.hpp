@@ -13,7 +13,7 @@ namespace oresforge::calls {
 // legacy scalar IR; no misleading claims about the general Oreslang ABI.
 enum class Kind {
   Constant, Parameter, Add, Sub, Mul, Less, LessEqual, Greater,
-  GreaterEqual, Equal, NotEqual, If, Call, Boolean, Not, Ternary, And, Or, BooleanXor, Div, Trap, ResultCall, BindResult, Local
+  GreaterEqual, Equal, NotEqual, If, Call, Boolean, Not, Ternary, And, Or, BooleanXor, Div, Trap, ResultCall, BindResult, Local, Ok, Some, None, OptionIf, OptionCall
 };
 // Provisional scalar native status ABI. Two INTEGER-class eightbytes on
 // SysV x86-64: value in RAX, error code in RDX. No heap allocation.
@@ -27,6 +27,14 @@ struct ArithmeticResult {
 static_assert(std::is_standard_layout_v<ArithmeticResult> &&
               std::is_trivially_copyable_v<ArithmeticResult>);
 static_assert(sizeof(ArithmeticResult)==16 && offsetof(ArithmeticResult,status)==8);
+// Distinct Option ABI: tag 0=None, 1=Some; value zeroed for None.
+struct ScalarOption {
+  std::int64_t value;
+  std::uint64_t tag;
+};
+static_assert(std::is_standard_layout_v<ScalarOption> &&
+              std::is_trivially_copyable_v<ScalarOption>);
+static_assert(sizeof(ScalarOption)==16 && offsetof(ScalarOption,tag)==8);
 struct Node {
   Kind kind;
   std::int64_t value = 0;
@@ -40,6 +48,7 @@ struct Function {
   std::vector<Node> nodes;
   int result = -1;
   bool returns_scalar_result = false;
+  bool returns_scalar_option = false;
 };
 struct Module {
   std::vector<Function> functions;
@@ -51,5 +60,6 @@ std::int64_t interpret(const Module& program, std::span<const std::int64_t> args
 // Only the explicitly typed Result<int,Error> entry may use this API.
 // A nonzero status is an Err payload, not an escaping ordinary throw.
 ArithmeticResult interpret_result(const Module& program, std::span<const std::int64_t> args);
+ScalarOption interpret_option(const Module& program, std::span<const std::int64_t> args);
 std::string emit_asm(const Module& program, Arch arch);
 }
