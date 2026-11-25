@@ -525,6 +525,13 @@ int main() {
     auto forged_logical=calls::parse("fnc main():int{return true && false ? 42 : 7;}");
     forged_logical.functions[0].nodes[1].kind=calls::Kind::Constant;
     reject_diagnostic([&] { calls::verify(forged_logical); },"condition_not_bool");
+    auto guard=calls::parse("fnc main(int x):int{guard x>0 {^ 1;} guard x neq 5 else return 2; end return 42;}");
+    ensure(calls::interpret(guard,std::array<std::int64_t,1>{0})==1,"guard first failure exits callable");
+    ensure(calls::interpret(guard,std::array<std::int64_t,1>{5})==2,"guard second failure exits callable");
+    ensure(calls::interpret(guard,std::array<std::int64_t,1>{3})==42,"guard success continues");
+    auto guard_wrong_type=calls::parse("fnc main():int{guard true {return 1;} return 42;}");
+    guard_wrong_type.functions[0].nodes[0].kind=calls::Kind::Constant;
+    reject_diagnostic([&] { calls::verify(guard_wrong_type); },"condition_not_bool");
     auto corrupt=calls::parse("fnc main(x:int):int{return x+1;}");
     corrupt.functions[0].nodes.back().children[0]=999;
     reject_diagnostic([&] { calls::verify(corrupt); },
