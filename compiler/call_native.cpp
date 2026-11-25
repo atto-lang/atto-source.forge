@@ -193,7 +193,8 @@ class Parser {
     expect("}");
   }
   // This scalar subset has no local state, effects, or general statements.
-  // Every admitted guard failure body is exactly one explicit typed return.
+  // Every admitted guard failure body ends in an explicit typed return;
+  // nested guards must satisfy the same terminal proof on every path.
   // Reuse the verified lazy If tree: true continues, false returns early.
   int terminal_body(std::size_t d) {
     depth(d);
@@ -207,9 +208,9 @@ class Parser {
     }
     const bool braced=take("{");
     if(!braced) expect("else");
-    if(token_.text!="return" && token_.text!="^")
+    if(token_.text!="return" && token_.text!="^" && token_.text!="guard")
       fail("guard_failure_requires_return: scalar guard failure must return from callable");
-    const int failure=terminal_return(d+1);
+    const int failure=terminal_body(d+1);
     expect(braced?"}":"end");
     const int continuation=terminal_body(d+1);
     return add(Kind::If,0,{}, {condition,continuation,failure});
