@@ -19,6 +19,15 @@ int main() {
     "pub fnc int <- main() {return 42;}",
     "pub fnc main() -> int {return 42;}"
   }) assert(parse_source(signature).ok());
+  for (const auto* begin_body : {
+    "fnc main(): int\nbegin\n^ 42;\nend",
+    "fnc main(): int\nbegin\nreturn 42;\nend;",
+    "int <- main()\nbegin\n^ 42;\nend.",
+    "fnc int <- main()\nbegin\nreturn 42;\nend;",
+    "int\xE2\x80\xA2 main()\nbegin\n^ 40+2;\nend.",
+    "fnc int\xE2\x80\xA2 main()\nbegin\nreturn 42;\nend"
+  }) assert(parse_source(begin_body).ok());
+  assert(parse_source("fnc main(): int { ^ 40 + 2; }").ok());
   for (const auto* inferred : {
     "fnc main(): infer {return 40+2;}",
     "fnc main() -> infer {return 6*7;}",
@@ -46,7 +55,7 @@ int main() {
   auto a = parse_source("pub fnc main(): int { return 4 + 5 * (6 - 1); }");
   assert(a.ok() && a.nodes[a.root].op == Op::add);
   assert(a.nodes.size() == 7);
-  auto ops = parse_source("fnc main(): int {return ~0 & 15 | 1 ^ 2;}");
+  auto ops = parse_source("fnc main(): int {return ~0 & 15 | 1 ^^ 2;}");
   assert(ops.ok() && ops.nodes[ops.root].op == Op::bor);
   auto b = parse_source("fnc main(): int {return -9223372036854775808;}");
   assert(b.ok() && b.nodes[b.root].value == std::numeric_limits<i64>::min());
@@ -68,6 +77,15 @@ int main() {
     "fnc main(): int {return x;}",
     "fnc main(): int {return 42 == 42;}",
     "fnc main(): int {return 2 ** 3;}",
+    "fnc main(): int {return 6 ^ 3;}",
+    "fnc main(): int {return ^ 42;}",
+    "fnc main(): int {^ 6 ^ 3;}",
+    "fnc main(): int {return 6 ^^^ 3;}",
+    "fnc main(): int {return 6 ^ /* split */ ^ 3;}",
+    "fnc main(): int begin\n^ 42;\nend",
+    "fnc main(): int\nbegin ^ 42;\nend",
+    "fnc main(): int\nbegin\n^ 42;\nend junk",
+    "fnc main(): int\nbegin\n^ 42;\nend..",
     "fnc main(): int {return (1;}",
     "fnc main(): int {return 1;}\nfnc evil():int{return 2;}",
     "fnc main(): int {return @;}"
@@ -97,4 +115,89 @@ int main() {
   auto budget = parse_source(many);
   assert(budget.error == ParseError::node_limit);
   assert(parse_source(std::string(16385, 'a')).error == ParseError::lexical);
+  for (const auto* good : {
+    "fnc main(): int {return seq(1,2,42);}",
+    "fnc main(): int {return (> 1,2,42);}",
+    "fnc main(): int {return seq(1,(> 2,3),42);}",
+    "int\xE2\x80\xA2 main()\nbegin\n^ seq(4,42);\nend."
+  }) assert(parse_source(good).ok());
+  for (const auto* bad_seq : {
+    "fnc main(): int {return seq();}",
+    "fnc main(): int {return seq(1,);}",
+    "fnc main(): int {return (> 1,);}",
+    "fnc main(): int {return (1,2);}"
+  }) assert(!parse_source(bad_seq).ok());
+  auto forged_seq = parse_source("fnc main(): int {return seq(1,42);}");
+  assert(forged_seq.ok());
+  forged_seq.nodes.back().right = forged_seq.nodes.size();
+  assert(!validate_ast(forged_seq));
+  for (const auto* bad_io : {
+    "fnc main(): int {return 1 << 2;}",
+    "fnc main(): int {return 1 >> 2;}",
+    "fnc main(): int {return seq(1 >> 2,42);}"
+  }) assert(parse_source(bad_io).error == ParseError::io_direction_unsupported);
+  for (const auto* bad_pipe : {
+    "fnc main(): int {return pipe;}",
+    "fnc main(): int {return rpipe;}"
+  }) assert(parse_source(bad_pipe).error == ParseError::unsupported_continuous_pipe);
+  assert(parse_source("fnc main(): int {return 1 <<< 3 | 8 >>> 2;}").ok());
+  assert(parse_source("fnc main(): int {return 6 ^^ 3;}").ok());
+  assert(parse_source("fnc main(): int {return /* pipe rpipe << >> */ seq(1,42);}").ok());
+
+  assert(parse_source("fnc main(): int {return /* outer /* inner */ rest */ 42;}").ok());
+  auto denied_bang = parse_source("fnc main(): int {return copy! 42;}");
+  assert(denied_bang.error == ParseError::ownership_bang_unsupported);
+  assert(parse_error_name(denied_bang.error) == "E_OWNERSHIP_BANG_UNSUPPORTED");
+  auto ignored_bang = parse_source("fnc main(): int {return /* take! */ 42;}");
+  assert(ignored_bang.ok());
+
+
+  // Inline tasks remain same-frame, with independent syntax and effect gates.
+  for (const char* source : {
+    "fnc main(): int {return sync task<int> {return 42;};}",
+    "fnc main(): int {return sync task {return 40+2;};}",
+    "fnc main(): int {return sync task<int> {return sync task<int> {return 42;};};}",
+    "fnc main(): int {do sync task {} return 42;}",
+    "fnc main(): int {do sync task<void> {return;}; return 42;}",
+    "fnc main(): int {do sync task {} ^ seq(1, 42);}",
+    "int• main()\nbegin\ndo sync task<void> {return;};\n^ sync task<int> {return 42;};\nend."
+  }) {
+    const auto parsed = parse_source(source);
+    assert(parsed.ok() && validate_ast(parsed));
+  }
+  for (const char* source : {
+    "fnc main(): int {return task<int> {return 42;};}",
+    "fnc main(): int {do task<int> {return 42;}; return 0;}",
+    "fnc main(): int {return sync;}",
+    "fnc main(): int {return sync task<int> {return;};}",
+    "fnc main(): int {return sync task<void> {};}",
+    "fnc main(): int {return sync task<bool> {return 42;};}",
+    "fnc main(): int {do sync task<int> {return 41;};return 42;}",
+    "fnc main(): int {do sync task {return 41;};return 42;}",
+    "fnc main(): int {sync task {} return 42;}",
+    "fnc main(): int {sync task<void> {} return 42;}",
+    "fnc main(): int {return sync task<int> {return await 42;};}"
+  }) assert(!parse_source(source).ok());
+  assert(parse_source(
+    "fnc main(): int {do sync task<int> {return 41;};return 42;}"
+  ).error == ParseError::task_return_type);
+  assert(parse_source(
+    "fnc main(): int {do sync task {return 41;};return 42;}"
+  ).error == ParseError::task_return_type);
+  assert(parse_source(
+    "fnc main(): int {return task<int> {return 42;};}"
+  ).error == ParseError::task_unsupported);
+  assert(parse_source(
+    "fnc main(): int {return sync;}"
+  ).error == ParseError::reserved_sync);
+  auto forged_task = parse_source(
+    "fnc main(): int {return sync task<int> {return 42;};}");
+  assert(forged_task.ok());
+  forged_task.nodes.back().right = 1;
+  assert(!validate_ast(forged_task));
+  assert(parse_source(
+    "fnc main(): int {return /* sync task<int> */ seq(1,42);}"
+  ).ok());
+
+
 }

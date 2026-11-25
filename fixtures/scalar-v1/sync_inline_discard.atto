@@ -1,0 +1,1 @@
+pub fnc main(): int { do sync task<void> { return; }; return 42; }

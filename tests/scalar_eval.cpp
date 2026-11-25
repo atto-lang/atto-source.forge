@@ -22,13 +22,17 @@ int main() {
     {"1 <<< 64",1}, {"1 <<< -1",std::numeric_limits<i64>::min()},
     {"-1 >>> 1",std::numeric_limits<i64>::max()},
     {"-8 ashr 2",-2}, {"(1 <<< 63) >>> 63",1},
-    {"-8 ashr 2 + 1",-1}, {"~0",-1}, {"-1 & 42",42}, {"1 | 4",5}, {"6 ^ 3",5},
-    {"~0 & 255",255}, {"1 | 2 & 4",1}, {"1 ^ 3 & 2",3},
-    {"1 | 2 ^ 3 & 2",1}, {"~(-9223372036854775808)",9223372036854775807LL}
+    {"-8 ashr 2 + 1",-1}, {"~0",-1}, {"-1 & 42",42}, {"1 | 4",5}, {"6 ^^ 3",5},
+    {"~0 & 255",255}, {"1 | 2 & 4",1}, {"1 ^^ 3 & 2",3},
+    {"1 | 2 ^^ 3 & 2",1}, {"~(-9223372036854775808)",9223372036854775807LL}
   }) {
     const auto value = evaluate_source(program(c.expr));
     assert(value.ok() && *value.value == c.expected);
   }
+  const auto caret = evaluate_source("fnc main(): int\nbegin\n^ 6 ^^ 3;\nend.");
+  assert(caret.ok() && *caret.value == 5);
+  assert(evaluate_source("fnc main(): int { ^ 40+2; }").value == std::optional<i64>{42});
+  assert(evaluate_source(program("6 ^ 3")).error == EvalError::parse_error);
   for (const char* expr : {
     "9223372036854775807 + 1",
     "-9223372036854775808 - 1",
@@ -64,4 +68,32 @@ int main() {
   bad_unary.nodes.back().right = 1;
   assert(!validate_ast(bad_unary));
   assert(evaluate(bad_unary).error == EvalError::invalid_ast);
+  for (const auto* e : {"seq(1,2,42)", "(> 3,4,42)", "seq(42)",
+                        "seq(1,seq(2,42))"}) {
+    const auto result = evaluate_source(program(e));
+    assert(result.ok() && *result.value == 42);
+  }
+  assert(evaluate_source(program("seq(1/0,42)")).error == EvalError::divide_by_zero);
+  assert(evaluate_source(program("seq(9223372036854775807+1,42)")).error == EvalError::overflow);
+
+
+  for (const auto* source : {
+    "fnc main(): int {return sync task<int> {return 42;};}",
+    "fnc main(): int {return 1 + sync task {return 41;};}",
+    "fnc main(): int {do sync task {} return 42;}",
+    "fnc main(): int {do sync task<void> {return;}; return 42;}",
+    "fnc main(): int {return sync task<int> {return sync task<int> {return 42;};};}",
+    "fnc main(): int {return seq(1,sync task<int> {return 42;});}"
+  }) {
+    auto t = evaluate_source(source);
+    assert(t.ok() && *t.value == 42);
+  }
+  assert(evaluate_source(
+    "fnc main(): int {return sync task<int> {return 1/0;};}"
+  ).error == EvalError::divide_by_zero);
+  assert(evaluate_source(
+    "fnc main(): int {do sync task<int> {return 1;};return 42;}"
+  ).error == EvalError::parse_error);
+
+
 }

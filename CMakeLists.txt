@@ -631,3 +631,26 @@ add_test(NAME scalar_check_only
     "-DFORGE=$<TARGET_FILE:forge_scalar>"
     "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/scalar-check"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/scalar_check.cmake")
+
+# Bounded local Pointer<int> compiler-native guest parity. This runs real
+# generated source under GCC/Clang and sanitizers, never a Python model.
+add_executable(pointer_local_typed_test tests/pointer_local_typed.cpp)
+target_link_libraries(pointer_local_typed_test PRIVATE atto_forge_checked_i64)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(pointer_local_typed_test PRIVATE -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(pointer_local_typed_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(pointer_local_typed_test PRIVATE -fsanitize=address,undefined)
+  endif()
+elseif(MSVC)
+  target_compile_options(pointer_local_typed_test PRIVATE /UNDEBUG)
+endif()
+add_test(NAME pointer_local_typed_test COMMAND pointer_local_typed_test)
+add_test(NAME pointer_local_native_guests
+  COMMAND "${CMAKE_COMMAND}"
+    "-DROOT=${CMAKE_CURRENT_SOURCE_DIR}"
+    "-DCXX=${CMAKE_CXX_COMPILER}"
+    "-DSANITIZERS=${ATTO_FORGE_SANITIZERS}"
+    "-DFORGE=$<TARGET_FILE:forge_scalar>"
+    "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/pointer-local-guests"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/pointer_local_guest.cmake")

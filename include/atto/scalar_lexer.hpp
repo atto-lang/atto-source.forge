@@ -7,11 +7,12 @@
 
 namespace atto::forge::scalar {
 enum class Kind {
-  name, integer, lparen, rparen, lbrace, rbrace, colon, semicolon,
-  plus, minus, star, slash, percent, bit_and, bit_or, bit_xor, tilde, shl, lshr, arrow, left_arrow, end
+  name, integer, lparen, rparen, lbrace, rbrace, colon, semicolon, period,
+  plus, minus, star, slash, percent, bit_and, bit_or, bit_xor, caret_return, tilde, shl, lshr, io_write, io_read, arrow, left_arrow, comma, gt, lt, assign, bang, end
 };
 struct Token { Kind kind; std::size_t offset; std::size_t length; };
-enum class LexError { none, source_too_large, token_limit, unsupported_byte, unterminated_comment };
+enum class LexError { none, source_too_large, token_limit, unsupported_byte, unterminated_comment,
+                      comment_nesting_limit, ownership_bang_unsupported };
 struct Lexed {
   std::vector<Token> tokens;
   LexError error = LexError::none;
@@ -50,16 +51,25 @@ inline constexpr std::size_t max_tokens = 256;
     if (c == '/' && i + 1 < src.size() && src[i + 1] == '*') {
       const std::size_t opening = i;
       i += 2;
-      bool closed = false;
-      while (i + 1 < src.size()) {
-        if (src[i] == '*' && src[i + 1] == '/') {
+      std::size_t depth = 1;
+      while (i < src.size() && depth != 0) {
+        if (i + 1 < src.size() && src[i] == '/' && src[i + 1] == '*') {
+          // Admit at most 128 nested block comment frames.
+          if (depth >= 128) {
+            out.error = LexError::comment_nesting_limit;
+            out.error_offset = i;
+            return out;
+          }
+          ++depth;
           i += 2;
-          closed = true;
-          break;
+        } else if (i + 1 < src.size() && src[i] == '*' && src[i + 1] == '/') {
+          --depth;
+          i += 2;
+        } else {
+          ++i;
         }
-        ++i;
       }
-      if (!closed) {
+      if (depth != 0) {
         out.error = LexError::unterminated_comment;
         out.error_offset = opening;
         return out;
@@ -76,6 +86,20 @@ inline constexpr std::size_t max_tokens = 256;
     if (is_name_start(c)) {
       kind = Kind::name;
       do { ++i; } while (i < src.size() && is_name(src[i]));
+      // Admit a reserved ownership verb as a word, but never silently
+      // tokenize its unlowered bang form as scalar arithmetic.
+      const auto word = src.substr(start, i - start);
+      const bool ownership_verb = word == "copy" || word == "take" ||
+          word == "borrow" || word == "share" || word == "pin" ||
+          word == "drop" || word == "freeze" || word == "weak";
+      const bool comparison = src.substr(i, 2) == "!=" ||
+          src.substr(i, 3) == "!eq";
+      if (ownership_verb && i < src.size() && src[i] == '!' &&
+          !comparison) {
+        out.error = LexError::ownership_bang_unsupported;
+        out.error_offset = start;
+        return out;
+      }
     } else if (c == '-' && src.substr(i, 2) == "->") {
       kind = Kind::arrow;
       i += 2;
@@ -87,6 +111,18 @@ inline constexpr std::size_t max_tokens = 256;
       i += 3;
     } else if (c == '>' && src.substr(i, 3) == ">>>") {
       kind = Kind::lshr;
+      i += 3;
+    } else if (c == '<' && src.substr(i, 2) == "<<") {
+      kind = Kind::io_write; i += 2;
+    } else if (c == '>' && src.substr(i, 2) == ">>") {
+      kind = Kind::io_read; i += 2;
+    } else if (c == '^' && src.substr(i, 2) == "^^") {
+      kind = Kind::bit_xor;
+      i += 2;
+    } else if (static_cast<unsigned char>(c) == 0xE2 &&
+               src.substr(i, 3) == "\xE2\x80\xA2") {
+      // Exact U+2022 callable marker only; all other non-ASCII stays denied.
+      kind = Kind::left_arrow;
       i += 3;
     } else if (is_digit(c)) {
       kind = Kind::integer;
@@ -100,6 +136,12 @@ inline constexpr std::size_t max_tokens = 256;
         case '}': kind = Kind::rbrace; break;
         case ':': kind = Kind::colon; break;
         case ';': kind = Kind::semicolon; break;
+        case '.': kind = Kind::period; break;
+        case ',': kind = Kind::comma; break;
+        case '>': kind = Kind::gt; break;
+        case '<': kind = Kind::lt; break;
+        case '=': kind = Kind::assign; break;
+        case '!': kind = Kind::bang; break;
         case '+': kind = Kind::plus; break;
         case '-': kind = Kind::minus; break;
         case '*': kind = Kind::star; break;
@@ -107,7 +149,7 @@ inline constexpr std::size_t max_tokens = 256;
         case '%': kind = Kind::percent; break;
         case '&': kind = Kind::bit_and; break;
         case '|': kind = Kind::bit_or; break;
-        case '^': kind = Kind::bit_xor; break;
+        case '^': kind = Kind::caret_return; break;
         case '~': kind = Kind::tilde; break;
         default:
           out.error = LexError::unsupported_byte;

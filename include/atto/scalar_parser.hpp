@@ -11,14 +11,17 @@
 #include <vector>
 
 namespace atto::forge::scalar {
-enum class Op { literal, add, sub, mul, div, rem, neg, band, bor, bxor, bnot, shl, lshr, ashr };
+enum class Op { literal, add, sub, mul, div, rem, neg, band, bor, bxor, bnot, shl, lshr, ashr, seq, inline_task };
 struct Node {
   Op op;
   std::size_t left = 0, right = 0;
   i64 value = 0;
 };
 enum class ParseError {
-  none, lexical, syntax, literal_out_of_range, depth_limit, node_limit
+  none, lexical, syntax, literal_out_of_range, depth_limit, node_limit,
+  io_direction_unsupported, unsupported_continuous_pipe,
+  ownership_bang_unsupported, pointer_profile, task_unsupported, task_return_type,
+  reserved_sync
 };
 // Stable sanitized diagnostics; never echo user source bytes.
 [[nodiscard]] constexpr std::string_view parse_error_name(ParseError error) noexcept {
@@ -29,11 +32,29 @@ enum class ParseError {
     case ParseError::literal_out_of_range: return "E_PARSE_RANGE";
     case ParseError::depth_limit: return "E_PARSE_DEPTH";
     case ParseError::node_limit: return "E_PARSE_NODES";
+    case ParseError::io_direction_unsupported: return "E_IO_DIRECTION_UNSUPPORTED";
+    case ParseError::unsupported_continuous_pipe: return "E_UNSUPPORTED_CONTINUOUS_PIPE";
+    case ParseError::ownership_bang_unsupported: return "E_OWNERSHIP_BANG_UNSUPPORTED";
+    case ParseError::pointer_profile: return "E_POINTER_PROFILE";
+    case ParseError::task_unsupported: return "E_TASK_UNSUPPORTED";
+    case ParseError::task_return_type: return "E_TASK_RETURN_TYPE";
+    case ParseError::reserved_sync: return "E_RESERVED";
   }
   return "E_PARSE_UNKNOWN";
 }
 
+// BorrowedLocal is NOT an owning Pointer.alloc<T> region or a raw Atto
+// pointer. The canonical parser verifies the exact lexical sequence and
+// erases all source names before emission. Only a single initialized i64
+// place with a compiler-authenticated readonly handle is admitted.
+struct BorrowedLocal {
+  std::string referent;
+  std::string handle;
+  std::string copied_scalar;
+  i64 initial = 0;
+};
 struct Parsed {
+  std::optional<BorrowedLocal> local;
   std::vector<Node> nodes;
   std::size_t root = 0;
   ParseError error = ParseError::none;
@@ -51,6 +72,38 @@ inline constexpr int max_parse_depth = 24;
 [[nodiscard]] inline bool validate_ast(const Parsed& p) {
   if (!p.ok() || p.nodes.size() > max_nodes ||
       p.root != p.nodes.size() - 1) return false;
+  if (p.local) {
+    // A forged or mutated typed plan must not be allowed to change its
+    // value, launder a raw address, or become an owning pointer. There is
+    // exactly one canonical postorder i64 read-copy result.
+    const auto& l = *p.local;
+    const auto safe_name = [](const std::string& n) {
+      if (n.empty() || n.size() > 96) return false;
+      auto start = [](char ch) {
+        return (ch >= 'a' && ch <= 'z') ||
+               (ch >= 'A' && ch <= 'Z') || ch == '_';
+      };
+      if (!start(n[0])) return false;
+      for (char ch : n)
+        if (!start(ch) && !(ch >= '0' && ch <= '9')) return false;
+      return true;
+    };
+    const auto reserved = [](const std::string& n) {
+      return n == "main" || n == "int" || n == "Pointer" ||
+             n == "let" || n == "val" || n == "rt" ||
+             n == "ref" || n == "deref" || n == "unref" ||
+             n == "return" || n == "fnc" || n == "pub";
+    };
+    if (!safe_name(l.referent) || !safe_name(l.handle) ||
+        !safe_name(l.copied_scalar) ||
+        reserved(l.referent) || reserved(l.handle) ||
+        reserved(l.copied_scalar) ||
+        l.referent == l.handle || l.referent == l.copied_scalar ||
+        l.handle == l.copied_scalar ||
+        p.nodes.size() != 1 || p.root != 0 ||
+        p.nodes[0].op != Op::literal || p.nodes[0].value != l.initial)
+      return false;
+  }
   std::vector<unsigned char> reachable(p.nodes.size(), 0);
   std::vector<std::size_t> pending{p.root};
   while (!pending.empty()) {
@@ -66,6 +119,7 @@ inline constexpr int max_parse_depth = 24;
         break;
       case Op::neg:
       case Op::bnot:
+      case Op::inline_task:
         if (node.left >= index || node.right != 0) return false;
         pending.push_back(node.left);
         break;
@@ -80,6 +134,7 @@ inline constexpr int max_parse_depth = 24;
       case Op::shl:
       case Op::lshr:
       case Op::ashr:
+      case Op::seq:
         if (node.left >= index || node.right >= index) return false;
         pending.push_back(node.left);
         pending.push_back(node.right);
@@ -130,7 +185,7 @@ class Parser {
     out_.nodes.push_back(n);
     return out_.nodes.size() - 1;
   }
-  // bit_or < bit_xor < bit_and < addition < multiplication < unary.
+  // bit_or < bit_xor (^^ only) < bit_and < addition < multiplication < unary.
   // Flat precedence tiers do not consume the nesting depth budget.
   // Only actual parenthesized or unary nesting increments depth.
   [[nodiscard]] std::optional<std::size_t> expr(int depth) {
@@ -215,6 +270,22 @@ class Parser {
     }
     return lhs;
   }
+  // Sequence prefixes remain checked postorder dependencies, never discarded.
+  [[nodiscard]] std::optional<std::size_t> sequence_body(int depth) {
+    if (depth > max_parse_depth) { fail(ParseError::depth_limit); return std::nullopt; }
+    auto last = expr(depth + 1);
+    if (!last) return std::nullopt;
+    std::size_t count = 1;
+    while (take(Kind::comma)) {
+      if (++count > 16) { fail(ParseError::node_limit); return std::nullopt; }
+      auto next = expr(depth + 1);
+      if (!next) return std::nullopt;
+      last = append(Node{Op::seq, *last, *next, 0});
+      if (!last) return std::nullopt;
+    }
+    if (!take(Kind::rparen)) { fail(ParseError::syntax); return std::nullopt; }
+    return last;
+  }
   [[nodiscard]] std::optional<std::size_t> unary(int depth) {
     if (depth > max_parse_depth) { fail(ParseError::depth_limit); return std::nullopt; }
     if (take(Kind::plus)) return unary(depth + 1);
@@ -242,12 +313,19 @@ class Parser {
       if (!rhs) return std::nullopt;
       return append(Node{Op::neg, *rhs, 0, 0});
     }
+    if (name("seq")) {
+      if (!take(Kind::lparen)) { fail(ParseError::syntax); return std::nullopt; }
+      return sequence_body(depth + 1);
+    }
     if (take(Kind::lparen)) {
+      if (take(Kind::gt)) return sequence_body(depth + 1);
       auto inside = expr(depth + 1);
       if (!inside) return std::nullopt;
       if (!take(Kind::rparen)) { fail(ParseError::syntax); return std::nullopt; }
       return inside;
     }
+    if (current().kind == Kind::name && text() == "sync")
+      return inline_task(depth + 1, false);
     if (current().kind == Kind::integer) {
       auto n = parse_decimal_i64(text());
       if (!n) { fail(ParseError::literal_out_of_range); return std::nullopt; }
@@ -257,12 +335,151 @@ class Parser {
     fail(ParseError::syntax);
     return std::nullopt;
   }
+  // Pure restricted task: same-frame, checked scalar execution. No child,
+  // suspension, future, cancellation or ambient actor capability is granted.
+  [[nodiscard]] std::optional<std::size_t> inline_task(int depth, bool discard) {
+    if (depth > max_parse_depth) { fail(ParseError::depth_limit); return std::nullopt; }
+    if (!name("sync") || !name("task")) {
+      fail(ParseError::syntax); return std::nullopt;
+    }
+    enum class Payload { inferred, integer, void_type };
+    Payload payload = Payload::inferred;
+    if (take(Kind::lt)) {
+      if (name("int")) payload = Payload::integer;
+      else if (name("void")) payload = Payload::void_type;
+      else { fail(ParseError::task_unsupported); return std::nullopt; }
+      if (!take(Kind::gt)) { fail(ParseError::task_unsupported); return std::nullopt; }
+    }
+    if (!take(Kind::lbrace)) { fail(ParseError::syntax); return std::nullopt; }
+    std::optional<std::size_t> body;
+    if (name("return")) {
+      if (current().kind != Kind::semicolon) body = expr(depth + 1);
+      if (out_.error != ParseError::none) return std::nullopt;
+      if (!take(Kind::semicolon)) { fail(ParseError::syntax); return std::nullopt; }
+    }
+    if (!take(Kind::rbrace)) { fail(ParseError::syntax); return std::nullopt; }
+    if ((discard && (payload == Payload::integer || body.has_value())) ||
+        (!discard && (payload == Payload::void_type || !body))) {
+      fail(ParseError::task_return_type); return std::nullopt;
+    }
+    // A typed void statement uses an unobservable scalar placeholder;
+    // the checker still requires all referenced child nodes to be reachable.
+    if (!body) body = append(Node{Op::literal, 0, 0, 0});
+    if (!body) return std::nullopt;
+    return append(Node{Op::inline_task, *body, 0, 0});
+  }
+  [[nodiscard]] bool expected(Kind kind) {
+    if (take(kind)) return true;
+    fail(ParseError::pointer_profile);
+    return false;
+  }
+  [[nodiscard]] bool expected(std::string_view word) {
+    if (name(word)) return true;
+    fail(ParseError::pointer_profile);
+    return false;
+  }
+  [[nodiscard]] std::optional<std::string> local_id() {
+    if (current().kind != Kind::name) {
+      fail(ParseError::pointer_profile);
+      return std::nullopt;
+    }
+    std::string name_value(text());
+    ++pos_;
+    if (name_value.size() > 96 ||
+        name_value == "main" || name_value == "int" ||
+        name_value == "Pointer" || name_value == "let" ||
+        name_value == "val" || name_value == "rt" ||
+        name_value == "ref" || name_value == "deref" ||
+        name_value == "unref" || name_value == "return" ||
+        name_value == "fnc" || name_value == "pub") {
+      fail(ParseError::pointer_profile);
+      return std::nullopt;
+    }
+    return name_value;
+  }
+  [[nodiscard]] bool local_op(std::string_view op) {
+    if (name("rt")) return expected(op);
+    const auto begin = current().offset;
+    if (!expected(op)) return false;
+    // Even whitespace or comments between operation and ! are rejected;
+    // source offsets are retained by the *canonical* lexer.
+    if (current().kind != Kind::bang ||
+        current().offset != begin + op.size()) {
+      fail(ParseError::pointer_profile);
+      return false;
+    }
+    ++pos_;
+    return true;
+  }
+  [[nodiscard]] bool local_pointer() {
+    auto owner = local_id();
+    if (!owner || !expected(Kind::colon) ||
+        !expected("int") || !expected(Kind::assign))
+      return false;
+    if (current().kind != Kind::integer) {
+      fail(ParseError::pointer_profile);
+      return false;
+    }
+    auto initial = parse_decimal_i64(text());
+    if (!initial) {
+      fail(ParseError::literal_out_of_range);
+      return false;
+    }
+    ++pos_;
+    if (!expected(Kind::semicolon) || !expected("val") ||
+        !expected("Pointer") || !expected(Kind::lt) ||
+        !expected("int") || !expected(Kind::gt))
+      return false;
+    auto handle = local_id();
+    if (!handle) return false;
+    if (*handle == *owner) {
+      fail(ParseError::pointer_profile);
+      return false;
+    }
+    if (!expected(Kind::assign) || !local_op("ref") ||
+        !expected(*owner) || !expected(Kind::semicolon) ||
+        !expected("val"))
+      return false;
+    auto copy = local_id();
+    if (!copy) return false;
+    if (*copy == *owner || *copy == *handle) {
+      fail(ParseError::pointer_profile);
+      return false;
+    }
+    if (!expected(Kind::assign) || !local_op("deref") ||
+        !expected(*handle) || !expected(Kind::semicolon) ||
+        !local_op("unref") || !expected(*handle) ||
+        !expected(Kind::semicolon) || !expected("return") ||
+        !expected(*copy) || !expected(Kind::semicolon) ||
+        !expected(Kind::rbrace) || current().kind != Kind::end) {
+      fail(ParseError::pointer_profile);
+      return false;
+    }
+    // The proof is closed-world: exactly one readonly copy and one unref
+    // precede the only return. No branch, call, actor, await, handle copy,
+    // second function or operation is accepted before guest emission.
+    out_.local = BorrowedLocal{*owner, *handle, *copy, *initial};
+    auto root = append(Node{Op::literal, 0, 0, *initial});
+    if (!root) return false;
+    out_.root = *root;
+    return true;
+  }
 public:
   Parser(std::string_view source, Lexed lexed)
       : source_(source), tokens_(std::move(lexed.tokens)) {
     if (!lexed.ok()) {
-      out_.error = ParseError::lexical;
+      out_.error = lexed.error == LexError::ownership_bang_unsupported
+          ? ParseError::ownership_bang_unsupported : ParseError::lexical;
       out_.error_offset = lexed.error_offset;
+    }
+    if (out_.error == ParseError::none) {
+      for (const auto& token : tokens_) {
+        if (token.kind == Kind::io_write || token.kind == Kind::io_read) {
+          out_.error = ParseError::io_direction_unsupported;
+          out_.error_offset = token.offset;
+          break;
+        }
+      }
     }
   }
   [[nodiscard]] Parsed parse() {
@@ -284,16 +501,79 @@ public:
         signature_ok = scalar_return_type();
       }
     }
-    if (!signature_ok || !take(Kind::lbrace) || !name("return")) {
+    if (!signature_ok) {
+      fail(ParseError::syntax);
+      return std::move(out_);
+    }
+    const bool brace_body = take(Kind::lbrace);
+    if (!brace_body) {
+      if (!name("begin")) {
+        fail(ParseError::syntax);
+        return std::move(out_);
+      }
+      // begin must be a standalone next-line marker in this scalar profile.
+      const auto& begin = tokens_[pos_ - 1];
+      const auto& prior = tokens_[pos_ - 2];
+      const auto before = source_.substr(prior.offset + prior.length,
+                                          begin.offset - prior.offset - prior.length);
+      const auto& first_statement = current();
+      const auto after = source_.substr(begin.offset + begin.length,
+                                         first_statement.offset - begin.offset - begin.length);
+      if (before.find('\n') == std::string_view::npos ||
+          after.find('\n') == std::string_view::npos) {
+        fail(ParseError::syntax);
+        return std::move(out_);
+      }
+    }
+    // A deliberately closed-world Pointer<int> local plan bypasses the
+    // general scalar expression grammar only after exact typed admission.
+    if (brace_body && name("let")) {
+      (void)local_pointer();
+      return std::move(out_);
+    }
+    // The only statement form added here is an in-frame, void-only
+    // 'do sync task'. Its completion precedes the final scalar return.
+    std::optional<std::size_t> before_return;
+    while (current().kind == Kind::name && text() == "do") {
+      (void)name("do");
+      auto t = inline_task(1, true);
+      if (!t) return std::move(out_);
+      (void)take(Kind::semicolon);
+      if (before_return) {
+        before_return = append(Node{Op::seq, *before_return, *t, 0});
+        if (!before_return) return std::move(out_);
+      } else before_return = *t;
+    }
+    if (!(name("return") || take(Kind::caret_return))) {
       fail(ParseError::syntax);
       return std::move(out_);
     }
     auto root = expr(0);
     if (!root) return std::move(out_);
-    if (!take(Kind::semicolon) || !take(Kind::rbrace) ||
-        current().kind != Kind::end) {
+    if (!take(Kind::semicolon)) {
       fail(ParseError::syntax);
       return std::move(out_);
+    }
+    if (brace_body) {
+      if (!take(Kind::rbrace)) {
+        fail(ParseError::syntax);
+        return std::move(out_);
+      }
+    } else {
+      if (!name("end")) {
+        fail(ParseError::syntax);
+        return std::move(out_);
+      }
+      (void)take(Kind::period);
+      (void)take(Kind::semicolon);
+    }
+    if (current().kind != Kind::end) {
+      fail(ParseError::syntax);
+      return std::move(out_);
+    }
+    if (before_return) {
+      root = append(Node{Op::seq, *before_return, *root, 0});
+      if (!root) return std::move(out_);
     }
     out_.root = *root;
     return std::move(out_);
@@ -301,6 +581,29 @@ public:
 };
 
 [[nodiscard]] inline Parsed parse_source(std::string_view src) {
-  return Parser(src, tokenize(src)).parse();
+  Lexed lexed = tokenize(src);
+  // Token-based reservations ignore text inside comments. Only the
+  // lexically adjacent 'sync task' form can create the checked inline node.
+  if (lexed.ok()) {
+    auto word_at = [&](std::size_t i) -> std::string_view {
+      if (i >= lexed.tokens.size()) return {};
+      const auto& tok = lexed.tokens[i];
+      return tok.kind == Kind::name
+          ? src.substr(tok.offset, tok.length) : std::string_view{};
+    };
+    for (std::size_t i = 0; i < lexed.tokens.size(); ++i) {
+      const auto word = word_at(i);
+      Parsed rejected;
+      rejected.error_offset = lexed.tokens[i].offset;
+      if (word == "pipe" || word == "rpipe")
+        rejected.error = ParseError::unsupported_continuous_pipe;
+      else if (word == "sync" && word_at(i + 1) != "task")
+        rejected.error = ParseError::reserved_sync;
+      else if (word == "task" && (i == 0 || word_at(i - 1) != "sync"))
+        rejected.error = ParseError::task_unsupported;
+      if (rejected.error != ParseError::none) return rejected;
+    }
+  }
+  return Parser(src, std::move(lexed)).parse();
 }
 }  // namespace atto::forge::scalar

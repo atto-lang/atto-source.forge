@@ -41,14 +41,79 @@ int main() {
   const std::string nul("1\0" "2", 3);
   auto bad = tokenize(std::string_view(nul));
   assert(bad.error == LexError::unsupported_byte && bad.error_offset == 1);
-  const auto bits = tokenize("~1 & 2 | 3 ^ 4");
+  const auto bits = tokenize("~1 & 2 | 3 ^^ 4");
   assert(bits.ok());
   assert(bits.tokens[0].kind == Kind::tilde);
   assert(bits.tokens[2].kind == Kind::bit_and);
   assert(bits.tokens[4].kind == Kind::bit_or);
   assert(bits.tokens[6].kind == Kind::bit_xor);
+  assert(bits.tokens[6].length == 2);
+  const auto caret = tokenize("fnc main(): int { ^ 42; }");
+  assert(caret.ok());
+  bool saw_caret = false;
+  for (const auto& t : caret.tokens) {
+    if (t.kind == Kind::caret_return) { saw_caret = true; assert(t.length == 1); }
+  }
+  assert(saw_caret);
+  const auto bullet = tokenize("int\xE2\x80\xA2 main()\nbegin\n^ 42;\nend.");
+  assert(bullet.ok());
+  bool saw_bullet = false, saw_period = false;
+  for (const auto& t : bullet.tokens) {
+    if (t.kind == Kind::left_arrow && t.length == 3) saw_bullet = true;
+    if (t.kind == Kind::period) saw_period = true;
+  }
+  assert(saw_bullet && saw_period);
+  const auto split = tokenize("1 ^ /* not contiguous */ ^ 2");
+  assert(split.ok());
+  for (const auto& t : split.tokens) assert(t.kind != Kind::bit_xor);
+  assert(tokenize("int\xE2\x80\xA3 main()").error == LexError::unsupported_byte);
   assert(tokenize("\xC3\xA9").error == LexError::unsupported_byte);
   assert(tokenize(std::string(max_source_bytes + 1, 'a')).error == LexError::source_too_large);
   assert(tokenize(std::string(max_tokens + 1, '+')).error == LexError::token_limit);
   assert(tokenize(std::string(max_tokens, '+')).ok());
+  const auto directions = tokenize("c << 42; (c >>); c <<< 3; c >>> 2;");
+  assert(directions.ok());
+  int writes = 0, reads = 0, shifts = 0;
+  for (const auto& token : directions.tokens) {
+    if (token.kind == Kind::io_write) ++writes;
+    if (token.kind == Kind::io_read) ++reads;
+    if (token.kind == Kind::shl || token.kind == Kind::lshr) ++shifts;
+  }
+  assert(writes == 1 && reads == 1 && shifts == 2);
+  assert(tokenize("(> 1,2)").ok());
+  assert(tokenize("a = b").ok());
+  assert(tokenize("a < b").ok());
+  assert(tokenize("// c << 42\n 7").ok());
+
+  std::string nested_comments;
+  for (int depth = 0; depth < 128; ++depth) nested_comments += "/*";
+  nested_comments += "7";
+  for (int depth = 0; depth < 128; ++depth) nested_comments += "*/";
+  auto bounded_comments = tokenize(nested_comments);
+  assert(bounded_comments.ok());
+  assert(bounded_comments.tokens.size() == 2);
+  assert(bounded_comments.tokens[0].kind == Kind::integer);
+  nested_comments.insert(0, "/*");
+  nested_comments += "*/";
+  auto excessive_comments = tokenize(nested_comments);
+  assert(excessive_comments.error == LexError::comment_nesting_limit);
+  assert(excessive_comments.error_offset == 256);
+  auto hidden_tokens = tokenize("/* outer /* copy! */ rpipe >> */ 42");
+  assert(hidden_tokens.ok());
+  assert(hidden_tokens.tokens.size() == 2);
+  for (const auto* forbidden : {"copy!", "copy!!", "take!", "borrow!", "share!",
+                                "pin!", "drop!", "freeze!", "weak!"}) {
+    auto denied = tokenize(forbidden);
+    assert(denied.error == LexError::ownership_bang_unsupported);
+    assert(denied.error_offset == 0);
+  }
+  for (const auto* valid : {"ref!", "deref!", "unref!"}) {
+    auto lexed = tokenize(valid);
+    assert(lexed.ok());
+    assert(lexed.tokens.size() == 3);
+    assert(lexed.tokens[0].kind == Kind::name);
+    assert(lexed.tokens[1].kind == Kind::bang);
+    assert(lexed.tokens[2].kind == Kind::end);
+  }
+
 }

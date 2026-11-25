@@ -13,11 +13,14 @@ int main() {
     "fnc main(): int {return -9223372036854775808;}");
   assert(mn && mn->find("numeric_limits<atto::forge::i64>::min()") != std::string::npos);
   const auto bitwise = emit_cpp_source(
-    "fnc main(): int {return ~0 & 15 | 1 ^ 2;}");
+    "fnc main(): int {return ~0 & 15 | 1 ^^ 2;}");
   assert(bitwise && bitwise->find("bit_not") != std::string::npos);
   assert(bitwise->find("bit_and") != std::string::npos);
   assert(bitwise->find("bit_or") != std::string::npos);
   assert(bitwise->find("bit_xor") != std::string::npos);
+  const auto caret = emit_cpp_source("fnc main(): int { ^ 6 ^^ 3; }");
+  assert(caret && caret->find("bit_xor") != std::string::npos);
+  assert(!emit_cpp_source("fnc main(): int { return 6 ^ 3; }"));
   const auto traps = emit_cpp_source("fnc main(): int {return 3 / 0;}");
   assert(traps && traps->find("E_DIVZERO") != std::string::npos);
   assert(traps->find("return 71") != std::string::npos);
@@ -45,4 +48,23 @@ int main() {
   forged.nodes.back().op = static_cast<Op>(900);
   assert(!validate_ast(forged));
   assert(!emit_cpp(forged));
+  const auto seq = emit_cpp_source("fnc main(): int {return seq(1,(> 2,3),42);}");
+  assert(seq);
+  assert(seq == emit_cpp_source("fnc main(): int {return seq(1,(> 2,3),42);}"));
+  assert(!emit_cpp_source("fnc main(): int {return seq(1,);}"));
+
+
+  auto inlined = emit_cpp_source(
+    "fnc main(): int {do sync task {} return sync task<int> {return 42;};}");
+  assert(inlined && inlined->find("std::printf") != std::string::npos);
+  assert(inlined->find("[[maybe_unused]]") != std::string::npos);
+  assert(inlined->find("TaskSpawn") == std::string::npos);
+  assert(inlined->find("Future<") == std::string::npos);
+  assert(inlined == emit_cpp_source(
+    "fnc main(): int {do sync task {} return sync task<int> {return 42;};}"));
+  assert(!emit_cpp_source("fnc main(): int {return task<int> {return 42;};}"));
+  assert(!emit_cpp_source(
+    "fnc main(): int {do sync task<int> {return 1;};return 42;}"));
+
+
 }

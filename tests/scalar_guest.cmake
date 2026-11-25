@@ -41,15 +41,17 @@ file(WRITE "${invalid}" "fnc main(): int {return os.read_env(\"HOME\");}")
 file(WRITE "${stale}" "stale source")
 execute_process(COMMAND "${FORGE}" "${invalid}" -o "${stale}"
   RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
-if(NOT "${rc}" STREQUAL "2" OR EXISTS "${stale}")
-  message(FATAL_ERROR "invalid source published or stale output retained")
+file(READ "${stale}" after_invalid)
+if(NOT "${rc}" STREQUAL "2" OR NOT "${after_invalid}" STREQUAL "stale source")
+  message(FATAL_ERROR "invalid source deleted or changed existing output")
 endif()
 string(REPEAT "1" 17000 huge)
 file(WRITE "${OUT_DIR}/huge.atto" "${huge}")
 execute_process(COMMAND "${FORGE}" "${OUT_DIR}/huge.atto" -o "${stale}"
   RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
-if(NOT "${rc}" STREQUAL "2" OR EXISTS "${stale}")
-  message(FATAL_ERROR "source-size budget violated")
+file(READ "${stale}" after_size_reject)
+if(NOT "${rc}" STREQUAL "2" OR NOT "${after_size_reject}" STREQUAL "stale source")
+  message(FATAL_ERROR "oversized source deleted or changed existing output")
 endif()
 
 # Guard output and temp-path direct symlink clobber.
@@ -93,6 +95,10 @@ file(REMOVE "${link_temp}")
 
 verify_guest(bitwise "0" "15\n" "")
 verify_guest(bitwise_precedence "0" "1\n" "")
+verify_guest(caret_return "0" "42\n" "")
+verify_guest(caret_xor "0" "5\n" "")
+verify_guest(return_arrow_begin "0" "42\n" "")
+verify_guest(return_bullet_begin "0" "42\n" "")
 
 verify_guest(shift_logical "0" "9223372036854775807\n" "")
 verify_guest(shift_arithmetic "0" "-1\n" "")
@@ -137,3 +143,23 @@ verify_guest(infer_arrow "0" "42\n" "")
 verify_guest(infer_block "0" "42\n" "")
 verify_guest(infer_prefix "0" "42\n" "")
 verify_guest(infer_bare_prefix "0" "42\n" "")
+
+# Real native guests: prefix traps must not be optimized away.
+verify_guest(seq_scalar "0" "42\n" "")
+verify_guest(seq_divzero "71" "" "E_DIVZERO\n")
+verify_guest(seq_overflow "70" "" "E_OVERFLOW\n")
+
+# Nested comments are inert even when they conceal reserved words and I/O.
+verify_guest(nested_comments "0" "42\n" "")
+
+# Restricted inline sync task guests are same-frame and non-suspending.
+# These test emitted native C++; no Future, scheduler or cancellation claim.
+verify_guest(sync_inline_discard "0" "42\n" "")
+verify_guest(sync_inline_nested "0" "42\n" "")
+verify_guest(sync_inline_statement "0" "42\n" "")
+verify_guest(sync_inline_trap "71" "" "E_DIVZERO\n")
+
+# Cross-feature executable guests: begin/end + bullet + void do + value task
+# + ordered sequence; failure must short-circuit before later task result.
+verify_guest(integration_task_seq_bullet "0" "42\n" "")
+verify_guest(integration_task_seq_trap "71" "" "E_DIVZERO\n")

@@ -1,0 +1,4 @@
+int <- main()
+begin
+^ 40 + 2;
+end.
