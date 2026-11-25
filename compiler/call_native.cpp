@@ -228,7 +228,7 @@ class Parser {
     }
     expect("}");
   }
-  // Java parses trap as a unary operator. This narrow root-only Result
+  // Java parses trap as a unary operator. This terminal Result
   // admission accepts repeated trap aliases as one flat capture boundary.
   int trapped_return(std::size_t d) {
     depth(d);
@@ -419,6 +419,8 @@ class Parser {
         if(found==params.end())fail("unknown parameter");
         return add(Kind::Parameter,static_cast<std::int64_t>(found-params.begin()));
       }
+      if(local_source_>=0 && name==local_name_)
+        fail("scalar Result local is not callable");
       std::vector<int> args;
       if (token_.text!=")") {
         do {
