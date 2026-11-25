@@ -500,6 +500,28 @@ int main() {
     reject_diagnostic([] { calls::parse(
       "fnc other(x:int):int{return x;}"
       " fnc main():int{return other();}"); },"function arity mismatch");
+    // Typed predicates must remain verifiable even for externally supplied IR.
+    auto typed=calls::parse("fnc main(x:int):int{^ x eq 0 ? 42 : 7;}");
+    ensure(calls::interpret(typed,std::array<std::int64_t,1>{0})==42,"typed ternary true");
+    ensure(calls::interpret(typed,std::array<std::int64_t,1>{1})==7,"typed ternary false");
+    auto negated=calls::parse("fnc main(x:int):int{return unless x !eq 0 then 42 else 7 fi;}");
+    ensure(calls::interpret(negated,std::array<std::int64_t,1>{0})==42,"negation true");
+    ensure(calls::interpret(negated,std::array<std::int64_t,1>{1})==7,"negation false");
+    auto forged_pred=calls::parse("fnc main():int{return true ? 42 : 7;}");
+    forged_pred.functions[0].nodes[0].kind=calls::Kind::Constant;
+    reject_diagnostic([&] { calls::verify(forged_pred); },"condition_not_bool");
+    auto forged_bool=calls::parse("fnc main():int{return true ? 42 : 7;}");
+    forged_bool.functions[0].nodes[0].value=2;
+    reject_diagnostic([&] { calls::verify(forged_bool); },"invalid Boolean literal");
+    auto forged_arm=calls::parse("fnc main():int{return true ? 1 : 0;}");
+    forged_arm.functions[0].nodes[1].kind=calls::Kind::Boolean;
+    reject_diagnostic([&] { calls::verify(forged_arm); },"conditional branch is not int");
+    auto forged_mixed=calls::parse("fnc main():int{return true eq false ? 42 : 7;}");
+    forged_mixed.functions[0].nodes[1].kind=calls::Kind::Constant;
+    reject_diagnostic([&] { calls::verify(forged_mixed); },"comparison operand type mismatch");
+    auto forged_negation=calls::parse("fnc main():int{return unless true then 42 else 7 fi;}");
+    forged_negation.functions[0].nodes[0].kind=calls::Kind::Constant;
+    reject_diagnostic([&] { calls::verify(forged_negation); },"condition_not_bool");
     auto corrupt=calls::parse("fnc main(x:int):int{return x+1;}");
     corrupt.functions[0].nodes.back().children[0]=999;
     reject_diagnostic([&] { calls::verify(corrupt); },
