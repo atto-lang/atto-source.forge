@@ -7,7 +7,7 @@
 #include <vector>
 
 namespace atto::forge::scalar {
-enum class EvalError { none, parse_error, invalid_ast, overflow, divide_by_zero };
+enum class EvalError { none, parse_error, invalid_ast, overflow, divide_by_zero, shift_distance };
 struct Evaluated {
   std::optional<i64> value;
   EvalError error = EvalError::none;
@@ -50,12 +50,18 @@ struct Evaluated {
         result = checked_div(lhs, values[node.right]);
         break;
       case Op::shl:
+        if (values[node.right] < 0 || values[node.right] > 63)
+          return {{}, EvalError::shift_distance};
         result = shl_i64(lhs, values[node.right]);
         break;
       case Op::lshr:
+        if (values[node.right] < 0 || values[node.right] > 63)
+          return {{}, EvalError::shift_distance};
         result = lshr_i64(lhs, values[node.right]);
         break;
       case Op::ashr:
+        if (values[node.right] < 0 || values[node.right] > 63)
+          return {{}, EvalError::shift_distance};
         result = ashr_i64(lhs, values[node.right]);
         break;
       case Op::band:
