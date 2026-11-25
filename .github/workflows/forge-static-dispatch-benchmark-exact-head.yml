@@ -1,0 +1,51 @@
+name: Forge static dispatch benchmark - exact-head native image
+on:
+  pull_request:
+    paths:
+      - .github/workflows/forge-static-dispatch-benchmark-exact-head.yml
+      - benchmarks/static_dispatch/**
+      - compiler/call_native.cpp
+      - verification/static_dispatch_aot_test.cpp
+      - tests/fixtures/static-dispatch/**
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-stage0-benchmark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact PR commit with no persisted credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify exact source and record native compiler versions
+        shell: bash
+        env:
+          EXPECTED: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED"
+          test -z "$(git status --porcelain)"
+          echo "FORGE_DISPATCH_BENCH_SOURCE_HEAD=$(git rev-parse HEAD)"
+          echo "FORGE_DISPATCH_BENCH_SOURCE_TREE=$(git rev-parse 'HEAD^{tree}')"
+          uname -sm
+          g++ --version | sed -n '1p'
+          clang++ --version | sed -n '1p'
+      - name: Build real Forge stage-0 native verification compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S . -B build-dispatch-benchmark -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+          cmake --build build-dispatch-benchmark --parallel 2 \
+            --target oresforge_static_dispatch_aot_verifier
+          ctest --test-dir build-dispatch-benchmark --output-on-failure -V \
+            -R '^oresforge_static_dispatch_aot_source_and_ir$'
+      - name: Execute Forge native direct-call benchmarks and labeled synthetic control
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n benchmarks/static_dispatch/run.sh
+          bash benchmarks/static_dispatch/run.sh \
+            "$PWD/build-dispatch-benchmark/oresforge_static_dispatch_aot_verifier"
