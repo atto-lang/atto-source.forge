@@ -79,6 +79,21 @@ POSITIVE = (
      ((0,7),(1,42),(2,7))),
     ("user-xor-call", "fnc Xor(a:int,b:int):int{return a+b;} fnc main():int{return Xor(19,23);}",
      ((42,),)),
+    ("option-payload", "fnc value(int x):Option<int>{return Some(x);}"
+     " fnc main(x:int):int{return match<int> value(x) over on Some(n):int -> n, on None:int -> 7, end;}",
+     ((42,42),(0,0),(-9223372036854775808,-9223372036854775808),(9223372036854775807,9223372036854775807))),
+    ("option-none", "fnc value():Option<int>{return None;}"
+     " fnc main():int{return match<int> value() over on Some(n):int -> n, on None:int -> 42, end;}",
+     ((42,),)),
+    ("option-forward", "fnc main(x:int):int{return match<int> forward(x) over on None:int -> 7, on Some(n):int -> n+1, end;}"
+     " fnc forward(x:int):Option<int>{return value(x);} fnc value(x:int):Option<int>{return Some(x);}",
+     ((41,42),(0,1),(-1,0))),
+    ("option-lazy-none", "fnc main(a:int):int{return match<int> None over on Some(n):int -> 9223372036854775807+a, on None:int -> 42, end;}",
+     ((1,42),(2,42))),
+    ("option-lazy-some", "fnc main(a:int):int{return match<int> Some(a) over on Some(n):int -> n, on None:int -> 9223372036854775807+a, end;}",
+     ((1,1),(2,2))),
+    ("option-nested", "fnc main(a:int):int{return match<int> Some(a) over on Some(n):int -> (match<int> Some(n+1) over on Some(m):int -> m+n, on None:int -> 0, end), on None:int -> 7, end;}",
+     ((20,41),(0,1))),
     ("no-args", "fnc main():int{return 42;}", ((42,),)),
 )
 # Exact shared Git blobs, including the final newline added by build().
@@ -132,6 +147,13 @@ INVALID = (
     ("bool-xor-shadow-function", "fnc main():int{return Xor(true,false) ? 42 : 7;} fnc Xor(a:int,b:int):int{return a+b;}", "Boolean Xor intrinsic is shadowed"),
     ("bool-xor-shadow-formal", "fnc main(Xor:int):int{return Xor(true,false) ? 42 : 7;}", "Boolean Xor intrinsic is shadowed"),
     ("bool-xor-symbolic", "fnc main():int{return true ^^ false ? 42 : 7;}", "FORGE_XOR_BACKEND_UNSUPPORTED"),
+    ("option-bool-payload", "fnc value():Option<int>{return Some(true);} fnc main():int{return 42;}", "Boolean is not an int"),
+    ("option-entry", "fnc main():Option<int>{return None;}", "native entry must return int"),
+    ("option-as-int", "fnc value():Option<int>{return None;} fnc main():int{return value();}", "callable Option result type mismatch"),
+    ("int-as-option", "fnc value():int{return 42;} fnc main():int{return match<int> value() over on Some(n):int -> n, on None:int -> 7, end;}", "callable Option result type mismatch"),
+    ("option-duplicate", "fnc main():int{return match<int> None over on None:int -> 1, on None:int -> 2, end;}", "duplicate Option match arm"),
+    ("option-payload-outside-arm", "fnc main():int{return match<int> Some(42) over on Some(n):int -> n, on None:int -> n, end;}", "unknown parameter"),
+    ("option-payload-not-callable", "fnc main():int{return match<int> Some(42) over on Some(n):int -> n(), on None:int -> 0, end;}", "Option payload is not callable"),
     ("integer-condition", "fnc main():int{return if 1 then 2 else 3;}", "condition_not_bool"),
     ("integer-ternary", "fnc main():int{return 1 ? 2 : 3;}", "condition_not_bool"),
     ("integer-unless", "fnc main():int{return unless 1 then 2 else 3 fi;}", "condition_not_bool"),
