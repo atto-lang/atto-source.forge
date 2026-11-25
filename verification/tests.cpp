@@ -532,6 +532,12 @@ int main() {
     auto guard_wrong_type=calls::parse("fnc main():int{guard true {return 1;} return 42;}");
     guard_wrong_type.functions[0].nodes[0].kind=calls::Kind::Constant;
     reject_diagnostic([&] { calls::verify(guard_wrong_type); },"condition_not_bool");
+    auto bool_xor=calls::parse("fnc main(x:int):int{return Xor(x eq 0,false) ? 42 : 7;}");
+    ensure(calls::interpret(bool_xor,std::array<std::int64_t,1>{0})==42,"Boolean Xor true");
+    ensure(calls::interpret(bool_xor,std::array<std::int64_t,1>{1})==7,"Boolean Xor false");
+    auto bad_xor=calls::parse("fnc main():int{return Xor(true,false) ? 42 : 7;}");
+    bad_xor.functions[0].nodes[1].kind=calls::Kind::Constant;
+    reject_diagnostic([&] { calls::verify(bad_xor); },"Boolean Xor requires two bool operands");
     auto corrupt=calls::parse("fnc main(x:int):int{return x+1;}");
     corrupt.functions[0].nodes.back().children[0]=999;
     reject_diagnostic([&] { calls::verify(corrupt); },
