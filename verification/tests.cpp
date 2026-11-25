@@ -551,6 +551,18 @@ int main() {
     for(auto& node:forged_result.functions[1].nodes)
       if(node.kind==calls::Kind::ResultCall) node.kind=calls::Kind::Call;
     reject_diagnostic([&] { calls::verify(forged_result); },"scalar Result call type mismatch");
+    auto option=calls::parse("fnc main(x:int):Option<int>{return if x eq 0 then Some(x) else None fi;}");
+    const auto option_some=calls::interpret_option(option,std::array<std::int64_t,1>{0});
+    const auto option_none=calls::interpret_option(option,std::array<std::int64_t,1>{1});
+    ensure(option_some.value==0 && option_some.tag==1,"Some zero is not None");
+    ensure(option_none.value==0 && option_none.tag==0,"None payload is zeroed");
+    auto bad_option=option;
+    bad_option.functions[0].nodes.back().kind=calls::Kind::If;
+    reject_diagnostic([&] { calls::verify(bad_option); },"invalid scalar Option return");
+    auto bad_ok=calls::parse("fnc main(x:int):Result<int,Error>{return Ok(x);}");
+    bad_ok.functions[0].nodes[0].kind=calls::Kind::Boolean;
+    bad_ok.functions[0].nodes[0].value=1;
+    reject_diagnostic([&] { calls::verify(bad_ok); },"constructor requires infallible int payload");
     auto corrupt=calls::parse("fnc main(x:int):int{return x+1;}");
     corrupt.functions[0].nodes.back().children[0]=999;
     reject_diagnostic([&] { calls::verify(corrupt); },
