@@ -151,6 +151,12 @@ class Parser {
     const auto start=at_;
     if (at_==source_.size()) { tok_={Kind::End,{},start}; return; }
     auto c=static_cast<unsigned char>(source_[at_]);
+    // The lexer reaches the member dot before factor() can inspect it.
+    // Reject only the exact reserved namespace token, after trivia skipping.
+    if (c=='.' && (previousToken=="ets" || previousToken=="pg")) {
+      tok_={Kind::Punct,source_.substr(start,1),start};
+      error("Forge ETS/pg guest APIs require authenticated isolate, table and mailbox lowering");
+    }
     if (c=='@')
       throw std::runtime_error("annotations require typed target validation and AOT lowering; unsupported in Forge stage-0 at byte "+
                                std::to_string(start));
