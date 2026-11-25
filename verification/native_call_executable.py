@@ -15,6 +15,28 @@ import sys
 import tempfile
 import hashlib
 
+RESULT_CASES = (
+    ("trap-bang", "fnc main(a:int,b:int):Result<int,Error>{return trap! (a/b);}",
+     ((5,2,2,0),(-5,2,-2,0),(42,0,0,65538),(-9223372036854775808,-1,0,65537))),
+    ("trap-bare", "fnc main(a:int,b:int):Result<int,Error>{^ trap (a/b);}",
+     ((5,2,2,0),(0,1,0,0),(42,0,0,65538),(-9223372036854775808,-1,0,65537))),
+    ("trap-flat", "fnc main(a:int,b:int):Result<int,Error>{return trap! trap (a/b);}",
+     ((5,2,2,0),(42,0,0,65538),(-9223372036854775808,-1,0,65537))),
+    ("trap-call", "fnc q(a:int,b:int):int{return a/b;} fnc wrap(a:int,b:int):int{return q(a,b)+1;} fnc main(a:int,b:int):Result<int,Error>{return trap! wrap(a,b);}",
+     ((84,2,43,0),(42,0,0,65538),(-9223372036854775808,-1,0,65537),(9223372036854775807,1,0,65537))),
+    ("trap-lazy", "fnc main(a:int):Result<int,Error>{return trap! (a eq 0 ? 42 : 84/a);}",
+     ((0,42,0),(2,42,0),(-2,-42,0))),
+    ("trap-order", "fnc main(a:int):Result<int,Error>{return trap! ((1/a)+(9223372036854775807+1));}",
+     ((0,0,65538),(1,0,65537))),
+)
+RESULT_INVALID = (
+    ("trap-bool", "fnc main():Result<int,Error>{return trap! true;}", "Boolean is not an int"),
+    ("trap-int-return", "fnc main():int{return trap! 42;}", "expected callable expression"),
+    ("result-unwrapped", "fnc main():Result<int,Error>{return 42;}", "requires explicit trap"),
+    ("result-helper", "fnc f():Result<int,Error>{return trap! 42;} fnc main():int{return 1;}", "only at main entry"),
+    ("result-recursive", "fnc main():Result<int,Error>{return trap! main();}", "calls to scalar Result entry are unsupported"),
+    ("trap-unary-precedence", "fnc main():Result<int,Error>{return trap! 5/2;}", "unexpected token"),
+)
 POSITIVE = (
     ("signed-division", "fnc main(a:int,b:int):int{return a/b;}",
      ((5,2,2),(-5,2,-2),(5,-2,-2),(-5,-2,2),(9007199254740993,1,9007199254740993),
@@ -213,7 +235,7 @@ def execute(args,cwd,timeout=10):
 def require(value,message):
     if not value:raise RuntimeError(message)
 
-def build(compiler,cc,root,label,source,param_count):
+def build(compiler,cc,root,label,source,param_count,result_entry=False):
     file=root/"entry.atto"
     file.write_text(source+"\n",encoding="utf8")
     emit=execute([compiler,"emit-call-asm","x86_64",str(file)],root)
@@ -227,7 +249,16 @@ def build(compiler,cc,root,label,source,param_count):
     (root/"entry.s").write_text(asm,encoding="ascii")
     signature=", ".join("int64_t" for _ in range(param_count)) or "void"
     arguments=", ".join("v[%d]"%i for i in range(param_count))
-    driver=DRIVER.replace("PARAMS",signature).replace("COUNT",str(param_count)).replace("ARGS",arguments)
+    driver=DRIVER
+    if result_entry:
+        require(".globl oresforge_entry_result\n" in asm and
+                ".globl oresforge_entry\n" not in asm and
+                ".globl oresforge_entry_checked\n" not in asm,
+                "Result entry must not expose scalar ABI "+label)
+        driver=driver.replace("extern int64_t oresforge_entry(PARAMS);","")
+        driver=driver.replace("oresforge_entry_checked","oresforge_entry_result")
+        driver=driver.replace("const int64_t result=oresforge_entry(ARGS);","const int64_t result=0;")
+    driver=driver.replace("PARAMS",signature).replace("COUNT",str(param_count)).replace("ARGS",arguments)
     (root/"driver.c").write_text(driver,encoding="ascii")
     executable=root/"native"
     link=execute([cc,"-std=c11","-Wall","-Wextra","-Werror",
@@ -247,6 +278,39 @@ def main():
     positives=negatives=0
     with tempfile.TemporaryDirectory(prefix="oresforge-native-calls-") as tmp:
         root=Path(tmp)
+        for label,source,cases in RESULT_CASES:
+            count=len(cases[0])-2
+            file,exe,_=build(compiler,cc,root,label,source,count,result_entry=True)
+            for row in cases:
+                inp=row[:-2]
+                expected=(str(row[-2])+" "+str(row[-1])+"\n").encode()
+                host=execute([compiler,"run-result-calls",str(file),*map(str,inp)],root)
+                native=execute([str(exe),"--checked",*map(str,inp)],root)
+                require((host.returncode,host.stdout,host.stderr)==(0,expected,b""),
+                        "scalar trap host mismatch "+label)
+                require((native.returncode,native.stdout,native.stderr)==(0,expected,b""),
+                        "scalar trap native mismatch "+label)
+                wrong=execute([compiler,"run-calls",str(file),*map(str,inp)],root)
+                require(wrong.returncode==1 and not wrong.stdout and b"requires run-result-calls" in wrong.stderr,
+                        "Result must not leak through scalar host API")
+                positives+=1
+        file,exe,_=build(compiler,cc,root,"trap-depth",
+            "fnc recurse(n:int):int{return recurse(n);} fnc main(n:int):Result<int,Error>{return trap! recurse(n);}",
+            1,result_entry=True)
+        host=execute([compiler,"run-result-calls",str(file),"1"],root)
+        native=execute([str(exe),"--checked","1"],root)
+        require(host.returncode==1 and not host.stdout and b"call depth exceeded" in host.stderr,
+                "trap must not swallow host depth fault")
+        require(native.returncode==-signal.SIGILL and not native.stdout,
+                "trap must not swallow native depth fault")
+        negatives+=1
+        for label,source,diagnostic in RESULT_INVALID:
+            file=root/"result-invalid.atto"
+            file.write_text(source+"\n",encoding="utf8")
+            failure=execute([compiler,"emit-call-asm","x86_64",str(file)],root)
+            require(failure.returncode==1 and not failure.stdout and diagnostic.encode() in failure.stderr,
+                    "invalid Result emitted assembly "+label+": "+failure.stderr.decode(errors="replace"))
+            negatives+=1
         for label,source,cases in POSITIVE:
             number=len(cases[0])-1
             file,exe,asm=build(compiler,cc,root,label,source,number)
