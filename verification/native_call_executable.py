@@ -22,19 +22,19 @@ EFFECT_CASES = (
     ("option-predicate-effect", "option", "fnc main(a:int):Option<int>{return if a+1 eq 0 then None else Some(a) fi;}",
      ((-1,0,0,0),(0,0,1,0),(9223372036854775807,0,0,65537))),
     ("option-helper-effect", "option", "fnc f(a:int,b:int):Option<int>{return Some(a/b);} fnc main(a:int,b:int):Option<int>{return f(a,b);}",
-     ((42,2,21,1),(42,0,0,0,65538))),
+     ((42,2,21,1,0),(42,0,0,0,65538))),
     ("ok-payload-effect", "result", "fnc main(a:int):Result<int,Error>{return Ok(a+1);}",
      ((0,1,0,0),(9223372036854775807,0,0,65537))),
     ("result-forward-effect", "result", "fnc f(a:int,b:int):Result<int,Error>{return Ok(a/b);} fnc main(a:int,b:int):Result<int,Error>{return f(a,b);}",
-     ((42,2,21,0),(42,0,0,0,65538))),
+     ((42,2,21,0,0),(42,0,0,0,65538))),
     ("trap-catches-forward-effect", "result", "fnc f(a:int,b:int):Result<int,Error>{return Ok(a/b);} fnc main(a:int,b:int):Result<int,Error>{return trap! f(a,b);}",
-     ((42,2,21,0),(42,0,0,65538,0))),
+     ((42,2,21,0,0),(42,0,0,65538,0))),
     ("trap-preserves-existing-err", "result", "fnc f(a:int,b:int):Result<int,Error>{return trap! (a/b);} fnc main(a:int,b:int):Result<int,Error>{return trap! f(a,b);}",
-     ((42,2,21,0),(42,0,0,65538,0))),
+     ((42,2,21,0,0),(42,0,0,65538,0))),
     ("question-does-not-catch-effect", "result", "fnc f(a:int,b:int):Result<int,Error>{return Ok(a/b);} fnc main(a:int,b:int):Result<int,Error>{val q=f(a,b)?; return Ok(q);}",
-     ((42,2,21,0),(42,0,0,0,65538))),
+     ((42,2,21,0,0),(42,0,0,0,65538))),
     ("question-propagates-err", "result", "fnc f(a:int,b:int):Result<int,Error>{return trap! (a/b);} fnc main(a:int,b:int):Result<int,Error>{val q=f(a,b)?; return Ok(q);}",
-     ((42,2,21,0),(42,0,0,65538,0))),
+     ((42,2,21,0,0),(42,0,0,65538,0))),
     ("argument-effect", "result", "fnc f(a:int):Result<int,Error>{return Ok(a);} fnc main(a:int):Result<int,Error>{val q=f(a+1)?; return Ok(q);}",
      ((0,1,0,0),(9223372036854775807,0,0,65537))),
     ("trap-argument-effect", "result", "fnc f(a:int):Result<int,Error>{return Ok(a);} fnc main(a:int):Result<int,Error>{return trap! f(a+1);}",
@@ -373,6 +373,8 @@ def main():
         root=Path(tmp)
         for label,kind,source,cases in EFFECT_CASES:
             count=len(cases[0])-3
+            require(0<=count<=4 and all(len(row)==count+3 for row in cases),
+                    "malformed effect vector arity "+label)
             file,exe,_=build(compiler,cc,root,label,source,count,
                              result_entry=kind=="result",option_entry=kind=="option")
             for row in cases:
