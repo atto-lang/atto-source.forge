@@ -529,6 +529,22 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 add_test(NAME result_int_parse_v1_test COMMAND result_int_parse_v1_test)
 
+# Host-only bounded Error identity foundation, not a guest exception ABI.
+add_executable(forge_error_arena_test verification/error_arena_test.cpp)
+target_include_directories(forge_error_arena_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_features(forge_error_arena_test PRIVATE cxx_std_20)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(forge_error_arena_test PRIVATE -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ORESFORGE_SANITIZERS)
+    target_compile_options(forge_error_arena_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(forge_error_arena_test PRIVATE -fsanitize=address,undefined)
+  endif()
+elseif(MSVC)
+  target_compile_options(forge_error_arena_test PRIVATE /UNDEBUG)
+endif()
+add_test(NAME forge_error_arena_host COMMAND forge_error_arena_test)
+set_tests_properties(forge_error_arena_host PROPERTIES TIMEOUT 15 LABELS "host-only;error-representation")
+
 # Restricted native lexer has no Python or borrowed source buffers.
 add_executable(scalar_lexer_test tests/scalar_lexer.cpp)
 target_link_libraries(scalar_lexer_test PRIVATE atto_forge_checked_i64)
