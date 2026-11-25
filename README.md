@@ -106,6 +106,21 @@ This establishes **native host-model behavior only**, not Forge guest IR lowerin
 are in atto-source.rs#344, atto-borrow-checker.rs#43, atto-spec#92,
 and atto-platform-conformance#76.
 
+
+## Restricted real native List<int> structural-pattern guest (draft PR #43)
+
+**Failed-compile output safety:** Forge now never deletes or rewrites a pre-existing caller-owned generated file on parse failure, oversized input, invalid patterns or failed checked lowering. The five destructive cleanup paths were removed from `tools/forge_scalar.cpp`; scalar and List negative suites distinguish absent destinations (no artifact created) from pre-existing sentinel outputs (bytes preserved). This is a regression gate, not a claim of filesystem race freedom: native output directory and staging path preflight remains vulnerable to adversarial concurrent pathname replacement until OS-level descriptor-relative creation/publication is implemented.
+
+
+
+The existing \`forge_scalar\` source compiler now admits a strictly bounded, single-source \`List<int>\` profile: one immutable \`List.of\` literal (maximum 32 i64 elements), one \`return match<int>\`, and a required wildcard fallback. It supports native \`...\` only at sequence boundaries, exact integer literals, \`is int\` / \`is int as val name\` binders, a scalar comparison guard, and checked addition of captured integers. The frontend uses source tokens, immutable checked pattern data and deterministic C++20 emission. **The generated native binary owns and reads the List values and evaluates matching at runtime; it does not invoke the host-only pattern reference matcher or precompute an answer in the compiler.**
+
+The native guest uses a stack-owned \`std::array<int64_t,N>\`, never a cross-tenant actor capability or exposed pointer. Matching picks the first (leftmost-shortest) witness. A guard is evaluated once for that witness; failure selects fallback without exploring later decompositions. The generated code has bounded loops, bounded captures and \`checked_add\` with \`E_OVERFLOW\` / exit 70. This differs from the Rust/Wasm guest overflow ABI (\`panic_code=1\`), while expressing the same overflow semantics.
+
+This **is not general Forge List/Array lowering** and not a TenantVM sandbox, JIT/AOT isolation proof, library implementation or compiled \`pattern.of<T>()\`. Dynamic elements, runtime template values, \`std.pattern\` import linking, counted repetition, interior rests, non-int list elements, mutable rest views and escaping capture loans are not admitted. The separate \`typed_pattern_fragment.hpp\` remains host-reference-only. The compiler must not emit native source for malformed or unsupported programs.
+
+\`fixtures/list-pattern-guest/\` pins **eight byte-identical shared source programs** from Rust/Wasm PR #415 (seven positive expected results 60,0,30,7,1,3,32 and one overflow). \`tests/list_pattern_guest.cmake\` requires \`forge_scalar\` to compile the sources, GCC or Clang to build generated C++ and the native binaries to produce exact outputs, plus 11 invalid/no-artifact diagnostics. \`tests/list_pattern_frontend.cpp\` tests scope, budgets, comment spoofing, UTF-8-injection rejection and deterministic code generation with assertions retained in Release. The matrix includes ASan/UBSan. **The source files and tests are committed; no current-head compiler build or compiled native guest CI pass has been observed yet.** Do not promote the candidate until material CI executes on an exact source SHA/tree and independent security/ownership review approves it.
+
 ## Restricted native scalar compiled guest (stage 0)
 
 Build CMake and invoke `build/forge_scalar fixtures/scalar-v1/arithmetic.atto -o /tmp/atto-scalar.cpp`,
@@ -114,7 +129,7 @@ The actual guest binary prints `34`. Signed overflow emits `E_OVERFLOW` and exit
 division by zero emits `E_DIVZERO` and exits 71.
 The C++ frontend and test harness contain no Python. The CMake integration test
 compiles and executes four source fixtures on GCC and Clang and denies malformed
-or over-budget sources while removing a stale output artifact.
+or over-budget sources without creating a new artifact; failed compilation preserves any pre-existing caller-owned output byte-for-byte.
 
 Scope: one scalar main function with literals, parentheses, unary arithmetic
 and checked i64 operators. This is not a general Forge JIT/AOT compiler, actor
@@ -128,7 +143,7 @@ Restricted decimal scalar literals permit leading zeros in the signed `INT64_MIN
 
 The native Forge tests compile and execute an additional 29-case `.atto` scalar conformance corpus, including signed arithmetic, bitwise precedence, masked shifts, INT64_MIN, overflow and division-by-zero exits. When `ATTO_FORGE_SANITIZERS=ON`, **generated guest binaries** themselves are built under ASan/UBSan, as well as the Forge frontend. This validates only the restricted stage-0 compiled scalar subset, not the full Forge JIT/AOT or actor runtime.
 
-The native Forge CLI now reports sanitized parse codes (`E_PARSE_LEXICAL`, `E_PARSE_SYNTAX`, `E_PARSE_RANGE`, `E_PARSE_DEPTH`, `E_PARSE_NODES`) with source byte offsets, without echoing source text. Invalid source removes stale emitted artifacts and exits 2.
+The native Forge CLI now reports sanitized parse codes (`E_PARSE_LEXICAL`, `E_PARSE_SYNTAX`, `E_PARSE_RANGE`, `E_PARSE_DEPTH`, `E_PARSE_NODES`) with source byte offsets, without echoing source text. Invalid source exits 2 and emits no new artifact, while preserving any pre-existing caller-owned output file.
 
 Restricted Forge CLI output-path preflight rejects symlinked ancestor directories, symlinked output files, and preexisting staging paths, including dangling symlinks; it also requires destination parent directories to exist. This is not a proof against adversarial concurrent filesystem races: production sandboxing must use OS-level capabilities and descriptor-relative atomic publication.
 

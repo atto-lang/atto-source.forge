@@ -1,7 +1,9 @@
 #include "atto/scalar_emit.hpp"
+#include "atto/list_pattern_guest.hpp"
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <system_error>
 
@@ -28,6 +30,15 @@ int main(int argc, char** argv) {
     if (!text.empty()) file.read(text.data(), static_cast<std::streamsize>(size));
     if (!file || file.peek() != std::char_traits<char>::eof())
       return deny("E_SOURCE: changing or truncated input");
+    const auto list = atto::forge::list_guest::compile(text);
+    if (list.candidate) {
+      if (!list.ok()) {
+        std::cerr << atto::forge::list_guest::error_name(list.error)
+                  << " byte=" << list.offset << '\n';
+        return 2;
+      }
+      return 0;
+    }
     const auto parsed = atto::forge::scalar::parse_source(text);
     if (!parsed.ok()) {
       std::cerr << atto::forge::scalar::parse_error_name(parsed.error)
@@ -94,7 +105,6 @@ int main(int argc, char** argv) {
   ec.clear();
   const auto size = fs::file_size(input, ec);
   if (ec || size > max_source_bytes) {
-    ec.clear(); fs::remove(output, ec);
     return deny("E_SOURCE_LIMIT");
   }
   std::ifstream file(input, std::ios::binary);
@@ -102,20 +112,32 @@ int main(int argc, char** argv) {
   std::string source(static_cast<std::size_t>(size), '\0');
   if (!source.empty()) file.read(source.data(), static_cast<std::streamsize>(size));
   if (!file || file.peek() != std::char_traits<char>::eof()) {
-    ec.clear(); fs::remove(output, ec);
     return deny("E_SOURCE: changing or truncated input");
   }
-  const auto parsed = atto::forge::scalar::parse_source(source);
-  if (!parsed.ok()) {
-    ec.clear(); fs::remove(output, ec);
-    std::cerr << atto::forge::scalar::parse_error_name(parsed.error)
-              << " byte=" << parsed.error_offset << '\n';
-    return 2;
-  }
-  const auto generated = atto::forge::scalar::emit_cpp(parsed);
-  if (!generated) {
-    ec.clear(); fs::remove(output, ec);
-    return deny("E_AST: scalar AST rejected before code emission");
+  // Failed compilation must never unlink or rewrite a caller-owned existing
+  // output. Only the private .part artifact may be cleaned up on failure.
+  // Source-compiled List<int> has its own strict grammar and checked
+  // lowering. The host-only typed fragment reference is never a fallback.
+  std::optional<std::string> generated;
+  const auto list = atto::forge::list_guest::compile(source);
+  if (list.candidate) {
+    if (!list.ok()) {
+        std::cerr << atto::forge::list_guest::error_name(list.error)
+                << " byte=" << list.offset << '\n';
+      return 2;
+    }
+    generated = list.source;
+  } else {
+    const auto parsed = atto::forge::scalar::parse_source(source);
+    if (!parsed.ok()) {
+        std::cerr << atto::forge::scalar::parse_error_name(parsed.error)
+                << " byte=" << parsed.error_offset << '\n';
+      return 2;
+    }
+    generated = atto::forge::scalar::emit_cpp(parsed);
+    if (!generated) {
+        return deny("E_AST: scalar AST rejected before code emission");
+    }
   }
   std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
   if (!out) return deny("E_OUTPUT: open failed");

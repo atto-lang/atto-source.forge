@@ -10,11 +10,24 @@ function(check_diag label source expected)
   file(WRITE "${output}" "stale source")
   execute_process(COMMAND "${FORGE}" "${input}" -o "${output}"
     RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
-  if(NOT "${rc}" STREQUAL "2" OR EXISTS "${output}" OR NOT "${out}" STREQUAL "")
-    message(FATAL_ERROR "${label}: invalid source admitted or stale output retained")
+  file(READ "${output}" preserved)
+  if(NOT "${rc}" STREQUAL "2" OR NOT "${preserved}" STREQUAL "stale source" OR
+     NOT "${out}" STREQUAL "")
+    message(FATAL_ERROR "${label}: failed compile modified pre-existing output")
   endif()
   if(NOT "${err}" MATCHES "^${expected} byte=[0-9]+\n$")
     message(FATAL_ERROR "${label}: expected ${expected} with byte offset, got [${err}]")
+  endif()
+  # A separate initially absent path must stay absent. Preserving an
+  # existing caller file is correct, but is NOT proof of zero new artifacts.
+  set(fresh "${OUT_DIR}/fresh_diagnostic_${label}.cpp")
+  file(REMOVE "${fresh}")
+  execute_process(COMMAND "${FORGE}" "${input}" -o "${fresh}"
+    RESULT_VARIABLE fresh_rc OUTPUT_VARIABLE fresh_out ERROR_VARIABLE fresh_err)
+  if(NOT "${fresh_rc}" STREQUAL "2" OR EXISTS "${fresh}" OR
+     NOT "${fresh_out}" STREQUAL "" OR
+     NOT "${fresh_err}" MATCHES "^${expected} byte=[0-9]+\n$")
+    message(FATAL_ERROR "${label}: invalid source generated an artifact at absent destination")
   endif()
 endfunction()
 check_diag(lexical "fnc main(): int {return @;}" "E_PARSE_LEXICAL")
