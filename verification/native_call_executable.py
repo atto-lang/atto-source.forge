@@ -51,6 +51,14 @@ POSITIVE = (
      ((0,42),(1,7))),
     ("nested-ternary", "fnc main(a:int):int{return a eq 0 ? 42 : a eq 1 ? 7 : 9;}",
      ((0,42),(1,7),(2,9))),
+    ("logical-and-lazy", "fnc main(a:int):int{return a eq 0 && 9223372036854775807+a eq 0 ? 7 : 42;}",
+     ((0,42),(1,42),(-1,42))),
+    ("logical-or-lazy", "fnc main(a:int):int{return a eq 1 || 9223372036854775807+a eq 0 ? 42 : 7;}",
+     ((1,42),(0,7),(-1,7))),
+    ("logical-precedence", "fnc main(a:int):int{return a eq 0 || a eq 1 && false ? 42 : 7;}",
+     ((0,42),(1,7),(2,7))),
+    ("logical-nested", "fnc main(a:int):int{return ifnot (a eq 0 || a eq 1) && true then 42 else 7 fi;}",
+     ((0,7),(1,7),(2,42))),
     ("no-args", "fnc main():int{return 42;}", ((42,),)),
 )
 TRAPS = (
@@ -62,11 +70,19 @@ TRAPS = (
      (9223372036854775807,), "i64 mul overflow"),
     ("overflow-sub", "fnc main(n:int):int{return n-1;}",
      (-9223372036854775808,), "i64 sub overflow"),
+    ("logical-and-evaluates-rhs", "fnc main(a:int):int{return a eq 1 && 9223372036854775807+a eq 0 ? 7 : 42;}",
+     (1,), "i64 add overflow"),
+    ("logical-or-evaluates-rhs", "fnc main(a:int):int{return a eq 0 || 9223372036854775807+a eq 0 ? 7 : 42;}",
+     (1,), "i64 add overflow"),
     ("unbounded-recursion", "fnc always(n:int):int{return always(n);}"
      " fnc main(n:int):int{return always(n);}",
      (1,), "call depth exceeded"),
 )
 INVALID = (
+    ("logical-int-left", "fnc main():int{return 1 && true ? 42 : 7;}", "condition_not_bool"),
+    ("logical-int-right", "fnc main():int{return false && 1 ? 42 : 7;}", "condition_not_bool"),
+    ("logical-or-int-right", "fnc main():int{return true || 1 ? 42 : 7;}", "condition_not_bool"),
+    ("logical-bool-return", "fnc main():int{return true && false;}", "Boolean is not an int"),
     ("integer-condition", "fnc main():int{return if 1 then 2 else 3;}", "condition_not_bool"),
     ("integer-ternary", "fnc main():int{return 1 ? 2 : 3;}", "condition_not_bool"),
     ("integer-unless", "fnc main():int{return unless 1 then 2 else 3 fi;}", "condition_not_bool"),
