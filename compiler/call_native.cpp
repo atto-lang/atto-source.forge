@@ -34,7 +34,8 @@ bool boolean_kind(Kind k) {
 }
 bool reserved_predicate_word(std::string_view s) {
   return s=="true" || s=="false" || s=="ifnot" || s=="unless" ||
-         s=="eq" || s=="neq" || s=="fi" || s=="guard" || s=="end";
+         s=="eq" || s=="neq" || s=="fi" || s=="guard" || s=="end" ||
+         s=="trap" || s=="Result" || s=="Error";
 }
 
 class Parser {
@@ -91,6 +92,8 @@ class Parser {
                                std::to_string(begin));
     if (letter(c)) {
       while (at_<text_.size() && (letter(text_[at_])||digit(text_[at_]))) ++at_;
+      if (text_.substr(begin,at_-begin)=="trap" && at_<text_.size() &&
+          text_[at_]=='!') ++at_;
     } else if (digit(c)) {
       while (at_<text_.size() && digit(text_[at_])) ++at_;
     } else if (c=='!' && text_.substr(begin,3)=="!eq" &&
@@ -188,9 +191,32 @@ class Parser {
     }
     expect(")");
     if(!take(":"))expect("->");
-    expect("int");expect("{");
-    current_->result=terminal_body(0);
+    if (take("Result")) {
+      if (name!="main") fail("scalar Result currently supported only at main entry");
+      expect("<");expect("int");expect(",");expect("Error");expect(">");
+      current_->returns_scalar_result=true;
+      expect("{");
+      if (!take("^")) expect("return");
+      current_->result=trapped_return(0);
+      expect(";");
+    } else {
+      expect("int");expect("{");
+      current_->result=terminal_body(0);
+    }
     expect("}");
+  }
+  // Java parses trap as a unary operator. This narrow root-only Result
+  // admission accepts repeated trap aliases as one flat capture boundary.
+  int trapped_return(std::size_t d) {
+    depth(d);
+    if (!take("trap") && !take("trap!"))
+      fail("scalar Result entry requires explicit trap or trap!");
+    while (token_.text=="trap" || token_.text=="trap!") {
+      depth(++d); next();
+    }
+    const int operand=factor(d+1);
+    require_integer(operand);
+    return add(Kind::Trap,0,{}, {operand});
   }
   // This scalar subset has no local state, effects, or general statements.
   // Every admitted guard failure body is exactly one explicit typed return.
@@ -389,22 +415,29 @@ class Parser {
   }
 };
 
+// Host reference only: distinguish the two admitted guest ordinary errors
+// from depth, budget, verifier, or host allocation failures.
+struct ArithmeticFailure final : std::runtime_error {
+  ArithmeticStatus status;
+  ArithmeticFailure(ArithmeticStatus s,const char* message)
+    :std::runtime_error(message),status(s) {}
+};
 std::int64_t checked(Kind k,std::int64_t a,std::int64_t b) {
   std::int64_t out=0;
   switch(k) {
     case Kind::Add:
-      if(__builtin_add_overflow(a,b,&out))throw std::runtime_error("i64 add overflow");
+      if(__builtin_add_overflow(a,b,&out))throw ArithmeticFailure(ArithmeticStatus::Overflow,"i64 add overflow");
       return out;
     case Kind::Sub:
-      if(__builtin_sub_overflow(a,b,&out))throw std::runtime_error("i64 sub overflow");
+      if(__builtin_sub_overflow(a,b,&out))throw ArithmeticFailure(ArithmeticStatus::Overflow,"i64 sub overflow");
       return out;
     case Kind::Mul:
-      if(__builtin_mul_overflow(a,b,&out))throw std::runtime_error("i64 mul overflow");
+      if(__builtin_mul_overflow(a,b,&out))throw ArithmeticFailure(ArithmeticStatus::Overflow,"i64 mul overflow");
       return out;
     case Kind::Div:
-      if(b==0) throw std::runtime_error("i64 division by zero");
+      if(b==0) throw ArithmeticFailure(ArithmeticStatus::DivisionByZero,"i64 division by zero");
       if(a==std::numeric_limits<std::int64_t>::min() && b==-1)
-        throw std::runtime_error("i64 division overflow");
+        throw ArithmeticFailure(ArithmeticStatus::Overflow,"i64 division overflow");
       return a/b;
     case Kind::Less: return a<b;
     case Kind::LessEqual: return a<=b;
@@ -429,6 +462,7 @@ struct Evaluator {
     if (remaining--==0)throw std::runtime_error("callable execution budget exceeded");
     const auto& n=fn.nodes.at(static_cast<std::size_t>(id));
     if(n.kind==Kind::Constant||n.kind==Kind::Boolean)return n.value;
+    if(n.kind==Kind::Trap) return visit(fn,n.children[0],args,depth);
     if(n.kind==Kind::Not)return !visit(fn,n.children[0],args,depth);
     if(n.kind==Kind::And) {
       if(!visit(fn,n.children[0],args,depth)) return 0;
@@ -474,6 +508,11 @@ struct Native {
       out<<"  movabsq $"<<n.value<<", %rax\n";
     } else if(n.kind==Kind::Parameter) {
       out<<"  movq "<<parameter_slot(static_cast<int>(n.value))<<", %rax\n";
+    } else if(n.kind==Kind::Trap) {
+      // The entry's status-return epilogue is the outermost trap boundary.
+      // Child failures use the existing explicit propagation path; no JIT,
+      // heap object or signal handler is needed for these scalar errors.
+      emit_node(fn,n.children[0]);
     } else if(n.kind==Kind::Not) {
       emit_node(fn,n.children[0]);
       out<<"  xorq $1, %rax\n";
@@ -545,12 +584,15 @@ struct Native {
     // Keep the historic scalar entry's terminal fault behavior, and expose
     // an explicit value/status entry for the new checked ABI. Internal calls
     // always use the checked convention and propagate arithmetic failures.
-    out<<".text\n.globl oresforge_entry\n.type oresforge_entry, @function\n"
+    const bool result_entry=program.functions.at(static_cast<std::size_t>(program.entry)).returns_scalar_result;
+    const char* entry_symbol=result_entry?"oresforge_entry_result":"oresforge_entry_checked";
+    out<<".text\n";
+    if(!result_entry) out<<".globl oresforge_entry\n.type oresforge_entry, @function\n"
        <<"oresforge_entry:\n  subq $8, %rsp\n  call oresforge_entry_checked\n"
        <<"  addq $8, %rsp\n  testq %rdx, %rdx\n  jne .Lores_legacy_fault\n  ret\n"
-       <<".size oresforge_entry, .-oresforge_entry\n"
-       <<".globl oresforge_entry_checked\n.type oresforge_entry_checked, @function\n"
-       <<"oresforge_entry_checked:\n  xorl %r8d, %r8d\n"
+       <<".size oresforge_entry, .-oresforge_entry\n";
+    out<<".globl "<<entry_symbol<<"\n.type "<<entry_symbol<<", @function\n"
+       <<entry_symbol<<":\n  xorl %r8d, %r8d\n"
        <<"  jmp .Lores_fn_"<<program.entry<<"\n";
     for (std::size_t i=0;i<program.functions.size();++i) {
       const auto& fn=program.functions[i];
@@ -573,7 +615,7 @@ struct Native {
        <<"  jmp .Lores_return_error\n"
        <<".Lores_divzero:\n  movl $"<<static_cast<std::uint64_t>(ArithmeticStatus::DivisionByZero)<<", %edx\n"
        <<".Lores_return_error:\n  xorl %eax, %eax\n  leave\n  ret\n"
-       <<".size oresforge_entry_checked, .-oresforge_entry_checked\n"
+       <<".size "<<entry_symbol<<", .-"<<entry_symbol<<"\n"
        <<".section .note.GNU-stack,\"\",@progbits\n";
     return out.str();
   }
@@ -601,8 +643,12 @@ void verify(const Module& m) {
     if(total>kMaxNodes)throw std::runtime_error("callable AST node budget exceeded");
     if(fn.result<0||static_cast<std::size_t>(fn.result)!=fn.nodes.size()-1)
       throw std::runtime_error("invalid callable return/root");
-    if (boolean_kind(fn.nodes[static_cast<std::size_t>(fn.result)].kind))
-      throw std::runtime_error("callable int return cannot be Boolean");
+    const auto root_kind=fn.nodes[static_cast<std::size_t>(fn.result)].kind;
+    if (fn.returns_scalar_result) {
+      if(fi!=static_cast<std::size_t>(m.entry) || root_kind!=Kind::Trap)
+        throw std::runtime_error("invalid scalar Result entry");
+    } else if (root_kind==Kind::Trap || boolean_kind(root_kind))
+      throw std::runtime_error("callable int return cannot be Boolean or Result");
     // This stage-0 AST must be an owned tree, not an arbitrary dataflow DAG.
     // Otherwise a node on an untaken if-branch could be reused without ever
     // initializing its stack slot. Enforce one reachable parent per child.
@@ -615,7 +661,7 @@ void verify(const Module& m) {
         case Kind::Greater: case Kind::GreaterEqual: case Kind::Equal:
         case Kind::NotEqual: case Kind::If: case Kind::Call:
         case Kind::Boolean: case Kind::Not: case Kind::Ternary:
-         case Kind::And: case Kind::Or: case Kind::BooleanXor: case Kind::Div: break;
+         case Kind::And: case Kind::Or: case Kind::BooleanXor: case Kind::Div: case Kind::Trap: break;
         default: throw std::runtime_error("unknown callable opcode");
       }
       if(n.kind!=Kind::Call && !n.name.empty())
@@ -628,7 +674,7 @@ void verify(const Module& m) {
       }
       std::size_t size=2;
       if(n.kind==Kind::Constant||n.kind==Kind::Boolean||n.kind==Kind::Parameter)size=0;
-      else if(n.kind==Kind::Not)size=1;
+      else if(n.kind==Kind::Not||n.kind==Kind::Trap)size=1;
       else if(n.kind==Kind::If||n.kind==Kind::Ternary)size=3;
       else if(n.kind==Kind::Call)size=n.children.size();
       if(n.children.size()!=size)throw std::runtime_error("callable operand arity mismatch");
@@ -637,6 +683,9 @@ void verify(const Module& m) {
       const auto child_bool=[&](std::size_t pos) {
         return boolean_kind(fn.nodes.at(static_cast<std::size_t>(n.children.at(pos))).kind);
       };
+      if(n.kind==Kind::Trap && (!fn.returns_scalar_result ||
+          i!=static_cast<std::size_t>(fn.result) || child_bool(0)))
+        throw std::runtime_error("scalar trap must be an int operand at Result entry root");
       if(n.kind==Kind::Not && !child_bool(0))
         throw std::runtime_error("condition_not_bool: negation requires bool");
       if(n.kind==Kind::If||n.kind==Kind::Ternary) {
@@ -668,6 +717,8 @@ void verify(const Module& m) {
       if(n.kind==Kind::Call) {
         if(n.callee<0 || static_cast<std::size_t>(n.callee)>=m.functions.size())
           throw std::runtime_error("invalid callable target");
+        if(m.functions[static_cast<std::size_t>(n.callee)].returns_scalar_result)
+          throw std::runtime_error("calls to scalar Result entry are unsupported");
         if(n.children.size()!=m.functions[static_cast<std::size_t>(n.callee)].parameters.size())
           throw std::runtime_error("function arity mismatch");
         if(n.name!=m.functions[static_cast<std::size_t>(n.callee)].name)
@@ -685,8 +736,21 @@ void verify(const Module& m) {
 }
 std::int64_t interpret(const Module& m,std::span<const std::int64_t> args) {
   verify(m);
+  if(m.functions.at(static_cast<std::size_t>(m.entry)).returns_scalar_result)
+    throw std::runtime_error("scalar Result requires run-result-calls");
   Evaluator eval{m};
   return eval.evaluate(static_cast<std::size_t>(m.entry),args,0);
+}
+ArithmeticResult interpret_result(const Module& m,std::span<const std::int64_t> args) {
+  verify(m);
+  if(!m.functions.at(static_cast<std::size_t>(m.entry)).returns_scalar_result)
+    throw std::runtime_error("run-result-calls requires Result<int,Error> entry");
+  Evaluator eval{m};
+  try {
+    return {eval.evaluate(static_cast<std::size_t>(m.entry),args,0),ArithmeticStatus::Ok};
+  } catch(const ArithmeticFailure& failure) {
+    return {0,failure.status};
+  }
 }
 std::string emit_asm(const Module& m,Arch arch) {
   if(arch!=Arch::X86_64)
