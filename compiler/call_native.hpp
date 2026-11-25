@@ -1,6 +1,8 @@
 #pragma once
 #include "codegen/native.hpp"
 #include <cstdint>
+#include <cstddef>
+#include <type_traits>
 #include <span>
 #include <string>
 #include <string_view>
@@ -22,6 +24,9 @@ struct ArithmeticResult {
   std::int64_t value;
   ArithmeticStatus status;
 };
+static_assert(std::is_standard_layout_v<ArithmeticResult> &&
+              std::is_trivially_copyable_v<ArithmeticResult>);
+static_assert(sizeof(ArithmeticResult)==16 && offsetof(ArithmeticResult,status)==8);
 struct Node {
   Kind kind;
   std::int64_t value = 0;
