@@ -390,7 +390,7 @@ int main() {
     reject_diagnostic([] { parse_source("fnc main():int{return rt deref value;}"); },
                       "pointer-style runtime operation is not valid Oreslang source");
     reject_diagnostic([] { parse_source("fnc main():int{return rt borrow mut value;}"); },
-                      "legacy 'rt borrow mut' is not valid Oreslang");
+                      "runtime ownership operation requires typed lowering in Forge");
     reject_diagnostic([] { parse_source("fnc main():int{return rt mut borrow value;}"); },
                       "runtime ownership operation requires typed lowering in Forge");
     // Shared mutation cannot silently degrade to a scalar alias. The scalar
