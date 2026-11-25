@@ -47,6 +47,8 @@ def _reject_constant(value: str) -> None:
 
 def verify_bytes(raw: bytes, repository_name: str) -> dict[str, object]:
     """Return the verified manifest or raise InvalidManifest (no false attestations)."""
+    if repository_name == 'atto-source.forge':
+        repository_name = 'oreslang-source.forge'
     if repository_name not in UPSTREAMS:
         raise InvalidManifest('unknown source repository')
     if not (1 <= len(raw) <= MAX_BYTES):
@@ -157,8 +159,7 @@ def main(argv: list[str] | None = None) -> int:
         root = Path(os.path.abspath(args.repository_root))
         # Recognize the exact renamed Forge checkout while retaining the
         # pinned historical declaration and all identity/upstream checks.
-        expected_name = ('oreslang-source.forge' if root.name == 'atto-source.forge'
-                         else root.name)
+        expected_name = root.name
         verify_bytes(_read_manifest_physically(root), expected_name)
     except (InvalidManifest, OSError) as exc:
         print(f'integration manifest DENIED: {exc}', file=sys.stderr)
