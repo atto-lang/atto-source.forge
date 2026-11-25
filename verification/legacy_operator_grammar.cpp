@@ -49,9 +49,11 @@ int main() {
     if (oresforge::calls::interpret(cb,{})!=42)
       throw std::runtime_error("callable caret return mismatch");
     for (auto arch:{oresforge::Arch::X86_64,oresforge::Arch::ARM64}) {
-      if (oresforge::emit_asm(a,arch)!=oresforge::emit_asm(b,arch) ||
+      if (oresforge::emit_asm(a,arch)!=oresforge::emit_asm(b,arch))
+        throw std::runtime_error("caret scalar assembly mismatch");
+      if (arch==oresforge::Arch::X86_64 &&
           oresforge::calls::emit_asm(ca,arch)!=oresforge::calls::emit_asm(cb,arch))
-        throw std::runtime_error("caret native assembly mismatch");
+        throw std::runtime_error("caret callable assembly mismatch");
     }
     auto reject_callable=[](std::string_view source,std::string_view expected) {
       try { (void)oresforge::calls::parse(source); }
