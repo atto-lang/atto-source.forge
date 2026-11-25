@@ -13,7 +13,7 @@ namespace oresforge::calls {
 // legacy scalar IR; no misleading claims about the general Oreslang ABI.
 enum class Kind {
   Constant, Parameter, Add, Sub, Mul, Less, LessEqual, Greater,
-  GreaterEqual, Equal, NotEqual, If, Call, Boolean, Not, Ternary, And, Or, BooleanXor, Div
+  GreaterEqual, Equal, NotEqual, If, Call, Boolean, Not, Ternary, And, Or, BooleanXor, Div, Trap
 };
 // Provisional scalar native status ABI. Two INTEGER-class eightbytes on
 // SysV x86-64: value in RAX, error code in RDX. No heap allocation.
@@ -39,6 +39,7 @@ struct Function {
   std::vector<std::string> parameters;
   std::vector<Node> nodes;
   int result = -1;
+  bool returns_scalar_result = false;
 };
 struct Module {
   std::vector<Function> functions;
@@ -47,5 +48,8 @@ struct Module {
 Module parse(std::string_view source);
 void verify(const Module& program);
 std::int64_t interpret(const Module& program, std::span<const std::int64_t> args);
+// Only the explicitly typed Result<int,Error> entry may use this API.
+// A nonzero status is an Err payload, not an escaping ordinary throw.
+ArithmeticResult interpret_result(const Module& program, std::span<const std::int64_t> args);
 std::string emit_asm(const Module& program, Arch arch);
 }
