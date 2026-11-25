@@ -28,7 +28,7 @@ struct Token { std::string_view text; std::size_t offset=0; };
 // Predicate types are statically derived from verified opcode identity.
 // The native ABI remains i64-only at function boundaries.
 bool boolean_kind(Kind k) {
-  return k==Kind::Boolean || k==Kind::Not ||
+  return k==Kind::Boolean || k==Kind::Not || k==Kind::And || k==Kind::Or ||
          k==Kind::Less || k==Kind::LessEqual || k==Kind::Greater ||
          k==Kind::GreaterEqual || k==Kind::Equal || k==Kind::NotEqual;
 }
@@ -98,6 +98,8 @@ class Parser {
       at_=begin+3;
     } else if ((c=='<'||c=='>'||c=='='||c=='!') &&
                at_<text_.size() && text_[at_]=='=') {
+      ++at_;
+    } else if ((c=='&'||c=='|') && at_<text_.size() && text_[at_]==c) {
       ++at_;
     } else if (c=='-' && at_<text_.size() && text_[at_]=='>') {
       ++at_;
@@ -197,7 +199,7 @@ class Parser {
     if (token_.text=="if" || token_.text=="ifnot" || token_.text=="unless") {
       const bool negated=token_.text!="if";
       next();
-      int condition=comparison(d+1);
+      int condition=logical_or(d+1);
       require_boolean(condition);
       if (negated) condition=add(Kind::Not,0,{}, {condition});
       expect("then");
@@ -211,7 +213,7 @@ class Parser {
       require_integer(no);
       return add(Kind::If,0,{}, {condition,yes,no});
     }
-    const int condition=comparison(d+1);
+    const int condition=logical_or(d+1);
     if (take("?")) {
       require_boolean(condition);
       const int yes=expr(d+1);
@@ -222,6 +224,28 @@ class Parser {
       return add(Kind::Ternary,0,{}, {condition,yes,no});
     }
     return condition;
+  }
+  int logical_or(std::size_t d) {
+    depth(d);
+    int left=logical_and(d+1);
+    while (take("||")) {
+      require_boolean(left);
+      const int right=logical_and(d+1);
+      require_boolean(right);
+      left=add(Kind::Or,0,{}, {left,right});
+    }
+    return left;
+  }
+  int logical_and(std::size_t d) {
+    depth(d);
+    int left=comparison(d+1);
+    while (take("&&")) {
+      require_boolean(left);
+      const int right=comparison(d+1);
+      require_boolean(right);
+      left=add(Kind::And,0,{}, {left,right});
+    }
+    return left;
   }
   int comparison(std::size_t d) {
     depth(d);
@@ -359,6 +383,14 @@ struct Evaluator {
     const auto& n=fn.nodes.at(static_cast<std::size_t>(id));
     if(n.kind==Kind::Constant||n.kind==Kind::Boolean)return n.value;
     if(n.kind==Kind::Not)return !visit(fn,n.children[0],args,depth);
+    if(n.kind==Kind::And) {
+      if(!visit(fn,n.children[0],args,depth)) return 0;
+      return visit(fn,n.children[1],args,depth);
+    }
+    if(n.kind==Kind::Or) {
+      if(visit(fn,n.children[0],args,depth)) return 1;
+      return visit(fn,n.children[1],args,depth);
+    }
     if(n.kind==Kind::Parameter)return args[static_cast<std::size_t>(n.value)];
     if(n.kind==Kind::If||n.kind==Kind::Ternary) {
       const auto pred=visit(fn,n.children[0],args,depth);
@@ -398,6 +430,13 @@ struct Native {
     } else if(n.kind==Kind::Not) {
       emit_node(fn,n.children[0]);
       out<<"  xorq $1, %rax\n";
+    } else if(n.kind==Kind::And||n.kind==Kind::Or) {
+      const auto tag=label++;
+      emit_node(fn,n.children[0]);
+      out<<"  cmpq $0, %rax\n  "<<(n.kind==Kind::And?"je":"jne")
+         <<" .Lores_logical_end_"<<tag<<"\n";
+      emit_node(fn,n.children[1]);
+      out<<".Lores_logical_end_"<<tag<<":\n";
     } else if(n.kind==Kind::If||n.kind==Kind::Ternary) {
       const auto tag=label++;
       emit_node(fn,n.children[0]);
@@ -505,7 +544,8 @@ void verify(const Module& m) {
         case Kind::Sub: case Kind::Mul: case Kind::Less: case Kind::LessEqual:
         case Kind::Greater: case Kind::GreaterEqual: case Kind::Equal:
         case Kind::NotEqual: case Kind::If: case Kind::Call:
-        case Kind::Boolean: case Kind::Not: case Kind::Ternary: break;
+        case Kind::Boolean: case Kind::Not: case Kind::Ternary:
+         case Kind::And: case Kind::Or: break;
         default: throw std::runtime_error("unknown callable opcode");
       }
       if(n.kind!=Kind::Call && !n.name.empty())
@@ -532,6 +572,9 @@ void verify(const Module& m) {
       if(n.kind==Kind::If||n.kind==Kind::Ternary) {
         if(!child_bool(0)) throw std::runtime_error("condition_not_bool: conditional requires bool");
         if(child_bool(1)||child_bool(2)) throw std::runtime_error("conditional branch is not int");
+      } else if(n.kind==Kind::And||n.kind==Kind::Or) {
+        if(!child_bool(0)||!child_bool(1))
+          throw std::runtime_error("condition_not_bool: logical operands require bool");
       } else if(n.kind==Kind::Equal||n.kind==Kind::NotEqual) {
         if(child_bool(0)!=child_bool(1)) throw std::runtime_error("comparison operand type mismatch");
       } else if(n.kind==Kind::Add||n.kind==Kind::Sub||n.kind==Kind::Mul||
