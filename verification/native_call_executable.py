@@ -15,6 +15,33 @@ import sys
 import tempfile
 import hashlib
 
+# Each tuple is (arguments..., value, typed variant, escaping ordinary effect).
+EFFECT_CASES = (
+    ("option-payload-effect", "option", "fnc main(a:int):Option<int>{return Some(a+1);}",
+     ((0,1,1,0),(9223372036854775807,0,0,65537))),
+    ("option-predicate-effect", "option", "fnc main(a:int):Option<int>{return if a+1 eq 0 then None else Some(a) fi;}",
+     ((-1,0,0,0),(0,0,1,0),(9223372036854775807,0,0,65537))),
+    ("option-helper-effect", "option", "fnc f(a:int,b:int):Option<int>{return Some(a/b);} fnc main(a:int,b:int):Option<int>{return f(a,b);}",
+     ((42,2,21,1),(42,0,0,0,65538))),
+    ("ok-payload-effect", "result", "fnc main(a:int):Result<int,Error>{return Ok(a+1);}",
+     ((0,1,0,0),(9223372036854775807,0,0,65537))),
+    ("result-forward-effect", "result", "fnc f(a:int,b:int):Result<int,Error>{return Ok(a/b);} fnc main(a:int,b:int):Result<int,Error>{return f(a,b);}",
+     ((42,2,21,0),(42,0,0,0,65538))),
+    ("trap-catches-forward-effect", "result", "fnc f(a:int,b:int):Result<int,Error>{return Ok(a/b);} fnc main(a:int,b:int):Result<int,Error>{return trap! f(a,b);}",
+     ((42,2,21,0),(42,0,0,65538,0))),
+    ("trap-preserves-existing-err", "result", "fnc f(a:int,b:int):Result<int,Error>{return trap! (a/b);} fnc main(a:int,b:int):Result<int,Error>{return trap! f(a,b);}",
+     ((42,2,21,0),(42,0,0,65538,0))),
+    ("question-does-not-catch-effect", "result", "fnc f(a:int,b:int):Result<int,Error>{return Ok(a/b);} fnc main(a:int,b:int):Result<int,Error>{val q=f(a,b)?; return Ok(q);}",
+     ((42,2,21,0),(42,0,0,0,65538))),
+    ("question-propagates-err", "result", "fnc f(a:int,b:int):Result<int,Error>{return trap! (a/b);} fnc main(a:int,b:int):Result<int,Error>{val q=f(a,b)?; return Ok(q);}",
+     ((42,2,21,0),(42,0,0,65538,0))),
+    ("argument-effect", "result", "fnc f(a:int):Result<int,Error>{return Ok(a);} fnc main(a:int):Result<int,Error>{val q=f(a+1)?; return Ok(q);}",
+     ((0,1,0,0),(9223372036854775807,0,0,65537))),
+    ("trap-argument-effect", "result", "fnc f(a:int):Result<int,Error>{return Ok(a);} fnc main(a:int):Result<int,Error>{return trap! f(a+1);}",
+     ((0,1,0,0),(9223372036854775807,0,65537,0))),
+    ("effect-four-arguments", "int", "fnc main(a:int,b:int,c:int,d:int):int{return a+b*c/d;}",
+     ((1,6,7,2,22,0,0),(1,6,7,0,0,0,65538))),
+)
 OPTION_CASES = (
     ("option-some", "fnc main(a:int):Option<int>{return Some(a);}",
      ((0,0,1),(-9223372036854775808,-9223372036854775808,1),(9223372036854775807,9223372036854775807,1))),
@@ -29,8 +56,6 @@ OPTION_CASES = (
 OPTION_INVALID = (
     ("option-int", "fnc main():Option<int>{return 42;}", "Option return requires"),
     ("option-bool", "fnc main():Option<int>{return Some(true);}", "Boolean is not an int"),
-    ("option-effect", "fnc main(a:int):Option<int>{return Some(a+1);}", "Option body requires infallible"),
-    ("option-condition-effect", "fnc main(a:int):Option<int>{return if a+1 eq 0 then None else Some(a) fi;}", "Option body requires infallible"),
     ("option-int-condition", "fnc main():Option<int>{return if 1 then None else Some(0) fi;}", "condition_not_bool"),
     ("option-to-int", "fnc find():Option<int>{return None;} fnc main():int{return find();}", "scalar Option call type mismatch"),
     ("option-from-int", "fnc find():int{return 0;} fnc main():Option<int>{return find();}", "scalar Option call type mismatch"),
@@ -71,7 +96,6 @@ RESULT_CASES = (
      ((0,0,65538),(1,0,65537))),
 )
 RESULT_INVALID = (
-    ("ok-effect", "fnc main(a:int):Result<int,Error>{return Ok(a+1);}", "constructor requires infallible int payload"),
     ("ok-bool", "fnc main():Result<int,Error>{return Ok(false);}", "Boolean is not an int"),
     ("err-numeric", "fnc main():Result<int,Error>{return Err(65538);}", "Err requires typed Error payload lowering"),
 
@@ -81,7 +105,6 @@ RESULT_INVALID = (
     ("result-to-int", "fnc f():Result<int,Error>{return trap! 42;} fnc main():int{return f();}", "scalar Result call type mismatch"),
     ("result-bind-int", "fnc f():int{return 42;} fnc main():Result<int,Error>{val q=f()?; return trap! q;}", "scalar Result call type mismatch"),
     ("result-bind-noncall", "fnc main():Result<int,Error>{val q=42?; return trap! q;}", "postfix ? requires a Result callable"),
-    ("result-argument-effect", "fnc f(a:int):Result<int,Error>{return trap! a;} fnc main(a:int):Result<int,Error>{val q=f(a+1)?; return trap! q;}", "Result call arguments require infallible scalar leaves"),
     ("result-unbound-local", "fnc f(a:int):Result<int,Error>{return trap! a;} fnc main():Result<int,Error>{val q=f(q)?; return trap! q;}", "unknown parameter"),
     ("result-shadow-param", "fnc f():Result<int,Error>{return trap! 1;} fnc main(q:int):Result<int,Error>{val q=f()?; return trap! q;}", "Result binding shadows a parameter"),
     ("result-recursive", "fnc main():Result<int,Error>{return trap! main();}", "calls to scalar Result entry are unsupported"),
@@ -244,10 +267,13 @@ DRIVER = r"""#include <errno.h>
 #include <string.h>
 extern int64_t oresforge_entry(PARAMS);
 struct result_pair { int64_t value; uint64_t status; };
+struct outcome { int64_t value; uint64_t tag; uint64_t effect; };
+extern void oresforge_entry_effect(EFFECT_PARAMS);
 extern struct result_pair oresforge_entry_checked(PARAMS);
 int main(int argc,char **argv) {
  int checked = argc>1 && strcmp(argv[1],"--checked")==0;
- if (checked) { --argc; ++argv; }
+ int effect = argc>1 && strcmp(argv[1],"--effect")==0;
+ if (checked || effect) { --argc; ++argv; }
  if (argc!=COUNT+1)return 2;
  int64_t v[4]={0,0,0,0};
  (void)v; /* zero-argument native entries do not consume the array */
@@ -256,6 +282,17 @@ int main(int argc,char **argv) {
   const long long val=strtoll(argv[i+1],&end,10);
   if(errno||!*argv[i+1]||*end)return 3;
   v[i]=(int64_t)val;
+ }
+ if (effect) {
+  struct outcome result={-1,UINT64_MAX,UINT64_MAX};
+  oresforge_entry_effect(EFFECT_ARGS);
+  for (int iteration=0; iteration<8; ++iteration) {
+   struct outcome again={-1,UINT64_MAX,UINT64_MAX};
+   oresforge_entry_effect(REPEAT_ARGS);
+   if (again.value!=result.value || again.tag!=result.tag || again.effect!=result.effect) return 6;
+  }
+  if(printf("%" PRId64 " %" PRIu64 " %" PRIu64 "\n",result.value,result.tag,result.effect)<0)return 4;
+  return fflush(stdout)==0?0:5;
  }
  if (checked) {
   const struct result_pair result=oresforge_entry_checked(ARGS);
@@ -294,7 +331,7 @@ def build(compiler,cc,root,label,source,param_count,result_entry=False,option_en
     asm=emit.stdout.decode("ascii")
     require("  call .Lores_fn_" in asm or "call ." not in asm,
             "native call syntax invalid in "+label)
-    require(".Lores_depth:" in asm and ".Lores_overflow:" in asm and
+    require(".Lores_depth:" in asm and ".Lores_return_effect:" in asm and ".Lores_return_variant:" in asm and
             len(asm)<5000000,"no bounded native call frame "+label)
     (root/"entry.s").write_text(asm,encoding="ascii")
     signature=", ".join("int64_t" for _ in range(param_count)) or "void"
@@ -311,6 +348,9 @@ def build(compiler,cc,root,label,source,param_count,result_entry=False,option_en
         driver=driver.replace("extern int64_t oresforge_entry(PARAMS);","")
         driver=driver.replace("oresforge_entry_checked",symbol)
         driver=driver.replace("const int64_t result=oresforge_entry(ARGS);","const int64_t result=0;")
+    effect_params="struct outcome *"+(", "+signature if param_count else "")
+    suffix=", "+arguments if param_count else ""
+    driver=driver.replace("EFFECT_PARAMS",effect_params).replace("EFFECT_ARGS","&result"+suffix).replace("REPEAT_ARGS","&again"+suffix)
     driver=driver.replace("PARAMS",signature).replace("COUNT",str(param_count)).replace("ARGS",arguments)
     (root/"driver.c").write_text(driver,encoding="ascii")
     executable=root/"native"
@@ -331,6 +371,24 @@ def main():
     positives=negatives=0
     with tempfile.TemporaryDirectory(prefix="oresforge-native-calls-") as tmp:
         root=Path(tmp)
+        for label,kind,source,cases in EFFECT_CASES:
+            count=len(cases[0])-3
+            file,exe,_=build(compiler,cc,root,label,source,count,
+                             result_entry=kind=="result",option_entry=kind=="option")
+            for row in cases:
+                inp=row[:-3]
+                expected=(" ".join(map(str,row[-3:]))+"\n").encode()
+                host=execute([compiler,"run-effect-calls",str(file),*map(str,inp)],root)
+                native=execute([str(exe),"--effect",*map(str,inp)],root)
+                require((host.returncode,host.stdout,host.stderr)==(0,expected,b""),
+                        "effect host mismatch "+label+"/"+repr(inp))
+                require((native.returncode,native.stdout,native.stderr)==(0,expected,b""),
+                        "effect native mismatch "+label+"/"+repr(inp))
+                if row[-1]!=0 and kind!="int":
+                    legacy=execute([str(exe),"--checked",*map(str,inp)],root)
+                    require(legacy.returncode==-signal.SIGILL and not legacy.stdout,
+                            "escaping effect must not become a tagged return "+label)
+                positives+=1
         for label,source,cases in OPTION_CASES:
             count=len(cases[0])-2
             file,exe,_=build(compiler,cc,root,label,source,count,option_entry=True)
