@@ -38,9 +38,11 @@ int main(int argc, char** argv) {
       return deny("E_AST: scalar AST rejected");
     return 0;
   }
-  if (argc != 4 || std::string(argv[2]) != "-o")
-    return deny("E_USAGE: forge_scalar input.atto -o output.cpp");
-  const fs::path input(argv[1]), output(argv[3]);
+  const bool strict = argc == 5 && std::string(argv[1]) == "--verify=strict";
+  const int offset = strict ? 1 : 0;
+  if (argc != 4 + offset || std::string(argv[2 + offset]) != "-o")
+    return deny("E_USAGE: forge_scalar [--verify=strict] input.atto -o output.cpp");
+  const fs::path input(argv[1 + offset]), output(argv[3 + offset]);
   if (input.extension() != ".atto" || output.extension() != ".cpp")
     return deny("E_PATH: expected .atto and .cpp");
   std::error_code ec;
@@ -105,7 +107,8 @@ int main(int argc, char** argv) {
     ec.clear(); fs::remove(output, ec);
     return deny("E_SOURCE: changing or truncated input");
   }
-  const auto parsed = atto::forge::scalar::parse_source(source);
+  const auto parsed = strict ? atto::forge::scalar::parse_verified_strict_i64(source)
+                             : atto::forge::scalar::parse_source(source);
   if (!parsed.ok()) {
     ec.clear(); fs::remove(output, ec);
     std::cerr << atto::forge::scalar::parse_error_name(parsed.error)
