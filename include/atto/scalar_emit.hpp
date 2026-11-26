@@ -8,8 +8,101 @@
 
 namespace atto::forge::scalar {
 inline constexpr std::size_t max_emitted_bytes = 64 * 1024;
+// Conditional DAGs are evaluated lazily with a bounded cache per node.
+// Only the chosen successor executes; shared nodes and eager sequence
+// prefixes execute at most once, in source order. No guest-supplied C++.
+[[nodiscard]] inline std::optional<std::string> emit_lazy_cpp(const Parsed& p) {
+  if (!validate_ast(p) || !p.trace_steps.empty()) return std::nullopt;
+  std::string code = "#include <atto/checked_i64.hpp>\n#include <cstdio>\n#include <cstdlib>\n#include <limits>\n#include <optional>\nint main(){\n";
+  auto var=[](std::size_t i){return "v"+std::to_string(i);};
+  auto literal=[](i64 n)->std::string{
+    return n==std::numeric_limits<i64>::min()?"std::numeric_limits<atto::forge::i64>::min()":std::to_string(n);
+  };
+  for(std::size_t i=0;i<p.nodes.size();++i){
+    const auto& n=p.nodes[i];auto v=var(i);
+    auto left=var(n.left)+"()",right=var(n.right)+"()";
+    code+="  std::optional<atto::forge::i64> c"+v+";\n  auto "+v+" = [&]() -> atto::forge::i64 {\n    if (c"+v+") return *c"+v+";\n";
+    std::string body;
+    if(n.op==Op::literal) body="    c"+v+" = "+literal(n.value)+";\n";
+    else if(n.op==Op::loop_group){
+      for(std::size_t j=0;j<n.states.size();++j)
+        body+="    auto state"+std::to_string(j)+" = "+var(n.states[j])+"();\n";
+      body+="    for (;;) {\n";
+      for(std::size_t j=n.left;j<i;++j)body+="      c"+var(j)+".reset();\n";
+      for(std::size_t j=0;j<n.states.size();++j)
+        body+="      c"+var(n.states[j])+" = state"+std::to_string(j)+";\n";
+      body+="      if ("+right+" == 0) break;\n";
+      std::size_t exit_index=0;
+      for(std::size_t k=0;k<=n.effects.size();++k){
+        while(exit_index<n.exits.size()&&n.exits[exit_index].position==k){
+          const auto& x=n.exits[exit_index++];
+          body+="      if ("+var(x.condition)+"() != 0) {\n";
+          for(std::size_t j=0;j<x.values.size();++j)
+            body+="        state"+std::to_string(j)+" = "+var(x.values[j])+"();\n";
+          if(x.breaking){
+            for(std::size_t j=0;j<n.states.size();++j)
+              body+="        c"+var(n.states[j])+" = state"+std::to_string(j)+";\n";
+            body+="        break;\n";
+          }else body+="        continue;\n";
+          body+="      }\n";
+        }
+        if(k<n.effects.size())body+="      (void)"+var(n.effects[k])+"();\n";
+      }
+      for(std::size_t j=0;j<n.updates.size();++j)
+        body+="      state"+std::to_string(j)+" = "+var(n.updates[j])+"();\n";
+      body+="    }\n    c"+v+" = state0;\n";
+    }
+    else if(n.op==Op::loop_read){
+      const auto& group=p.nodes[n.left];auto state=var(group.states[static_cast<std::size_t>(n.value)]);
+      body="    (void)"+left+";\n    c"+v+" = *c"+state+";\n";
+    }
+    else if(n.op==Op::loop_value){
+      const auto state=var(n.left),update=var(static_cast<std::size_t>(n.value));
+      body="    auto state = "+left+";\n    for (;;) {\n      c"+state+" = state;\n";
+      for(std::size_t j=n.left+1;j<i;++j)body+="      c"+var(j)+".reset();\n";
+      body+="      if ("+right+" == 0) break;\n      state = "+update+"();\n    }\n    c"+v+" = state;\n";
+    }
+    else if(n.op==Op::choose)body="    c"+v+" = "+left+" != 0 ? "+right+" : "+var(static_cast<std::size_t>(n.value))+"();\n";
+    else if(n.op==Op::copy||n.op==Op::loop_state)body="    c"+v+" = "+left+";\n";
+    else if(n.op==Op::sequence)body="    (void)"+left+";\n    c"+v+" = "+right+";\n";
+    else if(n.op==Op::narrow)body="    auto a = "+left+";\n    if (a < -2147483648LL || a > 2147483647LL) { std::fputs(\"E_I32_OVERFLOW\\n\", stderr); std::exit(74); }\n    c"+v+" = a;\n";
+    else if(n.op==Op::refine)body="    auto a = "+left+";\n    if (a < "+literal(n.value)+" || a > "+literal(n.upper)+") { std::fputs(\"E_REFINEMENT_VIOLATION\\n\", stderr); std::exit(73); }\n    c"+v+" = a;\n";
+    else {
+      body="    auto a = "+left+";\n";
+      if(n.op!=Op::neg&&n.op!=Op::bnot)body+="    auto b = "+right+";\n";
+      std::string op;
+      switch(n.op){
+        case Op::eq:op="==";break;case Op::ne:op="!=";break;
+        case Op::lt:op="<";break;case Op::le:op="<=";break;
+        case Op::gt:op=">";break;case Op::ge:op=">=";break;
+        default:break;
+      }
+      if(!op.empty())body+="    c"+v+" = a "+op+" b;\n";
+      else {
+        std::string call;
+        switch(n.op){
+          case Op::neg:call="checked_neg(a)";break;
+          case Op::add:call="checked_add(a,b)";break;
+          case Op::sub:call="checked_sub(a,b)";break;
+          case Op::mul:call="checked_mul(a,b)";break;
+          case Op::div:
+            body+="    if (b == 0) { std::fputs(\"E_DIVZERO\\n\", stderr); std::exit(71); }\n";
+            call="checked_div(a,b)";break;
+          default:return std::nullopt; // strict conditional profile only
+        }
+        body+="    c"+v+" = atto::forge::"+call+";\n    if (!c"+v+") { std::fputs(\"E_OVERFLOW\\n\", stderr); std::exit(70); }\n";
+      }
+    }
+    code+=body+"    return *c"+v+";\n  };\n";
+    if(code.size()>max_emitted_bytes)return std::nullopt;
+  }
+  code+="  std::printf(\"%lld\\n\", static_cast<long long>("+var(p.root)+"()));\n  return 0;\n}\n";
+  if(code.size()>max_emitted_bytes)return std::nullopt;
+  return code;
+}
 [[nodiscard]] inline std::optional<std::string> emit_cpp(const Parsed& p) {
   if (!validate_ast(p)) return std::nullopt;
+  for(const auto& n:p.nodes)if(n.op==Op::choose||n.op==Op::loop_value||n.op==Op::loop_group)return emit_lazy_cpp(p);
   std::string code = R"(#include <atto/checked_i64.hpp>
 #include <cstdio>
 #include <cstdint>
@@ -28,6 +121,20 @@ struct SpanScope {
 )";
   }
   code += "int main() {\n";
+  // Emit genuine native stack storage and a const pointer read. Names from
+  // user source never enter generated C++; the borrow is compiler-authenticated
+  // and nonowning, and unref only invalidates this lexical handle.
+  if (p.local) {
+    const auto initial = std::to_string(p.local->initial);
+    code += "  const atto::forge::i64 __atto_place{" + initial + "};\n";
+    code += "  const atto::forge::i64* __atto_borrow = &__atto_place;\n";
+    code += "  const atto::forge::i64 __atto_copy = *__atto_borrow;\n";
+    code += "  __atto_borrow = nullptr; // non-owning unref, not delete/free\n";
+    code += "  std::printf(\"%lld\\n\", static_cast<long long>(__atto_copy));\n";
+    code += "  return 0;\n}\n";
+    if (code.size() > max_emitted_bytes) return std::nullopt;
+    return code;
+  }
   std::size_t open_spans = 0;
   if (!p.trace_steps.empty()) {
     code += "  atto::forge::i64 answer = 0;\n";
@@ -63,6 +170,9 @@ struct SpanScope {
     } else if(n.op==Op::copy||n.op==Op::sequence){
       if(n.op==Op::sequence)code+="  (void)"+var(n.left)+";\n";
       code+="  auto "+var(i)+" = "+var(n.op==Op::copy?n.left:n.right)+";\n";
+    } else if(n.op==Op::narrow){
+      code += "  if (*" + var(n.left) + " < -2147483648LL || *" + var(n.left) + " > 2147483647LL) { std::fputs(\"E_I32_OVERFLOW\\n\", stderr); return 74; }\n";
+      code += "  auto " + var(i) + " = " + var(n.left) + ";\n";
     } else if (n.op==Op::refine) {
       code += "  if (*" + var(n.left) + " < " + literal(n.value) +
           " || *" + var(n.left) + " > " + literal(n.upper) +

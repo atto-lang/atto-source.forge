@@ -5,6 +5,58 @@
 using namespace atto::forge;
 using namespace atto::forge::scalar;
 int main() {
+  // All four effect spellings must fail closed in the scalar profile.
+  for (const std::string_view spelling : {"suspends", "susp", "\xE2\xA7\x96", "\xE2\x88\x82"}) {
+    const auto source = std::string("pub ") + std::string(spelling) +
+        " fnc main(): int {return 42;}";
+    const auto lexed = tokenize(source);
+    assert(lexed.error == LexError::suspension_unsupported);
+    assert(lexed.error_offset == 4);
+    const auto rejected = parse_source(source);
+    assert(rejected.error == ParseError::suspension_unsupported);
+    assert(parse_error_name(rejected.error) == "E_SUSPENDS_UNSUPPORTED");
+    const auto comment = std::string("fnc main(): int {return 42;} // ") + std::string(spelling);
+    assert(parse_source(comment).ok());
+    const auto quoted = tokenize(std::string("\"") + std::string(spelling) + "\"");
+    assert(quoted.ok() && quoted.tokens[0].kind == Kind::quoted);
+  }
+  assert(tokenize("suspension susp2").ok());
+
+  // Pointer<int> ref!/deref!/unref! is admitted only by the distinct
+  // closed-world local-pointer parser, never as an untyped ownership call.
+  for (const std::string_view expression : {
+      "copy!42", "take!value", "borrow! mut owner",
+      "share!owner", "pin!owner", "drop!owner",
+      "freeze!owner", "weak!owner", "copy!eq\xC3\xA9" }) {
+    const auto source = std::string("fnc main(): int {return ") +
+                        std::string(expression) + ";}";
+    const auto rejected = parse_source(source);
+    assert(rejected.error == ParseError::ownership_bang_unsupported);
+    assert(parse_error_name(rejected.error) == "E_OWNERSHIP_BANG_UNSUPPORTED");
+  }
+  const auto ordinary_comparison =
+      parse_source("fnc main(): int { return copy!eq other; }");
+  assert(ordinary_comparison.error != ParseError::ownership_bang_unsupported);
+  const auto nested_comment = parse_source(
+      "fnc main(): int {return /* outer /* copy!secret */ remaining */ 42;}");
+  assert(nested_comment.ok());
+  assert(nested_comment.nodes[nested_comment.root].value == 42);
+  // Even at the maximum supported depth, ownership-looking text remains
+  // comment trivia and cannot reach typed pointer or scalar lowering.
+  std::string deep_comment = "fnc main(): int {return ";
+  for (int n = 0; n < 128; ++n) deep_comment += "/*";
+  deep_comment += " copy!untrusted_secret ";
+  for (int n = 0; n < 128; ++n) deep_comment += "*/";
+  deep_comment += " 42;}";
+  const auto deep_parsed = parse_source(deep_comment);
+  assert(deep_parsed.ok());
+  assert(deep_parsed.nodes[deep_parsed.root].value == 42);
+  std::string overdeep_comment = "fnc main(): int {return ";
+  for (int n = 0; n < 129; ++n) overdeep_comment += "/*";
+  overdeep_comment += " copy!untrusted_secret ";
+  for (int n = 0; n < 129; ++n) overdeep_comment += "*/";
+  overdeep_comment += " 42;}";
+  assert(parse_source(overdeep_comment).error == ParseError::lexical);
   auto commented = parse_source(
       "/* module header */ fnc main(): int { // body\n"
       " return 8 / /* denominator */ 2; /* tail */ }");
