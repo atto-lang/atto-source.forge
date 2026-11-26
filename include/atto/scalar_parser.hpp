@@ -1192,6 +1192,24 @@ class Parser {
   std::optional<Predicate> predicate(const Facts& incoming,int depth){
     if(depth>16){fail(ParseError::depth_limit);return std::nullopt;}
     set_facts(incoming);
+    // The strict scalar lane admits only typed predicate negation, never
+    // integer truthiness. Parenthesize comparisons to retain unary precedence.
+    if(take(Kind::bang)||take(Kind::unicode_not)){
+      if(current().kind!=Kind::lparen && current().kind!=Kind::bang &&
+          current().kind!=Kind::unicode_not &&
+          !(current().kind==Kind::name&&(text()=="true"||text()=="false"))){
+        fail(ParseError::verify_unsupported);return std::nullopt;
+      }
+      auto p=predicate(incoming,depth+1);if(!p)return std::nullopt;
+      auto zero=append(Node{Op::literal,0,0,0});if(!zero)return std::nullopt;
+      auto neg=append(Node{Op::eq,p->node,*zero,0});if(!neg)return std::nullopt;
+      return Predicate{*neg,std::move(p->no),std::move(p->yes)};
+    }
+    if(current().kind==Kind::name&&(text()=="true"||text()=="false")){
+      const bool truth=name("true");if(!truth)(void)name("false");
+      auto node=append(Node{Op::literal,0,0,truth?1:0});if(!node)return std::nullopt;
+      return Predicate{*node,incoming,incoming};
+    }
     if(take(Kind::lparen)){auto p=guard_or(incoming,depth+1);if(!p||!take(Kind::rparen))return std::nullopt;return p;}
     auto a=expr(0);if(!a)return std::nullopt;
     Op op,inverse;
