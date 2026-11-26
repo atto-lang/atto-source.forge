@@ -13,6 +13,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import hashlib
 
 POSITIVE = (
     ("factorial", "fnc fact(n:int):int{return if n<=1 then 1 else n*fact(n-1);}"
@@ -33,8 +34,69 @@ POSITIVE = (
      ((-5,-105),(0,0),(5,105))),
     ("signed-comparisons", "fnc main(a:int,b:int):int{return if a<b then 1 else if a>=b then 2 else 3;}",
      ((-9223372036854775808,9223372036854775807,1),(2,2,2),(10,2,2))),
+    ("typed-equality", "fnc main(a:int,b:int):int{^ a eq b ? 42 : 7;}",
+     ((0,0,42),(1,2,7),(-9223372036854775808,-9223372036854775808,42))),
+    ("typed-neq", "fnc main(a:int,b:int):int{return if a neq b then 42 else 7;}",
+     ((1,2,42),(2,2,7))),
+    ("typed-bang-eq", "fnc main(a:int,b:int):int{return a !eq b ? 42 : 7;}",
+     ((1,2,42),(2,2,7))),
+    ("ifnot", "fnc main(a:int):int{return ifnot a eq 0 then 42 else 7 fi;}",
+     ((-1,42),(0,7),(1,42))),
+    ("unless", "fnc main(a:int):int{return unless a eq 0 then 42 else 7 fi;}",
+     ((-1,42),(0,7),(1,42))),
+    ("lazy-ternary", "fnc main(a:int):int{return a eq 0 ? 42 : 9223372036854775807+a;}",
+     ((0,42),(-1,9223372036854775806))),
+    ("lazy-negated", "fnc main(a:int):int{return unless a eq 1 then 42 else 9223372036854775807+a fi;}",
+     ((2,42),(0,42))),
+    ("bool-equality", "fnc main(a:int):int{return (a eq 0) eq true ? 42 : 7;}",
+     ((0,42),(1,7))),
+    ("nested-ternary", "fnc main(a:int):int{return a eq 0 ? 42 : a eq 1 ? 7 : 9;}",
+     ((0,42),(1,7),(2,9))),
+    ("logical-and-lazy", "fnc main(a:int):int{return a eq 0 && 9223372036854775807+a eq 0 ? 7 : 42;}",
+     ((0,42),(1,42),(-1,42))),
+    ("logical-or-lazy", "fnc main(a:int):int{return a eq 1 || 9223372036854775807+a eq 0 ? 42 : 7;}",
+     ((1,42),(0,7),(-1,7))),
+    ("logical-precedence", "fnc main(a:int):int{return a eq 0 || a eq 1 && false ? 42 : 7;}",
+     ((0,42),(1,7),(2,7))),
+    ("logical-nested", "fnc main(a:int):int{return ifnot (a eq 0 || a eq 1) && true then 42 else 7 fi;}",
+     ((0,7),(1,7),(2,42))),
+    ("guard-brace-continue", "// Same semantic behavior as keyword-continue.atto.\npub fnc main(): int {\n  guard true { return 0; }\n  return 42;\n}", ((42,),)),
+    ("guard-brace-failure", "// False guard executes terminal failure block.\npub fnc main(): int {\n  guard false { return 0; }\n  return 42;\n}", ((0,),)),
+    ("guard-keyword-continue", "// Same semantic behavior as brace-continue.atto.\npub fnc main(): int {\n  guard true else\n    return 0;\n  end\n  return 42;\n}", ((42,),)),
+    ("guard-keyword-failure", "// False guard executes terminal failure block.\npub fnc main(): int {\n  guard false else\n    return 0;\n  end\n  return 42;\n}", ((0,),)),
+    ("guard-canonical-scalar", "// Canonical AttoLang guard v1: successful guest exit status must be 42.\nfnc bounded(int x): int {\n  guard x > 0 { return 1; }\n  guard x < 10, x neq 5 { return 2; }\n  return 42;\n}\n\npub fnc main(): int {\n  return bounded(3);\n}", ((42,),)),
+    ("guard-runtime", "fnc main(int a):int{guard a>0 {^ 1;} guard a<10, a neq 5 else return 2; end return 42;}",
+     ((0,1),(3,42),(5,2),(11,2),(-1,1))),
+    ("guard-lazy-checks", "fnc main(a:int):int{guard a eq 0, 9223372036854775807+a eq 0 {return 7;} return 42;}",
+     ((0,7),(1,7),(-1,7))),
+    ("guard-lazy-failure", "fnc main(a:int):int{guard a eq 1 {return 9223372036854775807+a;} return 42;}",
+     ((1,42),(0,9223372036854775807))),
+    ("guard-lazy-continuation", "fnc main(a:int):int{guard a eq 0 else return 42; end return 9223372036854775807+a;}",
+     ((1,42),(0,9223372036854775807))),
+    ("bool-xor-truth-table", "fnc main(a:int,b:int):int{return Xor(a eq 0,b eq 0) ? 42 : 7;}",
+     ((0,0,7),(0,1,42),(1,0,42),(1,1,7))),
+    ("bool-xor-composition", "fnc main(a:int):int{return Xor(a eq 0,true) && a neq 2 ? 42 : 7;}",
+     ((0,7),(1,42),(2,7))),
+    ("user-xor-call", "fnc Xor(a:int,b:int):int{return a+b;} fnc main():int{return Xor(19,23);}",
+     ((42,),)),
+    ("integer-xor-runtime", "fnc main(a:int,b:int):int{return a ^^ b;}",
+     ((11,4,15),(-1,0,-1),(-1,-1,0),(-9223372036854775808,-1,9223372036854775807),(9223372036854775807,-9223372036854775808,-1))),
+    ("integer-xor-precedence", "fnc main(a:int,b:int):int{return a+1 ^^ b*2;}",
+     ((2,5,9),(0,1,3))),
+    ("integer-xor-chain", "fnc main(a:int,b:int):int{return a ^^ b ^^ 7;}",
+     ((11,4,8),(7,7,7))),
+    ("integer-xor-caret", "fnc main(a:int,b:int):int{^ (a ^^ b) eq 15 ? 42 : 7;}",
+     ((11,4,42),(1,2,7))),
     ("no-args", "fnc main():int{return 42;}", ((42,),)),
 )
+# Exact shared Git blobs, including the final newline added by build().
+GUARD_FIXTURE_BLOBS = {
+    "guard-brace-continue": "fa9dd0394a3ef08f0ecb4ff010e94cc72a859126",
+    "guard-brace-failure": "f4cdcada6b147c77a1f0f6ae6469a31ee44f2603",
+    "guard-keyword-continue": "82a2afa93e827f387407d0530febf328254599dc",
+    "guard-keyword-failure": "13f41e961534f8b93895c224b04df77feb286793",
+    "guard-canonical-scalar": "e2344e360ac643e25df7ca14eb01432929cecbe5",
+}
 TRAPS = (
     ("overflow-add", "fnc plus(n:int):int{return n+1;}"
      " fnc main(n:int):int{return plus(n);}",
@@ -44,11 +106,56 @@ TRAPS = (
      (9223372036854775807,), "i64 mul overflow"),
     ("overflow-sub", "fnc main(n:int):int{return n-1;}",
      (-9223372036854775808,), "i64 sub overflow"),
+    ("logical-and-evaluates-rhs", "fnc main(a:int):int{return a eq 1 && 9223372036854775807+a eq 0 ? 7 : 42;}",
+     (1,), "i64 add overflow"),
+    ("logical-or-evaluates-rhs", "fnc main(a:int):int{return a eq 0 || 9223372036854775807+a eq 0 ? 7 : 42;}",
+     (1,), "i64 add overflow"),
+    ("bool-xor-eager-rhs", "fnc main(a:int):int{return Xor(true,9223372036854775807+a eq 0) ? 42 : 7;}",
+     (1,), "i64 add overflow"),
+    ("bool-xor-eager-lhs", "fnc main(a:int):int{return Xor(9223372036854775807+a eq 0,false) ? 42 : 7;}",
+     (1,), "i64 add overflow"),
+    ("bool-xor-left-before-right", "fnc main(a:int):int{return Xor(9223372036854775807+a eq 0,9223372036854775807*a*2 eq 0) ? 42 : 7;}",
+     (1,), "i64 add overflow"),
     ("unbounded-recursion", "fnc always(n:int):int{return always(n);}"
      " fnc main(n:int):int{return always(n);}",
      (1,), "call depth exceeded"),
 )
 INVALID = (
+    ("logical-int-left", "fnc main():int{return 1 && true ? 42 : 7;}", "condition_not_bool"),
+    ("logical-int-right", "fnc main():int{return false && 1 ? 42 : 7;}", "condition_not_bool"),
+    ("logical-or-int-right", "fnc main():int{return true || 1 ? 42 : 7;}", "condition_not_bool"),
+    ("logical-bool-return", "fnc main():int{return true && false;}", "Boolean is not an int"),
+    ("guard-int-condition", "fnc main():int{guard 1 {return 0;} return 42;}", "condition_not_bool"),
+    ("guard-int-second-check", "fnc main():int{guard false, 1 else return 0; end return 42;}", "condition_not_bool"),
+    ("guard-fallthrough", "fnc main():int{guard false {} return 42;}", "guard_failure_requires_return"),
+    ("guard-break", "fnc main():int{guard false else break; end return 42;}", "guard_failure_requires_return"),
+    ("guard-throw", "fnc main():int{guard false {throw 1;} return 42;}", "guard_failure_requires_return"),
+    ("guard-void-return", "fnc main():int{guard false {return;} return 42;}", "expected callable expression"),
+    ("guard-bool-return", "fnc main():int{guard false {return true;} return 42;}", "Boolean is not an int"),
+    ("guard-missing-tail", "fnc main():int{guard true {return 1;}}", "unexpected token"),
+    ("guard-wrong-closer", "fnc main():int{guard true else return 1; fi return 42;}", "unexpected token"),
+    ("guard-reserved-formal", "fnc helper(guard:int):int{return 42;} fnc main():int{return 42;}", "reserved predicate word"),
+    ("bool-xor-mixed", "fnc main():int{return Xor(true,1) ? 42 : 7;}", "Boolean Xor requires two bool operands"),
+    ("bool-xor-arity", "fnc main():int{return Xor(true) ? 42 : 7;}", "Boolean Xor requires two bool operands"),
+    ("bool-xor-shadow-function", "fnc main():int{return Xor(true,false) ? 42 : 7;} fnc Xor(a:int,b:int):int{return a+b;}", "Boolean Xor intrinsic is shadowed"),
+    ("bool-xor-shadow-formal", "fnc main(Xor:int):int{return Xor(true,false) ? 42 : 7;}", "Boolean Xor intrinsic is shadowed"),
+    ("bool-xor-symbolic", "fnc main():int{return true ^^ false ? 42 : 7;}", "Boolean is not an int"),
+    ("integer-xor-mixed", "fnc main():int{return 1 ^^ false;}", "Boolean is not an int"),
+    ("integer-xor-equality-precedence", "fnc main():int{return 11 ^^ 4 eq 15 ? 42 : 7;}", "Boolean is not an int"),
+    ("integer-xor-spaced", "fnc main():int{return 11 ^ ^ 4;}", "single caret is only a return statement"),
+    ("integer-xor-infix-caret", "fnc main():int{return 11 ^ 4;}", "single caret is only a return statement"),
+    ("integer-condition", "fnc main():int{return if 1 then 2 else 3;}", "condition_not_bool"),
+    ("integer-ternary", "fnc main():int{return 1 ? 2 : 3;}", "condition_not_bool"),
+    ("integer-unless", "fnc main():int{return unless 1 then 2 else 3 fi;}", "condition_not_bool"),
+    ("bool-return", "fnc main():int{return true;}", "Boolean is not an int"),
+    ("bool-arithmetic", "fnc main():int{return true+1;}", "Boolean is not an int"),
+    ("bool-ordered", "fnc main():int{return true<false ? 2 : 3;}", "Boolean is not an int"),
+    ("mixed-equality", "fnc main():int{return true eq 1 ? 2 : 3;}", "comparison operand type mismatch"),
+    ("bool-arg", "fnc f(n:int):int{return n;} fnc main():int{return f(true);}", "Boolean is not an int"),
+    ("bool-arm", "fnc main():int{return true ? false : 3;}", "Boolean is not an int"),
+    ("negated-missing-fi", "fnc main():int{return unless true then 2 else 3;}", "unexpected token"),
+    ("neq-boundary", "fnc main():int{return 1 !equation 2 ? 3 : 4;}", "invalid character"),
+    ("unreachable-type-error", "fnc hidden():int{return true;} fnc main():int{return 42;}", "Boolean is not an int"),
     ("wrong-arity", "fnc f(n:int):int{return n;} fnc main():int{return f(1,2);}", "function arity mismatch"),
     ("unknown-target", "fnc main():int{return absent(1);}", "unknown function"),
     ("unreachable-invalid", "fnc bad():int{return absent();} fnc main():int{return 1;}", "unknown function"),
@@ -91,7 +198,7 @@ def require(value,message):
     if not value:raise RuntimeError(message)
 
 def build(compiler,cc,root,label,source,param_count):
-    file=root/"entry.ores"
+    file=root/"entry.atto"
     file.write_text(source+"\n",encoding="utf8")
     emit=execute([compiler,"emit-call-asm","x86_64",str(file)],root)
     require(emit.returncode==0 and not emit.stderr,
@@ -127,8 +234,14 @@ def main():
         for label,source,cases in POSITIVE:
             number=len(cases[0])-1
             file,exe,asm=build(compiler,cc,root,label,source,number)
+            if label in GUARD_FIXTURE_BLOBS:
+                data=file.read_bytes()
+                blob=hashlib.sha1(b"blob "+str(len(data)).encode("ascii")+b"\0"+data).hexdigest()
+                require(blob==GUARD_FIXTURE_BLOBS[label],"shared guard fixture drift "+label)
             if label in ("factorial","fibonacci","mutual","nested"):
                 require(asm.count("  call .Lores_fn_")>=1,"missing real native call "+label)
+            if label.startswith("integer-xor-"):
+                require("  xorq " in asm,"missing native integer xor instruction "+label)
             if label in ("factorial","lazy"):
                 require("  je .Lores_else_" in asm,"missing native lazy branch "+label)
             for row in cases:
@@ -151,7 +264,7 @@ def main():
                     "native overflow/depth failed to trap "+label+": "+str(native.returncode))
             negatives+=1
         for label,source,diagnostic in INVALID:
-            file=root/"bad.ores"
+            file=root/"bad.atto"
             file.write_text(source+"\n",encoding="utf8")
             for command in ((compiler,"run-calls",str(file)),(compiler,"emit-call-asm","x86_64",str(file))):
                 failure=execute(command,root)
