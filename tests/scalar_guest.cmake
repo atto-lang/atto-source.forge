@@ -224,7 +224,8 @@ foreach(expr IN ITEMS "1<Millis>.to_unit<Second>()/1<Second>" "92233720368547758
   endif()
   message(STATUS "UNIT_NATIVE_REJECT ${expr}")
 endforeach()
-foreach(decl IN ITEMS "define dimension Time\; define unit Second: Time\; define unit Tick: Time\;" "define dimension Time\; define dimension Length\; define unit Meter: Length\; define unit Tick: Time = Meter\;" "define dimension Time\; define unit Tick: Time = Second\; define unit Second: Time\;" "define dimension Time\; define dimension Time\;" "define unit Second: Missing\;" "define dimension Time\; define unit Time: Time\;" "define dimension Time\; define unit Second: Time\; define unit Second: Time\;" "define dimension Time\; define unit Second: Time\; define unit Millis: Time = Second / 0\;" "define dimension Time\; define unit Second: Time\; define unit Bad: Time = Second * -1\;" "define dimension Time\; define unit Second: Time\; define unit Huge: Time = Second * 9223372036854775807\; define unit TooBig: Time = Huge * 2\;")
+foreach(decl IN ITEMS "define dimension Time\; define unit Second: Time\; define unit Tick: Time\;" "define dimension Time\; define dimension Length\; define unit Meter: Length\; define unit Tick: Time = Meter\;" "define dimension Time\; define unit Tick: Time = Second\; define unit Second: Time\;" "define dimension Time\; define dimension Time\;" "define unit Second: Missing\;" "define dimension Time\; define unit Time: Time\;" "define dimension Time\; define unit Second: Time\; define unit Second: Time\;" "define dimension Time\; define unit Second: Time\; define unit Millis: Time = Second / 0\;" "define dimension Time\; define unit Second: Time\; define unit Bad: Time = Second * -1\;" "define dimension Time\; define unit Second: Time\; define unit Huge: Time = Second * 9223372036854775807\; define unit H2: Time = Huge * 9223372036854775807\; define unit H3: Time = H2 * 9223372036854775807\; define unit H4: Time = H3 * 9223372036854775807\; define unit TooBig: Time = H4 * 9223372036854775807\;")
+  string(REPLACE "\\;" ";" decl "${decl}")
   file(WRITE "${OUT_DIR}/unit-decl-invalid.atto" "${decl}\npub fnc main() -> int {return 42;}")
   execute_process(COMMAND "${FORGE}" "${OUT_DIR}/unit-decl-invalid.atto" -o "${OUT_DIR}/unit-decl-invalid.cpp"
     RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 15)
@@ -296,6 +297,7 @@ verify_binding(first-overflow "val first=9223372036854775807+1; val second=43::<
 verify_binding(read-metadata "val a=42; val b=a.<Second>; return b/1<Second>+a-a;" 0 "42\n" "")
 verify_binding(cast-proof "val a=1::<Bounded>; val Bounded b=a; return b+41;" 0 "42\n" "")
 foreach(body IN ITEMS "val a=42<Second>\; return a\;" "val a=42<Second>\; val int b=a\; return b\;" "val Positive a=0<Second>\; return 42\;" "val Positive a=42<Millis>\; return 42\;" "val Bounded a=43\; return a\;" "val a=b\; val b=42\; return a\;" "val a=a\; return a\;" "val a=1\; val a=42\; return a\;" "val a=42\; a=0\; return a\;" "val a=42\; return a.<Second>\;" "val self=42\; return self\;" "val Second=42\; return Second\;" "val a=42<Second>\; return a.to_unit<Millis>()/1<Millis>\;")
+  string(REPLACE "\\;" ";" body "${body}")
   file(WRITE "${OUT_DIR}/binding-invalid.atto" "${quantity_declarations}\npub fnc main() -> int {${body}}")
   execute_process(COMMAND "${FORGE}" "${OUT_DIR}/binding-invalid.atto" -o "${OUT_DIR}/binding-invalid.cpp" RESULT_VARIABLE rc ERROR_VARIABLE err TIMEOUT 15)
   if(NOT "${rc}" STREQUAL "2" OR EXISTS "${OUT_DIR}/binding-invalid.cpp")
@@ -341,6 +343,7 @@ verify_local_body(unused-trap "val unused=1.<Second>/0.<Second>; return 42;" 71 
 verify_local_body(order "val first=1/0; val second=9223372036854775807+1; return 42;" 71 "" "E_DIVZERO\n")
 verify_local_body(order-reversed "val first=9223372036854775807+1; val second=1/0; return 42;" 70 "" "E_OVERFLOW\n")
 foreach(body IN ITEMS "val using=1\; return using\;" "val dimension=1\; return dimension\;" "val unit=1\; return unit\;" "val Upper=42\; return Upper\;" "val distance=42.<Meter>\; return distance\;" "val x=1\; val x=2\; return x\;" "val x=y\; val y=42\; return x\;" "val x=x\; return x\;" "val x=1.<Meter>\; return x.<Meter>\;" "val x=1\; x=42\; return x\;")
+  string(REPLACE "\\;" ";" body "${body}")
   file(WRITE "${OUT_DIR}/local-invalid.atto" "${quantity_declarations}\npub fnc main() -> int { ${body} }")
   file(WRITE "${OUT_DIR}/local-invalid.cpp" "stale")
   execute_process(COMMAND "${FORGE}" "${OUT_DIR}/local-invalid.atto" -o "${OUT_DIR}/local-invalid.cpp"

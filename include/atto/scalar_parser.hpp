@@ -2,6 +2,7 @@
 // Restricted native Atto scalar parser: one main() with a scalar return.
 #include "atto/scalar_lexer.hpp"
 #include "atto/decimal_i64.hpp"
+#include "atto/exact_quantity_scale.hpp"
 #include <array>
 #include <cstdint>
 #include <limits>
@@ -21,7 +22,7 @@ struct Node {
   i64 upper = 0;
 };
 enum class ParseError {
-  none, lexical, syntax, literal_out_of_range, depth_limit, node_limit, telemetry, verify_unproven, verify_unsupported
+  none, lexical, syntax, literal_out_of_range, depth_limit, node_limit, telemetry, verify_unproven, verify_unsupported, unit_name, unit_duplicate, unit_dimension, unit_scale, unit_limit, unit_erasure, unit_attachment, unit_inexact, unit_range
 };
 // Stable sanitized diagnostics; never echo user source bytes.
 [[nodiscard]] constexpr std::string_view parse_error_name(ParseError error) noexcept {
@@ -35,6 +36,15 @@ enum class ParseError {
     case ParseError::telemetry: return "E_TELEMETRY_SCOPE";
     case ParseError::verify_unproven: return "E_VERIFY_UNPROVEN";
     case ParseError::verify_unsupported: return "E_VERIFY_UNSUPPORTED";
+    case ParseError::unit_name: return "E_UNIT_NAME";
+    case ParseError::unit_duplicate: return "E_UNIT_DUPLICATE";
+    case ParseError::unit_dimension: return "E_UNIT_DIMENSION";
+    case ParseError::unit_scale: return "E_UNIT_SCALE";
+    case ParseError::unit_limit: return "E_UNIT_LIMIT";
+    case ParseError::unit_erasure: return "E_UNIT_ERASURE";
+    case ParseError::unit_attachment: return "E_UNIT_ATTACHMENT";
+    case ParseError::unit_inexact: return "E_UNIT_INEXACT";
+    case ParseError::unit_range: return "E_UNIT_RANGE";
   }
   return "E_PARSE_UNKNOWN";
 }
@@ -137,28 +147,7 @@ class Parser {
   bool strict_ = false;
   // File-local bounded rational dimensions; erased only after scalar admission.
   using Dim = std::array<int, 8>;
-  struct Scale {
-    i64 n = 1, d = 1;
-    bool operator==(const Scale&) const = default;
-    [[nodiscard]] Scale inv() const { return {d,n}; }
-    [[nodiscard]] std::optional<Scale> mul(Scale rhs) const {
-      const i64 a=std::gcd(n,rhs.d), b=std::gcd(rhs.n,d);
-      const i64 x=n/a,y=rhs.n/b,z=d/b,w=rhs.d/a;
-      constexpr auto max=std::numeric_limits<i64>::max();
-      if (x>max/y || z>max/w) return std::nullopt;
-      return Scale{x*y,z*w};
-    }
-    [[nodiscard]] std::optional<i64> convert(i64 value,Scale target) const {
-      // Zero converts exactly even when the intermediate ratio exceeds i64.
-      if (value==0) return 0;
-      const auto ratio=mul(target.inv());
-      if (!ratio || value%ratio->d != 0) return std::nullopt;
-      const i64 q=value/ratio->d;
-      if (q>std::numeric_limits<i64>::max()/ratio->n ||
-          q<std::numeric_limits<i64>::min()/ratio->n) return std::nullopt;
-      return q*ratio->n;
-    }
-  };
+  using Scale = ExactScale;
   std::vector<Dim> dims_;
   std::vector<Scale> scales_;
   struct Range {
@@ -216,24 +205,26 @@ class Parser {
     return !n.empty() && n[0] >= 'A' && n[0] <= 'Z' && !known_name(n);
   }
   [[nodiscard]] std::optional<i64> factor() {
-    if (current().kind!=Kind::integer) return std::nullopt;
+    if (current().kind!=Kind::integer) {fail(ParseError::unit_scale);return std::nullopt;}
     auto value=parse_decimal_i64(text());
-    if (!value || *value<=0) return std::nullopt;
+    if (!value || *value<=0) {fail(ParseError::unit_scale);return std::nullopt;}
     ++pos_; return value;
   }
   [[nodiscard]] bool declarations() {
     while (name("define")) {
       const bool dimension = name("dimension");
-      if ((!dimension && !name("unit")) || current().kind != Kind::name || !declaration_name(text())) return false;
+      if ((!dimension && !name("unit")) || current().kind != Kind::name) return false;
+      if (known_name(text())) {fail(ParseError::unit_duplicate);return false;}
+      if(!declaration_name(text())) {fail(ParseError::unit_name);return false;}
       const auto n = text(); ++pos_;
       if (dimension) {
-        if (dimensions_.size() == Dim{}.size()) return false;
+        if (dimensions_.size() == Dim{}.size()) {fail(ParseError::unit_limit);return false;}
         dimensions_.push_back(n);
       } else {
         if (units_.size() == 32 || !take(Kind::colon) || current().kind != Kind::name) return false;
         std::size_t d = 0;
         while (d < dimensions_.size() && dimensions_[d] != text()) ++d;
-        if (d == dimensions_.size()) return false;
+        if (d == dimensions_.size()) {fail(ParseError::unit_name);return false;}
         ++pos_;
         Scale scale{};
         if (take(Kind::equals)) {
@@ -245,8 +236,9 @@ class Parser {
           }
           if (current().kind != Kind::name) return false;
           const Unit* base=nullptr;
-          for (const auto& u : units_) if (u.name==text() && u.dim==d) base=&u;
-          if (!base) return false;
+          for (const auto& u : units_) if (u.name==text()) base=&u;
+          if (!base) {fail(ParseError::unit_name);return false;}
+          if(base->dim!=d){fail(ParseError::unit_dimension);return false;}
           ++pos_;
           if (!prefix && (current().kind==Kind::star || current().kind==Kind::slash)) {
             const bool divide=take(Kind::slash);
@@ -255,10 +247,10 @@ class Parser {
             if (divide) f.d=*k; else f.n=*k;
           }
           const auto normalized=base->scale.mul(f);
-          if (!normalized) return false;
+          if (!normalized) {fail(ParseError::unit_limit);return false;}
           scale=*normalized;
         } else {
-          for (auto u : units_) if (u.dim == d) return false;
+          for (auto u : units_) if (u.dim == d) {fail(ParseError::unit_duplicate);return false;}
         }
         units_.push_back(Unit{n,d,scale});
       }
@@ -327,15 +319,16 @@ class Parser {
     return append(Node{Op::refine,n,0,r.lo,r.hi});
   }
   [[nodiscard]] bool attach(std::size_t n) {
-    if (!dimensionless(n) || current().kind != Kind::name) { fail(ParseError::syntax); return false; }
+    if (!dimensionless(n)) {fail(ParseError::unit_attachment);return false;}
+    if(current().kind!=Kind::name){fail(ParseError::unit_name);return false;}
     for (const auto& u : units_) if (u.name == text()) {
       dims_[n][u.dim] = 1; scales_[n]=u.scale; ++pos_; return true;
     }
-    fail(ParseError::syntax); return false;
+    fail(ParseError::unit_name); return false;
   }
   [[nodiscard]] bool scalar_cast(std::size_t n) {
     if (dimensionless(n)) return true;
-    fail(ParseError::syntax); return false;
+    fail(ParseError::unit_erasure); return false;
   }
   [[nodiscard]] const Token& current() const { return tokens_[pos_]; }
   [[nodiscard]] std::string_view text() const {
@@ -399,11 +392,12 @@ class Parser {
       } else {
         const auto& rhs = dims_[n.right];
         if (n.op == Op::add || n.op == Op::sub) {
-          if (lhs != rhs || scales_[n.left]!=scales_[n.right]) { fail(ParseError::syntax); return std::nullopt; }
+          if (lhs != rhs) {fail(ParseError::unit_dimension);return std::nullopt;}
+          if(scales_[n.left]!=scales_[n.right]){fail(ParseError::unit_scale);return std::nullopt;}
           d = lhs; s=scales_[n.left];r=ranges_[n.left].binary(ranges_[n.right],n.op);
         } else if (n.op == Op::mul || n.op == Op::div) {
           const auto scale=scales_[n.left].mul(n.op==Op::div?scales_[n.right].inv():scales_[n.right]);
-          if (!scale) { fail(ParseError::syntax); return std::nullopt; }
+          if (!scale) { fail(ParseError::unit_limit); return std::nullopt; }
           s=*scale;r=ranges_[n.left].binary(ranges_[n.right],n.op);
           for (std::size_t i = 0; i < d.size(); ++i) {
             d[i] = lhs[i] + (n.op == Op::mul ? rhs[i] : -rhs[i]);
@@ -454,14 +448,14 @@ class Parser {
         }
         const Unit* target=nullptr;
         for (const auto& u:units_) if (u.name==text()) target=&u;
-        if (!target) { fail(ParseError::syntax); return std::nullopt; }
+        if (!target) { fail(ParseError::unit_name); return std::nullopt; }
         Dim d{}; d[target->dim]=1;
-        if (dims_[*result]!=d) { fail(ParseError::syntax); return std::nullopt; }
+        if (dims_[*result]!=d) { fail(ParseError::unit_dimension); return std::nullopt; }
         ++pos_;
         if (!take(Kind::gt)||!take(Kind::lparen)||!take(Kind::rparen)) { fail(ParseError::syntax); return std::nullopt; }
         const auto converted=scales_[*result].convert(out_.nodes[*result].value,target->scale);
-        if (!converted) { fail(ParseError::syntax); return std::nullopt; }
-        out_.nodes[*result].value=*converted; scales_[*result]=target->scale; ranges_[*result]=Range::exact(*converted);
+        if(converted.error!=Scale::Error::none){fail(converted.error==Scale::Error::inexact?ParseError::unit_inexact:ParseError::unit_range);return std::nullopt;}
+        out_.nodes[*result].value=converted.value; scales_[*result]=target->scale; ranges_[*result]=Range::exact(converted.value);
         conversion=false;compact=false;continue;
       }
       if (!take(Kind::lt)) { fail(ParseError::syntax); return std::nullopt; }
