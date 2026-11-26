@@ -1,5 +1,6 @@
 #include "atto/scalar_emit.hpp"
 #include "atto/durable_counter_emit.hpp"
+#include "atto/durable_scalar_emit.hpp"
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -39,10 +40,11 @@ int main(int argc, char** argv) {
       return deny("E_AST: scalar AST rejected");
     return 0;
   }
-  const bool durable = argc == 5 && std::string(argv[1]) == "--durable-counter-actor-v1";
+  const bool scalar_codec = argc == 5 && std::string(argv[1]) == "--durable-scalar-codec-v1";
+  const bool durable = scalar_codec || (argc == 5 && std::string(argv[1]) == "--durable-counter-actor-v1");
   const int offset = durable ? 1 : 0;
   if (argc != 4 + offset || std::string(argv[2+offset]) != "-o")
-    return deny("E_USAGE: forge_scalar [--durable-counter-actor-v1] input.atto -o output.cpp");
+    return deny("E_USAGE: forge_scalar [--durable-counter-actor-v1|--durable-scalar-codec-v1] input.atto -o output.cpp");
   const fs::path input(argv[1+offset]), output(argv[3+offset]);
   if (input.extension() != ".atto" || output.extension() != ".cpp")
     return deny("E_PATH: expected .atto and .cpp");
@@ -110,7 +112,12 @@ int main(int argc, char** argv) {
   }
   std::optional<std::string> generated;
   if (durable) {
-    generated=atto::forge::scalar::emit_durable_counter_v1(source);
+    try {
+      generated=scalar_codec?std::optional<std::string>(atto::forge::scalar::emit_durable_scalar_v1_cpp(source)):atto::forge::scalar::emit_durable_counter_v1(source);
+    } catch(const std::invalid_argument&) {
+      ec.clear(); fs::remove(output, ec);
+      return deny("E_DURABLE_SCALAR_SCHEMA_V1");
+    }
     if (!generated) {
       ec.clear(); fs::remove(output, ec);
       return deny("E_DURABLE_COUNTER_ACTOR_ABI");
