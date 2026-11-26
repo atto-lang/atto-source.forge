@@ -439,4 +439,32 @@ verify_pair_case(generic_key [=[Pair.of<int,int>(42,5).second]=] "" E_PAIR_KEY_T
 verify_pair_case(escape [=[Pair.of("a",42)]=] "" E_PAIR_ESCAPE_UNSUPPORTED)
 verify_pair_case(first [=[Pair.of("a",42).first]=] "" E_PAIR_PROJECTION_UNSUPPORTED)
 verify_pair_case(overflow [=[Pair.of("a",9223372036854775808).second]=] "" E_PARSE_RANGE)
-verify_pair_case(effectful [=[Pair.of("a",1+2).second]=] "" E_PARSE_SYNTAX)
+verify_pair_case(arithmetic [=[Pair.of("a",1+2).second]=] 3 "")
+verify_pair_case(grouped_second [=[Pair.of<int>("a",(10+11)*2).second]=] 42 "")
+verify_pair_case(unknown [=[Pair.of("a",missing).second]=] "" E_PARSE_SYNTAX)
+verify_pair_case(bool_second [=[Pair.of("a",true).second]=] "" E_PARSE_SYNTAX)
+verify_pair_case(nested_second [=[Pair.of("a",Pair.of("b",42).second).second]=] 42 "")
+
+# Exercise a helper call and a local value using the same source compiler.
+set(dynamic_pair_source "${OUT_DIR}/pair-dynamic-local.atto")
+set(dynamic_pair_cpp "${OUT_DIR}/pair-dynamic-local.cpp")
+set(dynamic_pair_binary "${OUT_DIR}/pair-dynamic-local")
+file(REMOVE "${dynamic_pair_cpp}" "${dynamic_pair_cpp}.part" "${dynamic_pair_binary}")
+file(WRITE "${dynamic_pair_source}" "${quantity_declarations}\nfnc twice(Bounded n): int { return n*2; }\npub fnc main(): int { val Bounded n = 21; return Pair.of<int>(\"key\",twice(n)).second; }\n")
+execute_process(COMMAND "${FORGE}" "${dynamic_pair_source}" -o "${dynamic_pair_cpp}"
+  RESULT_VARIABLE rc ERROR_VARIABLE err TIMEOUT 15)
+if(NOT "${rc}" STREQUAL "0" OR NOT EXISTS "${dynamic_pair_cpp}")
+  message(FATAL_ERROR "dynamic Pair helper compile failed: ${err}")
+endif()
+execute_process(COMMAND "${CXX}" -std=c++20 -Wall -Wextra -Werror ${guest_flags}
+  "-I${ROOT}/include" "${dynamic_pair_cpp}" -o "${dynamic_pair_binary}"
+  RESULT_VARIABLE rc ERROR_VARIABLE err TIMEOUT 30)
+if(NOT "${rc}" STREQUAL "0")
+  message(FATAL_ERROR "dynamic Pair helper native build failed: ${err}")
+endif()
+execute_process(COMMAND "${dynamic_pair_binary}" RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 10)
+if(NOT "${rc}" STREQUAL "0" OR NOT "${out}" STREQUAL "42\n" OR NOT "${err}" STREQUAL "")
+  message(FATAL_ERROR "dynamic Pair helper native mismatch: ${rc}, ${out}, ${err}")
+endif()
+
+verify_local_body(pair-trap "return Pair.of<int>(\"key\",1/0).second;" 71 "" "E_DIVZERO\n")
