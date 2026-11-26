@@ -369,5 +369,114 @@ class IntegrationManifestGateTests(unittest.TestCase):
 
 
 
+    def test_cli_rejects_embedded_nul_root_without_unhandled_exception(self):
+        # Argparse accepts this when invoked as a Python callable even though
+        # an OS shell cannot pass an actual NUL in argv.
+        self.assertEqual(module.main(['--repository-root',
+                                      '/' + REPO_NAME + '\x00outside']), 1)
+
+    @unittest.skipUnless(os.name == 'posix', 'POSIX descriptor instrumentation')
+    def test_cli_accepts_regular_manifest_with_instrumented_open(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / REPO_NAME
+            (root / '.oreslang').mkdir(parents=True)
+            (root / '.oreslang/integration.json').write_bytes(encode(valid_manifest()))
+            native_open = os.open
+            opened = []
+
+            def trace_open(path, flags, *args, **kwargs):
+                opened.append(str(path))
+                return native_open(path, flags, *args, **kwargs)
+
+            with mock.patch.object(module.os, 'open', side_effect=trace_open):
+                self.assertEqual(module.main(['--repository-root', str(root)]), 0)
+            self.assertIn('integration.json', opened)
+
+    @unittest.skipUnless(os.name == 'posix', 'POSIX dir_fd support gate')
+    def test_cli_denies_missing_descriptor_relative_open_support(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / REPO_NAME
+            (root / '.oreslang').mkdir(parents=True)
+            (root / '.oreslang/integration.json').write_bytes(encode(valid_manifest()))
+            # A platform with O_NOFOLLOW constants but no dir_fd-compatible
+            # os.open must deny the manifest, never fall back to path reads.
+            with mock.patch.object(module.os, 'supports_dir_fd', set()):
+                self.assertEqual(module.main(['--repository-root', str(root)]), 1)
+
+    @unittest.skipUnless(os.name == 'posix', 'Unix stable descriptor gate')
+    def test_cli_rejects_in_place_append_during_read(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / REPO_NAME
+            (root / '.oreslang').mkdir(parents=True)
+            leaf = root / '.oreslang/integration.json'
+            leaf.write_bytes(encode(valid_manifest()))
+            original_read = os.read
+            mutated = False
+
+            def append_while_reading(fd, size):
+                nonlocal mutated
+                chunk = original_read(fd, size)
+                if not mutated:
+                    with leaf.open('ab') as output:
+                        output.write(b' ')
+                    mutated = True
+                return chunk
+
+            with mock.patch.object(module.os, 'read', side_effect=append_while_reading):
+                self.assertEqual(module.main(['--repository-root', str(root)]), 1)
+            self.assertTrue(mutated)
+
+    @unittest.skipUnless(os.name == 'posix', 'Unix stable descriptor gate')
+    def test_cli_rejects_same_size_rewrite_during_read(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / REPO_NAME
+            (root / '.oreslang').mkdir(parents=True)
+            leaf = root / '.oreslang/integration.json'
+            raw = encode(valid_manifest())
+            leaf.write_bytes(raw)
+            initial = leaf.stat()
+            original_read = os.read
+            mutated = False
+
+            def rewrite_while_reading(fd, size):
+                nonlocal mutated
+                chunk = original_read(fd, size)
+                if not mutated:
+                    leaf.write_bytes(raw)
+                    # Force an observable metadata delta even on filesystems
+                    # with coarse ctime/mtime clock resolution.
+                    os.utime(leaf, ns=(initial.st_atime_ns,
+                                       initial.st_mtime_ns + 1_000_000_000))
+                    mutated = True
+                return chunk
+
+            with mock.patch.object(module.os, 'read', side_effect=rewrite_while_reading):
+                self.assertEqual(module.main(['--repository-root', str(root)]), 1)
+            self.assertTrue(mutated)
+
+    @unittest.skipUnless(os.name == 'posix', 'Unix stable descriptor gate')
+    def test_cli_rejects_hardlink_added_during_read(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / REPO_NAME
+            (root / '.oreslang').mkdir(parents=True)
+            leaf = root / '.oreslang/integration.json'
+            leaf.write_bytes(encode(valid_manifest()))
+            alias = Path(temp) / 'late-link.json'
+            original_read = os.read
+            linked = False
+
+            def link_while_reading(fd, size):
+                nonlocal linked
+                chunk = original_read(fd, size)
+                if not linked:
+                    alias.hardlink_to(leaf)
+                    linked = True
+                return chunk
+
+            with mock.patch.object(module.os, 'read', side_effect=link_while_reading):
+                self.assertEqual(module.main(['--repository-root', str(root)]), 1)
+            self.assertTrue(linked)
+
+
 if __name__ == '__main__':
     unittest.main()

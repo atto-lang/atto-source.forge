@@ -27,6 +27,8 @@ UPSTREAMS = {
 }
 EXPECTED_KEYS = frozenset({'schemaVersion', 'protocol', 'repository', 'role', 'upstreams', 'evidence', 'note'})
 MAX_BYTES = 4096
+# Preserve the native capability identity when tests instrument os.open.
+_NATIVE_OPEN = os.open
 
 
 class InvalidManifest(ValueError):
@@ -98,6 +100,9 @@ def _read_manifest_physically(root: Path) -> bytes:
     if os.name != 'posix' or any(not hasattr(os, flag) for flag in required):
         raise InvalidManifest('secure descriptor-relative manifest reads unavailable')
 
+    if _NATIVE_OPEN not in getattr(os, 'supports_dir_fd', ()):
+        raise InvalidManifest('descriptor-relative open is unsupported')
+
     directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
     leaf_flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
     # A no-follow open of an absolute path checks only its final component.
@@ -136,6 +141,13 @@ def _read_manifest_physically(root: Path) -> bytes:
                         break
                     chunks.append(chunk)
                     remaining -= len(chunk)
+                # Preserve the exact opened descriptor; detect observable
+                # mutation during the bounded read, never claim immutability.
+                after = os.fstat(leaf_fd)
+                fields = ('st_mode', 'st_dev', 'st_ino', 'st_nlink',
+                          'st_size', 'st_mtime_ns', 'st_ctime_ns')
+                if any(getattr(opened, field) != getattr(after, field) for field in fields):
+                    raise InvalidManifest('manifest changed during bounded read')
                 return b''.join(chunks)
             finally:
                 os.close(leaf_fd)
@@ -157,6 +169,8 @@ def main(argv: list[str] | None = None) -> int:
         # the lexically normalized path when the kernel follows the symlink.
         if '..' in args.repository_root.parts:
             raise InvalidManifest('repository root parent traversal is forbidden')
+        if '\x00' in os.fspath(args.repository_root):
+            raise InvalidManifest('repository root contains NUL')
         root = Path(os.path.abspath(args.repository_root))
         expected_name = root.name
         verify_bytes(_read_manifest_physically(root), expected_name)
