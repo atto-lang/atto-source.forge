@@ -19,4 +19,7 @@ struct Input {
 std::string encode(const Input&);
 Bytes seal(std::string_view key,std::span<const std::uint8_t> artifact,const Secret&);
 Bytes verify(std::string_view key,std::span<const std::uint8_t> envelope,const Secret&);
+// Trusted external current pin, not a durable rollback-proof provider.
+Bytes ledger_record(std::string_view scope,std::uint64_t epoch,const Secret& master);
+Secret ledger_admit(std::string_view scope,std::span<const std::uint8_t> record,const Secret& current_pin,const Secret& master);
 }

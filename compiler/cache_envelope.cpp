@@ -52,4 +52,31 @@ Bytes verify(std::string_view key,std::span<const std::uint8_t> b,const Secret& 
  if(!equal(magic,b.first(8))||!equal(k,b.subspan(8,32))||length!=b.size()-Header||!equal(mac(secret,b),b.subspan(80,32))||!equal(sha(b.subspan(Header)),b.subspan(48,32)))invalid();
  return Bytes(b.begin()+Header,b.end());
 }
+
+namespace {
+[[noreturn]] void ledger_invalid(){throw std::runtime_error("E_CACHE_LEDGER: invalid or stale record");}
+struct WipedKey {Secret value{}; ~WipedKey(){OPENSSL_cleanse(value.data(),value.size());}};
+Bytes ledger_scope(std::string_view scope){
+ Bytes result;try{identity(result,scope);}catch(const std::runtime_error&){ledger_invalid();}return result;
+}
+void derive_ledger(std::string_view scope,std::uint64_t epoch,const Secret& master,Secret& out){
+ if(epoch==0||equal(master,Secret{}))ledger_invalid();
+ Bytes message;text(message,"atto.compiler.local-receipt-key.v1");message.push_back(0);
+ append(message,ledger_scope(scope));integer(message,epoch,8);
+ unsigned n=0;if(!HMAC(EVP_sha256(),master.data(),static_cast<int>(master.size()),message.data(),message.size(),out.data(),&n)||n!=out.size())ledger_invalid();
+}
+}
+Bytes ledger_record(std::string_view scope,std::uint64_t epoch,const Secret& master){
+ auto id=ledger_scope(scope);WipedKey key;derive_ledger(scope,epoch,master,key.value);
+ Bytes result;text(result,"ATTOLED1");append(result,id);integer(result,epoch,8);append(result,sha(key.value));return result;
+}
+Secret ledger_admit(std::string_view scope,std::span<const std::uint8_t> record,const Secret& current_pin,const Secret& master){
+ auto id=ledger_scope(scope);if(record.size()!=52+scope.size())ledger_invalid();
+ Bytes magic;text(magic,"ATTOLED1");
+ if(!equal(sha(record),current_pin)||!equal(record.first(8),magic)||!equal(record.subspan(8,id.size()),id))ledger_invalid();
+ std::uint64_t epoch=0;for(auto v:record.subspan(12+scope.size(),8))epoch=(epoch<<8)|v;
+ WipedKey key;derive_ledger(scope,epoch,master,key.value);
+ if(!equal(sha(key.value),record.subspan(20+scope.size(),32)))ledger_invalid();
+ return key.value;
+}
 }
