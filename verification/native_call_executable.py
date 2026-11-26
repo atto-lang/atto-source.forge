@@ -17,6 +17,10 @@ import hashlib
 
 # Each tuple is (arguments..., value, typed variant, escaping ordinary effect).
 EFFECT_CASES = (
+    ("allocation-early-return", "int", "pub fnc main(int used,int cap):int{if used<0 || cap<0 then return 0; fi if used>=cap then return 0; fi return cap-used;}",
+     ((-1,9223372036854775807,0,0,0),(0,-1,0,0,0),(0,9223372036854775807,9223372036854775807,0,0),(3,8,5,0,0),(8,8,0,0,0))),
+    ("early-return-lazy-fault", "int", "fnc main(int x):int{if x eq 0 then return 42; fi if x eq 1 then return 7; fi return 1/(x-2);}",
+     ((0,42,0,0),(1,7,0,0),(2,0,0,65538),(3,1,0,0))),
     ("bool-option", "option", "fnc fits(int x):bool{return x>=-128 && x<=127;} fnc main(int x):Option<int>{return if fits(x) then Some(x) else None fi;}",
      ((-129,0,0,0),(-128,-128,1,0),(0,0,1,0),(127,127,1,0),(128,0,0,0))),
     ("bool-effect-trap", "result", "fnc test(int x):bool{return 42/x eq 21;} fnc main(int x):Result<int,Error>{return trap! (test(x) ? 42 : 7);}",
@@ -279,6 +283,10 @@ TRAPS = (
      (1,), "call depth exceeded"),
 )
 INVALID = (
+    ("early-return-int-condition", "fnc main():int{if 1 then return 42; fi return 0;}", "condition_not_bool"),
+    ("early-return-missing-continuation", "fnc main():int{if true then return 42; fi}", "unexpected token"),
+    ("early-return-bool-arm", "fnc main():int{if true then return false; fi return 0;}", "Boolean is not an int"),
+    ("early-return-missing-fi", "fnc main():int{if true then return 42; return 0;}", "unexpected token"),
     ("result-match-duplicate", "fnc main():int{return match<int> Ok(42) over on Ok(n):int -> n, on Ok(m):int -> m, end;}", "duplicate Result match arm"),
     ("result-match-wildcard-scope", "fnc main():int{return match<int> Ok(42) over on Ok(_):int -> _, on Err(_):int -> 0, end;}", "unknown parameter"),
     ("result-match-error-binding", "fnc main():int{return match<int> Ok(42) over on Ok(n):int -> n, on Err(e):int -> 0, end;}", "Err binding requires nominal Error payload lowering"),
