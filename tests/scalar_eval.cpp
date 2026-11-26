@@ -19,12 +19,11 @@ int main() {
     {"-9223372036854775808 + 1",std::numeric_limits<i64>::min() + 1},
     {"8/2*3+1",13},
     {"1 <<< 63",std::numeric_limits<i64>::min()},
-    {"1 <<< 64",1}, {"1 <<< -1",std::numeric_limits<i64>::min()},
     {"-1 >>> 1",std::numeric_limits<i64>::max()},
     {"-8 ashr 2",-2}, {"(1 <<< 63) >>> 63",1},
-    {"-8 ashr 2 + 1",-1}, {"~0",-1}, {"-1 & 42",42}, {"1 | 4",5}, {"6 ^ 3",5},
-    {"~0 & 255",255}, {"1 | 2 & 4",1}, {"1 ^ 3 & 2",3},
-    {"1 | 2 ^ 3 & 2",1}, {"~(-9223372036854775808)",9223372036854775807LL}
+    {"-8 ashr 2 + 1",-1}, {"~0",-1}, {"-1 & 42",42}, {"1 | 4",5}, {"6 ^^ 3",5},
+    {"~0 & 255",255}, {"1 | 2 & 4",1}, {"1 ^^ 3 & 2",3},
+    {"1 | 2 ^^ 3 & 2",1}, {"~(-9223372036854775808)",9223372036854775807LL}
   }) {
     const auto value = evaluate_source(program(c.expr));
     assert(value.ok() && *value.value == c.expected);
@@ -40,6 +39,11 @@ int main() {
   }) assert(evaluate_source(program(expr)).error == EvalError::overflow);
   for (const char* expr : {"1 / 0", "2 % 0", "1 / (7 - 7)"})
     assert(evaluate_source(program(expr)).error == EvalError::divide_by_zero);
+  for (const char* expr : {"1 <<< 64", "1 <<< -1", "1 >>> 64",
+      "1 ashr -1", "1 <<< (32 + 32)"})
+    assert(evaluate_source(program(expr)).error == EvalError::shift_distance);
+  assert(evaluate_source("fnc main(): int { ^ 12 ^^ 10; }").value == 6);
+  assert(evaluate_source(program("12 ^ 10")).error == EvalError::parse_error);
   assert(evaluate_source(program("abc")).error == EvalError::parse_error);
   auto ast = parse_source(program("5+3"));
   assert(ast.ok());

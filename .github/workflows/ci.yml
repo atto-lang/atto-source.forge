@@ -1,0 +1,154 @@
+name: Forge compiler and runtime checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: forge-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bootstrap:
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [g++, clang++]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify exact source commit and Git tree
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git diff --quiet --exit-code
+          echo "EXACT_SOURCE_COMMIT=$(git rev-parse HEAD)"
+          echo "EXACT_SOURCE_TREE=$(git rev-parse HEAD^{tree})"
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DCMAKE_CXX_COMPILER=${{ matrix.compiler }}
+      - name: Compile
+        run: cmake --build build --parallel 2
+      - name: Self-test fail-closed Option-pattern evidence harness (synthetic only)
+        run: python3 -m unittest discover -s scripts -p test_option_pattern_contract.py -v
+      - name: Reject unsupported Option pattern syntax using real Forge compiler
+        run: |
+          python3 scripts/check_option_pattern_contract.py --backend forge \
+            --revision "${{ github.event.pull_request.head.sha || github.sha }}" --report build/option-pattern-forge.json \
+            -- ./build/oresforge ir '{source}'
+      - name: Preserve Option-pattern admission report (not parity)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: option-pattern-forge-admission-${{ matrix.compiler }}
+          path: build/option-pattern-forge.json
+          if-no-files-found: ignore
+      - name: Run regression tests
+        run: ctest --test-dir build --output-on-failure
+      - name: Execute documented source fixture
+        run: test "$(./build/oresforge run examples/hello.ores)" = "14"
+
+  sanitizers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify exact source commit and Git tree
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git diff --quiet --exit-code
+          echo "EXACT_SOURCE_COMMIT=$(git rev-parse HEAD)"
+          echo "EXACT_SOURCE_TREE=$(git rev-parse HEAD^{tree})"
+      - name: Configure ASan and UBSan
+        run: >-
+          cmake -S . -B build-sanitized -DCMAKE_BUILD_TYPE=Debug
+          -DBUILD_TESTING=ON -DCMAKE_CXX_COMPILER=clang++
+          -DCMAKE_CXX_FLAGS="-O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+      - name: Compile
+        run: cmake --build build-sanitized --parallel 2
+      - name: Execute sanitized regressions
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1
+        run: ctest --test-dir build-sanitized --output-on-failure
+
+  fuzz-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify exact source commit and Git tree
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git diff --quiet --exit-code
+          echo "EXACT_SOURCE_COMMIT=$(git rev-parse HEAD)"
+          echo "EXACT_SOURCE_TREE=$(git rev-parse HEAD^{tree})"
+      - name: Configure instrumented libFuzzer
+        run: >-
+          cmake -S . -B build-fuzz -DCMAKE_BUILD_TYPE=Debug
+          -DBUILD_TESTING=OFF -DORESFORGE_FUZZ=ON
+          -DCMAKE_CXX_COMPILER=clang++
+      - name: Compile instrumented frontend and actor mailbox fuzz targets
+        run: cmake --build build-fuzz --target oresforge_fuzz oresforge_mailbox_fuzz --parallel 2
+      - name: Deterministic bounded frontend fuzz corpus regression
+        run: >-
+          ./build-fuzz/oresforge_fuzz -runs=3000 -max_len=4096
+          -timeout=3 -rss_limit_mb=1024 verification/fuzz-corpus
+      - name: Differential actor mailbox fuzz regression
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1
+        run: >-
+          ./build-fuzz/oresforge_mailbox_fuzz -runs=3000 -max_len=4096
+          -timeout=3 -rss_limit_mb=1024 -seed=20261016
+
+  mailbox-thread-safety:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Prove exact Oreslang PR-head checkout (not merge ref)
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git rev-parse 'HEAD^{tree}'
+      - name: GCC ThreadSanitizer on actual actor mailbox concurrency
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++20 -O1 -g -pthread -Wall -Wextra -Wconversion -Werror \
+            -fno-omit-frame-pointer -fsanitize=thread -I. \
+            runtime/actor.cpp verification/actor_mailbox_concurrency.cpp \
+            -o "$RUNNER_TEMP/oresforge-mailbox-tsan"
+          for i in 1 2 3; do
+            TSAN_OPTIONS=halt_on_error=1 "$RUNNER_TEMP/oresforge-mailbox-tsan"
+          done

@@ -41,12 +41,16 @@ int main() {
   const std::string nul("1\0" "2", 3);
   auto bad = tokenize(std::string_view(nul));
   assert(bad.error == LexError::unsupported_byte && bad.error_offset == 1);
-  const auto bits = tokenize("~1 & 2 | 3 ^ 4");
+  const auto bits = tokenize("~1 & 2 | 3 ^^ 4");
   assert(bits.ok());
   assert(bits.tokens[0].kind == Kind::tilde);
   assert(bits.tokens[2].kind == Kind::bit_and);
   assert(bits.tokens[4].kind == Kind::bit_or);
-  assert(bits.tokens[6].kind == Kind::bit_xor);
+  assert(bits.tokens[6].kind == Kind::bit_xor && bits.tokens[6].length == 2);
+  const auto carets = tokenize("^ ^^ ^ ^");
+  assert(carets.ok() && carets.tokens[0].kind == Kind::caret &&
+         carets.tokens[1].kind == Kind::bit_xor &&
+         carets.tokens[2].kind == Kind::caret && carets.tokens[3].kind == Kind::caret);
   assert(tokenize("\xC3\xA9").error == LexError::unsupported_byte);
   assert(tokenize(std::string(max_source_bytes + 1, 'a')).error == LexError::source_too_large);
   assert(tokenize(std::string(max_tokens + 1, '+')).error == LexError::token_limit);
