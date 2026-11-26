@@ -77,6 +77,11 @@ int main() {
     "fnc main(): int {return 1;}\nfnc evil():int{return 2;}",
     "fnc main(): int {return @;}"
   }) assert(!parse_source(bad).ok());
+  assert(parse_source("fnc main(): int {return 4_2;}").ok());
+  assert(parse_source("fnc main(): int {return -9_223_372_036_854_775_808;}").ok());
+  for(auto bad : {"1_","1__2","9_223_372_036_854_775_808"}) {
+    assert(!parse_source(std::string("fnc main(): int {return ")+bad+";}").ok());
+  }
   auto overflow = parse_source("fnc main(): int {return 9223372036854775808;}");
   assert(overflow.error == ParseError::literal_out_of_range);
   std::string deep(40, '(');
