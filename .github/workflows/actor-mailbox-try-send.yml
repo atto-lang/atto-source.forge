@@ -1,0 +1,40 @@
+name: Forge bounded try_send native Rust gate
+on:
+  pull_request:
+    paths:
+      - 'runtime/actor.hpp'
+      - 'runtime/actor.cpp'
+      - 'verification/actor_mailbox_limits.cpp'
+      - 'verification/actor_mailbox_try_send_runner.rs'
+      - '.github/workflows/actor-mailbox-try-send.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-try-send:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify exact PR head and native mailbox blobs
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          git rev-parse 'HEAD^{tree}'
+          git hash-object runtime/actor.hpp runtime/actor.cpp \
+            verification/actor_mailbox_limits.cpp \
+            verification/actor_mailbox_try_send_runner.rs
+      - name: Rust test runner executes actual Forge native mailbox O1/O2
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustc --edition=2021 -D warnings --test \
+            verification/actor_mailbox_try_send_runner.rs \
+            -o "$RUNNER_TEMP/forge-mailbox-try-send-tests"
+          "$RUNNER_TEMP/forge-mailbox-try-send-tests" --test-threads=1 --nocapture

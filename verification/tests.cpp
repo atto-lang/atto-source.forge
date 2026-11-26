@@ -9,6 +9,9 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <fstream>
+#include <iterator>
+#include <set>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -32,7 +35,7 @@ void reject_diagnostic(const std::function<void()>& fn,std::string_view diagnost
   } catch (const std::exception& error) {
     if (std::string_view(error.what()).find(diagnostic)==std::string_view::npos)
       throw std::runtime_error("source rejected for wrong reason: "+
-                               std::string(error.what()));
+                               std::string(error.what())+" (expected: "+std::string(diagnostic)+")");
     return;
   }
   throw std::runtime_error("malformed source admitted unexpectedly");
@@ -44,6 +47,144 @@ oresforge::Program source(const std::string& expr) {
 int main() {
   try {
     using namespace oresforge;
+    // Checked literal aggregate aliases reach the existing scalar IR and
+    // native emitter, not a host-language aggregate evaluator.
+    const auto named_aggregates=parse_source(
+      "pub fnc main():int{"
+      "const Record<infer R> r=(a=1,b=true);"
+      "const Tuple<infer T> t=(true,2);"
+      "const struct<infer S> s={a:3};"
+      "const Record<R> r2=(b=false,a=10);"
+      "const Tuple<T> t2=(false,12);"
+      "const struct<S> s2={a:20};"
+      "return r2.a+t2[1]+s2.a;}");
+    ensure(interpret(named_aggregates)==42,"named aggregate scalar interpreter");
+    ensure(emit_asm(named_aggregates,Arch::X86_64).find("movabs $42")!=std::string::npos,
+           "named aggregate x86_64 emission");
+    ensure(emit_asm(named_aggregates,Arch::ARM64).find("movz x0, #42")!=std::string::npos,
+           "named aggregate arm64 emission");
+    ensure(interpret(parse_source("fnc main():int{const Record r=(a=10);"
+      "const Tuple t=(true,12);const struct s={a:20};return r.a+t[1]+s.a;}"))==42,
+      "anonymous aggregate has no type binding");
+    for (const auto* body : {
+      "const Record<infer> r=(a=1);return 0;",
+      "const Record<R> r=(a=1);return 0;",
+      "const Record<infer Map> r=(a=1);return 0;",
+      "const Record<infer R> r=(a=1);const Tuple<infer R> t=(1,2);return 0;",
+      "const Record<infer R> r=(a=1);const Record<R> s=(a=true);return 0;",
+      "const Record<infer R> r=(a=1);const Record<R> s=(a=1,b=2);return 0;",
+      "const Record<infer R> r=(a=1,b=2);const Record<R> s=(a=1);return 0;",
+      "const Record<infer R> r=(a=1,a=2);return 0;",
+      "const Tuple<infer T> t=(1,true);const Tuple<T> s=(true,1);return 0;",
+      "const Tuple<infer T> t=(1,true);const Tuple<T> s=(1);return 0;",
+      "const struct<infer S> s={a:1};const Record<S> r=(a=1);return 0;",
+      "const Record<infer R> r=(a=1);return r;",
+      "const Record<infer R> r=(a=true);return r.a;",
+      "const Tuple<infer T> t=(1,true);return t[2];",
+      "const Record<infer R> r=(a=unknown);return 0;"
+    }) reject([&] { (void)parse_source(std::string("fnc main():int{")+body+"}"); });
+    reject([&] { (void)parse_source("fnc first():int{const Record<infer R> r=(a=1);return r.a;}"
+      "fnc main():int{const Record<R> r=(a=42);return r.a;}"); });
+    for (const auto* alias : {"while","select","await","Pointer","ActorMail",
+        "ReadLoan","AtomicInt","RwLock","unsafe","persistent"}) {
+      const std::string src=std::string("fnc main():int{const Record<infer ")+alias+
+          "> r=(a=1);return r.a;}";
+      reject_diagnostic([&] { (void)parse_source(src); }, "E_TYPE_NAME");
+    }
+    reject_diagnostic([&] { (void)parse_source(
+      "fnc main():int{const Record<infer R> select=(a=1);return 0;}"); }, "E_TYPE_NAME");
+    reject_diagnostic([&] { (void)parse_source(
+      "fnc main():int{const struct<infer S> s={await:1};return 0;}"); }, "E_TYPE_NAME");
+    ensure(interpret(parse_source("fnc main():int{const Record<infer If> r=(a=1);"
+      "const Record<If> s=(a=42);return s.a;}"))==42,"case-sensitive alias");
+    const auto changed_aggregates=parse_source("fnc main():int{"
+      "const Record<infer R> r=(a=1,b=true);const Record<R> r2=(b=false,a=11);"
+      "const Tuple<infer T> t=(true,2);const Tuple<T> t2=(false,14);"
+      "const struct<infer S> s={a:3};const struct<S> s2={a:23};"
+      "return r2.a+t2[1]+s2.a;}");
+    ensure(interpret(changed_aggregates)==48,"distinct aggregate reuse values");
+    ensure(emit_asm(changed_aggregates,Arch::X86_64).find("movabs $48")!=std::string::npos,
+           "distinct aggregate native emission");
+    // Two-word contextual declarations are not executable stage-0 scalar
+    // functions; every mode must reject with the correct semantic capability.
+    for (std::string_view source_text : {
+      "define state container Counter as end",
+      "define pub state container Counter as end",
+      "pub define state container Counter as end"
+    }) {
+      reject_diagnostic([&] { (void)parse_source(source_text); },
+                        "STATE_CONTAINER_BACKEND_UNSUPPORTED");
+      reject_diagnostic([&] { (void)parse_runtime_source(source_text); },
+                        "STATE_CONTAINER_BACKEND_UNSUPPORTED");
+    }
+    for (std::string_view source_text : {
+      "define virtual actor Cart as end",
+      "define pub virtual actor Cart as end",
+      "pub define virtual actor Cart as end"
+    }) {
+      reject_diagnostic([&] { (void)parse_source(source_text); },
+                        "VIRTUAL_ACTOR_BACKEND_UNSUPPORTED");
+      reject_diagnostic([&] { (void)parse_runtime_source(source_text); },
+                        "VIRTUAL_ACTOR_BACKEND_UNSUPPORTED");
+    }
+    // Guard is reserved across AttoLang even where Forge stage-0 cannot
+    // compile its checked early-exit CFG. Rejection must be precise, and
+    // must occur before verified IR or an executable is emitted.
+    for (std::string_view guard_source : {
+        "fnc main():int{guard true{return 1;}return 42;}",
+        "fnc main():int{guard 1>0{return 1;}return 42;}",
+        "fnc guard():int{return 42;}",
+        "fnc helper(guard:int):int{return 42;} fnc main():int{return 42;}"
+    }) {
+      reject_diagnostic([&] { (void)parse_source(guard_source); },
+                        "GUARD_BACKEND_UNSUPPORTED");
+      reject_diagnostic([&] { (void)parse_runtime_source(guard_source); },
+                        "GUARD_BACKEND_UNSUPPORTED");
+    }
+    ensure(interpret(parse_source(
+        "fnc main():int{return 42;} // guard is not a token"))==42,
+        "guard spelling in comment must remain ignored");
+    ensure(interpret(parse_source(
+      "fnc main():int{return 42;} // define virtual actor Spoof"))==42,
+      "declaration head inside a comment is not executable source");
+    // Shared language admission floor: both Forge source frontends must reject
+    // semantic attributes, while ordinary annotation-looking comments remain legal.
+    std::ifstream annotation_manifest("annotation-admission-v1.tsv");
+    ensure(static_cast<bool>(annotation_manifest), "missing annotation admission corpus");
+    std::set<std::string> annotation_ids;
+    std::string annotation_row;
+    while (std::getline(annotation_manifest, annotation_row)) {
+      if (annotation_row.empty() || annotation_row.front()=='#') continue;
+      const auto first=annotation_row.find('\t');
+      const auto second=first==std::string::npos
+        ? std::string::npos : annotation_row.find('\t',first+1);
+      if (first==std::string::npos || second==std::string::npos ||
+          annotation_row.find('\t',second+1)!=std::string::npos)
+        throw std::runtime_error("malformed annotation admission TSV row");
+      const auto kind=annotation_row.substr(0,first);
+      const auto id=annotation_row.substr(first+1,second-first-1);
+      const auto encoded=annotation_row.substr(second+1);
+      if (id.empty() || encoded.empty() || !annotation_ids.insert(id).second)
+        throw std::runtime_error("empty/duplicate annotation admission ID");
+      std::string program;
+      for (std::size_t i=0; i<encoded.size(); ++i) {
+        if (encoded[i]=='\\' && i+1<encoded.size() && encoded[i+1]=='n') {
+          program.push_back('\n'); ++i;
+        } else {
+          program.push_back(encoded[i]);
+        }
+      }
+      if (kind=="shared-deny" || kind=="bootstrap-deny") {
+        reject_diagnostic([&] { (void)parse_source(program); }, "annotations require");
+        reject_diagnostic([&] { (void)calls::parse(program); }, "annotations require");
+      } else if (kind=="shared-allow") {
+        ensure(interpret(parse_source(program))==42, "Forge annotation scalar positive");
+        (void)calls::parse(program);
+      } else {
+        throw std::runtime_error("unknown annotation admission case kind");
+      }
+    }
+    ensure(annotation_ids.size()>=12, "incomplete annotation admission corpus");
     // Cross-backend i64 positive controls run against the real Forge parser,
     // verified IR and checked interpreter. These are not Python-only data tests.
     for (const auto& [expression, expected] : kPortableNumericalCases) {
@@ -62,6 +203,28 @@ int main() {
       reject_diagnostic([&] { (void)interpret(source(expression)); },
                         overflow_diagnostics[i]);
     }
+    // Explicit inverted layouts are not scalar IR and must never be
+    // silently lowered as ordinary structs/classes or plain Array<T>.
+    for (const auto& invalid : {
+      "define inverted struct Point as int x; int y; end",
+      "define pub inverted struct Point as int x; end",
+      "pub define inverted class Point as int x; end",
+      "define /* harmless */ inverted /* still a declaration */ struct Point as int x; end"
+    }) {
+      reject_diagnostic([&] { (void)parse_source(invalid); },
+                        "inverted struct/class requires one-level typed SoA");
+    }
+    reject_diagnostic([&] {
+      (void)parse_source(
+        "fnc main():int{return InvertedArray<Point>.with_capacity(1); }");
+    }, "inverted collection requires typed owned SoA columns");
+    ensure(interpret(parse_source(
+              "fnc main():int{return 42;} // define inverted struct ignored"))==42,
+           "inverted declaration text inside comment must be inert");
+    ensure(interpret(parse_source(
+              "fnc main():int{/* define inverted struct Nested */return 42;}"))==42,
+           "nested comment mention must not enable inverted layouts");
+
     // The bootstrap intentionally has NO BigInt, Decimal or binary64 lowering.
     // Fail closed rather than treating those spellings as signed i64.
     reject([] { source("1.25"); });
@@ -94,6 +257,25 @@ int main() {
            "CR-only trailing comment must stay a comment");
     ensure(interpret(parse_source("fnc main():int{return 42;} // import ignored"))==42,
            "import in a comment does not trigger module admission");
+    // Both frontends deny ModelGraph before IR, with contextual syntax.
+    for (const auto& declaration : {
+        "define model PriceEstimate() as AddTax(10) end",
+        "define model x as Identity() end",
+        "define pub model PriceEstimate() as AddTax(10) end",
+        "pub define model PriceEstimate() as AddTax(10) end",
+        "define /* comment */ model PriceEstimate() as AddTax(10) end"
+    }) {
+      reject_diagnostic([&] { (void)parse_source(declaration); },
+                        "MODEL_LOWERING_UNSUPPORTED");
+      reject_diagnostic([&] { (void)parse_runtime_source(declaration); },
+                        "MODEL_LOWERING_UNSUPPORTED");
+    }
+    ensure(interpret(parse_source(
+        "fnc model():int{return 41;} fnc main():int{return model()+1;}"))==42,
+        "model remains a contextual function name");
+    ensure(interpret(parse_source(
+        "/* define model Fake as Op() end */ fnc main():int{return 42;}"))==42,
+        "model declarations in comments are inert");
     // Nominal enums and same-arity virtual method dispatch are not part of
     // this scalar frontend. Deny the declaration with a specific diagnostic,
     // rather than claiming parity from a synthetic policy helper.
@@ -132,6 +314,61 @@ int main() {
                    "private abstract receive(int x): int; end");
     }, "private abstract hooks require typed native vtables");
 
+    // Generic serial actors are distinct from source HTTP actors and must
+    // fail with their OWN compiler-owned unsupported capability marker.
+    for (const char* program : {
+      "define serial actor Worker as end",
+      "pub define serial actor Worker as end"
+    }) {
+      reject_diagnostic([&] { (void)parse_source(program); },
+                        "SERIAL_ACTOR_BACKEND_UNSUPPORTED");
+      reject_diagnostic([&] { (void)calls::parse(program); },
+                        "SERIAL_ACTOR_BACKEND_UNSUPPORTED");
+    }
+    // A source HTTP actor must never downgrade to a scalar callable just
+    // because the host has mailbox primitives. Verify the actual stage-0
+    // parser's typed rejection for both equivalent serial spellings and 3x4.
+    for (const char* program : {
+      "define serial http actor Endpoint as end",
+      "define http actor Endpoint as int requestConcurrency = 1; int messageConcurrency = 1; end",
+      "define http actor Endpoint as int requestConcurrency = 3; int messageConcurrency = 4; end",
+      "pub define serial http actor Endpoint as end",
+      "define pub http actor Endpoint as end"
+    }) {
+      reject_diagnostic([&] { (void)parse_source(program); },
+                        "HTTP_ACTOR_BACKEND_UNSUPPORTED");
+      reject_diagnostic([&] { (void)calls::parse(program); },
+                        "HTTP_ACTOR_BACKEND_UNSUPPORTED");
+    }
+    // Exercise identical bytes with BOTH independent Forge source compilers.
+    // CMake copies these into the test build working directory, so this
+    // cannot accidentally pass by looking at a mutable relative source path.
+    for (const auto& [name, expected] : std::array<std::pair<const char*,const char*>,3>{{
+      {"serial-1x1.atto",
+       "define pub serial http actor Endpoint as\n"
+       "  receive(ActorMail<int> mail): void { return; }\nend\n"},
+      {"explicit-1x1.atto",
+       "define pub http actor Endpoint as\n"
+       "  int requestConcurrency = 1;\n  int messageConcurrency = 1;\n"
+       "  receive(ActorMail<int> mail): void { return; }\nend\n"},
+      {"unsupported-3x4.atto",
+       "define pub http actor Endpoint as\n"
+       "  int requestConcurrency = 3;\n  int messageConcurrency = 4;\n"
+       "  receive(ActorMail<int> mail): void { return; }\nend\n"}
+    }}) {
+      std::ifstream input(std::string("http-actor-v1/")+name,std::ios::binary);
+      ensure(static_cast<bool>(input),"missing canonical HTTP actor Atto fixture");
+      const std::string data((std::istreambuf_iterator<char>(input)),
+                             std::istreambuf_iterator<char>());
+      ensure(data==expected,"canonical HTTP actor source bytes drifted");
+      reject_diagnostic([&] { (void)parse_source(data); },
+                        "HTTP_ACTOR_BACKEND_UNSUPPORTED");
+      reject_diagnostic([&] { (void)calls::parse(data); },
+                        "HTTP_ACTOR_BACKEND_UNSUPPORTED");
+    }
+    ensure(interpret(parse_source(
+      "fnc main():int{return 42;} // define serial http actor NotReal as end"))==42,
+      "HTTP actor comment must remain lexical trivia");
     // The scalar bootstrap has no class vtable, receiver loan, or closure
     // representation. New language constructs must fail closed until their
     // actual native codegen and ownership checking are present.
@@ -147,10 +384,6 @@ int main() {
       "fnc main():int{return lex[self] || -> 1;}",
       "define class Foo as fnc read(mut self, int x): int { return x; } end",
       "define class Foo as fnc read(self Foo)(int x): int { return x; } end",
-      // Receiver-arities are a normative future contract, but this stage-0
-      // compiler must not emit native code for either valid receiver methods
-      // or duplicate slots. These are capability rejection tests only, NOT
-      // evidence that Forge detects duplicate method signatures.
       "define class Foo as x():void{return;} x(mut self)():void{return;}end",
       "define class Foo as x(mut self)():void{return;} x():void{return;}end",
       "define class Foo as x(int n):void{return;} x(mut self,int n):void{return;}end",
@@ -222,9 +455,35 @@ int main() {
     reject_diagnostic([] { parse_source("fnc main():int{return rt deref value;}"); },
                       "pointer-style runtime operation is not valid Oreslang source");
     reject_diagnostic([] { parse_source("fnc main():int{return rt borrow mut value;}"); },
-                      "legacy 'rt borrow mut' is not valid Oreslang");
+                      "runtime ownership operation requires typed lowering in Forge");
     reject_diagnostic([] { parse_source("fnc main():int{return rt mut borrow value;}"); },
                       "runtime ownership operation requires typed lowering in Forge");
+    // Shared mutation cannot silently degrade to a scalar alias. The scalar
+    // compiler and the opt-in runtime-entry profile must diagnose the feature
+    // itself before any interpreted result, IR, or executable is produced.
+    constexpr std::array<std::string_view,8> mut_share_invalid{
+      "rt mut share 42",
+      "(rt mut share 42)",
+      "1+(rt mut share 42)",
+      "rt mut share (rt borrow 42)",
+      "rt mut share (rt mut share 42)",
+      "rt mut share (40+2)",
+      "rt /* boundary */ mut /* owner */ share 42",
+      "rt\nmut\nshare 42",
+    };
+    for (const auto expression : mut_share_invalid) {
+      const auto source_text=std::string("fnc main():int{return ")+
+                             std::string(expression)+";}";
+      reject_diagnostic([&] { (void)parse_source(source_text); },
+                        "native rt mut share requires verified SharedMutex<T> capability");
+      reject_diagnostic([&] { (void)parse_runtime_source(source_text); },
+                        "native rt mut share requires verified SharedMutex<T> capability");
+    }
+    ensure(interpret(parse_source("fnc main():int{return 42;} // rt mut share ignored"))==42,
+           "ownership keywords in trailing comment cannot affect scalar result");
+    ensure(interpret(parse_source("fnc main():int{/* rt mut share ignored */ return 42;}"))==42,
+           "ownership keywords in block comments cannot affect scalar result");
+
     reject([] { parse_source("fnc main():int{return &value;}"); });
     reject([] { parse_source("fnc main():int{return &mut value;}"); });
     reject([] { parse_source("fnc main():int{return *value;}"); });
@@ -243,6 +502,19 @@ int main() {
     reject_diagnostic([] {
       parse_source("pub fnc main():int{return gpu task { 42 };}");
     }, "execution region requires verified CPU/GPU Task lowering");
+    // quantum is reserved with cpu/gpu: every source position, including
+    // function and parameter names, fails before lowering.
+    reject_diagnostic([] {
+      parse_source("pub fnc main():int{return quantum { 42 };}");
+    }, "execution region requires verified CPU/GPU Task lowering");
+    reject_diagnostic([] {
+      parse_source("fnc quantum(a:int):int{return a+1;}\nfnc main():int{return quantum(41);}");
+    }, "execution region requires verified CPU/GPU Task lowering");
+    reject_diagnostic([] {
+      parse_source("fnc f(quantum:int):int{return quantum+1;}\nfnc main():int{return f(41);}");
+    }, "execution region requires verified CPU/GPU Task lowering");
+    ensure(interpret(parse_source("fnc f(quantum_bits:int):int{return quantum_bits+1;}\nfnc main():int{return f(41);}"))==42,
+           "quantum-prefixed identifier stays ordinary");
     reject_diagnostic([] {
       parse_source("pub fnc main():int{return task { 42 };}");
     }, "execution task requires scheduler-aware Future/continuation lowering");
@@ -253,7 +525,7 @@ int main() {
     // Both source frontends must validate bytes before ignoring comments.
     // A lexical skip is not permission to admit malformed source encodings.
     const std::string callable_comment="fnc main():int{return 1;} // ";
-    for (const std::string bad : {
+    for (const std::string& bad : {
         std::string("\xc0\xaf",2), std::string("\xed\xa0\x80",3),
         std::string("\xe2\x82",2), std::string("\xf4\x90\x80\x80",4),
         std::string("\x80",1)}) {
@@ -293,6 +565,121 @@ int main() {
     reject_diagnostic([] { calls::parse(
       "fnc other(x:int):int{return x;}"
       " fnc main():int{return other();}"); },"function arity mismatch");
+    // Typed predicates must remain verifiable even for externally supplied IR.
+    auto typed=calls::parse("fnc main(x:int):int{^ x eq 0 ? 42 : 7;}");
+    ensure(calls::interpret(typed,std::array<std::int64_t,1>{0})==42,"typed ternary true");
+    ensure(calls::interpret(typed,std::array<std::int64_t,1>{1})==7,"typed ternary false");
+    auto negated=calls::parse("fnc main(x:int):int{return unless x !eq 0 then 42 else 7 fi;}");
+    ensure(calls::interpret(negated,std::array<std::int64_t,1>{0})==42,"negation true");
+    ensure(calls::interpret(negated,std::array<std::int64_t,1>{1})==7,"negation false");
+    auto forged_pred=calls::parse("fnc main():int{return true ? 42 : 7;}");
+    forged_pred.functions[0].nodes[0].kind=calls::Kind::Constant;
+    reject_diagnostic([&] { calls::verify(forged_pred); },"condition_not_bool");
+    auto forged_bool=calls::parse("fnc main():int{return true ? 42 : 7;}");
+    forged_bool.functions[0].nodes[0].value=2;
+    reject_diagnostic([&] { calls::verify(forged_bool); },"invalid Boolean literal");
+    auto forged_arm=calls::parse("fnc main():int{return true ? 1 : 0;}");
+    forged_arm.functions[0].nodes[1].kind=calls::Kind::Boolean;
+    reject_diagnostic([&] { calls::verify(forged_arm); },"conditional branch is not int");
+    auto forged_mixed=calls::parse("fnc main():int{return true eq false ? 42 : 7;}");
+    forged_mixed.functions[0].nodes[1].kind=calls::Kind::Constant;
+    reject_diagnostic([&] { calls::verify(forged_mixed); },"comparison operand type mismatch");
+    auto forged_negation=calls::parse("fnc main():int{return unless true then 42 else 7 fi;}");
+    forged_negation.functions[0].nodes[0].kind=calls::Kind::Constant;
+    reject_diagnostic([&] { calls::verify(forged_negation); },"condition_not_bool");
+    auto forged_logical=calls::parse("fnc main():int{return true && false ? 42 : 7;}");
+    forged_logical.functions[0].nodes[1].kind=calls::Kind::Constant;
+    reject_diagnostic([&] { calls::verify(forged_logical); },"condition_not_bool");
+    auto guard=calls::parse("fnc main(int x):int{guard x>0 {^ 1;} guard x neq 5 else return 2; end return 42;}");
+    ensure(calls::interpret(guard,std::array<std::int64_t,1>{0})==1,"guard first failure exits callable");
+    ensure(calls::interpret(guard,std::array<std::int64_t,1>{5})==2,"guard second failure exits callable");
+    ensure(calls::interpret(guard,std::array<std::int64_t,1>{3})==42,"guard success continues");
+    auto guard_wrong_type=calls::parse("fnc main():int{guard true {return 1;} return 42;}");
+    guard_wrong_type.functions[0].nodes[0].kind=calls::Kind::Constant;
+    reject_diagnostic([&] { calls::verify(guard_wrong_type); },"condition_not_bool");
+    auto bool_xor=calls::parse("fnc main(x:int):int{return Xor(x eq 0,false) ? 42 : 7;}");
+    ensure(calls::interpret(bool_xor,std::array<std::int64_t,1>{0})==42,"Boolean Xor true");
+    ensure(calls::interpret(bool_xor,std::array<std::int64_t,1>{1})==7,"Boolean Xor false");
+    auto integer_xor=calls::parse("fnc main(a:int,b:int):int{return a ^^ b;}");
+    ensure(calls::interpret(integer_xor,std::array<std::int64_t,2>{11,4})==15,"integer XOR");
+    auto bad_integer_xor=calls::parse("fnc main():int{return 11 ^^ 4;}");
+    bad_integer_xor.functions[0].nodes[1].kind=calls::Kind::Boolean;
+    bad_integer_xor.functions[0].nodes[1].value=1;
+    reject_diagnostic([&] { calls::verify(bad_integer_xor); },"Boolean is not an int");
+    auto bad_xor=calls::parse("fnc main():int{return Xor(true,false) ? 42 : 7;}");
+    bad_xor.functions[0].nodes[1].kind=calls::Kind::Constant;
+    reject_diagnostic([&] { calls::verify(bad_xor); },"Boolean Xor requires two bool operands");
+    auto result_bind=calls::parse("fnc divide(a:int,b:int):Result<int,Error>{return trap! (a/b);} fnc main(a:int,b:int):Result<int,Error>{val q=divide(a,b)?;return trap! (q+q);}");
+    const auto rb_ok=calls::interpret_result(result_bind,std::array<std::int64_t,2>{6,3});
+    const auto rb_err=calls::interpret_result(result_bind,std::array<std::int64_t,2>{1,0});
+    ensure(rb_ok.value==4 && rb_ok.status==calls::ArithmeticStatus::Ok,"Result local success");
+    ensure(rb_err.status==calls::ArithmeticStatus::DivisionByZero,"Result propagation retains code");
+    auto forged_local=result_bind;
+    for(auto& node:forged_local.functions[1].nodes)
+      if(node.kind==calls::Kind::Local) node.value=-1;
+    reject_diagnostic([&] { calls::verify(forged_local); },"invalid scalar Result local use");
+    auto forged_result=result_bind;
+    for(auto& node:forged_result.functions[1].nodes)
+      if(node.kind==calls::Kind::ResultCall) node.kind=calls::Kind::Call;
+    reject_diagnostic([&] { calls::verify(forged_result); },"scalar Result call type mismatch");
+    auto option=calls::parse("fnc main(x:int):Option<int>{return if x eq 0 then Some(x) else None fi;}");
+    const auto option_some=calls::interpret_option(option,std::array<std::int64_t,1>{0});
+    const auto option_none=calls::interpret_option(option,std::array<std::int64_t,1>{1});
+    ensure(option_some.value==0 && option_some.tag==1,"Some zero is not None");
+    ensure(option_none.value==0 && option_none.tag==0,"None payload is zeroed");
+    auto bad_option=option;
+    bad_option.functions[0].nodes.back().kind=calls::Kind::If;
+    reject_diagnostic([&] { calls::verify(bad_option); },"invalid scalar Option return");
+    auto matched=calls::parse("fnc main():int{return match<int> Some(42) over on Some(n):int -> n, on None:int -> 0, end;}");
+    ensure(calls::interpret(matched,{})==42,"Option match payload");
+    auto forged_match=matched;
+    std::swap(forged_match.functions[0].nodes.back().children[1],forged_match.functions[0].nodes.back().children[2]);
+    reject_diagnostic([&] { calls::verify(forged_match); },"Option payload outside Some arm");
+    auto result_match=calls::parse("fnc main():int{return match<int> Ok(42) over on Ok(n):int -> n, on Err():int -> 0, end;}");
+    ensure(calls::interpret(result_match,{})==42,"scalar Result match consumes successful payload");
+    auto flat_ok=calls::parse("fnc main():int{return match<int> trap! Ok(42) over on Ok(n):int -> n, on Err(_):int -> 0, end;}");
+    ensure(calls::interpret(flat_ok,{})==42,"trap Ok stays flat");
+    auto flat_fault=calls::parse("fnc main():int{return match<int> trap! Ok(1/0) over on Ok(n):int -> n, on Err(_):int -> 42, end;}");
+    ensure(calls::interpret(flat_fault,{})==42,"trap Ok captures ordinary payload effect");
+    auto forged_result_match=result_match;
+    auto& match_node=forged_result_match.functions[0].nodes.back();
+    std::swap(match_node.children[1],match_node.children[2]);
+    reject_diagnostic([&] { calls::verify(forged_result_match); },"Result payload outside Ok arm");
+    auto forged_result_subject=result_match;
+    auto& subject=forged_result_subject.functions[0].nodes.at(
+        static_cast<std::size_t>(forged_result_subject.functions[0].nodes.back().children[0]));
+    subject.kind=calls::Kind::Some;
+    reject_diagnostic([&] { calls::verify(forged_result_subject); },"Result match requires Result subject");
+    auto bad_ok=calls::parse("fnc main(x:int):Result<int,Error>{return Ok(x);}");
+    bad_ok.functions[0].nodes[0].kind=calls::Kind::Boolean;
+    bad_ok.functions[0].nodes[0].value=1;
+    reject_diagnostic([&] { calls::verify(bad_ok); },"constructor requires int payload");
+    auto effect=calls::parse("fnc main(a:int):Result<int,Error>{return Ok(a+1);}");
+    const auto escaped=calls::interpret_effect(effect,std::array<std::int64_t,1>{9223372036854775807LL});
+    ensure(escaped.value==0 && escaped.tag==0 && escaped.effect==calls::ArithmeticStatus::Overflow,
+           "ordinary effect does not become Err");
+    auto captured=calls::parse("fnc main(a:int):Result<int,Error>{return trap! (a+1);}");
+    const auto err=calls::interpret_effect(captured,std::array<std::int64_t,1>{9223372036854775807LL});
+    ensure(err.value==0 && err.tag==65537 && err.effect==calls::ArithmeticStatus::Ok,
+           "trap converts ordinary effect into Err");
+    auto bool_helper=calls::parse(
+      "use namespace types; pub fnc fits(int x):bool{return x>=-128 && x<=127;}"
+      " fnc main(int x):int{return fits(x) ? 1 : 0;}");
+    ensure(calls::interpret(bool_helper,std::array<std::int64_t,1>{-128})==1,
+           "typed helper preserves inclusive bound");
+    ensure(calls::interpret(bool_helper,std::array<std::int64_t,1>{128})==0,
+           "typed helper rejects out of range");
+    auto wrong_bool_return=bool_helper;
+    wrong_bool_return.functions[0].returns_bool=false;
+    reject_diagnostic([&] { calls::verify(wrong_bool_return); },"callable int return cannot be Boolean or Result");
+    auto wrong_bool_call=bool_helper;
+    for(auto& node:wrong_bool_call.functions[1].nodes)
+      if(node.kind==calls::Kind::BoolCall) node.kind=calls::Kind::Call;
+    reject_diagnostic([&] { calls::verify(wrong_bool_call); },"Boolean target type mismatch");
+    auto wrong_bool_target=bool_helper;
+    for(auto& node:wrong_bool_target.functions[1].nodes)
+      if(node.kind==calls::Kind::BoolCall) {node.callee=1;node.name="main";}
+    reject_diagnostic([&] { calls::verify(wrong_bool_target); },"Boolean target type mismatch");
     auto corrupt=calls::parse("fnc main(x:int):int{return x+1;}");
     corrupt.functions[0].nodes.back().children[0]=999;
     reject_diagnostic([&] { calls::verify(corrupt); },
@@ -448,7 +835,7 @@ int main() {
     ensure(interpret(parse_source(arithmetic76))==76,
            "shared arithmetic-76 source execution");
     for (const auto& expression : {"3/2", "4/2", "5/0", "-9223372036854775808/-1"})
-      reject_diagnostic([&] { source(expression); }, "float result lowering");
+      reject_diagnostic([&] { source(expression); }, "FORGE_CHECKED_DIVISION_BACKEND_UNSUPPORTED");
     for (const auto& expression : {"0.125", "1e10", "1E-10", "123.456d", "123d"})
       reject_diagnostic([&] { source(expression); }, "typed numeric lowering");
     // Internal checked-i64 IR division is distinct from the source / operator.
@@ -544,11 +931,27 @@ int main() {
       "fnc main():int{do match 1 over on structural {x:int} v when true -> {return 1;} on _ -> {return 0;} end}",
       "fnc main():int{do match 1 over on _ -> {return 1;} end}"
     }) {
-      reject_diagnostic([&] { (void)parse_source(candidate); }, "expected");
+      reject_diagnostic([&] { (void)parse_source(candidate); },
+          std::string_view(candidate).find("do match")!=std::string_view::npos
+              ? "unexpected token" // rejected at do, before lexing match
+              : std::string_view(candidate).find("match 1 over")!=std::string_view::npos
+                  ? "MATCH_DEFAULT_BACKEND_UNSUPPORTED" : "expected");
     }
     reject_diagnostic([] {
       (void)parse_source("@structural\nfnc main():int{return 1;}");
-    }, "invalid character");
+    }, "annotations require");
+    for (const auto& attribute : {
+        "@FromJson(\"id\")", "@CallerRole(Admin)", "@CallableBy(Admin)",
+        "@DefaultArgVals(x=1)", "@UnknownPolicy"}) {
+      reject_diagnostic([&] {
+        (void)parse_source(std::string(attribute)+"\nfnc main():int{return 1;}");
+      }, "annotations require");
+      reject_diagnostic([&] {
+        (void)calls::parse(std::string(attribute)+"\nfnc main():int{return 1;}");
+      }, "annotations require");
+    }
+    ensure(interpret(parse_source("fnc main():int{return 42;} // @CallerRole(Admin)"))==42,
+           "annotation-looking text in comments is not source metadata");
     reject_diagnostic([] {
       parse_source("structural fnc main():int{return 1;}");
     }, "expected");
@@ -557,7 +960,7 @@ int main() {
     }, "tuple-v2 parameter requires typed ownership/ABI lowering");
     reject_diagnostic([] {
       parse_source("fnc main():int{match 1 over on _ -> {return 1;} end}");
-    }, "expected");
+    }, "MATCH_DEFAULT_BACKEND_UNSUPPORTED");
     // Task 70: structural and row syntax must fail closed across declaration,
     // parameter, projection and pattern surfaces. The scalar bootstrap has
     // neither row layout witnesses nor borrow/mutable-field capability checks.

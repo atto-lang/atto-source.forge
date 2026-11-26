@@ -1,0 +1,208 @@
+#pragma once
+// Restricted scalar AST evaluation with explicit arithmetic traps.
+// Host-model verification only: no executable .atto guest generated here.
+#include "atto/scalar_parser.hpp"
+#include <optional>
+#include <string_view>
+#include <vector>
+
+namespace atto::forge::scalar {
+enum class EvalError { none, parse_error, invalid_ast, overflow, divide_by_zero, shift_distance, refinement_violation, i32_overflow };
+struct Evaluated {
+  std::optional<i64> value;
+  EvalError error = EvalError::none;
+  [[nodiscard]] bool ok() const noexcept {
+    return error == EvalError::none && value.has_value();
+  }
+};
+// Host-only diagnostic model for the lazy DAG; actual guest gates compile
+// emitted C++ separately. Backward-only validated edges bound recursion.
+[[nodiscard]] inline Evaluated evaluate_lazy(const Parsed& p) {
+  if (!validate_ast(p) || !p.trace_steps.empty()) return {{}, EvalError::invalid_ast};
+  std::vector<std::optional<i64>> cache(p.nodes.size());
+  auto run=[&](auto&& self,std::size_t i)->Evaluated {
+    if(cache[i])return {cache[i],EvalError::none};
+    const auto& n=p.nodes[i];
+    std::optional<i64> value;
+    if(n.op==Op::literal)value=n.value;
+    else{
+      auto a=self(self,n.left);if(!a.ok())return a;
+      const auto x=*a.value;
+      if(n.op==Op::loop_group){
+        std::vector<i64> current;current.reserve(n.states.size());
+        for(auto k:n.states){auto initial=self(self,k);if(!initial.ok())return initial;current.push_back(*initial.value);}
+        std::size_t iterations=0;
+        for(;;){
+          for(std::size_t j=n.left;j<i;++j)cache[j].reset();
+          for(std::size_t j=0;j<n.states.size();++j)cache[n.states[j]]=current[j];
+          auto cond=self(self,n.right);if(!cond.ok())return cond;
+          if(*cond.value==0)break;
+          if(++iterations>1000000)return {{},EvalError::invalid_ast};
+          bool transferred=false,breaking=false;
+          std::size_t exit_index=0;
+          for(std::size_t k=0;k<=n.effects.size()&&!transferred;++k){
+            while(exit_index<n.exits.size()&&n.exits[exit_index].position==k){
+              const auto& x=n.exits[exit_index++];
+              auto condition=self(self,x.condition);if(!condition.ok())return condition;
+              if(*condition.value==0)continue;
+              for(std::size_t j=0;j<x.values.size();++j){
+                auto update=self(self,x.values[j]);if(!update.ok())return update;
+                current[j]=*update.value;
+              }
+              transferred=true;breaking=x.breaking;break;
+            }
+            if(!transferred&&k<n.effects.size()){auto effect=self(self,n.effects[k]);if(!effect.ok())return effect;}
+          }
+          if(transferred){
+            if(breaking){for(std::size_t j=0;j<n.states.size();++j)cache[n.states[j]]=current[j];break;}
+            continue;
+          }
+          for(std::size_t j=0;j<n.updates.size();++j){
+            auto update=self(self,n.updates[j]);if(!update.ok())return update;current[j]=*update.value;
+          }
+        }
+        value=current.front();
+      }
+      else if(n.op==Op::loop_read){
+        const auto& group=p.nodes[n.left];value=cache[group.states[static_cast<std::size_t>(n.value)]];
+        if(!value)return {{},EvalError::invalid_ast};
+      }
+      else if(n.op==Op::loop_value){
+        i64 current=x;std::size_t iterations=0;
+        for(;;){
+          cache[n.left]=current;
+          for(std::size_t j=n.left+1;j<i;++j)cache[j].reset();
+          auto cond=self(self,n.right);if(!cond.ok())return cond;
+          if(*cond.value==0)break;
+          // Host diagnostic model is bounded, not a runtime termination proof.
+          if(++iterations>1000000)return {{},EvalError::invalid_ast};
+          auto update=self(self,static_cast<std::size_t>(n.value));if(!update.ok())return update;
+          current=*update.value;
+        }
+        value=current;
+      }
+      else if(n.op==Op::choose){auto b=self(self,x!=0?n.right:static_cast<std::size_t>(n.value));if(!b.ok())return b;value=b.value;}
+      else if(n.op==Op::copy||n.op==Op::loop_state)value=x;
+      else if(n.op==Op::neg)value=checked_neg(x);
+      else if(n.op==Op::narrow){
+        if(x<std::numeric_limits<std::int32_t>::min()||x>std::numeric_limits<std::int32_t>::max())return {{},EvalError::i32_overflow};
+        value=x;
+      }
+      else if(n.op==Op::refine){
+        if(x<n.value||x>n.upper)return {{},EvalError::refinement_violation};
+        value=x;
+      }else{
+        if(n.op==Op::bnot)return {{},EvalError::invalid_ast};
+        auto b=self(self,n.right);if(!b.ok())return b;
+        const auto y=*b.value;
+        switch(n.op){
+          case Op::sequence:value=y;break;
+          case Op::eq:value=x==y;break;case Op::ne:value=x!=y;break;
+          case Op::lt:value=x<y;break;case Op::le:value=x<=y;break;
+          case Op::gt:value=x>y;break;case Op::ge:value=x>=y;break;
+          case Op::add:value=checked_add(x,y);break;
+          case Op::sub:value=checked_sub(x,y);break;
+          case Op::mul:value=checked_mul(x,y);break;
+          case Op::div:
+            if(y==0)return {{},EvalError::divide_by_zero};
+            value=checked_div(x,y);break;
+          default:return {{},EvalError::invalid_ast};
+        }
+      }
+    }
+    if(!value)return {{},EvalError::overflow};
+    cache[i]=value;return {value,EvalError::none};
+  };
+  return run(run,p.root);
+}
+[[nodiscard]] inline Evaluated evaluate(const Parsed& p) {
+  if (!validate_ast(p)) return {{}, EvalError::invalid_ast};
+  for(const auto& n:p.nodes)if(n.op==Op::choose||n.op==Op::loop_value||n.op==Op::loop_group)return evaluate_lazy(p);
+  std::vector<i64> values;
+  values.reserve(p.nodes.size());
+  for (std::size_t i = 0; i < p.nodes.size(); ++i) {
+    const Node& node = p.nodes[i];
+    if (node.op == Op::literal) {
+      values.push_back(node.value);
+      continue;
+    }
+    if(node.op==Op::copy||node.op==Op::sequence){
+      const auto value=values[node.op==Op::copy?node.left:node.right];
+      values.push_back(value);continue;
+    }
+    if(node.op==Op::narrow){
+      const auto value=values[node.left];
+      if(value<std::numeric_limits<std::int32_t>::min()||value>std::numeric_limits<std::int32_t>::max())return {{},EvalError::i32_overflow};
+      values.push_back(value);continue;
+    }
+    if (node.op==Op::refine) {
+      const auto value=values[node.left];
+      if (value<node.value || value>node.upper) return {{},EvalError::refinement_violation};
+      values.push_back(value);continue;
+    }
+    if (node.left >= i || (node.op != Op::neg && node.op != Op::bnot && node.right >= i))
+      return {{}, EvalError::invalid_ast};
+    const i64 lhs = values[node.left];
+    std::optional<i64> result;
+    switch (node.op) {
+      case Op::bnot:
+        result = bit_not(lhs);
+        break;
+      case Op::neg:
+        result = checked_neg(lhs);
+        break;
+      case Op::add:
+        result = checked_add(lhs, values[node.right]);
+        break;
+      case Op::sub:
+        result = checked_sub(lhs, values[node.right]);
+        break;
+      case Op::mul:
+        result = checked_mul(lhs, values[node.right]);
+        break;
+      case Op::div:
+        if (values[node.right] == 0) return {{}, EvalError::divide_by_zero};
+        result = checked_div(lhs, values[node.right]);
+        break;
+      case Op::shl:
+        if (values[node.right] < 0 || values[node.right] > 63)
+          return {{}, EvalError::shift_distance};
+        result = shl_i64(lhs, values[node.right]);
+        break;
+      case Op::lshr:
+        if (values[node.right] < 0 || values[node.right] > 63)
+          return {{}, EvalError::shift_distance};
+        result = lshr_i64(lhs, values[node.right]);
+        break;
+      case Op::ashr:
+        if (values[node.right] < 0 || values[node.right] > 63)
+          return {{}, EvalError::shift_distance};
+        result = ashr_i64(lhs, values[node.right]);
+        break;
+      case Op::band:
+        result = bit_and(lhs, values[node.right]);
+        break;
+      case Op::bor:
+        result = bit_or(lhs, values[node.right]);
+        break;
+      case Op::bxor:
+        result = bit_xor(lhs, values[node.right]);
+        break;
+      case Op::rem:
+        if (values[node.right] == 0) return {{}, EvalError::divide_by_zero};
+        result = checked_rem(lhs, values[node.right]);
+        break;
+      default:
+        return {{}, EvalError::invalid_ast};
+    }
+    if (!result) return {{}, EvalError::overflow};
+    values.push_back(*result);
+  }
+  return {values[p.root], EvalError::none};
+}
+[[nodiscard]] inline Evaluated evaluate_source(std::string_view src) {
+  const auto p = parse_source(src);
+  if (!p.ok()) return {{}, EvalError::parse_error};
+  return evaluate(p);
+}
+}  // namespace atto::forge::scalar

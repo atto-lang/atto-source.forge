@@ -63,7 +63,7 @@ FUNCTION_REJECTIONS = (
      "fnc main():int{return 1\u00a0;}", "invalid character"),
 )
 REJECTIONS = (
-    ("division", "3/2", "division requires float result lowering"),
+    ("division", "3/2", "FORGE_CHECKED_DIVISION_BACKEND_UNSUPPORTED"),
     ("overflow_add", "9223372036854775807+1", "i64 add overflow"),
     ("overflow_sub", "-9223372036854775808-1", "i64 sub overflow"),
     ("overflow_mul", "3037000500*3037000500", "i64 mul overflow"),
@@ -131,12 +131,22 @@ def main():
             status, assembly, err = run([str(compiler), "emit-asm", arch, str(source)], cwd=root)
             require(status == 0 and err == "" and
                     assembly.startswith(".text\n.globl oresforge_entry\noresforge_entry:\n") and
-                    assembly.endswith("  ret\n") and len(assembly) <= 1024,
+                    assembly.endswith("  ret\n.section .note.GNU-stack,\"\"," +
+                                      ("@progbits" if arch == "x86_64" else "%progbits") + "\n") and
+                    len(assembly) <= 1024,
                     "incorrect assembly emission in " + label)
             asm.write_text(assembly, encoding="ascii")
             status, out, err = run([cc, "-std=c11", "-Wall", "-Wextra", "-Werror",
                                     str(driver), str(asm), "-o", str(executable)], cwd=root)
             require(status == 0, "assembler/link failed in " + label + ": " + err)
+            # Inspect the linked ELF, not just the source directive.
+            readelf = shutil.which("readelf")
+            require(readelf is not None, "readelf required for non-executable stack proof")
+            status, headers, err = run([readelf, "-W", "-l", str(executable)], cwd=root)
+            stack = [line.split() for line in headers.splitlines()
+                     if line.split() and line.split()[0] == "GNU_STACK"]
+            require(status == 0 and err == "" and len(stack) == 1 and
+                    stack[0][6:-1] == ["RW"], "unexpected executable stack in " + label)
             status, out, err = run([str(executable)], cwd=root)
             require((status, out, err) == (0, expected + "\n", ""),
                     "native/checked-IR divergence in " + label)

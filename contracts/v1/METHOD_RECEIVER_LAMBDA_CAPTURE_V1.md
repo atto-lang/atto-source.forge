@@ -126,3 +126,5 @@ not substitute a scalar mutation or an unprotected callback.
 
 This is a phased migration. Cross-backend parity is **NOT ACHIEVED** until
 all required positive code executes and negative cases reject as specified.
+
+The bounded profile also provides a separately buildable `forge_nominal` CLI. Its isolated GCC and Clang CTest suites passed locally; complete merged-tree CI remains required.

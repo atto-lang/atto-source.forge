@@ -1,0 +1,34 @@
+name: Draft Forge bounded v2 generated codec
+on:
+  pull_request:
+    paths:
+      - 'include/atto/durable_bounded_emit_v2.hpp'
+      - 'include/ores/durable/bounded_checkpoint_v2.hpp'
+      - 'tests/durable_bounded_emit_v2_*.cpp'
+      - '.github/workflows/durable-bounded-v2.yml'
+permissions:
+  contents: read
+jobs:
+  generated:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Verify exact tree and generated native code
+        env:
+          EXPECTED: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED"
+          test -z "$(git status --porcelain)"
+          git rev-parse HEAD^{tree}
+          test "$(git hash-object include/ores/durable/bounded_checkpoint_v2.hpp)" = 215beefbbab7d42c01a30b7b3e921cbf24c40c10
+          flags=(-std=c++17 -O1 -g -Wall -Wextra -Wpedantic -Werror -UNDEBUG -fsanitize=address,undefined -fno-omit-frame-pointer -no-pie -Iinclude)
+          export ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1
+          g++ "${flags[@]}" tests/durable_bounded_emit_v2_generator.cpp -o "$RUNNER_TEMP/generator"
+          "$RUNNER_TEMP/generator" "$RUNNER_TEMP/generated.hpp"
+          g++ "${flags[@]}" -I"$RUNNER_TEMP" tests/durable_bounded_emit_v2_guest.cpp -o "$RUNNER_TEMP/guest"
+          "$RUNNER_TEMP/guest"
