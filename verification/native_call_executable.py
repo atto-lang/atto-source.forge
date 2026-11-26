@@ -161,6 +161,10 @@ TRAPS = (
      (1,), "call depth exceeded"),
 )
 INVALID = (
+    ("trap-bang-whitespace-0", "fnc main():int{return match<int> trap!(84/2) over on Ok(n):int -> n, on Err():int -> 7, end;}", "E_BANG_KEYWORD_WHITESPACE"),
+    ("trap-bang-whitespace-1", "fnc main():int{return match<int> trap!42 over on Ok(n):int -> n, on Err():int -> 7, end;}", "E_BANG_KEYWORD_WHITESPACE"),
+    ("trap-bang-whitespace-2", "fnc main():int{return match<int> trap!/*gap*/ (84/2) over on Ok(n):int -> n, on Err():int -> 7, end;}", "E_BANG_KEYWORD_WHITESPACE"),
+    ("trap-bang-whitespace-3", "fnc main():int{return match<int> trap!! (84/2) over on Ok(n):int -> n, on Err():int -> 7, end;}", "E_BANG_KEYWORD_WHITESPACE"),
     ("division-bool-left", "fnc main():int{return true/2;}", "Boolean is not an int"),
     ("division-bool-right", "fnc main():int{return 2/false;}", "Boolean is not an int"),
     ("logical-int-left", "fnc main():int{return 1 && true ? 42 : 7;}", "condition_not_bool"),
