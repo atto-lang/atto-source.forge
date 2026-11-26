@@ -88,14 +88,18 @@ int main() {
     }
     for (const char* keyword : {"trap!", "throw!", "raise!", "panic!", "copy!",
         "copy!!", "take!", "move!", "borrow!", "share!", "pin!", "drop!", "pipe!", "rpipe!", "stop!", "expand!"}) {
-      for (const char* tail : {"value", "(42)", "/*comment*/ value", ""}) {
+      for (const char* tail : {"value", "(42)", "/*comment*/ value", "", "\xc2\xa0" "value"}) {
         auto source = std::string("fnc main():int{return ") + keyword + tail + ";}";
-        bool rejected=false;
-        try { (void)oresforge::parse_source(source); }
-        catch (const std::runtime_error& e) {
-          rejected=std::string_view(e.what()).find("E_BANG_KEYWORD_WHITESPACE")!=std::string_view::npos;
+        for (int frontend=0; frontend<2; ++frontend) {
+          bool rejected=false;
+          try {
+            if (frontend==0) (void)oresforge::parse_source(source);
+            else (void)oresforge::calls::parse(source);
+          } catch (const std::runtime_error& e) {
+            rejected=std::string_view(e.what()).find("E_BANG_KEYWORD_WHITESPACE")!=std::string_view::npos;
+          }
+          if (!rejected) throw std::runtime_error("compact keyword not rejected: "+source);
         }
-        if (!rejected) throw std::runtime_error("compact keyword not rejected: "+source);
       }
     }
     {
