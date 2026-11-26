@@ -139,6 +139,19 @@ inline constexpr std::size_t max_trace_depth = 16;
   return true;
 }
 
+// Numeric separators belong to source syntax, not the host decimal API.
+// Require a digit on both sides; retain the bounded canonical conversion.
+[[nodiscard]] inline std::optional<i64> parse_source_decimal(std::string_view text) {
+  if(text.empty()||text.size()>64)return std::nullopt;
+  std::string digits;digits.reserve(text.size());
+  auto digit=[](char c){return c>='0'&&c<='9';};
+  for(std::size_t i=0;i<text.size();++i){
+    if(text[i]=='_'){
+      if(i==0||i+1==text.size()||!digit(text[i-1])||!digit(text[i+1]))return std::nullopt;
+    }else digits.push_back(text[i]);
+  }
+  return parse_decimal_i64(digits);
+}
 class Parser {
   std::string_view source_;
   std::vector<Token> tokens_;
@@ -206,7 +219,7 @@ class Parser {
   }
   [[nodiscard]] std::optional<i64> factor() {
     if (current().kind!=Kind::integer) {fail(ParseError::unit_scale);return std::nullopt;}
-    auto value=parse_decimal_i64(text());
+    auto value=parse_source_decimal(text());
     if (!value || *value<=0) {fail(ParseError::unit_scale);return std::nullopt;}
     ++pos_; return value;
   }
@@ -262,7 +275,7 @@ class Parser {
     const bool neg=take(Kind::minus);
     if (current().kind!=Kind::integer) return std::nullopt;
     const std::string digits=(neg?"-":"")+std::string(text());
-    const auto result=parse_decimal_i64(digits);
+    const auto result=parse_source_decimal(digits);
     if (result) ++pos_;
     return result;
   }
@@ -575,13 +588,13 @@ class Parser {
     if (take(Kind::minus)) {
       // Literal INT64_MIN is allowed; negating any evaluated INT64_MIN
       // is a checked overflow in the subsequent evaluator/codegen.
-      if (current().kind == Kind::integer && text().size() < 32) {
+      if (current().kind == Kind::integer && text().size() < 64) {
         // The negative range includes |INT64_MIN|. Reuse the canonical
         // decimal validator instead of comparing only the unpadded token.
         // This accepts -0009223372036854775808 consistently with other
         // decimal leading-zero literals but rejects larger magnitudes.
         const std::string signed_digits = "-" + std::string(text());
-        const auto minimum = parse_decimal_i64(signed_digits);
+        const auto minimum = parse_source_decimal(signed_digits);
         if (minimum && *minimum == std::numeric_limits<i64>::min()) {
           ++pos_;
           return postfix(append(Node{Op::literal, 0, 0, *minimum}), true, true);
@@ -598,7 +611,7 @@ class Parser {
       return postfix(inside);
     }
     if (current().kind == Kind::integer) {
-      auto n = parse_decimal_i64(text());
+      auto n = parse_source_decimal(text());
       if (!n) { fail(ParseError::literal_out_of_range); return std::nullopt; }
       ++pos_;
       return postfix(append(Node{Op::literal, 0, 0, *n}), true, true);
