@@ -6,7 +6,7 @@ compiler="$(realpath "$1")"
 corpus="$(realpath "$2")"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-test "$(git hash-object shared/oreslang/backend/CountedReadyGuest.hpp)" = f7d5a7b864ec2dbe443ac97d6ca4943445604b20
+test "$(git hash-object shared/oreslang/backend/CountedReadyGuest.hpp)" = 5f99e184ab71eb8eb3022d16bbcc04d1843ba335
 test "$(git hash-object shared/oreslang/runtime/NativeCountedI64Cursor.hpp)" = 3a1b3ff4cf235b721edf9dc64c1af411a94a74ee
 test "$(git hash-object shared/oreslang/runtime/NativeSelectArbiter.hpp)" = 2d85351e66e55aae19eb5e6a08a434643c2dc4e0
 test "$(git hash-object shared/oreslang/runtime/NativeSelectableI64Channel.hpp)" = bcb3a3eb9e0504f4bfa4808531a17126cacd0325
@@ -75,5 +75,26 @@ for body in \
   if "$compiler" --counted-ready-v1 "$work/bad.atto" > "$work/denial" 2> "$work/err"; then exit 1; fi
   test ! -s "$work/denial"; grep -F E_COUNTED_READY_PROFILE "$work/err"
   echo FORGE_SHARED_AFFINE_REJECT_PASS
+done
+# Canonical raw Future retains concrete scalar/array types and affine ownership.
+prefix='suspends fnc main(): int { const Channel<int> a = Channel.new<int>(1); writech a, 20; '
+body='const Future f = select { default: -> { return 20; } }; const Future batch = select(1) { when readch a: int n -> { return n; } }; const Array[int] values = await batch; const int extra = await select<int> { default: -> { return 2; } }; return (await f) + values[0] + extra; }'
+printf '%s%s\n' "$prefix" "$body" > "$work/raw-future.atto"
+"$compiler" --counted-ready-v1 "$work/raw-future.atto" > "$work/guest.cpp"
+clang++ -std=c++17 -O1 -pthread -I shared -S -emit-llvm "$work/guest.cpp" -o "$work/guest.ll"
+clang++ -O1 -pthread "$work/guest.ll" -o "$work/guest"
+test "$("$work/guest")" = 42
+echo FORGE_SHARED_GUEST_PASS raw-future
+for body in \
+  'const Future f = 42; return 42; }' \
+  'const Future<int> f = select(1) { when readch a: int n -> { return n; } }; return 42; }' \
+  'const Future f = select { default: -> { return a; } }; return 42; }' \
+  'const Future b = select(1) { when readch a: int n -> { return n; } }; return 42; }' \
+  'const Future b = select(1) { when readch a: int n -> { return n; } }; const int wrong = await b; return wrong; }' \
+  'const Future b = select(1) { when readch a: int n -> { return n; } }; const Array[int] first = await b; const Array[int] second = await b; return first[0]; }'; do
+  printf '%s%s\n' "$prefix" "$body" > "$work/raw-negative.atto"
+  if "$compiler" --counted-ready-v1 "$work/raw-negative.atto" > "$work/denial" 2> "$work/err"; then exit 1; fi
+  test ! -s "$work/denial"
+  grep -F E_COUNTED_READY_PROFILE "$work/err"
 done
 echo FORGE_SHARED_COUNTED_NATIVE_PASS
