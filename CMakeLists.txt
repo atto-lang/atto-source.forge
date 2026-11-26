@@ -457,6 +457,22 @@ if(BUILD_TESTING)
   add_test(NAME oresforge_actor_frames_ordinary_allocations_host COMMAND oresforge_actor_frame_allocations)
   set_tests_properties(oresforge_actor_frames_ordinary_allocations_host PROPERTIES
     TIMEOUT 30 LABELS "host-only;actor-logical-frames;allocation")
+
+  # Host typed scalar frame interpreter; never a compiled guest receipt.
+  foreach(vm_test IN ITEMS actor_frame_vm_host actor_frame_vm_quota)
+    add_executable(oresforge_${vm_test} verification/${vm_test}.cpp)
+    target_include_directories(oresforge_${vm_test} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_compile_features(oresforge_${vm_test} PRIVATE cxx_std_20)
+    target_link_libraries(oresforge_${vm_test} PRIVATE Threads::Threads)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+      target_compile_options(oresforge_${vm_test} PRIVATE
+        -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+    endif()
+    add_test(NAME oresforge_${vm_test} COMMAND oresforge_${vm_test})
+    set_tests_properties(oresforge_${vm_test} PROPERTIES TIMEOUT 30 LABELS "host-only;actor-logical-frames")
+  endforeach()
+
+
 endif()
 
 # Linux x86-64 native actor stack/heap substrate. HOST CALLBACKS ONLY:
