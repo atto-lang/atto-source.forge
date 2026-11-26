@@ -31,7 +31,14 @@ self-host a compiler, or implement a multi-worker preemptive scheduler.
   cooperatively unwinds the suspended callback before stack/heap retirement.
   This differs from PR #101's drain-on-stop scalar actor; production parity
   must select and verify one canonical STOP protocol **before** integrating
-  these two runtimes. Actor ids are not reused in a scheduler lifetime.
+  these two runtimes. This bounded trusted-host profile requires strictly
+  increasing positive numeric actor IDs within a scheduler lifetime. IDs
+  are never reused; a constant-size high-water mark replaces the previous
+  unbounded retired-ID set. Out-of-order IDs fail closed, including after
+  UINT64_MAX; failed admission does not consume the next ID. This is a
+  deliberate API restriction, not generation-based logical identity reuse.
+  The live registry remains an ordered map with O(log n) lookup. Supervisor
+  settlement and compiler-integrated slot reuse remain separate work.
 - The current domain heap is a bounded, non-recycling byte bump allocator.
   PR #101 (actor-owned scalar heap) and #117 (bounded arena / STOP fencing)
   remain separate draft integration candidates. This work must not silently

@@ -30,28 +30,25 @@ class ActorCooperativeScheduler final {
   ActorCooperativeScheduler(const ActorCooperativeScheduler&) = delete;
   ActorCooperativeScheduler& operator=(const ActorCooperativeScheduler&) = delete;
 
-  // Actor ids cannot be reused in this scheduler incarnation. A fresh
-  // ActorCooperativeScheduler is required, so old ActorRefs cannot alias a
-  // newly admitted actor after an old domain was retired.
+  // Host profile: IDs are strictly increasing for this scheduler lifetime.
+  // A scalar high-water mark replaces unbounded retired-ID tombstones.
+  // Exhaustion fails closed; old numeric STOP handles cannot target a successor.
+  // This deliberately narrows the former arbitrary-ID admission contract.
   ActorRef spawn(std::uint64_t id, std::size_t stack_bytes, std::size_t heap_bytes,
                  Handler handler, std::size_t mailbox_messages = 64,
                  std::size_t mailbox_bytes = 64 * 1024) {
     require_owner();
     require_outside_dispatch();
-    if (!id || !handler || live_.size() >= actor_limit_ || ever_used_.count(id))
+    if (!id || !handler || live_.size() >= actor_limit_ || id <= last_admitted_id_)
       throw std::logic_error("actor scheduler admission denied");
     auto entry = std::make_unique<Actor>(id, stack_bytes, heap_bytes,
                                          mailbox_messages, mailbox_bytes,
                                          std::move(handler));
     const auto ref = entry->mailbox.ref();
     // No construction callback runs on the parent's native stack.
-    ever_used_.emplace(id, true);
-    try {
-      live_.emplace(id, std::move(entry));
-    } catch (...) {
-      ever_used_.erase(id);
-      throw;
-    }
+    const auto inserted = live_.emplace(id, std::move(entry));
+    if (!inserted.second) throw std::logic_error("duplicate actor identity");
+    last_admitted_id_ = id; // Commit only after successful construction and insertion.
     return ref;
   }
 
@@ -188,7 +185,7 @@ class ActorCooperativeScheduler final {
   const std::thread::id owner_;
   const std::size_t actor_limit_;
   std::map<std::uint64_t, std::unique_ptr<Actor>> live_;
-  std::map<std::uint64_t, bool> ever_used_;
+  std::uint64_t last_admitted_id_ = 0;
   std::vector<std::uint64_t> runnable_;
   std::size_t ready_head_ = 0, ready_count_ = 0;
 
