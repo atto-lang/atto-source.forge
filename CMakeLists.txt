@@ -920,3 +920,11 @@ endif()
 
 # Explicit shared counted-ready AOT frontend headers.
 target_include_directories(oresforge PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+
+# The shared counted-ready CLI is opt-in; its native guests are mandatory in Linux CTest.
+if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_test(NAME oresforge_shared_counted_ready_native
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/verification/test-counted-ready-shared-native.sh"
+      "$<TARGET_FILE:oresforge>" "${CMAKE_CURRENT_SOURCE_DIR}/contracts/counted-ready-v1")
+  set_tests_properties(oresforge_shared_counted_ready_native PROPERTIES TIMEOUT 240)
+endif()

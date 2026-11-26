@@ -11,6 +11,7 @@ test "$(git hash-object shared/oreslang/runtime/NativeCountedI64Cursor.hpp)" = 3
 test "$(git hash-object shared/oreslang/runtime/NativeSelectArbiter.hpp)" = 2d85351e66e55aae19eb5e6a08a434643c2dc4e0
 test "$(git hash-object shared/oreslang/runtime/NativeSelectableI64Channel.hpp)" = bcb3a3eb9e0504f4bfa4808531a17126cacd0325
 test "$(git hash-object shared/oreslang/runtime/NativeSelectableI64Future.hpp)" = 0c972dc190fc25533792a928461298492ba3b5ea
+test "$(git hash-object "$corpus/manifest.json")" = 944135b41af31963b6337ae099c76ed5e7753e3d
 python3 - "$corpus" <<'PY'
 import json,sys,pathlib,hashlib
 root=pathlib.Path(sys.argv[1])
