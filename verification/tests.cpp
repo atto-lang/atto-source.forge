@@ -47,6 +47,27 @@ oresforge::Program source(const std::string& expr) {
 int main() {
   try {
     using namespace oresforge;
+    // Rebinding is a new SSA value in a callee-local environment.
+    for (const auto formal : {"rebind int n", "rebind n:int"}) {
+      const auto program=parse_source(std::string("fnc bump(")+formal+
+        "):int{n=n+1;n=n+1;return n;} pub fnc main():int{return bump(20)+20;}");
+      ensure(interpret(program)==42,"scalar rebind preserves caller value");
+    }
+    const auto fixed=parse_runtime_source("fnc main(int n):int{return n;}");
+    const auto marked=parse_runtime_source("fnc main(rebind int n):int{return n;}");
+    ensure(dump_ir(fixed)==dump_ir(marked),"unused rebind must not change IR");
+    const auto contextual=parse_runtime_source("fnc main(rebind:int):int{return rebind;}");
+    const std::array<std::int64_t,1> rebind_args={42};
+    ensure(interpret(contextual,rebind_args)==42,"contextual rebind identifier");
+    reject_diagnostic([] { (void)parse_runtime_source("fnc main(int n):int{n=42;return n;}"); },
+                      "E_IMMUTABLE_REBIND");
+    reject_diagnostic([] { (void)parse_runtime_source("fnc main(rebind rebind int n):int{return n;}"); },
+                      "E_SYNTAX");
+    reject([] { (void)parse_source("fnc bad(rebind int n):int{n=missing();return 0;} fnc main():int{return 42;}"); });
+    reject([] { (void)parse_source("fnc bad(rebind int n):int{n=bad(n);return 0;} fnc main():int{return 42;}"); });
+    const auto discarded=parse_runtime_source("fnc main(rebind int n):int{n=n+1;n=42;return n;}");
+    const std::array<std::int64_t,1> overflow_arg={std::numeric_limits<std::int64_t>::max()};
+    reject([&] { (void)interpret(discarded,overflow_arg); });
     // Checked literal aggregate aliases reach the existing scalar IR and
     // native emitter, not a host-language aggregate evaluator.
     const auto named_aggregates=parse_source(
