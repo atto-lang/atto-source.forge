@@ -471,6 +471,12 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
         "${CMAKE_CURRENT_SOURCE_DIR}/verification/native_call_executable.py"
         --compiler "$<TARGET_FILE:oresforge>")
     set_tests_properties(oresforge_real_native_recursive_calls PROPERTIES TIMEOUT 180)
+    # Unsupported counted select must fail through every real CLI mode.
+    add_test(NAME oresforge_mixed_counted_select_admission
+      COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/verification/mixed_counted_select_admission.py"
+        "$<TARGET_FILE:oresforge>")
+    set_tests_properties(oresforge_mixed_counted_select_admission PROPERTIES TIMEOUT 180)
     # The pinned core library is executable through the typed callable lane.
     # Keep it in the full GCC/Clang/sanitizer matrix, not just a path-filtered workflow.
     add_test(NAME oresforge_core_types_native

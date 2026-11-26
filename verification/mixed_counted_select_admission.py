@@ -7,7 +7,7 @@ import sys
 import tempfile
 binary = pathlib.Path(sys.argv[1]).resolve()
 root = pathlib.Path(__file__).resolve().parent / "fixtures" / "select-source-v2"
-fixtures = [["counted-mixed-future-alias","8f57de03c9fb44eb5594c99a7095f34b702a266a"],["counted-multi-channel-fair","4b9b79b9b8670f5b282d33e63b7a4b5691c2979a"],["counted-mixed-zero","458323db6019da434b97e5b966ee646411310acf"]]
+fixtures = [["counted-distinct-alias-projection","5baca9bb9eb4b98500cab770888a45fb60bbf10d"],["counted-mixed-future-alias","8f57de03c9fb44eb5594c99a7095f34b702a266a"],["counted-multi-channel-fair","4b9b79b9b8670f5b282d33e63b7a4b5691c2979a"],["counted-mixed-zero","458323db6019da434b97e5b966ee646411310acf"]]
 def run(mode, path):
     args = [str(binary), mode]
     if mode.startswith("emit-"):
@@ -34,4 +34,4 @@ with tempfile.TemporaryDirectory() as tmp:
     assert out.returncode == 0 and out.stdout.strip() == b"42", out
     out = run("emit-asm", path)
     assert out.returncode == 0 and out.stdout, out
-print("FORGE_MIXED_COUNTED_ADMISSION_PASS exact=3 isolated=16 modes=9 scalar_control=42; NOT counted guest")
+print("FORGE_MIXED_COUNTED_ADMISSION_PASS exact=4 isolated=16 modes=9 scalar_control=42; NOT counted guest")
