@@ -164,7 +164,7 @@ class Parser {
       tok_={Kind::Word,source_.substr(start,at_-start),start};
       // Require whitespace after the complete contextual bang keyword.
       if ((tok_.text=="trap" || tok_.text=="throw" || tok_.text=="raise" ||
-           tok_.text=="panic" || tok_.text=="copy" || tok_.text=="take" || tok_.text=="move" || tok_.text=="move" ||
+           tok_.text=="panic" || tok_.text=="copy" || tok_.text=="take" || tok_.text=="move" ||
            tok_.text=="borrow" || tok_.text=="share" || tok_.text=="pin" ||
            tok_.text=="drop" || tok_.text=="pipe" || tok_.text=="rpipe" ||
            tok_.text=="stop" || tok_.text=="expand") &&
@@ -180,7 +180,7 @@ class Parser {
       // to '!'. The stage-0 scalar IR has no ownership kind or runtime loan
       // authority; never reinterpret copy!/take!/borrow!/share! as a call.
       // The same guard catches 'mut borrow!' at the borrow token.
-      if ((tok_.text=="copy" || tok_.text=="take" ||
+      if ((tok_.text=="copy" || tok_.text=="take" || tok_.text=="move" ||
            tok_.text=="borrow" || tok_.text=="share") &&
           at_<source_.size() && source_[at_]=='!' &&
           !(at_+1<source_.size() && source_[at_+1]=='=') &&
