@@ -655,7 +655,7 @@ int main() {
     ensure(interpret(parse_source(arithmetic76))==76,
            "shared arithmetic-76 source execution");
     for (const auto& expression : {"3/2", "4/2", "5/0", "-9223372036854775808/-1"})
-      reject_diagnostic([&] { source(expression); }, "float result lowering");
+      reject_diagnostic([&] { source(expression); }, "FORGE_CHECKED_DIVISION_BACKEND_UNSUPPORTED");
     for (const auto& expression : {"0.125", "1e10", "1E-10", "123.456d", "123d"})
       reject_diagnostic([&] { source(expression); }, "typed numeric lowering");
     // Internal checked-i64 IR division is distinct from the source / operator.
@@ -751,7 +751,10 @@ int main() {
       "fnc main():int{do match 1 over on structural {x:int} v when true -> {return 1;} on _ -> {return 0;} end}",
       "fnc main():int{do match 1 over on _ -> {return 1;} end}"
     }) {
-      reject_diagnostic([&] { (void)parse_source(candidate); }, "expected");
+      const std::string_view input(candidate);
+      reject_diagnostic([&] { (void)parse_source(candidate); },
+          input.find("return match")!=std::string_view::npos ? "MATCH_DEFAULT_BACKEND_UNSUPPORTED" :
+          "unexpected token");
     }
     reject_diagnostic([] {
       (void)parse_source("@structural\nfnc main():int{return 1;}");
@@ -770,13 +773,13 @@ int main() {
            "annotation-looking text in comments is not source metadata");
     reject_diagnostic([] {
       parse_source("structural fnc main():int{return 1;}");
-    }, "expected");
+    }, "unexpected token");
     reject_diagnostic([] {
       parse_source("fnc main(structural Shape value):int{return 1;}");
     }, "tuple-v2 parameter requires typed ownership/ABI lowering");
     reject_diagnostic([] {
       parse_source("fnc main():int{match 1 over on _ -> {return 1;} end}");
-    }, "expected");
+    }, "MATCH_DEFAULT_BACKEND_UNSUPPORTED");
     // Task 70: structural and row syntax must fail closed across declaration,
     // parameter, projection and pattern surfaces. The scalar bootstrap has
     // neither row layout witnesses nor borrow/mutable-field capability checks.
