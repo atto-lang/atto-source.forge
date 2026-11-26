@@ -23,8 +23,28 @@ static void denied(const std::string& source) {
   expect_denial([&] { (void)oresforge::calls::parse(source); });
 }
 
+template<class F> static void expect_unsafe_denial(F&& parse) {
+  try { parse(); }
+  catch (const std::runtime_error& error) {
+    if (std::string_view(error.what()).find("UNSAFE_BACKEND_UNSUPPORTED") != std::string_view::npos) return;
+    throw;
+  }
+  throw std::runtime_error("unsafe source admitted");
+}
+
 int main() {
   try {
+    for (const std::string source : {
+        "unsafe fnc main():int{return 42;}",
+        "fnc main():int{unsafe {return 42;}}",
+        "fnc unsafe():int{return 42;} fnc main():int{return unsafe();}",
+        "fnc main():int{return 42;} // inert\runsafe {}"}) {
+      expect_unsafe_denial([&] { (void)oresforge::parse_source(source); });
+      expect_unsafe_denial([&] { (void)oresforge::parse_runtime_source(source); });
+      expect_unsafe_denial([&] { (void)oresforge::calls::parse(source); });
+    }
+    (void)oresforge::parse_source("fnc unsafe_tools():int{return 42;} fnc main():int{return unsafe_tools();}");
+    (void)oresforge::calls::parse("fnc unsafe_tools():int{return 42;} fnc main():int{return unsafe_tools();}");
     for (char control : {'\x1b', '\x7f'}) {
       denied(std::string("fnc main():int{/*") + control + "*/return 42;}");
       denied(std::string("fnc main():int{return 42;}//") + control);
