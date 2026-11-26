@@ -570,6 +570,17 @@ int main() {
     auto forged_match=matched;
     std::swap(forged_match.functions[0].nodes.back().children[1],forged_match.functions[0].nodes.back().children[2]);
     reject_diagnostic([&] { calls::verify(forged_match); },"Option payload outside Some arm");
+    auto result_match=calls::parse("fnc main():int{return match<int> Ok(42) over on Ok(n):int -> n, on Err():int -> 0, end;}");
+    ensure(calls::interpret(result_match,{})==42,"scalar Result match consumes successful payload");
+    auto forged_result_match=result_match;
+    auto& match_node=forged_result_match.functions[0].nodes.back();
+    std::swap(match_node.children[1],match_node.children[2]);
+    reject_diagnostic([&] { calls::verify(forged_result_match); },"Result payload outside Ok arm");
+    auto forged_result_subject=result_match;
+    auto& subject=forged_result_subject.functions[0].nodes.at(
+        static_cast<std::size_t>(forged_result_subject.functions[0].nodes.back().children[0]));
+    subject.kind=calls::Kind::Some;
+    reject_diagnostic([&] { calls::verify(forged_result_subject); },"Result match requires Result subject");
     auto bad_ok=calls::parse("fnc main(x:int):Result<int,Error>{return Ok(x);}");
     bad_ok.functions[0].nodes[0].kind=calls::Kind::Boolean;
     bad_ok.functions[0].nodes[0].value=1;
