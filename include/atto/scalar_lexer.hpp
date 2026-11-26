@@ -108,7 +108,13 @@ inline constexpr std::size_t max_tokens = 256;
     } else if (c == '"') {
       kind = Kind::quoted;
       ++i;
-      while (i < src.size() && src[i] != '"') ++i;
+      while (i < src.size() && src[i] != '"') {
+        if (src[i]=='\\') {
+          ++i;
+          if(i==src.size())break;
+        }
+        ++i;
+      }
       if (i == src.size()) {
         out.error = LexError::unsupported_byte;
         out.error_offset = start;

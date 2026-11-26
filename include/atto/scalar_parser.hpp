@@ -16,7 +16,7 @@
 #include <vector>
 
 namespace atto::forge::scalar {
-enum class Op { literal, add, sub, mul, div, rem, neg, refine, narrow, copy, sequence, band, bor, bxor, bnot, shl, lshr, ashr, eq, ne, lt, le, gt, ge, choose, loop_state, loop_value, loop_group, loop_read };
+enum class Op { literal, static_string_equal, add, sub, mul, div, rem, neg, refine, narrow, copy, sequence, band, bor, bxor, bnot, shl, lshr, ashr, eq, ne, lt, le, gt, ge, choose, loop_state, loop_value, loop_group, loop_read };
 struct LoopExit { std::size_t position=0, condition=0; bool breaking=false; std::vector<std::size_t> values{}; };
 struct Node {
   Op op;
@@ -25,6 +25,7 @@ struct Node {
   i64 upper = 0;
   std::vector<std::size_t> states{},effects{},updates{};
   std::vector<LoopExit> exits{};
+  std::string bytes_a{}, bytes_b{}; // Only static_string_equal owns byte spans.
 };
 enum class ParseError {
   none, lexical, syntax, literal_out_of_range, depth_limit, node_limit, telemetry, verify_unproven, verify_unsupported, unit_name, unit_duplicate, unit_dimension, unit_scale, unit_limit, unit_erasure, unit_attachment, unit_inexact, unit_range, refinement_empty, refinement_binding, refinement_precondition, refinement_return, refinement_duplicate, refinement_postcondition, refinement_contract, refinement_export, refinement_body, refinement_call, refinement_cast, i32_range, new_required, lock_unsupported, missing_initializer
@@ -93,6 +94,75 @@ inline constexpr std::size_t max_trace_depth = 16;
   return true;
 }
 
+// Length-bounded, shortest-form UTF-8 scalar validation, including embedded NUL.
+[[nodiscard]] inline bool valid_static_utf8(std::string_view bytes) {
+  if(bytes.size()>256)return false;
+  for(std::size_t i=0;i<bytes.size();){
+    unsigned c=static_cast<unsigned char>(bytes[i++]);
+    if(c<0x80)continue;
+    unsigned count=0, scalar=0, minimum=0;
+    if(c>=0xc2&&c<=0xdf){count=1;scalar=c&31;minimum=0x80;}
+    else if(c>=0xe0&&c<=0xef){count=2;scalar=c&15;minimum=0x800;}
+    else if(c>=0xf0&&c<=0xf4){count=3;scalar=c&7;minimum=0x10000;}
+    else return false;
+    if(count>bytes.size()-i)return false;
+    for(unsigned j=0;j<count;++j){
+      unsigned b=static_cast<unsigned char>(bytes[i++]);
+      if((b&0xc0)!=0x80)return false;
+      scalar=(scalar<<6)|(b&63);
+    }
+    if(scalar<minimum||scalar>0x10ffff||(scalar>=0xd800&&scalar<=0xdfff))return false;
+  }
+  return true;
+}
+
+[[nodiscard]] inline std::optional<std::string> decode_static_string(std::string_view raw){
+  if(raw.size()<2||raw.front()!='"'||raw.back()!='"')return std::nullopt;
+  std::string result;
+  auto hex=[](char c)->int{
+    if(c>='0'&&c<='9')return c-'0';
+    if(c>='a'&&c<='f')return c-'a'+10;
+    if(c>='A'&&c<='F')return c-'A'+10;
+    return -1;
+  };
+  auto unit=[&](std::size_t& i)->std::optional<unsigned>{
+    if(raw.size()-1-i<4)return std::nullopt;
+    unsigned n=0;
+    for(int j=0;j<4;++j){const auto h=hex(raw[i++]);if(h<0)return std::nullopt;n=n*16+static_cast<unsigned>(h);}
+    return n;
+  };
+  for(std::size_t i=1;i<raw.size()-1;){
+    char c=raw[i++];
+    if(c=='\r'||c=='\n'||c=='\0')return std::nullopt;
+    if(c!='\\')result.push_back(c);
+    else {
+      if(i>=raw.size()-1)return std::nullopt;
+      c=raw[i++];
+      if(c=='n')result.push_back('\n');
+      else if(c=='r')result.push_back('\r');
+      else if(c=='t')result.push_back('\t');
+      else if(c=='u'){
+        auto first=unit(i);if(!first)return std::nullopt;
+        unsigned n=*first;
+        if(n>=0xd800&&n<=0xdbff){
+          if(raw.size()-1-i<2||raw[i++]!='\\'||raw[i++]!='u')return std::nullopt;
+          auto low=unit(i);if(!low||*low<0xdc00||*low>0xdfff)return std::nullopt;
+          n=0x10000+((n-0xd800)<<10)+(*low-0xdc00);
+        }else if(n>=0xdc00&&n<=0xdfff)return std::nullopt;
+        auto byte=[&](unsigned b){result.push_back(static_cast<char>(b));};
+        if(n<0x80)byte(n);
+        else if(n<0x800){byte(0xc0|(n>>6));byte(0x80|(n&63));}
+        else if(n<0x10000){byte(0xe0|(n>>12));byte(0x80|((n>>6)&63));byte(0x80|(n&63));}
+        else{byte(0xf0|(n>>18));byte(0x80|((n>>12)&63));byte(0x80|((n>>6)&63));byte(0x80|(n&63));}
+      }else if(c=='\r'||c=='\n'||c=='\0')return std::nullopt;
+      else result.push_back(c);
+    }
+    if(result.size()>256)return std::nullopt;
+  }
+  if(!valid_static_utf8(result))return std::nullopt;
+  return result;
+}
+
 // Verify all untrusted or externally constructed ASTs before evaluation or
 // code emission. A valid postorder AST has the root as its final node,
 // backward-only edges, no detached nodes, and recognized operation tags.
@@ -115,6 +185,9 @@ inline constexpr std::size_t max_trace_depth = 16;
   std::vector<unsigned> owners(p.nodes.size(),0);
   for(std::size_t i=0;i<p.nodes.size();++i){
     const auto& n=p.nodes[i];
+    if(n.op==Op::static_string_equal){
+      if(n.left!=0||n.right!=0||(n.value!=0&&n.value!=1)||n.upper!=0||!valid_static_utf8(n.bytes_a)||!valid_static_utf8(n.bytes_b))return false;
+    }else if(!n.bytes_a.empty()||!n.bytes_b.empty())return false;
     if(n.op!=Op::loop_group&&(!n.states.empty()||!n.effects.empty()||!n.updates.empty()||!n.exits.empty()))return false;
     if(n.op==Op::loop_value){
       if(n.left>=i||p.nodes[n.left].op!=Op::loop_state||n.right<=n.left||n.right>=i||n.value<0||
@@ -175,7 +248,7 @@ inline constexpr std::size_t max_trace_depth = 16;
     const auto& n=p.nodes[i];
     if(n.op==Op::loop_state&&owners[i]!=1)return false;
     auto edge=[&](std::size_t k){for(auto [a,b]:regions)if(k>=a&&k<b&&(i<=a||i>b))return false;return true;};
-    if(n.op==Op::literal)continue;
+    if(n.op==Op::literal||n.op==Op::static_string_equal)continue;
     if(!edge(n.left))return false;
     if(n.op==Op::refine||n.op==Op::narrow||n.op==Op::neg||n.op==Op::bnot||n.op==Op::copy||n.op==Op::loop_state||n.op==Op::loop_read)continue;
     if(!edge(n.right))return false;
@@ -198,6 +271,7 @@ inline constexpr std::size_t max_trace_depth = 16;
     const auto& node = p.nodes[index];
     if (node.op != Op::refine && node.upper != 0) return false;
     switch (node.op) {
+      case Op::static_string_equal:
       case Op::literal:
         if (node.left != 0 || node.right != 0) return false;
         break;
@@ -364,6 +438,9 @@ class Parser {
   std::vector<std::pair<std::string_view,std::size_t>> bindings_;
   // Separate source-level Boolean identity from the scalar storage encoding.
   std::vector<std::pair<std::string_view,bool>> ordinary_bools_;
+  struct StaticView{std::string_view name;std::string bytes;bool writable;};
+  std::vector<StaticView> ordinary_strings_;
+  std::size_t string_versions_=0;
   std::vector<std::string_view> dimensions_;
   struct Unit { std::string_view name; std::size_t dim; Scale scale; };
   std::vector<Unit> units_;
@@ -577,7 +654,8 @@ class Parser {
     Scale s{};
     Range r{};
     if(n.op==Op::literal)r=Range::exact(n.value);
-    if (n.op != Op::literal) {
+    if(n.op==Op::static_string_equal)r=Range{0,1};
+    if (n.op != Op::literal && n.op!=Op::static_string_equal) {
       const auto& lhs = dims_[n.left];
       if (n.op == Op::neg || n.op == Op::refine || n.op==Op::narrow || n.op==Op::copy || n.op==Op::loop_state) {
         d = lhs; s = scales_[n.left];
@@ -873,6 +951,7 @@ class Parser {
     if(n.empty()||n[0]<'a'||n[0]>'z'||known_name(n))return false;
     for(auto s:{"val","let","int","i64","i32","bool","float","string","void","return","self","main","fnc","pub","define","type","where","as","and","units","in","true","false","if","else","end","begin","while","loop","task","await","suspends","infer","new","match","const","mut","using","unit","dimension","_"})if(n==s)return false;
     for(const auto& b:bindings_)if(b.first==n)return false;
+    for(const auto& b:ordinary_strings_)if(b.name==n)return false;
     for(const auto& a:strict_arrays_)if(a.first==n)return false;
     for(const auto& h:helpers_)if(h.name==n)return false;
     return true;
@@ -907,7 +986,7 @@ class Parser {
     for(std::size_t i=h.params.size();i<h.nodes.size();++i){
       if(out_.nodes.size()>=max_nodes){fail(ParseError::node_limit);return std::nullopt;}
       Node n=h.nodes[i];
-      if(n.op!=Op::literal){
+      if(n.op!=Op::literal&&n.op!=Op::static_string_equal){
         if(n.left>=map.size()){fail(ParseError::syntax);return std::nullopt;}
         n.left=map[n.left];
         if(n.op!=Op::neg&&n.op!=Op::bnot&&n.op!=Op::refine&&n.op!=Op::narrow&&n.op!=Op::copy&&n.op!=Op::loop_state&&n.op!=Op::loop_read){
@@ -989,6 +1068,25 @@ class Parser {
       p=Predicate{*c,join_facts(p->yes,q->yes),std::move(q->no)};
     }return p;
   }
+  std::optional<std::string> ordinary_string_value(){
+    if(current().kind==Kind::quoted){auto bytes=decode_static_string(text());++pos_;if(bytes)return bytes;}
+    else if(current().kind==Kind::name){
+      for(const auto& view:ordinary_strings_)if(view.name==text()){++pos_;return view.bytes;}
+    }
+    fail(ParseError::refinement_binding);return std::nullopt;
+  }
+  std::optional<std::size_t> ordinary_condition(){
+    if(current().kind==Kind::quoted||(current().kind==Kind::name&&std::any_of(ordinary_strings_.begin(),ordinary_strings_.end(),[&](const auto& v){return v.name==text();}))){
+      auto left=ordinary_string_value();if(!left)return std::nullopt;
+      bool unequal=false;
+      if(!name("eq")){if(!name("neq")){fail(ParseError::syntax);return std::nullopt;}unequal=true;}
+      auto right=ordinary_string_value();if(!right)return std::nullopt;
+      Node node{Op::static_string_equal,0,0,unequal?1:0};
+      node.bytes_a=std::move(*left);node.bytes_b=std::move(*right);
+      return append(std::move(node));
+    }
+    return ordinary_bool_value();
+  }
   std::optional<std::size_t> ordinary_bool_value(){
     if(name("true"))return append(Node{Op::literal,0,0,1});
     if(name("false"))return append(Node{Op::literal,0,0,0});
@@ -1002,8 +1100,8 @@ class Parser {
   }
   std::optional<std::size_t> returning(int depth){
     if(depth>16){fail(ParseError::depth_limit);return std::nullopt;}
-    if(!strict_&&!ordinary_bools_.empty()&&name("if")){
-      auto p=ordinary_bool_value();
+    if(!strict_&&(!ordinary_bools_.empty()||!ordinary_strings_.empty())&&name("if")){
+      auto p=ordinary_condition();
       if(!p||!take(Kind::lbrace))return std::nullopt;
       auto y=returning(depth+1);if(!y||!take(Kind::rbrace)||!name("else")||!take(Kind::lbrace))return std::nullopt;
       auto n=returning(depth+1);if(!n||!take(Kind::rbrace))return std::nullopt;
@@ -1162,6 +1260,12 @@ class Parser {
         if(current().kind!=Kind::name||pos_+1>=tokens_.size()||tokens_[pos_+1].kind!=Kind::equals)break;
         const auto n=text();pos_+=2;
         auto binding=std::find_if(bindings_.begin(),bindings_.end(),[&](const auto& x){return x.first==n;});
+        auto view=std::find_if(ordinary_strings_.begin(),ordinary_strings_.end(),[&](const auto& x){return x.name==n;});
+        if(view!=ordinary_strings_.end()){
+          if(!view->writable||++string_versions_>64){fail(ParseError::verify_unsupported);return std::nullopt;}
+          auto bytes=ordinary_string_value();if(!bytes||!take(Kind::semicolon))return std::nullopt;
+          view->bytes=std::move(*bytes);continue;
+        }
         auto decl=std::find_if(mutable_types.begin(),mutable_types.end(),[&](const auto& x){return x.first==n;});
         auto boolean=std::find_if(ordinary_bools_.begin(),ordinary_bools_.end(),[&](const auto& x){return x.first==n;});
         if(!strict_&&boolean!=ordinary_bools_.end()){
@@ -1178,8 +1282,19 @@ class Parser {
         binding->second=*version;effects.push_back(*version);
         continue;
       }
-      if(bindings_.size()>=32||current().kind!=Kind::name){fail(ParseError::syntax);return std::nullopt;}
+      if(bindings_.size()+ordinary_strings_.size()>=32||current().kind!=Kind::name){fail(ParseError::syntax);return std::nullopt;}
       auto n=text();++pos_;
+      bool string=false;
+      if(!strict_&&n=="string"&&current().kind==Kind::name){string=true;n=text();++pos_;}
+      else if(!strict_&&current().kind==Kind::colon&&pos_+1<tokens_.size()&&
+          tokens_[pos_+1].kind==Kind::name&&source_.substr(tokens_[pos_+1].offset,tokens_[pos_+1].length)=="string"){
+        string=true;pos_+=2;
+      }
+      if(string){
+        if(!binding_name(n)||!take(Kind::equals)||++string_versions_>64){fail(ParseError::syntax);return std::nullopt;}
+        auto bytes=ordinary_string_value();if(!bytes||!take(Kind::semicolon))return std::nullopt;
+        ordinary_strings_.push_back(StaticView{n,std::move(*bytes),mut});continue;
+      }
       // Only explicitly typed bool literals/copies in the ordinary scalar lane.
       bool boolean=false;
       if(!strict_&&n=="bool"&&current().kind==Kind::name){boolean=true;n=text();++pos_;}
@@ -1469,7 +1584,7 @@ class Parser {
       out_.root=*root;
       if(!validate_ast(out_))return false;
       helpers_.push_back(Helper{fname,std::move(params),*result,std::move(out_.nodes),std::move(dims_),std::move(scales_),std::move(ranges_)});
-      out_.nodes.clear();out_.root=0;dims_.clear();scales_.clear();ranges_.clear();bindings_.clear();strict_arrays_.clear();ordinary_bools_.clear();
+      out_.nodes.clear();out_.root=0;dims_.clear();scales_.clear();ranges_.clear();bindings_.clear();strict_arrays_.clear();ordinary_bools_.clear();ordinary_strings_.clear();string_versions_=0;
     }
     return true;
   }
