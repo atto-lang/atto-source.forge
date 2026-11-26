@@ -84,3 +84,25 @@ guest parity. No external private-source mirroring without authorization.
 
 Companion review targets: Java actor frames #2627, .NET actor frames #385,
 LLVM actor ownership/runtime work, platform-conformance #562.
+
+## 7 November hardening: terminal frame faults and concurrent quotas
+
+Further fail-closed checks now reject duplicate actor `begin` as a
+terminal reentrancy violation; make frame read/write bounds violations poison
+the offending logical execution; and reject heap access while the actor's
+logical continuation is suspended without a physical actor turn. Once a
+logical frame stack is poisoned, the same incarnation cannot continue heap
+operations. New native host negatives cover bounds faults, one healthy
+sibling, duplicate begin, suspended heap access, closed/restarted
+incarnation construction, reservation neutrality after stale construction,
+and zeroed new-incarnation memory.
+
+The aggregate budget ledger's `reserve` and `refund` methods are private
+to the actor-memory primitive; external host code can observe reservations
+but cannot erase a separate actor's quota credits. A new two-thread native
+test contends for a single 176-byte slot and requires exactly one admission,
+one denied reservation, and full final runtime+process refund. This is a
+C++ host-only admission model, **not an actor scheduler**. Full tenant
+quotas, bounded guest call-frame lowering, and compiler-backed `.atto`
+tests still block readiness. None of these new CTests have been observed
+to execute on a GitHub runner.
