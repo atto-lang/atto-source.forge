@@ -362,14 +362,27 @@ class Parser {
     const int condition=logical_or(d+1);
     if (take("?")) {
       require_boolean(condition);
-      const int yes=expr(d+1);
+      const int yes=ternary_arm(d+1);
       expect(":");
-      const int no=expr(d+1);
+      const int no=ternary_arm(d+1);
       require_integer(yes);
       require_integer(no);
       return add(Kind::Ternary,0,{}, {condition,yes,no});
     }
     return condition;
+  }
+  // Direct braces commit to a single explicit result, not an aggregate
+  // or callable return. Keep the verified lazy Ternary tree and native ABI.
+  int ternary_arm(std::size_t d) {
+    depth(d);
+    if (!take("{")) return expr(d+1);
+    if (!take("return") && !take("^"))
+      fail("E_VALUE_ARM: ternary block requires explicit return or ^; lexical prefixes are not lowered");
+    const int value=expr(d+1);
+    take(";");
+    if (!take("}"))
+      fail("E_VALUE_ARM: single-result ternary block requires closing '}'");
+    return value;
   }
   int logical_or(std::size_t d) {
     depth(d);
