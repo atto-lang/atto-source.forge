@@ -18,7 +18,9 @@ import hashlib
 POSITIVE = (
     ("signed-division", "fnc main(a:int,b:int):int{return a/b;}",
      ((5,2,2),(-5,2,-2),(5,-2,-2),(-5,-2,2),(9007199254740993,1,9007199254740993),
-      (-9223372036854775808,1,-9223372036854775808),(9223372036854775807,3,3074457345618258602))),
+      (-9223372036854775808,1,-9223372036854775808),(9223372036854775807,3,3074457345618258602),
+      (0,-1,0),(-9223372036854775808,2,-4611686018427387904),
+      (9223372036854775807,-1,-9223372036854775807))),
     ("division-precedence", "fnc main(a:int):int{return 2+a/3*4;}", ((8,10),(-8,-6))),
     ("division-lazy", "fnc main(a:int):int{return a eq 0 ? 42 : 84/a;}", ((0,42),(2,42),(-2,-42))),
     ("division-third-argument", "fnc q(a:int,b:int,c:int):int{return a/b+c;} fnc main(a:int,b:int,c:int):int{return q(a,b,c);}",
@@ -101,6 +103,7 @@ TRAPS = (
     ("division-overflow", "fnc main(a:int,b:int):int{return a/b;}", (-9223372036854775808,-1), "i64 division overflow"),
     ("division-propagates", "fnc q(a:int,b:int):int{return a/b;} fnc wrap(a:int,b:int):int{return q(a,b)+9223372036854775807;} fnc main(a:int,b:int):int{return wrap(a,b);}", (42,0), "i64 division by zero"),
     ("division-left-error-first", "fnc main(a:int):int{return (1/a)+(9223372036854775807+1);}", (0,), "i64 division by zero"),
+    ("division-left-overflow-first", "fnc main(a:int):int{return (9223372036854775807+a)+(1/(a-1));}", (1,), "i64 add overflow"),
     ("overflow-add", "fnc plus(n:int):int{return n+1;}"
      " fnc main(n:int):int{return plus(n);}",
      (9223372036854775807,), "i64 add overflow"),
@@ -228,6 +231,17 @@ def build(compiler,cc,root,label,source,param_count):
     signature=", ".join("int64_t" for _ in range(param_count)) or "void"
     arguments=", ".join("v[%d]"%i for i in range(param_count))
     driver=DRIVER.replace("PARAMS",signature).replace("COUNT",str(param_count)).replace("ARGS",arguments)
+    if label in ("division-zero", "division-overflow"):
+        # The same generated native entry must clear its error state on a
+        # successful call, then correctly report the original failure again.
+        # Repeating identical inputs alone cannot detect sticky status.
+        anchor = '  if(printf("%" PRId64 " %" PRIu64'
+        require(driver.count(anchor) == 1, "checked ABI recovery anchor drift")
+        driver = driver.replace(anchor, '''  const struct result_pair recovered=oresforge_entry_checked(84,2);
+  if (recovered.value!=42 || recovered.status!=0) return 7;
+  const struct result_pair failed_again=oresforge_entry_checked(v[0],v[1]);
+  if (failed_again.value!=result.value || failed_again.status!=result.status) return 8;
+''' + anchor, 1)
     (root/"driver.c").write_text(driver,encoding="ascii")
     executable=root/"native"
     link=execute([cc,"-std=c11","-Wall","-Wextra","-Werror",
