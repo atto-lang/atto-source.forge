@@ -18,7 +18,11 @@ static host_ticket_ptr admit(host_proxy_mailbox_tickets& m, receipt_identity id,
     return r.ticket;
 }
 static void correlation_and_full() {
-    host_proxy_mailbox_tickets a(13, 14, 1), b(13, 14, 1);
+    host_proxy_mailbox_tickets a(11, 13, 14, 1), b(11, 13, 14, 1);
+    auto wrong_tenant = route(101);
+    wrong_tenant.tenant = 88;
+    assert(a.admit(wrong_tenant, 7).status == host_ticket_admission::stale);
+    assert(!a.dispatch());
     auto first = admit(a, route(101), 11);
     auto first_turn = a.dispatch();
     assert(first_turn && first_turn->value() == 11);
@@ -45,7 +49,7 @@ static void correlation_and_full() {
     assert(a.conservation() && b.conservation());
 }
 static void concurrent_results() {
-    host_proxy_mailbox_tickets m(13, 14, 256);
+    host_proxy_mailbox_tickets m(11, 13, 14, 256);
     std::mutex sent_lock;
     std::vector<std::pair<std::int64_t, host_ticket_ptr>> sends;
     std::array<std::thread, 4> producers;
@@ -74,7 +78,7 @@ static void concurrent_results() {
     assert(m.conservation());
 }
 static void panic_restart_close() {
-    host_proxy_mailbox_tickets m(13, 14, 2);
+    host_proxy_mailbox_tickets m(11, 13, 14, 2);
     auto failed = admit(m, route(201), -1);
     auto turn = m.dispatch();
     auto abandoned = admit(m, route(202), 20);
@@ -84,14 +88,14 @@ static void panic_restart_close() {
     assert(!m.commit(*turn, 99));
     assert(m.admit(route(203), 1).status == host_ticket_admission::closed);
     assert(!m.dispatch() && m.conservation());
-    host_proxy_mailbox_tickets next(13, 15, 1);
+    host_proxy_mailbox_tickets next(11, 13, 15, 1);
     assert(next.admit(route(204), 1).status == host_ticket_admission::stale);
     assert(!next.snapshot(failed));
     auto fresh = admit(next, route(205, 15), 8);
     auto new_turn = next.dispatch();
     assert(new_turn && next.commit(*new_turn, 50));
     assert(next.snapshot(fresh)->result == 50 && next.conservation());
-    host_proxy_mailbox_tickets draining(13, 14, 1);
+    host_proxy_mailbox_tickets draining(11, 13, 14, 1);
     auto old = admit(draining, route(300), 3);
     draining.close();
     assert(draining.admit(route(301), 3).status == host_ticket_admission::closed);
