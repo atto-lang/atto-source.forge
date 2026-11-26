@@ -128,6 +128,44 @@ static void concurrent_terminal_races() {
         assert(!m.dispatch() && m.conservation());
     }
 }
+static void concurrent_close_with_queued_mail() {
+    for (std::uint64_t i = 0; i < 64; ++i) {
+        host_proxy_mailbox_tickets m(11, 13, 14, 1);
+        auto first = admit(m, route(7000 + i), 42);
+        auto turn = m.dispatch();
+        assert(turn);
+        auto queued = admit(m, route(8000 + i), 43);
+        std::barrier start(5);
+        bool committed = false, panicked = false;
+        host_ticket_admission_result foreign{};
+        std::thread commit([&] { start.arrive_and_wait(); committed = m.commit(*turn, 42); });
+        std::thread panic([&] { start.arrive_and_wait(); panicked = m.panic(*turn); });
+        std::thread close([&] { start.arrive_and_wait(); m.close(); });
+        std::thread attack([&] {
+            auto r = route(9000 + i); r.tenant = 88;
+            start.arrive_and_wait(); foreign = m.admit(r, 99);
+        });
+        start.arrive_and_wait();
+        commit.join(); panic.join(); close.join(); attack.join();
+        assert(committed != panicked);
+        assert(foreign.status == host_ticket_admission::stale && !foreign.ticket);
+        assert(m.admit(route(10000 + i), 99).status == host_ticket_admission::closed);
+        auto a = m.snapshot(first), b = m.snapshot(queued);
+        assert(a && b && a->has_result == committed && !b->has_result);
+        assert(a->state == (committed ? host_ticket_state::processed : host_ticket_state::failed));
+        if (committed) {
+            assert(a->result == 42 && b->state == host_ticket_state::admitted);
+            auto drain = m.dispatch();
+            assert(drain && drain->value() == 43 && m.commit(*drain, 43));
+            auto settled = m.snapshot(queued);
+            assert(settled && settled->state == host_ticket_state::processed && settled->has_result && settled->result == 43);
+        } else {
+            assert(b->state == host_ticket_state::abandoned);
+        }
+        assert(!m.dispatch() && m.conservation());
+        assert(!m.commit(*turn, 99) && !m.panic(*turn));
+    }
+}
 static void panic_restart_close() {
     host_proxy_mailbox_tickets m(11, 13, 14, 2);
     auto failed = admit(m, route(201), -1);
@@ -159,7 +197,9 @@ int main() {
     cross_tenant_same_actor();
     concurrent_results();
     concurrent_terminal_races();
+    concurrent_close_with_queued_mail();
     panic_restart_close();
+    std::puts("ATTO_FORGE_HOST_CLOSE_QUEUED_RACES_64=PASS");
     std::puts("ATTO_FORGE_HOST_TERMINAL_RACES_64=PASS");
     std::puts("ATTO_FORGE_HOST_PER_MAIL_TICKETS_128_CONCURRENT=PASS");
     std::puts("ATTO_FORGE_SCOPE=HOST_ONLY_NO_COMPILED_ATTO_PROXY");
