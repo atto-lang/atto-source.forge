@@ -538,6 +538,39 @@ int main() {
     auto bad_xor=calls::parse("fnc main():int{return Xor(true,false) ? 42 : 7;}");
     bad_xor.functions[0].nodes[1].kind=calls::Kind::Constant;
     reject_diagnostic([&] { calls::verify(bad_xor); },"Boolean Xor requires two bool operands");
+    auto result_bind=calls::parse("fnc divide(a:int,b:int):Result<int,Error>{return trap! (a/b);} fnc main(a:int,b:int):Result<int,Error>{val q=divide(a,b)?;return trap! (q+q);}");
+    const auto rb_ok=calls::interpret_result(result_bind,std::array<std::int64_t,2>{6,3});
+    const auto rb_err=calls::interpret_result(result_bind,std::array<std::int64_t,2>{1,0});
+    ensure(rb_ok.value==4 && rb_ok.status==calls::ArithmeticStatus::Ok,"Result local success");
+    ensure(rb_err.status==calls::ArithmeticStatus::DivisionByZero,"Result propagation retains code");
+    auto forged_local=result_bind;
+    for(auto& node:forged_local.functions[1].nodes)
+      if(node.kind==calls::Kind::Local) node.value=-1;
+    reject_diagnostic([&] { calls::verify(forged_local); },"invalid scalar Result local use");
+    auto forged_result=result_bind;
+    for(auto& node:forged_result.functions[1].nodes)
+      if(node.kind==calls::Kind::ResultCall) node.kind=calls::Kind::Call;
+    reject_diagnostic([&] { calls::verify(forged_result); },"scalar Result call type mismatch");
+    auto option=calls::parse("fnc main(x:int):Option<int>{return if x eq 0 then Some(x) else None fi;}");
+    const auto option_some=calls::interpret_option(option,std::array<std::int64_t,1>{0});
+    const auto option_none=calls::interpret_option(option,std::array<std::int64_t,1>{1});
+    ensure(option_some.value==0 && option_some.tag==1,"Some zero is not None");
+    ensure(option_none.value==0 && option_none.tag==0,"None payload is zeroed");
+    auto bad_option=option;
+    bad_option.functions[0].nodes.back().kind=calls::Kind::If;
+    reject_diagnostic([&] { calls::verify(bad_option); },"invalid scalar Option return");
+    auto bad_ok=calls::parse("fnc main(x:int):Result<int,Error>{return Ok(x);}");
+    bad_ok.functions[0].nodes[0].kind=calls::Kind::Boolean;
+    bad_ok.functions[0].nodes[0].value=1;
+    reject_diagnostic([&] { calls::verify(bad_ok); },"constructor requires int payload");
+    auto effect=calls::parse("fnc main(a:int):Result<int,Error>{return Ok(a+1);}");
+    const auto escaped=calls::interpret_effect(effect,std::array<std::int64_t,1>{9223372036854775807LL});
+    ensure(escaped.value==0 && escaped.tag==0 && escaped.effect==calls::ArithmeticStatus::Overflow,
+           "ordinary effect does not become Err");
+    auto captured=calls::parse("fnc main(a:int):Result<int,Error>{return trap! (a+1);}");
+    const auto err=calls::interpret_effect(captured,std::array<std::int64_t,1>{9223372036854775807LL});
+    ensure(err.value==0 && err.tag==65537 && err.effect==calls::ArithmeticStatus::Ok,
+           "trap converts ordinary effect into Err");
     auto corrupt=calls::parse("fnc main(x:int):int{return x+1;}");
     corrupt.functions[0].nodes.back().children[0]=999;
     reject_diagnostic([&] { calls::verify(corrupt); },
