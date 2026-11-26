@@ -133,8 +133,7 @@ class Parser {
     } else if (c=='-' && at_<text_.size() && text_[at_]=='>') {
       ++at_;
     } else if (c=='^' && at_<text_.size() && text_[at_]=='^') {
-      token_={text_.substr(begin,2),begin};
-      fail("FORGE_XOR_BACKEND_UNSUPPORTED: integer ^^ requires native bitwise lowering");
+      ++at_;
     } else if (std::string_view("()+-*/{};:,<>=^?").find(c)==std::string_view::npos) {
       at_=begin;
       fail("invalid character");
@@ -417,12 +416,24 @@ class Parser {
   }
   int logical_and(std::size_t d) {
     depth(d);
-    int left=comparison(d+1);
+    int left=integer_xor(d+1);
     while (take("&&")) {
       require_boolean(left);
-      const int right=comparison(d+1);
+      const int right=integer_xor(d+1);
       require_boolean(right);
       left=add(Kind::And,0,{}, {left,right});
+    }
+    return left;
+  }
+  // Java's equality/comparison expressions bind more tightly than integer XOR.
+  // No implicit conversion of predicate results to signed i64.
+  int integer_xor(std::size_t d) {
+    depth(d);
+    int left=comparison(d+1);
+    while (take("^^")) {
+      const int right=comparison(d+1);
+      require_integer(left); require_integer(right);
+      left=add(Kind::IntegerXor,0,{}, {left,right});
     }
     return left;
   }
@@ -565,6 +576,7 @@ std::int64_t checked(Kind k,std::int64_t a,std::int64_t b) {
       if(a==std::numeric_limits<std::int64_t>::min() && b==-1)
         throw ArithmeticFault(ArithmeticStatus::Overflow,"i64 division overflow");
       return a/b;
+    case Kind::IntegerXor: return a^b;
     case Kind::Less: return a<b;
     case Kind::LessEqual: return a<=b;
     case Kind::Greater: return a>b;
@@ -749,12 +761,13 @@ struct Native {
         case Kind::Add: out<<"  addq ";break;
         case Kind::Sub: out<<"  subq ";break;
         case Kind::Mul: out<<"  imulq ";break;
+        case Kind::IntegerXor: out<<"  xorq ";break;
         default: out<<"  cmpq ";break;
       }
       out<<value_slot(n.children[1])<<", %rax\n";
       if(n.kind==Kind::Add||n.kind==Kind::Sub||n.kind==Kind::Mul) {
         out<<"  jo "<<overflow_target<<"\n";
-      } else {
+      } else if(n.kind!=Kind::IntegerXor) {
         const char* cc="e";
         switch(n.kind) {
           case Kind::Less: cc="l";break;
@@ -851,7 +864,7 @@ void verify(const Module& m) {
         case Kind::Greater: case Kind::GreaterEqual: case Kind::Equal:
         case Kind::NotEqual: case Kind::If: case Kind::Call:
         case Kind::Boolean: case Kind::Not: case Kind::Ternary:
-         case Kind::And: case Kind::Or: case Kind::BooleanXor:
+         case Kind::And: case Kind::Or: case Kind::BooleanXor: case Kind::IntegerXor:
          case Kind::OptionSome: case Kind::OptionNone: case Kind::OptionCall:
          case Kind::OptionMatch: case Kind::OptionPayload: case Kind::Div:
          case Kind::ResultTrap: case Kind::ResultMatch: case Kind::ResultOk: case Kind::ResultCall: break;
@@ -908,7 +921,7 @@ void verify(const Module& m) {
           throw std::runtime_error("Boolean Xor intrinsic is shadowed by a source declaration");
       } else if(n.kind==Kind::Equal||n.kind==Kind::NotEqual) {
         if(child_bool(0)!=child_bool(1)) throw std::runtime_error("comparison operand type mismatch");
-      } else if(n.kind==Kind::Add||n.kind==Kind::Sub||n.kind==Kind::Mul||n.kind==Kind::Div||
+      } else if(n.kind==Kind::IntegerXor||n.kind==Kind::Add||n.kind==Kind::Sub||n.kind==Kind::Mul||n.kind==Kind::Div||
                 n.kind==Kind::Less||n.kind==Kind::LessEqual||n.kind==Kind::Greater||
                 n.kind==Kind::GreaterEqual) {
         if(child_bool(0)||child_bool(1)) throw std::runtime_error("Boolean is not an int");
