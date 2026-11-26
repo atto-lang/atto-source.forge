@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
+#include <optional>
 #include <thread>
 #include <vector>
 using namespace oresforge::runtime;
@@ -131,6 +132,34 @@ int main() {
   rejected([&]{faults.run_ready(1);});
   assert(faults.live_actors()==0);
   rejected([&]{faults.send(bad,one);});
+
+
+  // A callback can enqueue its own successor and then terminate. Retiring
+  // that callback must refund the queued wakeup before another actor admits.
+  for (bool fault : {false, true}) {
+    ActorCooperativeScheduler one_slot(1);
+    std::optional<ActorRef> self;
+    self = one_slot.spawn(81,128*1024,2048,
+      [&](auto&,auto,auto&) {
+        one_slot.send(*self,one);
+        if (fault) throw std::runtime_error("fault after self-send");
+        one_slot.stop_actor(81);
+      });
+    one_slot.send(*self,one);
+    if (fault) rejected([&]{one_slot.run_ready(1);});
+    else assert(one_slot.run_ready(1)==1);
+    assert(one_slot.live_actors()==0);
+    assert(one_slot.queued_turns()==0);
+    int called=0;
+    auto replacement=one_slot.spawn(82,128*1024,2048,
+      [&](auto&,auto,auto&){++called;});
+    rejected([&]{one_slot.send(*self,one);});
+    one_slot.send(replacement,one);
+    assert(one_slot.run_ready(1)==1);
+    assert(called==1);
+    one_slot.stop_all();
+    assert(one_slot.queued_turns()==0);
+  }
 
   // STOP before first scheduling never executes a user's callback.
   int never_called=0;
