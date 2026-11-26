@@ -4,6 +4,10 @@ on:
     paths:
       - 'core/types.atto'
       - 'compiler/frontend.cpp'
+      - 'compiler/call_native.cpp'
+      - 'compiler/call_native.hpp'
+      - 'verification/core_types_native.py'
+      - 'verification/native_call_executable.py'
       - 'tests/core-types-source.test.mjs'
       - 'tests/core-types-matrix-source.test.mjs'
       - 'tests/fixtures/core-types-v1/**'
@@ -72,10 +76,9 @@ jobs:
             esac
           done
           echo 'CORE_TYPES_FORGE_NAMESPACE_FRAGMENT=EXECUTED'
-          # The complete 13-function library is a separate, currently unsupported gate.
-          "$RUNNER_TEMP/forge-core-types/oresforge" check core/types.atto
-          "$RUNNER_TEMP/forge-core-types/oresforge" run core/types.atto > "$RUNNER_TEMP/core-types-forge.stdout"
-          echo 'CORE_TYPES_FORGE_STAGE0=EXECUTED'
+          # This library intentionally has no main; compile the pinned unchanged
+          # source plus explicit test entry adapters, link, and run every helper.
+          python3 verification/core_types_native.py --compiler "$RUNNER_TEMP/forge-core-types/oresforge"
       - name: Evidence limitations
         if: always()
-        run: echo 'Stage-0 Forge parser/interpreter only. Native JIT/AOT and imported-file guest execution require separate proofs. Zero actual runner steps means NOT_EXECUTED.' >> "$GITHUB_STEP_SUMMARY"
+        run: echo 'Pinned core/types plus test entry adapters: native x86-64 scalar AOT only; imported-module, generic, actor and full-language parity require separate proofs. Zero actual runner steps means NOT_EXECUTED.' >> "$GITHUB_STEP_SUMMARY"
