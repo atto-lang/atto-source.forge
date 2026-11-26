@@ -823,7 +823,7 @@ int main() {
     }, "tuple-v2 parameter requires typed ownership/ABI lowering");
     reject_diagnostic([] {
       parse_source("fnc main():int{match 1 over on _ -> {return 1;} end}");
-    }, "expected");
+    }, "MATCH_DEFAULT_BACKEND_UNSUPPORTED");
     // Task 70: structural and row syntax must fail closed across declaration,
     // parameter, projection and pattern surfaces. The scalar bootstrap has
     // neither row layout witnesses nor borrow/mutable-field capability checks.
