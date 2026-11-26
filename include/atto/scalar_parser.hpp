@@ -15,7 +15,7 @@
 #include <vector>
 
 namespace atto::forge::scalar {
-enum class Op { literal, add, sub, mul, div, rem, neg, refine, narrow, copy, sequence, band, bor, bxor, bnot, shl, lshr, ashr, eq, ne, lt, le, gt, ge, choose };
+enum class Op { literal, add, sub, mul, div, rem, neg, refine, narrow, copy, sequence, band, bor, bxor, bnot, shl, lshr, ashr, eq, ne, lt, le, gt, ge, choose, loop_state, loop_value };
 struct Node {
   Op op;
   std::size_t left = 0, right = 0;
@@ -104,6 +104,28 @@ inline constexpr std::size_t max_trace_depth = 16;
       --trace_depth;
     }
   }
+  // A loop region owns its private state node and all guard/update nodes.
+  // No use outside the region may refer to these transient cache entries.
+  std::vector<std::pair<std::size_t,std::size_t>> regions;
+  for(std::size_t i=0;i<p.nodes.size();++i){
+    const auto& n=p.nodes[i];
+    if(n.op!=Op::loop_value)continue;
+    if(n.left>=i||p.nodes[n.left].op!=Op::loop_state||n.right<=n.left||n.right>=i||n.value<0||
+       static_cast<std::uint64_t>(n.value)<=n.left||static_cast<std::uint64_t>(n.value)>=i)return false;
+    for(const auto& [a,b]:regions)if(n.left<=b&&a<=i)return false;
+    regions.emplace_back(n.left,i);
+  }
+  if(!regions.empty()&&!p.trace_steps.empty())return false;
+  for(std::size_t i=0;i<p.nodes.size();++i){
+    const auto& n=p.nodes[i];
+    if(n.op==Op::loop_state&&std::none_of(regions.begin(),regions.end(),[&](auto r){return r.first==i;}))return false;
+    auto edge=[&](std::size_t k){for(auto [a,b]:regions)if(k>=a&&k<b&&(i<=a||i>b))return false;return true;};
+    if(n.op==Op::literal)continue;
+    if(!edge(n.left))return false;
+    if(n.op==Op::refine||n.op==Op::narrow||n.op==Op::neg||n.op==Op::bnot||n.op==Op::copy||n.op==Op::loop_state)continue;
+    if(!edge(n.right))return false;
+    if((n.op==Op::choose||n.op==Op::loop_value)&&(n.value<0||!edge(static_cast<std::size_t>(n.value))))return false;
+  }
   std::vector<unsigned char> reachable(p.nodes.size(), 0);
   std::vector<std::size_t> pending{p.root};
   while (!pending.empty()) {
@@ -122,6 +144,7 @@ inline constexpr std::size_t max_trace_depth = 16;
         if (node.value > node.upper || node.left >= index || node.right != 0) return false;
         pending.push_back(node.left);
         break;
+      case Op::loop_state:
       case Op::narrow:
       case Op::copy:
       case Op::neg:
@@ -129,6 +152,7 @@ inline constexpr std::size_t max_trace_depth = 16;
         if (node.left >= index || node.right != 0) return false;
         pending.push_back(node.left);
         break;
+      case Op::loop_value:
       case Op::choose:
         if (node.left >= index || node.right >= index || node.value < 0 ||
             static_cast<std::uint64_t>(node.value) >= index) return false;
@@ -457,7 +481,7 @@ class Parser {
     if(strict_){
       switch(n.op){
         case Op::literal: case Op::refine: case Op::narrow: case Op::copy: case Op::sequence:
-        case Op::eq: case Op::ne: case Op::lt: case Op::le: case Op::gt: case Op::ge: case Op::choose: break;
+        case Op::eq: case Op::ne: case Op::lt: case Op::le: case Op::gt: case Op::ge: case Op::choose: case Op::loop_state: case Op::loop_value: break;
         case Op::neg:
           if(ranges_[n.left].lo==std::numeric_limits<i64>::min()){
             fail(ParseError::verify_unproven);return std::nullopt;
@@ -475,11 +499,13 @@ class Parser {
     if(n.op==Op::literal)r=Range::exact(n.value);
     if (n.op != Op::literal) {
       const auto& lhs = dims_[n.left];
-      if (n.op == Op::neg || n.op == Op::refine || n.op==Op::narrow || n.op==Op::copy) {
+      if (n.op == Op::neg || n.op == Op::refine || n.op==Op::narrow || n.op==Op::copy || n.op==Op::loop_state) {
         d = lhs; s = scales_[n.left];
         r=n.op==Op::neg?ranges_[n.left].neg():n.op==Op::refine?Range{n.value,n.upper}:ranges_[n.left];
         if(n.op==Op::neg)r.width=ranges_[n.left].width;
         if(n.op==Op::narrow)r=r.intersect(i32_lo,i32_hi,Width::i32);
+      } else if(n.op==Op::loop_value){
+        d=lhs;s=scales_[n.left];r=ranges_[n.left];
       } else if(n.op==Op::choose){
         auto z=static_cast<std::size_t>(n.value);
         if(!dimensionless(n.left)||dims_[n.right]!=dims_[z]){fail(ParseError::unit_dimension);return std::nullopt;}
@@ -866,7 +892,47 @@ class Parser {
     auto root=expr(0);if(!root||!take(Kind::semicolon))return std::nullopt;return root;
   }
   [[nodiscard]] std::optional<std::size_t> binding_body(std::optional<Refinement> result=std::nullopt){
-    while(name("val")){
+    // Each assignment creates a new graph identity; earlier snapshots remain
+    // immutable and every executed initializer stays in lexical order.
+    std::vector<std::pair<std::string_view,Refinement>> mutable_types;
+    std::vector<std::size_t> effects;
+    for(const auto& binding:bindings_)effects.push_back(binding.second);
+    for(;;){
+      if(strict_&&name("while")){
+        // Main-only single direct update. Helper graph instantiation of a
+        // loop requires a separate scoped-state remapper; deny for now.
+        if(result||mutable_types.size()!=1){fail(ParseError::verify_unsupported);return std::nullopt;}
+        const auto [key,want]=mutable_types.front();
+        auto binding=std::find_if(bindings_.begin(),bindings_.end(),[&](const auto& x){return x.first==key;});
+        if(binding==bindings_.end()||!compatible(binding->second,want,ParseError::refinement_binding))return std::nullopt;
+        auto state=append(Node{Op::loop_state,binding->second,0,0});if(!state)return std::nullopt;
+        binding->second=*state;ranges_[*state]=Range{want.lo,want.hi,want.width};
+        const auto incoming=facts();const bool old=guarded_;guarded_=true;
+        auto p=guard_or(incoming,0);if(!p||!take(Kind::lbrace))return std::nullopt;
+        if(current().kind!=Kind::name||text()!=key){fail(ParseError::verify_unsupported);return std::nullopt;}++pos_;
+        if(!take(Kind::equals))return std::nullopt;
+        set_facts(p->yes);auto update=expr(0);
+        if(!update||!compatible(*update,want,ParseError::refinement_binding)||!take(Kind::semicolon)||!take(Kind::rbrace))return std::nullopt;
+        set_facts(p->no);guarded_=old;
+        auto loop=append(Node{Op::loop_value,*state,p->node,static_cast<i64>(*update)});if(!loop)return std::nullopt;
+        binding->second=*loop;effects.push_back(*loop);
+        continue;
+      }
+      const bool immutable=name("val");
+      const bool mut=!immutable&&strict_&&name("let");
+      if(!immutable&&!mut){
+        if(!strict_||current().kind!=Kind::name||pos_+1>=tokens_.size()||tokens_[pos_+1].kind!=Kind::equals)break;
+        const auto n=text();pos_+=2;
+        auto binding=std::find_if(bindings_.begin(),bindings_.end(),[&](const auto& x){return x.first==n;});
+        auto decl=std::find_if(mutable_types.begin(),mutable_types.end(),[&](const auto& x){return x.first==n;});
+        if(binding==bindings_.end()||decl==mutable_types.end()){fail(ParseError::verify_unsupported);return std::nullopt;}
+        auto value=expr(0);
+        if(!value||!take(Kind::semicolon)||!compatible(*value,decl->second,ParseError::refinement_binding))return std::nullopt;
+        auto version=append(Node{Op::copy,*value,0,0});if(!version)return std::nullopt;
+        ranges_[*version].width=decl->second.width;
+        binding->second=*version;effects.push_back(*version);
+        continue;
+      }
       if(bindings_.size()>=32||current().kind!=Kind::name){fail(ParseError::syntax);return std::nullopt;}
       auto n=text();++pos_;
       std::optional<Refinement> want;
@@ -878,23 +944,28 @@ class Parser {
         if(!want||current().kind!=Kind::name){fail(ParseError::syntax);return std::nullopt;}
         n=text();++pos_;
       }
+      if(mut&&!want){fail(ParseError::verify_unsupported);return std::nullopt;}
       if(!binding_name(n)||!take(Kind::equals)){fail(ParseError::syntax);return std::nullopt;}
       auto value=expr(0);
       if(!value||!take(Kind::semicolon)){fail(ParseError::syntax);return std::nullopt;}
       if(want&&!compatible(*value,*want,ParseError::refinement_binding)){
         fail(ParseError::syntax);return std::nullopt;
       }
+      if(strict_){
+        value=append(Node{Op::copy,*value,0,0});if(!value)return std::nullopt;
+      }
       if(want)ranges_[*value].width=want->width;
       else if(ranges_[*value].width==Width::literal)ranges_[*value].width=Width::i64;
-      bindings_.emplace_back(n,*value);
+      bindings_.emplace_back(n,*value);effects.push_back(*value);
+      if(mut)mutable_types.emplace_back(n,*want);
     }
     if(current().kind==Kind::name&&text()=="let"){fail(ParseError::refinement_body);return std::nullopt;}
     auto root=returning(0);
     if(!root||(result?!compatible(*root,*result,ParseError::refinement_return):!scalar_cast(*root))||!take(Kind::rbrace)){fail(ParseError::syntax);return std::nullopt;}
     // Every initializer is part of the validated graph even if unused.
     // Existing postorder evaluation preserves lexical failure ordering.
-    for(auto i=bindings_.rbegin();i!=bindings_.rend();++i){
-      root=append(Node{Op::sequence,i->second,*root,0});
+    for(auto i=effects.rbegin();i!=effects.rend();++i){
+      root=append(Node{Op::sequence,*i,*root,0});
       if(!root)return std::nullopt;
     }
     return root;
