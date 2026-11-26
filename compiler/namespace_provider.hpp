@@ -17,7 +17,7 @@ inline std::string compile_namespace_provider(std::string_view input,
   if(selected_namespace.size()>128 || symbol.size()>128)
     throw std::runtime_error("E_NAMESPACE_PROFILE: identifier budget");
   static const std::regex pattern(
-      R"(^namespace ([A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*);\npub fnc ([A-Za-z_][A-Za-z0-9_]*)\(([^\n()]*)\): int \{ return (-?(0|[1-9][0-9]{0,18})); \}\n$)");
+      R"(^namespace ([A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*);\npub fnc ([A-Za-z_][A-Za-z0-9_]*)\(([^\n()]*)\): int \{ return ([^\n{};]+); \}\n$)");
   const std::string source(input);
   std::smatch m;
   if(!std::regex_match(source,m,pattern) || m[1].str()!=selected_namespace || selected_namespace.find('.')!=std::string_view::npos ||
@@ -25,6 +25,9 @@ inline std::string compile_namespace_provider(std::string_view input,
     throw std::runtime_error("E_NAMESPACE_PROFILE: explicit public provider required");
   if(!m[4].str().empty())
     throw std::runtime_error("E_NAMESPACE_ARITY: zero-argument provider required");
+  static const std::regex literal(R"(^-?(0|[1-9][0-9]{0,18})$)");
+  if(!std::regex_match(m[5].str(),literal))
+    throw std::runtime_error("E_NAMESPACE_PROFILE: integer literal required");
   // The stage-0 parser currently requires 'use namespace' and a single
   // identifier. Translate only that verified header spelling; preserve the
   // original declaration/body and invoke it through the checked compiler.
