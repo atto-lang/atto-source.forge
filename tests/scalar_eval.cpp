@@ -77,6 +77,21 @@ int main() {
       "pub fnc main() -> int { return f(0); }";
   auto lazy = parse_verified_strict_i64(guard);
   assert(lazy.ok() && evaluate(lazy).value == 42);
+  // A branch-local call must not execute its argument on the skipped path.
+  const std::string helper_prefix = "type R = int where self >= 1 and self <= 42; "
+      "fnc good(int x) -> int { val y=x; return y; } ";
+  for (const auto* body : {
+      "fnc f(int x) -> int { if x != 0 && good(42/x)>0 { return 1; } return 42; } pub fnc main() -> int { return f(0); }",
+      "fnc f(int x) -> int { if x == 0 || good(42/x)>0 { return 42; } return 0; } pub fnc main() -> int { return f(0); }",
+      "fnc f(int x) -> int { if x != 0 { return good(42/x); } return 0; } pub fnc main() -> int { return f(1); }",
+      "fnc outer(int x) -> int { return good(x); } fnc f(int x) -> int { if x != 0 { return outer(42/x); } return 0; } pub fnc main() -> int { return f(1); }"}) {
+    const auto parsed = parse_verified_strict_i64(helper_prefix + body);
+    assert(parsed.ok() && validate_ast(parsed) && evaluate(parsed).value == 42);
+  }
+  for (const auto* body : {
+      "fnc f(int x) -> int { if x == 0 { return good(42/x); } return 42; } pub fnc main() -> int { return f(1); }",
+      "fnc f(int x, int y) -> int { if x != 0 { return good(42/y); } return 42; } pub fnc main() -> int { return f(1,1); }"})
+    assert(!parse_verified_strict_i64(helper_prefix + body).ok());
   auto forged_choice = lazy;
   for(auto& n:forged_choice.nodes)if(n.op==Op::choose){n.value=-1;break;}
   assert(!validate_ast(forged_choice) && evaluate(forged_choice).error==EvalError::invalid_ast);

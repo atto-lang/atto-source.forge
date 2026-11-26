@@ -706,7 +706,9 @@ class Parser {
     return true;
   }
   [[nodiscard]] std::optional<std::size_t> call(const Helper& h,int depth){
-    if(guarded_){fail(ParseError::verify_unsupported);return std::nullopt;}
+    // Each call gets fresh graph nodes. The helper root sequences its parameters
+    // and local initializers; the lazy evaluator reaches that root only through
+    // the selected branch. Preserve the call boundary and never hoist its DAG.
     if(depth>max_parse_depth||!take(Kind::lparen)){fail(ParseError::syntax);return std::nullopt;}
     std::vector<std::size_t> map;
     for(std::size_t i=0;i<h.params.size();++i){
