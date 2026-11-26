@@ -23,7 +23,7 @@ def valid_manifest(repo=REPO_NAME):
     return {
         'schemaVersion': 1,
         'protocol': module.PROTOCOL,
-        'repository': 'ores-truffle-oreslang/' + repo,
+        'repository': ('atto-lang/' if repo == 'atto-source.forge' else 'ores-truffle-oreslang/') + repo,
         'role': 'compiler',
         'upstreams': list(module.UPSTREAMS[repo]),
         'evidence': 'not-attested',
@@ -37,10 +37,20 @@ def encode(payload):
 
 class IntegrationManifestGateTests(unittest.TestCase):
     def test_all_seven_source_backends(self):
-        self.assertEqual(len(module.UPSTREAMS), 7)
-        for repo in module.UPSTREAMS:
+        legacy = [repo for repo in module.UPSTREAMS if repo.startswith('oreslang-source.')]
+        self.assertEqual(len(legacy), 7)
+        for repo in legacy:
             with self.subTest(repo=repo):
                 self.assertEqual(module.verify_bytes(encode(valid_manifest(repo)), repo)['evidence'], 'not-attested')
+
+    def test_migrated_forge_identity_is_exact(self):
+        repo = 'atto-source.forge'
+        value = valid_manifest(repo)
+        self.assertEqual(module.verify_bytes(encode(value), repo)['repository'], 'atto-lang/atto-source.forge')
+        for wrong in ('ores-truffle-oreslang/oreslang-source.forge', 'other/atto-source.forge', 'atto-lang/atto-source.llvm'):
+            value['repository'] = wrong
+            self.assert_reject(encode(value), repo)
+        self.assert_reject(encode(valid_manifest(repo)), 'oreslang-source.forge')
 
     def test_real_local_manifest(self):
         root = Path(__file__).resolve().parent.parent
