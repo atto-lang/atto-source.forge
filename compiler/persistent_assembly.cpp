@@ -1,4 +1,5 @@
 #include "compiler/persistent_assembly.hpp"
+#include "compiler/scalar_assembly_admission.hpp"
 #include "compiler/frontend.hpp"
 #include "compiler/namespace_provider.hpp"
 #include <map>
@@ -77,8 +78,9 @@ AssemblyBuild compile_cached_assembly(const fs::path& root,std::string_view sour
  auto name="slot-"+k.substr(0,1);Wipe secret{ledger_admit(scope,record,pin,master)};
  Fd dir(open_root(root));struct stat st{};require(fstat(dir.fd,&st)==0&&st.st_uid==geteuid()&&(st.st_mode&077)==0);
  if(!cold){auto b=read_slot(dir.fd,name);if(b){Secret actual{};std::copy_n(b->begin()+8,32,actual.begin());auto a=hex(actual);require(a[0]==k[0]);
- auto payload=verify(a,*b,secret.value);if(a==k)return {std::move(payload),true};}}
+ auto payload=verify(a,*b,secret.value);if(a==k){audit_scalar_assembly(std::string_view(reinterpret_cast<const char*>(payload.data()),payload.size()));return {std::move(payload),true};}}}
  auto assembly=emit_runtime_asm(parse_runtime_source(std::string(source)),Arch::X86_64);
+ audit_scalar_assembly(assembly);
  Bytes bytes(assembly.begin(),assembly.end());publish(dir.fd,name,seal(k,bytes,secret.value));return {std::move(bytes),false};
 }
 
@@ -136,9 +138,10 @@ AssemblyBuild compile_cached_namespace_provider(const fs::path& root,
  Fd dir(open_root(root));struct stat st{};require(fstat(dir.fd,&st)==0&&st.st_uid==geteuid()&&(st.st_mode&077)==0);
  if(!cold){auto b=read_slot(dir.fd,slot);if(b){
   Secret actual{};std::copy_n(b->begin()+8,32,actual.begin());auto a=hex(actual);require(a[0]==k[0]);
-  auto payload=verify(a,*b,secret.value);if(a==k)return {std::move(payload),true};
+  auto payload=verify(a,*b,secret.value);if(a==k){audit_scalar_assembly(std::string_view(reinterpret_cast<const char*>(payload.data()),payload.size()));return {std::move(payload),true};}
  }}
  auto assembly=emit_runtime_asm(*program,Arch::X86_64);
+ audit_scalar_assembly(assembly);
  Bytes bytes(assembly.begin(),assembly.end());publish(dir.fd,slot,seal(k,bytes,secret.value));
  return {std::move(bytes),false};
 }
