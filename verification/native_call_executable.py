@@ -17,6 +17,14 @@ import hashlib
 
 # Each tuple is (arguments..., value, typed variant, escaping ordinary effect).
 EFFECT_CASES = (
+    ("bool-option", "option", "fnc fits(int x):bool{return x>=-128 && x<=127;} fnc main(int x):Option<int>{return if fits(x) then Some(x) else None fi;}",
+     ((-129,0,0,0),(-128,-128,1,0),(0,0,1,0),(127,127,1,0),(128,0,0,0))),
+    ("bool-effect-trap", "result", "fnc test(int x):bool{return 42/x eq 21;} fnc main(int x):Result<int,Error>{return trap! (test(x) ? 42 : 7);}",
+     ((2,42,0,0),(3,7,0,0),(0,0,65538,0))),
+    ("bool-effect-option", "option", "fnc test(int x):bool{return 42/x eq 21;} fnc main(int x):Option<int>{return if test(x) then Some(x) else None fi;}",
+     ((2,2,1,0),(3,0,0,0),(0,0,0,65538))),
+    ("bool-guard", "int", "fnc good(int x):bool{return x>0;} fnc main(int x):int{guard good(x) {guard x eq 0 {return 9;} return 7;} return 42;}",
+     ((-1,9,0,0),(0,7,0,0),(1,42,0,0))),
     ("option-payload-effect", "option", "fnc main(a:int):Option<int>{return Some(a+1);}",
      ((0,1,1,0),(9223372036854775807,0,0,65537))),
     ("option-predicate-effect", "option", "fnc main(a:int):Option<int>{return if a+1 eq 0 then None else Some(a) fi;}",
@@ -166,7 +174,14 @@ POSITIVE = (
     ("guard-brace-failure", "// False guard executes terminal failure block.\npub fnc main(): int {\n  guard false { return 0; }\n  return 42;\n}", ((0,),)),
     ("guard-keyword-continue", "// Same semantic behavior as brace-continue.atto.\npub fnc main(): int {\n  guard true else\n    return 0;\n  end\n  return 42;\n}", ((42,),)),
     ("guard-keyword-failure", "// False guard executes terminal failure block.\npub fnc main(): int {\n  guard false else\n    return 0;\n  end\n  return 42;\n}", ((0,),)),
-    ("guard-canonical-scalar", "// Canonical AttoLang guard v1: successful guest exit status must be 42.\nfnc bounded(int x): int {\n  guard x > 0 { return 1; }\n  guard x < 10, x neq 5 { return 2; }\n  return 42;\n}\n\npub fnc main(): int {\n  return bounded(3);\n}", ((42,),)),
+    ("guard-canonical-scalar", (Path(__file__).resolve().parent.parent /
+      "contracts/guard-v1/canonical-scalar.atto").read_text(encoding="utf8").removesuffix("\n"), ((42,),)),
+    ("guard-nested-keyword", "fnc main(x:int):int{guard x>0 else guard x eq 0 {^ 9;} ^ 7; end ^ 42;}",
+     ((-1,9),(0,7),(1,42))),
+    ("guard-nested-brace", "fnc main(x:int):int{guard x>0 {guard x eq 0 else ^ 9; end return 7;} return 42;}",
+     ((-1,9),(0,7),(1,42))),
+    ("guard-nested-lazy", "fnc main(x:int):int{guard x eq 1 {guard 9223372036854775807+x eq 0 {return 9;} return 7;} return 42;}",
+     ((1,42),(0,9))),
     ("guard-runtime", "fnc main(int a):int{guard a>0 {^ 1;} guard a<10, a neq 5 else return 2; end return 42;}",
      ((0,1),(3,42),(5,2),(11,2),(-1,1))),
     ("guard-lazy-checks", "fnc main(a:int):int{guard a eq 0, 9223372036854775807+a eq 0 {return 7;} return 42;}",
@@ -219,6 +234,9 @@ TRAPS = (
      (1,), "call depth exceeded"),
 )
 INVALID = (
+    ("nested-guard-fallthrough", "fnc main():int{guard true {guard false {return 7;}} return 42;}", "unexpected token"),
+    ("nested-guard-bool-return", "fnc main():int{guard true {guard false {return true;} return 7;} return 42;}", "Boolean is not an int"),
+    ("nested-guard-failure-no-return", "fnc main():int{guard true else guard false {} return 7; end return 42;}", "guard_failure_requires_return"),
     ("division-bool-left", "fnc main():int{return true/2;}", "Boolean is not an int"),
     ("division-bool-right", "fnc main():int{return 2/false;}", "Boolean is not an int"),
     ("logical-int-left", "fnc main():int{return 1 && true ? 42 : 7;}", "condition_not_bool"),
