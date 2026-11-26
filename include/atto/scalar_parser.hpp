@@ -734,6 +734,7 @@ class Parser {
         return postfix(append(Node{Op::copy,b.second,0,0}));
       }
     }
+    if(current().kind==Kind::name&&pos_+1<tokens_.size()&&tokens_[pos_+1].kind==Kind::lparen&&!refinements_.empty()){fail(ParseError::refinement_call);return std::nullopt;}
     fail(ParseError::syntax);
     return std::nullopt;
   }
@@ -1097,7 +1098,6 @@ public:
     const bool public_entry=name("pub");
     const bool fnc = name("fnc");
     if(public_entry&&fnc&&!refinements_.empty()&&current().kind==Kind::name&&text()!="main"&&text()!="int"&&text()!="infer"){fail(ParseError::refinement_export);return std::move(out_);}
-    if(fnc&&current().kind==Kind::name&&text()=="main"){}
     bool signature_ok = false;
     if (scalar_return_type()) {
       // Prefix int/infer return type, with or without fnc.
