@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -185,6 +186,14 @@ struct Parser {
   }
 };
 
+// C++ tokenization treats the magnitude of INT64_MIN as unsigned. Emit
+// signed, parenthesized constants so strict native builds preserve Atto i64.
+std::string i64_literal(std::int64_t value) {
+  if (value == std::numeric_limits<std::int64_t>::min())
+    return "(-9223372036854775807LL - 1LL)";
+  return "(" + std::to_string(value) + "LL)";
+}
+
 std::string emit(const Plan& plan) {
   std::string output=R"(#include <atto/tenant_bytes_v1.hpp>
 #include <cstdint>
@@ -208,11 +217,11 @@ int main() {
   auto v=[](int i){return "v"+std::to_string(i);};
   for(const auto& s:plan.steps){
     if(s.kind==Step::allocate){
-      output += "  auto "+v(s.variable)+"=arena.allocate_zeroed("+std::to_string(s.a)+");\n";
+      output += "  auto "+v(s.variable)+"=arena.allocate_zeroed("+i64_literal(s.a)+");\n";
       output += "  if("+v(s.variable)+".code!=Code::ok) return fail("+v(s.variable)+".code);\n";
     }else{
       output += "  { auto status="+v(s.variable)+".value->write_byte(arena,"+
-                std::to_string(s.a)+","+std::to_string(s.b)+");"+
+                i64_literal(s.a)+","+i64_literal(s.b)+");"+
                 " if(status!=Code::ok) return fail(status); }\n";
     }
   }
@@ -226,13 +235,13 @@ int main() {
     case Return::read_eq:
       output += "  std::uint8_t byte=0;\n";
       output += "  { auto status="+v(r.left)+".value->read_byte(arena,"+
-                std::to_string(r.argument)+",byte); if(status!=Code::ok) return fail(status); }\n";
+                i64_literal(r.argument)+",byte); if(status!=Code::ok) return fail(status); }\n";
       if(r.kind==Return::read)
         output += "  std::printf(\"%u\\n\",static_cast<unsigned>(byte));\n";
       else
-        output += "  std::printf(\"%lld\\n\",static_cast<long long>(byte=="+
-                  std::to_string(r.compared)+"?"+std::to_string(r.yes)+":"+
-                  std::to_string(r.no)+"));\n";
+        output += "  std::printf(\"%lld\\n\",static_cast<long long>(static_cast<std::int64_t>(byte)=="+
+                  i64_literal(r.compared)+"?"+i64_literal(r.yes)+":"+
+                  i64_literal(r.no)+"));\n";
       break;
     case Return::equal:
       output += "  bool same="+v(r.left)+".value->length()=="+v(r.right)+".value->length();\n";
@@ -245,7 +254,7 @@ int main() {
       output += "    if(rc!=Code::ok) return fail(rc);\n";
       output += "    if(left!=right){same=false;break;}\n  }\n";
       output += "  std::printf(\"%lld\\n\",static_cast<long long>(same?"+
-                std::to_string(r.yes)+":"+std::to_string(r.no)+"));\n";
+                i64_literal(r.yes)+":"+i64_literal(r.no)+"));\n";
       break;
   }
   output += "  return 0;\n}\n";
