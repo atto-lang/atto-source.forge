@@ -1133,9 +1133,9 @@ class Parser {
         continue;
       }
       const bool immutable=name("val");
-      const bool mut=!immutable&&strict_&&name("let");
+      const bool mut=!immutable&&name("let");
       if(!immutable&&!mut){
-        if(!strict_||current().kind!=Kind::name||pos_+1>=tokens_.size()||tokens_[pos_+1].kind!=Kind::equals)break;
+        if(current().kind!=Kind::name||pos_+1>=tokens_.size()||tokens_[pos_+1].kind!=Kind::equals)break;
         const auto n=text();pos_+=2;
         auto binding=std::find_if(bindings_.begin(),bindings_.end(),[&](const auto& x){return x.first==n;});
         auto decl=std::find_if(mutable_types.begin(),mutable_types.end(),[&](const auto& x){return x.first==n;});
@@ -1158,7 +1158,7 @@ class Parser {
         if(!want||current().kind!=Kind::name){fail(ParseError::syntax);return std::nullopt;}
         n=text();++pos_;
       }
-      if(mut&&!want){fail(ParseError::verify_unsupported);return std::nullopt;}
+      if(mut&&(!want||(!strict_&&want->name!="int"))){fail(ParseError::verify_unsupported);return std::nullopt;}
       if(strict_&&current().kind==Kind::semicolon){fail(ParseError::missing_initializer);return std::nullopt;}
       if(!binding_name(n)||!take(Kind::equals)){fail(ParseError::syntax);return std::nullopt;}
       if(strict_&&name("Array")){
@@ -1181,7 +1181,7 @@ class Parser {
       if(want&&!compatible(*value,*want,ParseError::refinement_binding)){
         fail(ParseError::syntax);return std::nullopt;
       }
-      if(strict_){
+      if(strict_||mut){
         value=append(Node{Op::copy,*value,0,0});if(!value)return std::nullopt;
       }
       if(want)ranges_[*value].width=want->width;
@@ -1510,7 +1510,7 @@ public:
     }
     if(!strict_&&missing_primitive_initializer())return std::move(out_);
     std::vector<std::string_view> aliases;
-    auto root = strict_||!helpers_.empty()||(current().kind==Kind::name&&(text()=="val"||(!refinements_.empty()&&text()=="let"))) ? binding_body() : body(aliases);
+    auto root = strict_||!helpers_.empty()||(current().kind==Kind::name&&(text()=="val"||text()=="let")) ? binding_body() : body(aliases);
     if (!root || current().kind != Kind::end) {
       fail(ParseError::syntax);
       return std::move(out_);
