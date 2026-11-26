@@ -73,13 +73,30 @@ static_assert(std::is_standard_layout_v<ExecutionCallbackContext>);
     return true;
 }
 
+[[nodiscard]] constexpr bool valid_execution_callback_context(
+        const ExecutionCallbackContext& context) noexcept {
+    if (context.runtime_domain == 0
+            || context.execution == 0
+            || context.dispatch == 0
+            || context.generation == 0
+            || !valid_boundary(context.boundary)
+            || context.trace_count == 0
+            || context.trace_count > max_callback_trace_boundaries
+            || (context.trace_elided != 0 && context.trace_count != max_callback_trace_boundaries)
+            || context.trace_boundaries[context.trace_count - 1] != context.boundary) {
+        return false;
+    }
+    for (std::size_t i = 0; i < context.trace_count; ++i) {
+        if (!valid_boundary(context.trace_boundaries[i])) return false;
+    }
+    return true;
+}
+
 [[nodiscard]] constexpr bool derive_execution_callback_context(
         const ExecutionCallbackContext& parent,
         CallbackBoundary boundary,
         ExecutionCallbackContext& out) noexcept {
-    if (!valid_boundary(boundary)
-            || parent.trace_count == 0
-            || parent.trace_count > max_callback_trace_boundaries) {
+    if (!valid_boundary(boundary) || !valid_execution_callback_context(parent)) {
         return false;
     }
 
@@ -98,23 +115,6 @@ static_assert(std::is_standard_layout_v<ExecutionCallbackContext>);
     return true;
 }
 
-[[nodiscard]] constexpr bool valid_execution_callback_context(
-        const ExecutionCallbackContext& context) noexcept {
-    if (context.runtime_domain == 0
-            || context.execution == 0
-            || context.dispatch == 0
-            || context.generation == 0
-            || !valid_boundary(context.boundary)
-            || context.trace_count == 0
-            || context.trace_count > max_callback_trace_boundaries
-            || context.trace_boundaries[context.trace_count - 1] != context.boundary) {
-        return false;
-    }
-    for (std::size_t i = 0; i < context.trace_count; ++i) {
-        if (!valid_boundary(context.trace_boundaries[i])) return false;
-    }
-    return true;
-}
 
 /*
  * Provenance-only scope. It never installs an actor turn, allocation/arena
