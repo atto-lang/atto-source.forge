@@ -437,6 +437,20 @@ if(BUILD_TESTING)
   add_test(NAME oresforge_actor_private_frames_host COMMAND oresforge_actor_frames_tests)
   set_tests_properties(oresforge_actor_private_frames_host PROPERTIES
     TIMEOUT 30 LABELS "host-only;actor-logical-frames")
+
+  # A separate executable keeps the allocation instrumentation local to the probe.
+  add_executable(oresforge_actor_frame_allocations verification/actor_frames_allocations.cpp)
+  target_include_directories(oresforge_actor_frame_allocations PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_actor_frame_allocations PRIVATE cxx_std_20)
+  target_link_libraries(oresforge_actor_frame_allocations PRIVATE Threads::Threads)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_actor_frame_allocations PRIVATE
+      -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+  endif()
+  add_test(NAME oresforge_actor_frames_ordinary_allocations_host COMMAND oresforge_actor_frame_allocations)
+  set_tests_properties(oresforge_actor_frames_ordinary_allocations_host PROPERTIES
+    TIMEOUT 30 LABELS "host-only;actor-logical-frames;allocation")
+
 endif()
 
 # Linux x86-64 native actor stack/heap substrate. HOST CALLBACKS ONLY:
