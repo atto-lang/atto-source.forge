@@ -376,6 +376,18 @@ class Parser {
   // Reuse the verified lazy If tree: true continues, false returns early.
   int terminal_body(std::size_t d) {
     depth(d);
+    // Restricted statement conditional: the taken arm exits immediately;
+    // the untaken arm continues. Reuse the validated lazy integer If IR.
+    // Boolean-return bodies and arbitrary mutable statements remain separate.
+    if (take("if")) {
+      const int condition=logical_or(d+1);
+      require_boolean(condition);
+      expect("then");
+      const int early=terminal_return(d+1);
+      expect("fi");
+      const int continuation=terminal_body(d+1);
+      return add(Kind::If,0,{}, {condition,early,continuation});
+    }
     if (!take("guard")) return terminal_return(d+1);
     int condition=logical_or(d+1);
     require_boolean(condition);
