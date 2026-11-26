@@ -42,12 +42,50 @@ def main():
                     r=execute(args,root)
                     require((r.returncode,r.stdout,r.stderr)==(0,expected,b""),name+" boundary mismatch "+str(x))
                 cases+=1
+        # Exercise Boolean results through multiple real native call frames, not
+        # only a direct helper-to-main adapter. RHS overflow is observable if
+        # a lazy Boolean helper accidentally evaluates its dead operand.
+        compositions=(
+          ("bool-call-chain",
+           "fnc leaf(int x):bool{return x eq 0;} "
+           "fnc middle(int x):bool{return leaf(x) eq false;} "
+           "fnc main(int x):int{return middle(x) ? 42 : 7;}",
+           ((0,7),(1,42),(-1,42))),
+          ("bool-call-lazy-and",
+           "fnc risky(int x):bool{return 9223372036854775807+x eq 0;} "
+           "fnc both(int x):bool{return x eq 0 && risky(x);} "
+           "fnc main(int x):int{return both(x) ? 42 : 7;}",
+           ((0,7),(1,7),(-1,7))),
+          ("bool-call-lazy-or",
+           "fnc risky(int x):bool{return 9223372036854775807+x eq 0;} "
+           "fnc either(int x):bool{return x eq 1 || risky(x);} "
+           "fnc main(int x):int{return either(x) ? 42 : 7;}",
+           ((1,42),(0,7),(-1,7))),
+          ("bool-call-four-arguments",
+           "fnc same(int a,int b,int c,int d):bool{return a eq b && c neq d;} "
+           "fnc main(int a,int b,int c,int d):int{return same(a,b,c,d) ? 42 : 7;}",
+           ((1,1,2,3,42),(1,2,3,4,7),(1,1,2,2,7))),
+        )
+        composition_cases=0
+        for name,code,vectors in compositions:
+            file,exe,asm=build(compiler,cc,root,name,code,len(vectors[0])-1)
+            require("  call .Lores_fn_" in asm,name+" missing native call")
+            for row in vectors:
+                expected=(str(row[-1])+"\n").encode()
+                for args in ([compiler,"run-calls",str(file),*map(str,row[:-1])],
+                             [str(exe),*map(str,row[:-1])]):
+                    r=execute(args,root)
+                    require((r.returncode,r.stdout,r.stderr)==(0,expected,b""),
+                            name+" composition mismatch "+repr(row))
+                composition_cases+=1
         negatives=(
           ("fnc f(int x):bool{return x;} fnc main():int{return 1;}","condition_not_bool"),
           ("fnc f(int x):bool{return x eq 0;} fnc main():int{return f(0);}","Boolean is not an int"),
           ("fnc f(int x):bool{return x eq 0;} fnc main():int{return f(0)+1;}","Boolean is not an int"),
           ("fnc f(int x):bool{return x eq 0;} fnc main():int{return f(0) eq 1 ? 1 : 0;}","comparison operand type mismatch"),
           ("fnc main():int{return f(0);} fnc f(int x):bool{return x eq 0;}","Boolean target type mismatch"),
+          ("fnc main():bool{return true;}","Boolean entry requires explicit int adapter"),
+          ("fnc f(int x):bool{return x eq 0;} fnc g(int x):int{return x;} fnc main():int{return g(f(0));}","Boolean is not an int"),
           ("use namespace a; use namespace b; fnc main():int{return 1;}","FORGE_NAMESPACE_DUPLICATE"),
           ("fnc main():int{return 1;} use namespace a;","FORGE_NAMESPACE_HEADER_ORDER"),
         )
@@ -57,7 +95,7 @@ def main():
             r=execute([compiler,"emit-call-asm","x86_64",str(file)],root)
             require(r.returncode!=0 and not r.stdout and diagnostic.encode() in r.stderr,
                     "wrong negative diagnostic: "+repr(r.stderr))
-    print("CORE_TYPES_FORGE_NATIVE=PASS functions=13 vectors="+str(cases)+" negatives="+str(len(negatives)))
+    print("CORE_TYPES_FORGE_NATIVE=PASS functions=13 vectors="+str(cases)+" compositions="+str(composition_cases)+" negatives="+str(len(negatives)))
 
 if __name__=="__main__":
     main()
