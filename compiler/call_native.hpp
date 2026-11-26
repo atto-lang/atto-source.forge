@@ -1,6 +1,8 @@
 #pragma once
 #include "codegen/native.hpp"
 #include <cstdint>
+#include <cstddef>
+#include <type_traits>
 #include <span>
 #include <string>
 #include <string_view>
@@ -11,8 +13,20 @@ namespace oresforge::calls {
 // legacy scalar IR; no misleading claims about the general Oreslang ABI.
 enum class Kind {
   Constant, Parameter, Add, Sub, Mul, Less, LessEqual, Greater,
-  GreaterEqual, Equal, NotEqual, If, Call, Boolean, Not, Ternary, And, Or, BooleanXor
+  GreaterEqual, Equal, NotEqual, If, Call, Boolean, Not, Ternary, And, Or, BooleanXor, Div
 };
+// Provisional scalar native status ABI. Two INTEGER-class eightbytes on
+// SysV x86-64: value in RAX, error code in RDX. No heap allocation.
+enum class ArithmeticStatus : std::uint64_t {
+  Ok=0, Overflow=65537, DivisionByZero=65538
+};
+struct ArithmeticResult {
+  std::int64_t value;
+  ArithmeticStatus status;
+};
+static_assert(std::is_standard_layout_v<ArithmeticResult> &&
+              std::is_trivially_copyable_v<ArithmeticResult>);
+static_assert(sizeof(ArithmeticResult)==16 && offsetof(ArithmeticResult,status)==8);
 struct Node {
   Kind kind;
   std::int64_t value = 0;
