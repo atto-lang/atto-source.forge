@@ -86,6 +86,28 @@ int main() {
     d = analyze(p, 48);
     need(d[0].storage == Storage::StackCandidate &&
          d[1].storage == Storage::StackCandidate, "aggregate frame within budget");
+    // A small first slot followed by a highly aligned slot needs padding
+    // before the second slot. Independent slot rounding undercharges by 56.
+    p = base(); p.allocations[0] = record("p", 8, 8);
+    p.allocations.push_back(record("q", 64, 64));
+    p.uses.push_back({0, UseKind::LocalBorrow, 0, true});
+    p.uses.push_back({1, UseKind::FieldWrite, 0});
+    p.uses.push_back({1, UseKind::FieldWrite, 1});
+    p.uses.push_back({1, UseKind::LocalBorrow, 0, true});
+    for (std::size_t budget : {72u, 127u}) {
+      d = analyze(p, budget);
+      need(d[0].storage == Storage::StackCandidate &&
+           d[1].storage == Storage::PreserveAllocation &&
+           d[1].reason == "stack-budget-or-alignment", "inter-slot padding charged");
+    }
+    d = analyze(p, 128);
+    need(d[0].storage == Storage::StackCandidate &&
+         d[1].storage == Storage::StackCandidate, "exact padded frame fits");
+    p.allocations[1] = record("q", 16, 16);
+    d = analyze(p, 24);
+    need(d[1].storage == Storage::PreserveAllocation, "mixed alignment cannot overbook");
+    d = analyze(p, 32);
+    need(d[1].storage == Storage::StackCandidate, "mixed alignment exact fit");
     p = base(); p.allocations.push_back(record("p"));
     invalid([&] { (void)analyze(p); });
     p = base(); p.allocations[0].alignment = 3;
