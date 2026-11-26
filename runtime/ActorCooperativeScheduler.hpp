@@ -25,7 +25,6 @@ class ActorCooperativeScheduler final {
       : owner_(std::this_thread::get_id()), actor_limit_(actor_limit) {
     if (!actor_limit || actor_limit > 65536)
       throw std::invalid_argument("invalid scheduler actor quota");
-    runnable_.resize(actor_limit); // no allocation needed during wakeup
   }
   ActorCooperativeScheduler(const ActorCooperativeScheduler&) = delete;
   ActorCooperativeScheduler& operator=(const ActorCooperativeScheduler&) = delete;
@@ -70,14 +69,11 @@ class ActorCooperativeScheduler final {
     require_owner();
     require_outside_dispatch();
     while (ready_count_ != 0) {
-      const auto id = runnable_[ready_head_];
-      runnable_[ready_head_] = 0;
-      ready_head_ = (ready_head_ + 1) % actor_limit_;
-      --ready_count_;
-      auto it = live_.find(id);
-      if (it == live_.end()) continue;
-      Actor& actor = *it->second;
-      actor.queued = false;
+      Actor& actor = *ready_head_;
+      auto it = live_.find(actor.id);
+      if (it == live_.end() || it->second.get() != &actor)
+        std::terminate(); // An intrusive ready node must remain live.
+      purge_ready(actor);
       try {
         if (!actor.started) {
           actor.started = true;
@@ -101,7 +97,7 @@ class ActorCooperativeScheduler final {
         if (!actor.stopping) {
           actor.mailbox.close();
           actor.stack.stop();
-          purge_ready(id); // A self-send may have queued this retired actor.
+          purge_ready(actor); // A self-send may have queued this retired actor.
           live_.erase(it);
           throw;
         }
@@ -111,14 +107,14 @@ class ActorCooperativeScheduler final {
             actor.stack.task_state() == ActorStackDomain::TaskState::Running)
           std::terminate(); // Cannot release a live native continuation.
         actor.stack.stop();
-        purge_ready(id); // A self-send may have queued this retired actor.
+        purge_ready(actor); // A self-send may have queued this retired actor.
         live_.erase(it);
         throw;
       }
       if (actor.stack.task_state() == ActorStackDomain::TaskState::Finished) {
         actor.mailbox.close();
         actor.stack.stop();
-        purge_ready(id); // A self-send may have queued this retired actor.
+        purge_ready(actor); // A self-send may have queued this retired actor.
         live_.erase(it);
       } else if (actor.stopping || actor.mailbox.queued() != 0) {
         ready(actor);
@@ -147,7 +143,7 @@ class ActorCooperativeScheduler final {
     actor.stopping = true;
     actor.mailbox.close();
     if (!actor.started) {
-      purge_ready(id);
+      purge_ready(actor);
       actor.stack.stop();
       live_.erase(it);
     } else if (actor.stack.task_state() == ActorStackDomain::TaskState::Suspended) {
@@ -183,14 +179,18 @@ class ActorCooperativeScheduler final {
     ActorStackDomain stack;
     Mailbox mailbox;
     Handler handler;
+    Actor* ready_prev = nullptr;
+    Actor* ready_next = nullptr;
     bool queued=false, started=false, stopping=false;
   };
   const std::thread::id owner_;
   const std::size_t actor_limit_;
   std::map<std::uint64_t, std::unique_ptr<Actor>> live_;
   std::map<std::uint64_t, bool> ever_used_;
-  std::vector<std::uint64_t> runnable_;
-  std::size_t ready_head_ = 0, ready_count_ = 0;
+  // Non-owning links refer exclusively to entries owned by live_.
+  Actor* ready_head_ = nullptr;
+  Actor* ready_tail_ = nullptr;
+  std::size_t ready_count_ = 0;
 
   void require_owner() const {
     if (std::this_thread::get_id() != owner_)
@@ -204,21 +204,24 @@ class ActorCooperativeScheduler final {
     if (actor.queued) return;
     if (ready_count_ >= actor_limit_)
       throw std::logic_error("bounded scheduler ready queue exhausted");
-    runnable_[(ready_head_ + ready_count_) % actor_limit_] = actor.id;
+    actor.ready_prev = ready_tail_;
+    actor.ready_next = nullptr;
+    if (ready_tail_) ready_tail_->ready_next = &actor;
+    else ready_head_ = &actor;
+    ready_tail_ = &actor;
     ++ready_count_;
-    actor.queued=true;
+    actor.queued = true;
   }
-  void purge_ready(std::uint64_t id) noexcept {
-    // A stopped, never-started actor must not occupy a wakeup slot forever.
-    std::size_t kept=0;
-    for (std::size_t i=0;i<ready_count_;++i) {
-      const auto value=runnable_[(ready_head_+i)%actor_limit_];
-      if (value != id) {
-        runnable_[(ready_head_+kept)%actor_limit_] = value;
-        ++kept;
-      }
-    }
-    ready_count_=kept;
+  void purge_ready(Actor& actor) noexcept {
+    if (!actor.queued) return;
+    // Unlink before any owning live_ erase, including self-send retirement.
+    if (actor.ready_prev) actor.ready_prev->ready_next = actor.ready_next;
+    else ready_head_ = actor.ready_next;
+    if (actor.ready_next) actor.ready_next->ready_prev = actor.ready_prev;
+    else ready_tail_ = actor.ready_prev;
+    actor.ready_prev = actor.ready_next = nullptr;
+    actor.queued = false;
+    --ready_count_;
   }
 };
 } // namespace oresforge::runtime
