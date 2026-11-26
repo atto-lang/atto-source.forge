@@ -25,6 +25,10 @@ struct Evaluated {
       values.push_back(node.value);
       continue;
     }
+    if(node.op==Op::copy||node.op==Op::sequence){
+      const auto value=values[node.op==Op::copy?node.left:node.right];
+      values.push_back(value);continue;
+    }
     if (node.op==Op::refine) {
       const auto value=values[node.left];
       if (value<node.value || value>node.upper) return {{},EvalError::refinement_violation};

@@ -60,6 +60,9 @@ struct SpanScope {
           ? "std::numeric_limits<atto::forge::i64>::min()"
           : std::to_string(n.value);
       code += "  std::optional<atto::forge::i64> " + var(i) + "{" + value + "};\n";
+    } else if(n.op==Op::copy||n.op==Op::sequence){
+      if(n.op==Op::sequence)code+="  (void)"+var(n.left)+";\n";
+      code+="  auto "+var(i)+" = "+var(n.op==Op::copy?n.left:n.right)+";\n";
     } else if (n.op==Op::refine) {
       code += "  if (*" + var(n.left) + " < " + literal(n.value) +
           " || *" + var(n.left) + " > " + literal(n.upper) +
