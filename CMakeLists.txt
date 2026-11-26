@@ -10,6 +10,22 @@ endif()
 add_executable(oresforge compiler/main.cpp)
 target_link_libraries(oresforge PRIVATE oresforge_core)
 include(CTest)
+option(ORESFORGE_EXPERIMENTAL_STAGE0_NATIVE_TESTS "Enable legacy scalar actor source-to-native witness (not production actor support)" OFF)
+if(BUILD_TESTING AND ORESFORGE_EXPERIMENTAL_STAGE0_NATIVE_TESTS)
+  if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    message(FATAL_ERROR "Stage-0 native actor witness currently requires Linux")
+  endif()
+  enable_language(C)
+  if(NOT CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" OR NOT CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    message(FATAL_ERROR "Stage-0 native actor witness requires GCC or Clang")
+  endif()
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  add_test(NAME forge_stage0_compiled_native_actor
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/scalar_actor_stage0_native.py"
+      --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}")
+  set_tests_properties(forge_stage0_compiled_native_actor PROPERTIES
+    TIMEOUT 180 LABELS "experimental;compiled-guest;legacy-syntax")
+endif()
 if(BUILD_TESTING)
   # This executes the REAL Forge compiler frontend on the backend-owned Atto
   # module and refuses a false-positive class/time compiler admission.
@@ -159,6 +175,18 @@ if(BUILD_TESTING)
       "-DUNSUPPORTED=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/scalar-check/unsupported.atto"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/verification/scalar_check_cli.cmake")
   set_tests_properties(oresforge_cli_scalar_check PROPERTIES TIMEOUT 45)
+  # Exact shared scalar source; execute emitted native code, not a host model.
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$")
+    add_test(NAME oresforge_shared_atto_native_scalar_aot
+      COMMAND "${CMAKE_COMMAND}"
+        "-DFORGE_COMPILER=$<TARGET_FILE:oresforge>"
+        "-DFORGE_CXX=${CMAKE_CXX_COMPILER}"
+        "-DPOSITIVE=${CMAKE_CURRENT_SOURCE_DIR}/contracts/atto-parity-v1/add.atto"
+        "-DNEGATIVE=${CMAKE_CURRENT_SOURCE_DIR}/contracts/atto-parity-v1/reject-unknown.atto"
+        "-DOUTPUT_ROOT=${CMAKE_CURRENT_BINARY_DIR}/atto-shared-scalar-native"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/verification/atto_scalar_native.cmake")
+    set_tests_properties(oresforge_shared_atto_native_scalar_aot PROPERTIES TIMEOUT 90)
+  endif()
   add_test(NAME oresforge_cli_legacy_ores_guest
     COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.ores")
   set_tests_properties(oresforge_cli_legacy_ores_guest PROPERTIES
@@ -235,6 +263,87 @@ if(BUILD_TESTING)
     COMMAND oresforge_actor_incarnation_memory_v1)
   set_tests_properties(oresforge_actor_incarnation_memory_v1_host
     PROPERTIES TIMEOUT 30)
+  # One trusted owner binds mailbox generation, the physical actor turn and
+  # separate native heap/frame memory. This is a host-only lifecycle check.
+  add_executable(oresforge_actor_incarnation_owner_v1
+    verification/actor_incarnation_owner_v1_test.cpp)
+  target_link_libraries(oresforge_actor_incarnation_owner_v1
+    PRIVATE oresforge_core Threads::Threads)
+  target_compile_features(oresforge_actor_incarnation_owner_v1 PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_actor_incarnation_owner_v1 PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME oresforge_actor_incarnation_owner_v1_host
+    COMMAND oresforge_actor_incarnation_owner_v1)
+  set_tests_properties(oresforge_actor_incarnation_owner_v1_host
+    PROPERTIES TIMEOUT 30)
+  # Actual ActorIncarnationOwnerV1 native DATA/STOP fence parity, host only.
+  add_executable(oresforge_supervisor_data_fence_parity_v1
+    verification/supervisor_data_fence_parity_v1_test.cpp)
+  target_link_libraries(oresforge_supervisor_data_fence_parity_v1
+    PRIVATE oresforge_core Threads::Threads)
+  target_compile_features(oresforge_supervisor_data_fence_parity_v1 PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_supervisor_data_fence_parity_v1 PRIVATE
+      -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+  endif()
+  add_test(NAME oresforge_supervisor_data_fence_parity_v1_host
+    COMMAND oresforge_supervisor_data_fence_parity_v1)
+  set_tests_properties(oresforge_supervisor_data_fence_parity_v1_host
+    PROPERTIES TIMEOUT 45)
+  # Long-lived native mailbox generation/reuse regression (host only).
+  add_executable(oresforge_mailbox_incarnation_reuse_v1
+    verification/mailbox_incarnation_reuse_v1_test.cpp)
+  target_link_libraries(oresforge_mailbox_incarnation_reuse_v1
+    PRIVATE oresforge_core Threads::Threads)
+  target_compile_features(oresforge_mailbox_incarnation_reuse_v1 PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_mailbox_incarnation_reuse_v1 PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME oresforge_mailbox_incarnation_reuse_v1_host
+    COMMAND oresforge_mailbox_incarnation_reuse_v1)
+  set_tests_properties(oresforge_mailbox_incarnation_reuse_v1_host
+    PROPERTIES TIMEOUT 60)
+  add_executable(oresforge_monotonic_domain_v1
+    verification/monotonic_domain_v1_test.cpp)
+  target_link_libraries(oresforge_monotonic_domain_v1 PRIVATE Threads::Threads)
+  target_include_directories(oresforge_monotonic_domain_v1 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_monotonic_domain_v1 PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_monotonic_domain_v1 PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME oresforge_monotonic_domain_v1_host
+    COMMAND oresforge_monotonic_domain_v1)
+  set_tests_properties(oresforge_monotonic_domain_v1_host PROPERTIES TIMEOUT 30)
+  add_executable(oresforge_actor_arena_domain_reuse_v1
+    verification/actor_arena_domain_reuse_v1_test.cpp)
+  target_link_libraries(oresforge_actor_arena_domain_reuse_v1 PRIVATE Threads::Threads)
+  target_include_directories(oresforge_actor_arena_domain_reuse_v1 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_actor_arena_domain_reuse_v1 PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_actor_arena_domain_reuse_v1 PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME oresforge_actor_arena_domain_reuse_v1_host
+    COMMAND oresforge_actor_arena_domain_reuse_v1)
+  set_tests_properties(oresforge_actor_arena_domain_reuse_v1_host PROPERTIES TIMEOUT 60)
+  # Independent sustained native host-owner lifecycle regression.
+  add_executable(oresforge_actor_owner_lifetime_v1
+    verification/actor_owner_lifetime_v1_test.cpp)
+  target_link_libraries(oresforge_actor_owner_lifetime_v1
+    PRIVATE oresforge_core Threads::Threads)
+  target_compile_features(oresforge_actor_owner_lifetime_v1 PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_actor_owner_lifetime_v1 PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME oresforge_actor_owner_lifetime_v1_host
+    COMMAND oresforge_actor_owner_lifetime_v1)
+  # Million-cycle sanitizer run needs more time than the old 100k regression.
+  set_tests_properties(oresforge_actor_owner_lifetime_v1_host PROPERTIES TIMEOUT 900)
   add_executable(oresforge_mailbox_model verification/actor_mailbox_model.cpp)
   target_link_libraries(oresforge_mailbox_model PRIVATE oresforge_core)
   add_test(NAME oresforge_actor_mailbox_model COMMAND oresforge_mailbox_model)
@@ -362,6 +471,13 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
         "${CMAKE_CURRENT_SOURCE_DIR}/verification/native_call_executable.py"
         --compiler "$<TARGET_FILE:oresforge>")
     set_tests_properties(oresforge_real_native_recursive_calls PROPERTIES TIMEOUT 180)
+    # The pinned core library is executable through the typed callable lane.
+    # Keep it in the full GCC/Clang/sanitizer matrix, not just a path-filtered workflow.
+    add_test(NAME oresforge_core_types_native
+      COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/verification/core_types_native.py"
+        --compiler "$<TARGET_FILE:oresforge>")
+    set_tests_properties(oresforge_core_types_native PROPERTIES TIMEOUT 180)
   endif()
 endif()
 
@@ -574,6 +690,38 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 add_test(NAME result_int_parse_v1_test COMMAND result_int_parse_v1_test)
 
+# Host-only bounded Error identity foundation, not a guest exception ABI.
+add_executable(forge_error_arena_test verification/error_arena_test.cpp)
+target_include_directories(forge_error_arena_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_features(forge_error_arena_test PRIVATE cxx_std_20)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(forge_error_arena_test PRIVATE -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(forge_error_arena_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(forge_error_arena_test PRIVATE -fsanitize=address,undefined)
+  endif()
+elseif(MSVC)
+  target_compile_options(forge_error_arena_test PRIVATE /UNDEBUG)
+endif()
+add_test(NAME forge_error_arena_host COMMAND forge_error_arena_test)
+set_tests_properties(forge_error_arena_host PROPERTIES TIMEOUT 15 LABELS "host-only;error-representation")
+
+# Host-only arithmetic status to Error identity bridge, not a guest ABI.
+add_executable(forge_arithmetic_error_bridge_test verification/arithmetic_error_bridge_test.cpp)
+target_include_directories(forge_arithmetic_error_bridge_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_features(forge_arithmetic_error_bridge_test PRIVATE cxx_std_20)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(forge_arithmetic_error_bridge_test PRIVATE -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(forge_arithmetic_error_bridge_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(forge_arithmetic_error_bridge_test PRIVATE -fsanitize=address,undefined)
+  endif()
+elseif(MSVC)
+  target_compile_options(forge_arithmetic_error_bridge_test PRIVATE /UNDEBUG)
+endif()
+add_test(NAME forge_arithmetic_error_bridge_host COMMAND forge_arithmetic_error_bridge_test)
+set_tests_properties(forge_arithmetic_error_bridge_host PROPERTIES TIMEOUT 15 LABELS "host-only;error-representation")
+
 # Restricted native lexer has no Python or borrowed source buffers.
 add_executable(scalar_lexer_test tests/scalar_lexer.cpp)
 target_link_libraries(scalar_lexer_test PRIVATE atto_forge_checked_i64)
@@ -597,6 +745,22 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   endif()
 endif()
 add_test(NAME scalar_parser_test COMMAND scalar_parser_test)
+
+# Deterministic bounded source-admission fuzz matrix: UTF-8 byte fragments,
+# nested comment delimiters, ownership bangs and arbitrary token sequences.
+# No native guest ABI or actor-runtime parity is claimed by this host test.
+add_executable(scalar_lexer_parser_fuzz_test tests/scalar_lexer_parser_fuzz.cpp)
+target_link_libraries(scalar_lexer_parser_fuzz_test PRIVATE atto_forge_checked_i64)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(scalar_lexer_parser_fuzz_test PRIVATE -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(scalar_lexer_parser_fuzz_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(scalar_lexer_parser_fuzz_test PRIVATE -fsanitize=address,undefined)
+  endif()
+elseif(MSVC)
+  target_compile_options(scalar_lexer_parser_fuzz_test PRIVATE /UNDEBUG)
+endif()
+add_test(NAME scalar_lexer_parser_fuzz_test COMMAND scalar_lexer_parser_fuzz_test)
 
 # Checked native scalar AST evaluator: no guest execution claim.
 add_executable(scalar_eval_test tests/scalar_eval.cpp)
@@ -688,6 +852,29 @@ add_test(NAME scalar_check_only
     "-DFORGE=$<TARGET_FILE:forge_scalar>"
     "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/scalar-check"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/scalar_check.cmake")
+
+# Bounded local Pointer<int> compiler-native guest parity. This runs real
+# generated source under GCC/Clang and sanitizers, never a Python model.
+add_executable(pointer_local_typed_test tests/pointer_local_typed.cpp)
+target_link_libraries(pointer_local_typed_test PRIVATE atto_forge_checked_i64)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(pointer_local_typed_test PRIVATE -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(pointer_local_typed_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(pointer_local_typed_test PRIVATE -fsanitize=address,undefined)
+  endif()
+elseif(MSVC)
+  target_compile_options(pointer_local_typed_test PRIVATE /UNDEBUG)
+endif()
+add_test(NAME pointer_local_typed_test COMMAND pointer_local_typed_test)
+add_test(NAME pointer_local_native_guests
+  COMMAND "${CMAKE_COMMAND}"
+    "-DROOT=${CMAKE_CURRENT_SOURCE_DIR}"
+    "-DCXX=${CMAKE_CXX_COMPILER}"
+    "-DSANITIZERS=${ATTO_FORGE_SANITIZERS}"
+    "-DFORGE=$<TARGET_FILE:forge_scalar>"
+    "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/pointer-local-guests"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/pointer_local_guest.cmake")
 
 
 # Proxy actor receipt semantics: isolated native HOST MODEL, not guest IPC.
