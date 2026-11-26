@@ -27,7 +27,7 @@ struct Node {
   std::vector<LoopExit> exits{};
 };
 enum class ParseError {
-  none, lexical, ownership_bang_unsupported, pointer_profile, syntax, literal_out_of_range, depth_limit, node_limit, telemetry, verify_unproven, verify_unsupported, unit_name, unit_duplicate, unit_dimension, unit_scale, unit_limit, unit_erasure, unit_attachment, unit_inexact, unit_range, refinement_empty, refinement_binding, refinement_precondition, refinement_return, refinement_duplicate, refinement_postcondition, refinement_contract, refinement_export, refinement_body, refinement_call, refinement_cast, i32_range, new_required, lock_unsupported, task_unsupported, task_return_type, pair_key_type, pair_scope, pair_escape, pair_projection, pair_key_unsupported, missing_initializer
+  none, lexical, ownership_bang_unsupported, pointer_profile, syntax, literal_out_of_range, depth_limit, node_limit, telemetry, verify_unproven, verify_unsupported, unit_name, unit_duplicate, unit_dimension, unit_scale, unit_limit, unit_erasure, unit_attachment, unit_inexact, unit_range, refinement_empty, refinement_binding, refinement_precondition, refinement_return, refinement_duplicate, refinement_postcondition, refinement_contract, refinement_export, refinement_body, refinement_call, refinement_cast, i32_range, new_required, lock_unsupported, task_unsupported, task_return_type, pair_key_type, pair_scope, pair_escape, pair_projection, pair_key_unsupported, missing_initializer, entry_scope, entry_escape, entry_projection
 };
 // Stable sanitized diagnostics; never echo user source bytes.
 [[nodiscard]] constexpr std::string_view parse_error_name(ParseError error) noexcept {
@@ -50,6 +50,9 @@ enum class ParseError {
     case ParseError::pair_escape: return "E_PAIR_ESCAPE_UNSUPPORTED";
     case ParseError::pair_projection: return "E_PAIR_PROJECTION_UNSUPPORTED";
     case ParseError::pair_key_unsupported: return "E_PAIR_KEY_UNSUPPORTED";
+    case ParseError::entry_scope: return "E_ENTRY_SCOPE_UNSUPPORTED";
+    case ParseError::entry_escape: return "E_ENTRY_ESCAPE_UNSUPPORTED";
+    case ParseError::entry_projection: return "E_ENTRY_PROJECTION_UNSUPPORTED";
     case ParseError::missing_initializer: return "E_MISSING_INITIALIZER";
     case ParseError::verify_unproven: return "E_VERIFY_UNPROVEN";
     case ParseError::verify_unsupported: return "E_VERIFY_UNSUPPORTED";
@@ -885,9 +888,61 @@ class Parser {
     return postfix(append(Node{Op::copy,*second,0,0}));
   }
 
+  // Both eager int operands are retained in the verified DAG. A copy of
+  // the first slot after the second evaluation selects key without rerunning it.
+  [[nodiscard]] std::optional<std::size_t> entry_projection(int depth) {
+    // The bounded token vector makes this conservative ambiguity scan cheap.
+    // A name in declarations, qualified access or parameters must not be
+    // mistaken for a builtin. Quoted text and comments are inert.
+    for (std::size_t i=0;i<tokens_.size();++i) {
+      const auto& t=tokens_[i];
+      if(t.kind!=Kind::name || source_.substr(t.offset,t.length)!="Entry") continue;
+      if(i+2>=tokens_.size() || tokens_[i+1].kind!=Kind::dot ||
+         tokens_[i+2].kind!=Kind::name ||
+         source_.substr(tokens_[i+2].offset,tokens_[i+2].length)!="of" ||
+         (i>0 && (tokens_[i-1].kind==Kind::dot || tokens_[i-1].kind==Kind::double_colon))) {
+        fail(ParseError::entry_scope); return std::nullopt;
+      }
+    }
+    ++pos_;
+    if(!take(Kind::dot)||!name("of")){fail(ParseError::syntax);return std::nullopt;}
+    if(take(Kind::lt)){
+      if(!name("int")||!take(Kind::comma)||!name("int")||!take(Kind::gt)){
+        fail(ParseError::entry_projection);return std::nullopt;
+      }
+    }
+    if(!take(Kind::lparen)){fail(ParseError::syntax);return std::nullopt;}
+    auto first=expr(depth+1);
+    if(!first)return std::nullopt;
+    // Fresh copy anchors even a reused binding in source evaluation order.
+    first=append(Node{Op::copy,*first,0,0});
+    if(!first)return std::nullopt;
+    if(!take(Kind::comma)){fail(ParseError::syntax);return std::nullopt;}
+    auto second=expr(depth+1);
+    if(!second)return std::nullopt;
+    second=append(Node{Op::copy,*second,0,0});
+    if(!second)return std::nullopt;
+    if(!dimensionless(*first)||!dimensionless(*second)){
+      fail(ParseError::unit_dimension);return std::nullopt;
+    }
+    if(ranges_[*first].width==Width::i32||ranges_[*second].width==Width::i32){
+      fail(ParseError::entry_projection);return std::nullopt;
+    }
+    if(!take(Kind::rparen)){fail(ParseError::syntax);return std::nullopt;}
+    if(!take(Kind::dot)){fail(ParseError::entry_escape);return std::nullopt;}
+    if(name("value"))return postfix(append(Node{Op::sequence,*first,*second,0}));
+    if(!name("key")){fail(ParseError::entry_projection);return std::nullopt;}
+    auto selected=append(Node{Op::copy,*first,0,0});
+    if(!selected)return std::nullopt;
+    auto tail=append(Node{Op::sequence,*second,*selected,0});
+    if(!tail)return std::nullopt;
+    return postfix(append(Node{Op::sequence,*first,*tail,0}));
+  }
+
   [[nodiscard]] std::optional<std::size_t> unary(int depth) {
     if (depth > max_parse_depth) { fail(ParseError::depth_limit); return std::nullopt; }
     if(current().kind==Kind::name && text()=="Pair" && pos_+1<tokens_.size() && tokens_[pos_+1].kind==Kind::dot) return pair_projection(depth);
+    if(current().kind==Kind::name && text()=="Entry" && pos_+1<tokens_.size() && tokens_[pos_+1].kind==Kind::dot) return entry_projection(depth);
     if (take(Kind::lt)) {
       if (const auto* r=refinement_target()) {
         ++pos_;
