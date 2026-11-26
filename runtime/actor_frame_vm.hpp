@@ -65,18 +65,15 @@ public:
             ++depth;
         };
         push(entry, argument);
-        std::size_t cycles = 0, consumed = 0;
+        std::size_t consumed = 0;
         while (depth != 0) {
-            // Cheap per-instruction increment. Only every 128th instruction
-            // performs the heavier quota comparison; no carrier is blocked.
-            if (++cycles == 128) {
-                cycles = 0;
-                consumed += 128;
-                if (consumed >= instruction_quota) {
-                    frames.retire(); // uncatchable actor-local terminal fault
-                    throw std::length_error("actor scalar VM execution quota exceeded");
-                }
+            // Admit exactly instruction_quota instructions, not quota - 1.
+            // A terminal return at the inclusive boundary is valid.
+            if (consumed == instruction_quota) {
+                frames.retire(); // uncatchable actor-local terminal fault
+                throw std::length_error("actor scalar VM execution quota exceeded");
             }
+            ++consumed;
             auto& frame = handles[depth - 1];
             auto state = load(frames, token, frame);
             const auto& code = functions_[function_ids[depth - 1]].instructions;
