@@ -955,3 +955,60 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
       "$<TARGET_FILE:oresforge>" "${CMAKE_CURRENT_SOURCE_DIR}/contracts/counted-ready-v1")
   set_tests_properties(oresforge_shared_counted_ready_native PROPERTIES TIMEOUT 240)
 endif()
+
+# ByteBuffer v1 native endian/bounds primitive (host-only, not Atto guest).
+add_executable(byte_buffer_v1_test tests/byte_buffer_v1.cpp)
+target_link_libraries(byte_buffer_v1_test PRIVATE atto_forge_checked_i64)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(byte_buffer_v1_test PRIVATE -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(byte_buffer_v1_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(byte_buffer_v1_test PRIVATE -fsanitize=address,undefined)
+  endif()
+elseif(MSVC)
+  target_compile_options(byte_buffer_v1_test PRIVATE /UNDEBUG)
+endif()
+add_test(NAME byte_buffer_v1_test COMMAND byte_buffer_v1_test)
+
+# Compare complete canonical source bytes before any native build.
+# Expected SHA-256 values are from atto-common-source PR #30.
+file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/include/atto/tenant_bytes_v1.hpp" ATTO_SHARED_ALLOC_HEADER_SHA)
+file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/tests/tenant_bytes_v1.cpp" ATTO_SHARED_ALLOC_TEST_SHA)
+if(NOT ATTO_SHARED_ALLOC_HEADER_SHA STREQUAL "4dfa5e8cf73b54c4877c9e423db57355f15b4fb1595d2ded293c97862b334769" OR
+   NOT ATTO_SHARED_ALLOC_TEST_SHA STREQUAL "768e9baba9ac6ded2c81e1256fa6e60cf50333a1ec8bcdac7d6dd4732d2e802d")
+  message(FATAL_ERROR "SHARED_ATTO_ALLOC_SOURCE_DRIFT: sync exact reviewed common-source bytes")
+endif()
+
+# Shared C++20 host reference snapshot, pinned to atto-common-source #30; production libraries remain backend-owned.
+# No Atto guest/runtime/TenantVM certification is implied by this CTest.
+add_executable(tenant_bytes_v1_test tests/tenant_bytes_v1.cpp)
+target_link_libraries(tenant_bytes_v1_test PRIVATE atto_forge_checked_i64 Threads::Threads)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(tenant_bytes_v1_test PRIVATE -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(tenant_bytes_v1_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(tenant_bytes_v1_test PRIVATE -fsanitize=address,undefined)
+  endif()
+elseif(MSVC)
+  target_compile_options(tenant_bytes_v1_test PRIVATE /UNDEBUG)
+endif()
+add_test(NAME tenant_bytes_v1_test COMMAND tenant_bytes_v1_test)
+
+# Experimental .atto allocation guest compiler; NOT canonical .atto stdlib linking.
+add_executable(forge_alloc tools/forge_alloc.cpp)
+target_link_libraries(forge_alloc PRIVATE atto_forge_checked_i64 Threads::Threads)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(forge_alloc PRIVATE -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(forge_alloc PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(forge_alloc PRIVATE -fsanitize=address,undefined)
+  endif()
+endif()
+add_test(NAME alloc_guest_v1_compiled
+  COMMAND "${CMAKE_COMMAND}"
+    "-DROOT=${CMAKE_CURRENT_SOURCE_DIR}"
+    "-DCXX=${CMAKE_CXX_COMPILER}"
+    "-DSANITIZERS=${ATTO_FORGE_SANITIZERS}"
+    "-DFORGE_ALLOC=$<TARGET_FILE:forge_alloc>"
+    "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/alloc-v1-guests"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/alloc_guest_v1.cmake")

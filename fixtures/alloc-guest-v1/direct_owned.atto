@@ -1,0 +1,5 @@
+import module r from pkg "alloc.byte_region";
+pub fnc main(): int throws Error {
+  val a = OwnedBytes.allocate_zeroed(1);
+  return a.read_byte(0);
+}
