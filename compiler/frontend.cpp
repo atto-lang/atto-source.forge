@@ -659,7 +659,7 @@ class Parser {
     if (e.tag==Expr::Tag::Call) {
       auto found=functions_.find(e.name);
       if (found==functions_.end())
-        throw std::runtime_error("unknown function: "+e.name);
+        throw std::runtime_error("unknown function: "+e.name+" at byte "+std::to_string(e.offset));
       if (found->second.parameters.size()!=e.children.size())
         throw std::runtime_error("function arity mismatch: "+e.name);
       validate_calls(e.name,active,complete);
@@ -706,7 +706,7 @@ class Parser {
       }
       case Expr::Tag::Call: {
         auto found=functions_.find(e.name);
-        if (found==functions_.end()) throw std::runtime_error("unknown function: "+e.name);
+        if (found==functions_.end()) throw std::runtime_error("unknown function: "+e.name+" at byte "+std::to_string(e.offset));
         const auto& fn=found->second;
         if (fn.parameters.size()!=e.children.size())
           throw std::runtime_error("function arity mismatch: "+e.name);
