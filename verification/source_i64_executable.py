@@ -98,7 +98,7 @@ def main():
     sha=hashlib.sha256(compiler.read_bytes()).hexdigest()
     cases=load_cases()
     records=[]
-    negatives=(("3/2","division requires float result lowering"),
+    negatives=(("3/2","FORGE_CHECKED_DIVISION_BACKEND_UNSUPPORTED: signed i64 quotient requires typed arithmetic error lowering"),
                ("9223372036854775808","invalid i64"),
                ("9223372036854775807+1","i64 add overflow"),
                ("-9223372036854775808-1","i64 sub overflow"),
