@@ -39,3 +39,32 @@ for expr in 'identity<U=int>(42)' 'identity<T=3>(42)' 'identity<T=bool>(true)' '
 done
 test "$count" -eq 14
 printf 'FORGE_GENERIC_VERIFIED %s cases\n' "$count"
+
+# Closed static predicates: both arms are checked, only selected arm lowers.
+for source in \
+ 'pub fnc main(): int { if 1 < 2 do return 42; fi return 0; }' \
+ 'pub fnc main(): int { if 2 < 1 do return 0; else return 42; fi }' \
+ 'pub fnc main(): int { if true do return 42; else return 9223372036854775807+1; fi }' \
+ 'pub fnc main(): int { if false do return 9223372036854775807+1; fi return 42; }' \
+ "$pre pub fnc main(): int { if 1 > 2 do return identity<int>(0); else return identity<T=int>(42); fi }"; do
+  printf '%s\n' "$source" > main.atto
+  test "$("$compiler" run main.atto)" = 42
+  "$compiler" emit-asm x86_64 main.atto > main.s
+  cc -std=c11 -Wall -Wextra -Werror driver.c main.s -o guest
+  test "$(./guest)" = 42
+  printf 'FORGE_STATIC_CONDITION_PASS %s\n' "$source"
+done
+for source in \
+ 'pub fnc main(): int { if 1 do return 42; fi return 0; }' \
+ 'pub fnc main(): int { if true do return 42; else return missing(0); fi }' \
+ 'pub fnc main(): int { if false do return missing; fi return 42; }' \
+ 'pub fnc main(): int { if true do return 42; }' \
+ 'pub fnc main(): int { if true do return 42; else return true; fi }' \
+ 'fnc other(int x): int { if x < 2 do return 42; fi return 0; } pub fnc main(): int { return other(1); }'; do
+  printf '%s\n' "$source" > main.atto
+  status=0
+  "$compiler" emit-asm x86_64 main.atto > out 2> err || status=$?
+  test "$status" -ne 0 && test ! -s out && test -s err
+  printf 'FORGE_STATIC_CONDITION_REJECT %s\n' "$source"
+done
+printf 'FORGE_STATIC_CONDITION_VERIFIED 11 cases\n'

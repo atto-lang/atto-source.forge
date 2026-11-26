@@ -34,7 +34,7 @@ struct Token { Kind kind; std::string_view text; std::size_t offset; };
 // semantically equivalent to invoking such a function, but NOT native ABI
 // calls, stack frames, mutable locals, recursion, or dynamic dispatch.
 struct Expr {
-  enum class Tag { Constant, Parameter, Negative, Add, Sub, Mul, Call };
+  enum class Tag { Constant, Parameter, Negative, Add, Sub, Mul, Call, StaticBranch };
   Tag tag;
   std::int64_t value = 0;
   std::string name;
@@ -404,10 +404,53 @@ class Parser {
     expect("{");
     if (tok_.text=="guard")
       error("GUARD_BACKEND_UNSUPPORTED: early-exit CFG and ownership lowering required");
-    if (!take("^")) expect("return");
-    fn.body=expression(0);
-    if (tok_.text=="^") error("single caret is only a return statement; integer XOR uses ^^");
-    expect(";"); expect("}");
+    if (take("if")) {
+      // Only the closed stage-0 entry has static predicate admission.
+      // Runtime parameter-dependent conditions belong to the typed CFG lane.
+      if(runtime_entry_ || name!="main" || !fn.parameters.empty())
+        error("FORGE_STATIC_CONDITION_ONLY: closed stage-0 main required");
+      bool condition=false;
+      if(take("true")) condition=true;
+      else if(take("false")) condition=false;
+      else {
+        auto lhs=factor(1);
+        if(lhs->tag!=Expr::Tag::Constant)
+          error("FORGE_STATIC_CONDITION_ONLY: integer literal required");
+        const bool less=take("<");
+        if(!less) expect(">");
+        auto rhs=factor(1);
+        if(rhs->tag!=Expr::Tag::Constant)
+          error("FORGE_STATIC_CONDITION_ONLY: integer literal required");
+        condition=less?lhs->value<rhs->value:lhs->value>rhs->value;
+      }
+      expect("do");
+      expect("return");
+      auto yes=expression(0);
+      expect(";");
+      ExprPtr no;
+      if(take("else")){
+        expect("return");
+        no=expression(0);
+        expect(";");
+        expect("fi");
+      }else{
+        expect("fi");
+        expect("return");
+        no=expression(0);
+        expect(";");
+      }
+      std::vector<ExprPtr> arms;
+      arms.push_back(std::move(yes));
+      arms.push_back(std::move(no));
+      // Both children are visited by validate_calls before lowering.
+      fn.body=node(Expr::Tag::StaticBranch,std::move(arms),condition?1:0);
+    }else{
+      if (!take("^")) expect("return");
+      fn.body=expression(0);
+      if (tok_.text=="^") error("single caret is only a return statement; integer XOR uses ^^");
+      expect(";");
+    }
+    expect("}");
     if (functions_.contains(name)) error("duplicate function");
     functions_.emplace(name,std::move(fn));
   }
@@ -572,6 +615,10 @@ class Parser {
     if (call_depth>kMaxCallDepth)
       throw std::runtime_error("function call depth exceeded");
     switch (e.tag) {
+      case Expr::Tag::StaticBranch:
+        // No eager IR from an unselected return arm; its syntax, bindings,
+        // arity and call graph were still checked by validate_calls.
+        return lower(*e.children.at(e.value?0:1),env,active,call_depth);
       case Expr::Tag::Constant: return add(Op::Constant,e.value);
       case Expr::Tag::Parameter: {
         auto found=env.find(e.name);
