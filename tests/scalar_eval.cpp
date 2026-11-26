@@ -71,6 +71,14 @@ int main() {
   const auto range = parse_source("type R = int where self >= 1 and self <= 42; fnc main(): int { return 42::<R>; }");
   assert(range.ok() && evaluate(range).value == 42);
   assert(evaluate_source("type R = int where self > 0; fnc main(): int { return 0::<R>; }").error == EvalError::refinement_violation);
+  const std::string contract_header="type R = int where self >= 1 and self <= 42; fnc f(int x) -> int requires x >= 1 requires x <= 42";
+  const std::string contract_tail=" pub fnc main() -> int { return f(2); }";
+  for(const char* body:{" { return 84/x; }","\nbegin return 84/x; end"," :: return 84/x; end","\n:: return 84/x; end"}){
+    const auto parsed=parse_verified_strict_i64(contract_header+body+contract_tail);
+    assert(parsed.ok()&&evaluate(parsed).value==42);
+  }
+  for(const char* body:{" begin return 84/x; end"," :: return 84/x; }"," :: return 84/x;"," :: begin return 84/x; end"})
+    assert(!parse_verified_strict_i64(contract_header+body+contract_tail).ok());
   // Host-model controls only: native C++ guest execution is a separate gate.
   const std::string guard = "type R = int where self >= 1 and self <= 42; "
       "fnc f(int x) -> int { if x != 0 && 42 / x > 0 { return 1; } return 42; } "
