@@ -49,6 +49,11 @@ int main() {
   assert(!tokenize("/* \xe2\x80\xae */").ok());
   assert(!tokenize("// \xf0\x80\x80\x80").ok());
   assert(!tokenize("\xed\xa0\x80").ok());
+  const auto negation = tokenize("¬¬Φ !φ != !eq");
+  assert(negation.ok());
+  assert(negation.tokens[0].kind == Kind::unicode_not && negation.tokens[0].length == 2);
+  assert(negation.tokens[1].kind == Kind::unicode_not);
+  assert(negation.tokens[3].kind == Kind::bang);
   const auto bits = tokenize("~1 & 2 | 3 ^^ 4");
   assert(bits.ok());
   assert(bits.tokens[0].kind == Kind::tilde);
