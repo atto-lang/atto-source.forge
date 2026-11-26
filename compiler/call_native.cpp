@@ -112,8 +112,24 @@ class Parser {
                                std::to_string(begin));
     if (letter(c)) {
       while (at_<text_.size() && (letter(text_[at_])||digit(text_[at_]))) ++at_;
-      if (text_.substr(begin,at_-begin)=="trap" && at_<text_.size() &&
-          text_[at_]=='!') ++at_;
+      const auto word=text_.substr(begin,at_-begin);
+      const bool bang_keyword=word=="trap" || word=="throw" || word=="raise" ||
+          word=="panic" || word=="copy" || word=="take" || word=="borrow" ||
+          word=="share" || word=="pin" || word=="drop" || word=="pipe" ||
+          word=="rpipe" || word=="stop" || word=="expand";
+      const bool word_neq=text_.substr(at_,3)=="!eq" &&
+          (at_+3==text_.size() || (!letter(text_[at_+3]) && !digit(text_[at_+3])));
+      if (bang_keyword && at_<text_.size() && text_[at_]=='!' &&
+          text_.substr(at_,2)!="!=" && !word_neq) {
+        const auto suffix=word=="copy" && text_.substr(at_,2)=="!!" ? 2u : 1u;
+        const auto after=at_+suffix;
+        if (after>=text_.size() || !space(text_[after]))
+          throw std::runtime_error("E_BANG_KEYWORD_WHITESPACE: whitespace required after bang keyword at byte "+
+                                   std::to_string(begin));
+        // Only trap is admitted by this restricted native-call frontend.
+        // Other keywords keep their existing fail-closed lowering gates.
+        if (word=="trap") ++at_;
+      }
     } else if (digit(c)) {
       while (at_<text_.size() && digit(text_[at_])) ++at_;
     } else if (c=='!' && text_.substr(begin,3)=="!eq" &&
@@ -127,8 +143,7 @@ class Parser {
     } else if (c=='-' && at_<text_.size() && text_[at_]=='>') {
       ++at_;
     } else if (c=='^' && at_<text_.size() && text_[at_]=='^') {
-      token_={text_.substr(begin,2),begin};
-      fail("FORGE_XOR_BACKEND_UNSUPPORTED: integer ^^ requires native bitwise lowering");
+      ++at_;
     } else if (std::string_view("()+-*/{};:,<>=^?").find(c)==std::string_view::npos) {
       at_=begin;
       fail("invalid character");
@@ -369,12 +384,22 @@ class Parser {
   }
   int logical_and(std::size_t d) {
     depth(d);
-    int left=comparison(d+1);
+    int left=integer_xor(d+1);
     while (take("&&")) {
       require_boolean(left);
-      const int right=comparison(d+1);
+      const int right=integer_xor(d+1);
       require_boolean(right);
       left=add(Kind::And,0,{}, {left,right});
+    }
+    return left;
+  }
+  int integer_xor(std::size_t d) {
+    depth(d);
+    int left=comparison(d+1);
+    while (take("^^")) {
+      const int right=comparison(d+1);
+      require_integer(left); require_integer(right);
+      left=add(Kind::IntegerXor,0,{}, {left,right});
     }
     return left;
   }
@@ -516,6 +541,7 @@ std::int64_t checked(Kind k,std::int64_t a,std::int64_t b) {
     case Kind::Mul:
       if(__builtin_mul_overflow(a,b,&out))throw ArithmeticFailure(ArithmeticStatus::Overflow,"i64 mul overflow");
       return out;
+    case Kind::IntegerXor: return a^b;
     case Kind::Div:
       if(b==0) throw ArithmeticFailure(ArithmeticStatus::DivisionByZero,"i64 division by zero");
       if(a==std::numeric_limits<std::int64_t>::min() && b==-1)
@@ -620,6 +646,7 @@ const char* argument_reg(std::size_t i) {
 }
 struct Native {
   const Module& program;
+  explicit Native(const Module& module) : program(module) {}
   std::ostringstream out;
   std::size_t label=0;
   std::string effect_target=".Lores_return_effect";
@@ -707,13 +734,14 @@ struct Native {
         case Kind::Add: out<<"  addq ";break;
         case Kind::Sub: out<<"  subq ";break;
         case Kind::Mul: out<<"  imulq ";break;
+        case Kind::IntegerXor: out<<"  xorq ";break;
         default: out<<"  cmpq ";break;
       }
       out<<value_slot(n.children[1])<<", %rax\n";
       if(n.kind==Kind::Add||n.kind==Kind::Sub||n.kind==Kind::Mul) {
         out<<"  movl $"<<static_cast<std::uint64_t>(ArithmeticStatus::Overflow)<<", %r9d\n"
            <<"  jo "<<effect_target<<"\n";
-      } else {
+      } else if(n.kind!=Kind::IntegerXor) {
         const char* cc="e";
         switch(n.kind) {
           case Kind::Less: cc="l";break;
@@ -836,7 +864,7 @@ void verify(const Module& m) {
         case Kind::Greater: case Kind::GreaterEqual: case Kind::Equal:
         case Kind::NotEqual: case Kind::If: case Kind::Call:
         case Kind::Boolean: case Kind::Not: case Kind::Ternary:
-         case Kind::And: case Kind::Or: case Kind::BooleanXor: case Kind::Div: case Kind::Trap: case Kind::ResultCall: case Kind::BindResult: case Kind::Local: case Kind::Ok: case Kind::Some: case Kind::None: case Kind::OptionIf: case Kind::OptionCall: case Kind::BoolCall: break;
+         case Kind::And: case Kind::Or: case Kind::BooleanXor: case Kind::Div: case Kind::Trap: case Kind::ResultCall: case Kind::BindResult: case Kind::Local: case Kind::Ok: case Kind::Some: case Kind::None: case Kind::OptionIf: case Kind::OptionCall: case Kind::BoolCall: case Kind::IntegerXor: break;
         default: throw std::runtime_error("unknown callable opcode");
       }
       if(n.kind!=Kind::Call && n.kind!=Kind::ResultCall && n.kind!=Kind::OptionCall && n.kind!=Kind::BoolCall && !n.name.empty())
@@ -897,7 +925,7 @@ void verify(const Module& m) {
           throw std::runtime_error("Boolean Xor intrinsic is shadowed by a source declaration");
       } else if(n.kind==Kind::Equal||n.kind==Kind::NotEqual) {
         if(child_bool(0)!=child_bool(1)) throw std::runtime_error("comparison operand type mismatch");
-      } else if(n.kind==Kind::Add||n.kind==Kind::Sub||n.kind==Kind::Mul||n.kind==Kind::Div||
+      } else if(n.kind==Kind::IntegerXor||n.kind==Kind::Add||n.kind==Kind::Sub||n.kind==Kind::Mul||n.kind==Kind::Div||
                 n.kind==Kind::Less||n.kind==Kind::LessEqual||n.kind==Kind::Greater||
                 n.kind==Kind::GreaterEqual) {
         if(child_bool(0)||child_bool(1)) throw std::runtime_error("Boolean is not an int");
