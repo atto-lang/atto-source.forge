@@ -795,9 +795,9 @@ class Parser {
     }
     return lhs;
   }
-  // Only pure, immediately projected scalar Pair factories. This parser
+  // Only static-key, immediately projected scalar Pair factories. This parser
   // does not allocate or expose an owned product or execute runtime keys.
-  [[nodiscard]] std::optional<std::size_t> pair_projection() {
+  [[nodiscard]] std::optional<std::size_t> pair_projection(int depth) {
     // The bounded token vector makes this conservative ambiguity scan cheap.
     // A name in declarations, qualified access or parameters must not be
     // mistaken for a builtin. Quoted text and comments are inert.
@@ -836,20 +836,22 @@ class Parser {
     }
     ++pos_;
     if(!take(Kind::comma)){fail(ParseError::syntax);return std::nullopt;}
-    const bool negative=take(Kind::minus);
-    if(current().kind!=Kind::integer){fail(ParseError::syntax);return std::nullopt;}
-    auto n=parse_source_decimal((negative?"-":"")+std::string(text()));
-    if(!n){fail(ParseError::literal_out_of_range);return std::nullopt;}
-    ++pos_;
+    auto second=expr(depth+1);
+    if(!second)return std::nullopt;
+    // Do not erase units or accept a narrower explicitly typed value as int.
+    if(!dimensionless(*second)){fail(ParseError::unit_dimension);return std::nullopt;}
+    if(ranges_[*second].width==Width::i32){fail(ParseError::pair_projection);return std::nullopt;}
     if(!take(Kind::rparen)){fail(ParseError::syntax);return std::nullopt;}
     if(!take(Kind::dot)){fail(ParseError::pair_escape);return std::nullopt;}
     if(!name("second")){fail(ParseError::pair_projection);return std::nullopt;}
-    return postfix(append(Node{Op::literal,0,0,*n}));
+    // The static key has no effects; retain the checked expression DAG
+    // exactly once, including runtime arithmetic error paths.
+    return postfix(append(Node{Op::copy,*second,0,0}));
   }
 
   [[nodiscard]] std::optional<std::size_t> unary(int depth) {
     if (depth > max_parse_depth) { fail(ParseError::depth_limit); return std::nullopt; }
-    if(current().kind==Kind::name && text()=="Pair" && pos_+1<tokens_.size() && tokens_[pos_+1].kind==Kind::dot) return pair_projection();
+    if(current().kind==Kind::name && text()=="Pair" && pos_+1<tokens_.size() && tokens_[pos_+1].kind==Kind::dot) return pair_projection(depth);
     if (take(Kind::lt)) {
       if (const auto* r=refinement_target()) {
         ++pos_;
