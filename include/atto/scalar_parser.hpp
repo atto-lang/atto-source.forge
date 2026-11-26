@@ -232,7 +232,14 @@ class Parser {
       switch(op){
         case Op::eq:r.lo=std::max(r.lo,n);r.hi=std::min(r.hi,n);break;
         case Op::ne:
-          if(!r.has(n)||r.lo==r.hi)return *this;
+          if(!r.has(n))return *this;
+          if(r.lo==r.hi){
+            // Contradictory singleton on a split path: retain only the
+            // representable guard domain, never certify arbitrary dead code.
+            if(!bit(n))return *this;
+            return width==Width::i32?Range{INT32_MIN,INT32_MAX,width,bit(n)}:
+                Range{std::numeric_limits<i64>::min(),std::numeric_limits<i64>::max(),width,bit(n)};
+          }
           if(r.lo==n)++r.lo;else if(r.hi==n)--r.hi;else r.holes|=bit(n);break;
         case Op::lt:if(n==std::numeric_limits<i64>::min())return *this;r.hi=std::min(r.hi,n-1);break;
         case Op::le:r.hi=std::min(r.hi,n);break;
