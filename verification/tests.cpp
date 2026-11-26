@@ -85,6 +85,26 @@ int main() {
     }) reject([&] { (void)parse_source(std::string("fnc main():int{")+body+"}"); });
     reject([&] { (void)parse_source("fnc first():int{const Record<infer R> r=(a=1);return r.a;}"
       "fnc main():int{const Record<R> r=(a=42);return r.a;}"); });
+    for (const auto* alias : {"while","select","await","Pointer","ActorMail",
+        "ReadLoan","AtomicInt","RwLock","unsafe","persistent"}) {
+      const std::string src=std::string("fnc main():int{const Record<infer ")+alias+
+          "> r=(a=1);return r.a;}";
+      reject_diagnostic([&] { (void)parse_source(src); }, "E_TYPE_NAME");
+    }
+    reject_diagnostic([&] { (void)parse_source(
+      "fnc main():int{const Record<infer R> select=(a=1);return 0;}"); }, "E_TYPE_NAME");
+    reject_diagnostic([&] { (void)parse_source(
+      "fnc main():int{const struct<infer S> s={await:1};return 0;}"); }, "E_TYPE_NAME");
+    ensure(interpret(parse_source("fnc main():int{const Record<infer If> r=(a=1);"
+      "const Record<If> s=(a=42);return s.a;}"))==42,"case-sensitive alias");
+    const auto changed_aggregates=parse_source("fnc main():int{"
+      "const Record<infer R> r=(a=1,b=true);const Record<R> r2=(b=false,a=11);"
+      "const Tuple<infer T> t=(true,2);const Tuple<T> t2=(false,14);"
+      "const struct<infer S> s={a:3};const struct<S> s2={a:23};"
+      "return r2.a+t2[1]+s2.a;}");
+    ensure(interpret(changed_aggregates)==48,"distinct aggregate reuse values");
+    ensure(emit_asm(changed_aggregates,Arch::X86_64).find("movabs $48")!=std::string::npos,
+           "distinct aggregate native emission");
     // Two-word contextual declarations are not executable stage-0 scalar
     // functions; every mode must reject with the correct semantic capability.
     for (std::string_view source_text : {
