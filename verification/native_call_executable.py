@@ -441,6 +441,62 @@ def build(compiler,cc,root,label,source,param_count,result_entry=False,option_en
     require(link.returncode==0,"link failed "+label+": "+link.stderr.decode(errors="replace"))
     return file,executable,asm
 
+def verify_shared_debit(compiler, cc, root):
+    corpus = (Path(__file__).resolve().parent.parent /
+              "contracts/atto-xo-checked-debit-v1/cases.tsv").read_bytes()
+    blob = hashlib.sha1(b"blob " + str(len(corpus)).encode("ascii") +
+                        b"\0" + corpus).hexdigest()
+    require(blob == "6831dbd0c18eeaa2078fa5f3e324d0f88b40771e",
+            "shared debit corpus drift")
+    cases = {
+        "normal": ("42", None),
+        "control": ("43", None),
+        "max-valid": ("42", None),
+        "fee-overflow": ("overflow", b"i64 add overflow"),
+        "notional-overflow": ("overflow", b"i64 mul overflow"),
+        "overflow-cancel": ("overflow", b"i64 add overflow"),
+        "overflow-dead-result": ("overflow", b"i64 mul overflow"),
+    }
+    seen = set()
+    values = overflows = 0
+    for line in corpus.decode("utf8").splitlines():
+        fields = line.split("|")
+        require(len(fields) == 8, "malformed debit corpus row")
+        label, expected, _, _, _, _, _, source = fields
+        require(label in cases and label not in seen, "unexpected debit case " + label)
+        seen.add(label)
+        outcome, diagnostic = cases[label]
+        require(expected == outcome, "debit oracle drift " + label)
+        file, exe, asm = build(compiler, cc, root, label, source, 0)
+        require(file.read_bytes() == (source + "\n").encode("utf8"),
+                "guest bytes changed " + label)
+        require("  call .Lores_fn_" in asm, "missing real debit call " + label)
+        host = execute([compiler, "run-calls", str(file)], root)
+        native = execute([str(exe)], root)
+        checked = execute([str(exe), "--checked"], root)
+        if diagnostic is None:
+            value = (outcome + "\n").encode("ascii")
+            require((host.returncode, host.stdout, host.stderr) == (0, value, b""),
+                    "debit interpreter value mismatch " + label)
+            require((native.returncode, native.stdout, native.stderr) == (0, value, b""),
+                    "debit native value mismatch " + label)
+            require((checked.returncode, checked.stdout, checked.stderr) ==
+                    (0, (outcome + " 0\n").encode("ascii"), b""),
+                    "debit checked value mismatch " + label)
+            values += 1
+        else:
+            require(host.returncode == 1 and host.stdout == b"" and diagnostic in host.stderr,
+                    "debit interpreter overflow mismatch " + label)
+            require(native.returncode == -signal.SIGILL and native.stdout == b""
+                    and native.stderr == b"", "debit native trap mismatch " + label)
+            require((checked.returncode, checked.stdout, checked.stderr) ==
+                    (0, b"0 65537\n", b""), "debit checked fault mismatch " + label)
+            overflows += 1
+    require(seen == set(cases) and (values, overflows) == (3, 4),
+            "incomplete shared debit execution")
+    print("ATTO_XO_DEBIT_NATIVE_PASS values=3 overflow=4")
+    return values, overflows
+
 def main():
     a=argparse.ArgumentParser()
     a.add_argument("--compiler",required=True)
@@ -453,6 +509,9 @@ def main():
     positives=negatives=0
     with tempfile.TemporaryDirectory(prefix="oresforge-native-calls-") as tmp:
         root=Path(tmp)
+        debit_values, debit_overflows = verify_shared_debit(compiler, cc, root)
+        positives += debit_values
+        negatives += debit_overflows
         for label,kind,source,cases in EFFECT_CASES:
             count=len(cases[0])-3
             require(0<=count<=4 and all(len(row)==count+3 for row in cases),
