@@ -18,6 +18,10 @@ import hashlib
 RESULT_CASES = (
     ("trap-bang", "fnc main(a:int,b:int):Result<int,Error>{return trap! (a/b);}",
      ((5,2,2,0),(-5,2,-2,0),(42,0,0,65538),(-9223372036854775808,-1,0,65537))),
+    ("trap-bang-tab", "fnc main(a:int,b:int):Result<int,Error>{return trap!\t(a/b);}",
+     ((5,2,2,0),(42,0,0,65538),(-9223372036854775808,-1,0,65537))),
+    ("trap-bang-linebreak", "fnc main(a:int,b:int):Result<int,Error>{return trap!\n(a/b);}",
+     ((5,2,2,0),(42,0,0,65538),(-9223372036854775808,-1,0,65537))),
     ("trap-bare", "fnc main(a:int,b:int):Result<int,Error>{^ trap (a/b);}",
      ((5,2,2,0),(0,1,0,0),(42,0,0,65538),(-9223372036854775808,-1,0,65537))),
     ("trap-flat", "fnc main(a:int,b:int):Result<int,Error>{return trap! trap (a/b);}",
