@@ -866,7 +866,27 @@ class Parser {
     auto root=expr(0);if(!root||!take(Kind::semicolon))return std::nullopt;return root;
   }
   [[nodiscard]] std::optional<std::size_t> binding_body(std::optional<Refinement> result=std::nullopt){
-    while(name("val")){
+    // Each assignment creates a new graph identity; earlier snapshots remain
+    // immutable and every executed initializer stays in lexical order.
+    std::vector<std::pair<std::string_view,Refinement>> mutable_types;
+    std::vector<std::size_t> effects;
+    for(const auto& binding:bindings_)effects.push_back(binding.second);
+    for(;;){
+      const bool immutable=name("val");
+      const bool mut=!immutable&&strict_&&name("let");
+      if(!immutable&&!mut){
+        if(!strict_||current().kind!=Kind::name||pos_+1>=tokens_.size()||tokens_[pos_+1].kind!=Kind::equals)break;
+        const auto n=text();pos_+=2;
+        auto binding=std::find_if(bindings_.begin(),bindings_.end(),[&](const auto& x){return x.first==n;});
+        auto decl=std::find_if(mutable_types.begin(),mutable_types.end(),[&](const auto& x){return x.first==n;});
+        if(binding==bindings_.end()||decl==mutable_types.end()){fail(ParseError::verify_unsupported);return std::nullopt;}
+        auto value=expr(0);
+        if(!value||!take(Kind::semicolon)||!compatible(*value,decl->second,ParseError::refinement_binding))return std::nullopt;
+        auto version=append(Node{Op::copy,*value,0,0});if(!version)return std::nullopt;
+        ranges_[*version].width=decl->second.width;
+        binding->second=*version;effects.push_back(*version);
+        continue;
+      }
       if(bindings_.size()>=32||current().kind!=Kind::name){fail(ParseError::syntax);return std::nullopt;}
       auto n=text();++pos_;
       std::optional<Refinement> want;
@@ -878,23 +898,28 @@ class Parser {
         if(!want||current().kind!=Kind::name){fail(ParseError::syntax);return std::nullopt;}
         n=text();++pos_;
       }
+      if(mut&&!want){fail(ParseError::verify_unsupported);return std::nullopt;}
       if(!binding_name(n)||!take(Kind::equals)){fail(ParseError::syntax);return std::nullopt;}
       auto value=expr(0);
       if(!value||!take(Kind::semicolon)){fail(ParseError::syntax);return std::nullopt;}
       if(want&&!compatible(*value,*want,ParseError::refinement_binding)){
         fail(ParseError::syntax);return std::nullopt;
       }
+      if(strict_){
+        value=append(Node{Op::copy,*value,0,0});if(!value)return std::nullopt;
+      }
       if(want)ranges_[*value].width=want->width;
       else if(ranges_[*value].width==Width::literal)ranges_[*value].width=Width::i64;
-      bindings_.emplace_back(n,*value);
+      bindings_.emplace_back(n,*value);effects.push_back(*value);
+      if(mut)mutable_types.emplace_back(n,*want);
     }
     if(current().kind==Kind::name&&text()=="let"){fail(ParseError::refinement_body);return std::nullopt;}
     auto root=returning(0);
     if(!root||(result?!compatible(*root,*result,ParseError::refinement_return):!scalar_cast(*root))||!take(Kind::rbrace)){fail(ParseError::syntax);return std::nullopt;}
     // Every initializer is part of the validated graph even if unused.
     // Existing postorder evaluation preserves lexical failure ordering.
-    for(auto i=bindings_.rbegin();i!=bindings_.rend();++i){
-      root=append(Node{Op::sequence,i->second,*root,0});
+    for(auto i=effects.rbegin();i!=effects.rend();++i){
+      root=append(Node{Op::sequence,*i,*root,0});
       if(!root)return std::nullopt;
     }
     return root;
