@@ -150,6 +150,15 @@ class Parser {
         while (d < dimensions_.size() && dimensions_[d] != text()) ++d;
         if (d == dimensions_.size()) return false;
         ++pos_;
+        if (take(Kind::equals)) {
+          if (current().kind != Kind::name) return false;
+          bool found = false;
+          for (auto u : units_) if (u.first == text() && u.second == d) found = true;
+          if (!found) return false;
+          ++pos_;
+        } else {
+          for (auto u : units_) if (u.second == d) return false;
+        }
         units_.emplace_back(n, d);
       }
       if (!take(Kind::semicolon)) return false;
@@ -247,7 +256,8 @@ class Parser {
   [[nodiscard]] std::optional<std::size_t> postfix(std::optional<std::size_t> result, bool compact = false) {
     if (!result) return std::nullopt;
     while (current().kind == Kind::double_colon || current().kind == Kind::dot ||
-           (compact && current().kind == Kind::lt)) {
+           (compact && current().kind == Kind::lt && pos_ > 0 &&
+            tokens_[pos_-1].offset + tokens_[pos_-1].length == current().offset)) {
       const bool cast = take(Kind::double_colon);
       if (!cast) (void)take(Kind::dot);
       if (!take(Kind::lt)) { fail(ParseError::syntax); return std::nullopt; }

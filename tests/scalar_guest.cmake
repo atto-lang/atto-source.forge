@@ -191,9 +191,12 @@ foreach(expr IN ITEMS "42::<bool>" "<bool>42" "42 as bool" "42::<i32>" "42.<Seco
 endforeach()
 
 # Scale-one dimensional arithmetic must survive actual native emission.
-set(quantity_declarations "define dimension Time; define dimension Length; define unit Second: Time; define unit Meter: Length;")
+set(quantity_declarations "define dimension Time; define dimension Length; define unit Second: Time; define unit Meter: Length; define unit Tick: Time = Second;")
 verify_cast_expr(unit-dot "84.<Second> / 2.<Second>" 0 "42\n" "")
 verify_cast_expr(unit-compact "84<Second> / 2<Second>" 0 "42\n" "")
+verify_cast_expr(unit-alias "84<Second> / 2<Tick>" 0 "42\n" "")
+verify_cast_expr(unit-keyword-precedence "((40+2) as Second) / 1<Second>" 0 "42\n" "")
+verify_cast_expr(unit-keyword-low-precedence "(40+2 as Second) / 1<Second>" 0 "42\n" "")
 verify_cast_expr(unit-legacy "84::<Second> / 2::<Second>" 0 "42\n" "")
 verify_cast_expr(unit-keyword "(84 as Second) / (2 as Second)" 0 "42\n" "")
 verify_cast_expr(unit-add "(40.<Meter> + 2.<Meter>) / 1.<Meter>" 0 "42\n" "")
@@ -205,7 +208,7 @@ verify_cast_expr(unit-cast "(42::<i64>).<Second> / 1.<Second>" 0 "42\n" "")
 verify_cast_expr(unit-zero "1.<Second> / 0.<Second>" 71 "" "E_DIVZERO\n")
 verify_cast_expr(unit-overflow "(9223372036854775807.<Second> + 1.<Second>) / 1.<Second>" 70 "" "E_OVERFLOW\n")
 verify_cast_expr(unit-div-overflow "-9223372036854775808.<Second> / -1.<Second>" 70 "" "E_OVERFLOW\n")
-foreach(expr IN ITEMS "1.<Meter> + 1.<Second>" "1.<Meter> - 1" "1.<Meter>" "1.<Time>" "1.<Missing>" "1.<Meter>.<Meter>" "1.<Meter>::<i64>" "<i64>(1.<Meter>)" "1.<Meter> as i64" "<Meter>1" "1.<int>" "1.<Meter> & 1" "~1.<Meter>" "1.<Meter> % 1.<Meter>" "1.<Meter> <<< 1" "1.<Meter> / 1.<Second>" "1.<Meter> * 1.<Meter>")
+foreach(expr IN ITEMS "84 <Second> / 2<Second>" "84/*split*/<Second> / 2<Second>" "1.<Meter> + 1.<Second>" "1.<Meter> - 1" "1.<Meter>" "1.<Time>" "1.<Missing>" "1.<Meter>.<Meter>" "1.<Meter>::<i64>" "<i64>(1.<Meter>)" "1.<Meter> as i64" "<Meter>1" "1.<int>" "1.<Meter> & 1" "~1.<Meter>" "1.<Meter> % 1.<Meter>" "1.<Meter> <<< 1" "1.<Meter> / 1.<Second>" "1.<Meter> * 1.<Meter>")
   file(WRITE "${OUT_DIR}/unit-invalid.atto" "${quantity_declarations}\npub fnc main() -> int {return ${expr};}")
   file(WRITE "${OUT_DIR}/unit-invalid.cpp" "stale")
   execute_process(COMMAND "${FORGE}" "${OUT_DIR}/unit-invalid.atto" -o "${OUT_DIR}/unit-invalid.cpp"
@@ -215,7 +218,7 @@ foreach(expr IN ITEMS "1.<Meter> + 1.<Second>" "1.<Meter> - 1" "1.<Meter>" "1.<T
   endif()
   message(STATUS "UNIT_NATIVE_REJECT ${expr}")
 endforeach()
-foreach(decl IN ITEMS "define dimension Time\; define dimension Time\;" "define unit Second: Missing\;" "define dimension Time\; define unit Time: Time\;" "define dimension Time\; define unit Second: Time\; define unit Second: Time\;" "define dimension Time\; define unit Second: Time\; define unit Millis: Time = Second / 1000\;")
+foreach(decl IN ITEMS "define dimension Time\; define unit Second: Time\; define unit Tick: Time\;" "define dimension Time\; define dimension Length\; define unit Meter: Length\; define unit Tick: Time = Meter\;" "define dimension Time\; define unit Tick: Time = Second\; define unit Second: Time\;" "define dimension Time\; define dimension Time\;" "define unit Second: Missing\;" "define dimension Time\; define unit Time: Time\;" "define dimension Time\; define unit Second: Time\; define unit Second: Time\;" "define dimension Time\; define unit Second: Time\; define unit Millis: Time = Second / 1000\;")
   file(WRITE "${OUT_DIR}/unit-decl-invalid.atto" "${decl}\npub fnc main() -> int {return 42;}")
   execute_process(COMMAND "${FORGE}" "${OUT_DIR}/unit-decl-invalid.atto" -o "${OUT_DIR}/unit-decl-invalid.cpp"
     RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 15)
