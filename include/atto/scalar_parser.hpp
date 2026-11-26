@@ -192,6 +192,16 @@ class Parser {
   std::vector<Unit> units_;
   struct Refinement { std::string_view name; Dim dim; Scale scale; i64 lo, hi; };
   std::vector<Refinement> refinements_;
+  struct Helper {
+    std::string_view name;
+    std::vector<Refinement> params;
+    Refinement result;
+    std::vector<Node> nodes;
+    std::vector<Dim> dims;
+    std::vector<Scale> scales;
+    std::vector<Range> ranges;
+  };
+  std::vector<Helper> helpers_;
   static constexpr int exponent_limit = 32;
   [[nodiscard]] bool dimensionless(std::size_t n) const { return dims_[n] == Dim{} && scales_[n] == Scale{}; }
   [[nodiscard]] bool known_name(std::string_view n) const {
@@ -275,6 +285,7 @@ class Parser {
       std::size_t count=0;
       bool has_units=false;
       for (;;) {
+        if (name("units")) {has_units=true;break;}
         if (++count>16 || !name("self")) return false;
         const bool lower=take(Kind::gt);
         if (!lower && !take(Kind::lt)) return false;
@@ -604,6 +615,9 @@ class Parser {
       return postfix(append(Node{Op::literal, 0, 0, *n}), true, true);
     }
     if(current().kind==Kind::name){
+      for(const auto& h:helpers_)if(h.name==text()){
+        ++pos_;return call(h,depth+1);
+      }
       for(const auto& b:bindings_)if(b.first==text()){
         ++pos_;
         // A new read node owns independent type metadata; attaching a unit
@@ -618,6 +632,7 @@ class Parser {
     if(n.empty()||n[0]<'a'||n[0]>'z'||known_name(n))return false;
     for(auto s:{"val","let","int","i64","i32","bool","float","string","void","return","self","main","fnc","pub","define","type","where","as","and","units","in","true","false","if","else","end","begin","while","loop","task","await","suspends","infer","new","match","const","mut","using","unit","dimension","_"})if(n==s)return false;
     for(const auto& b:bindings_)if(b.first==n)return false;
+    for(const auto& h:helpers_)if(h.name==n)return false;
     return true;
   }
   [[nodiscard]] std::optional<Refinement> annotation(std::string_view n) const {
@@ -625,7 +640,43 @@ class Parser {
     for(const auto& r:refinements_)if(r.name==n)return r;
     return std::nullopt;
   }
-  [[nodiscard]] std::optional<std::size_t> binding_body(){
+  [[nodiscard]] bool compatible(std::size_t n,const Refinement& want)const{
+    return dims_[n]==want.dim&&scales_[n]==want.scale&&ranges_[n].within(want.lo,want.hi);
+  }
+  [[nodiscard]] std::optional<std::size_t> call(const Helper& h,int depth){
+    if(depth>max_parse_depth||!take(Kind::lparen)){fail(ParseError::syntax);return std::nullopt;}
+    std::vector<std::size_t> map;
+    for(std::size_t i=0;i<h.params.size();++i){
+      if(i&&!take(Kind::comma)){fail(ParseError::syntax);return std::nullopt;}
+      auto arg=expr(depth+1);
+      if(!arg||!compatible(*arg,h.params[i])){fail(ParseError::syntax);return std::nullopt;}
+      map.push_back(*arg);
+    }
+    if(!take(Kind::rparen)){fail(ParseError::syntax);return std::nullopt;}
+    // Template graph has already been type-checked over the declared
+    // parameter intervals. Instantiate once, with only backward edges.
+    for(std::size_t i=h.params.size();i<h.nodes.size();++i){
+      if(out_.nodes.size()>=max_nodes){fail(ParseError::node_limit);return std::nullopt;}
+      Node n=h.nodes[i];
+      if(n.op!=Op::literal){
+        if(n.left>=map.size()){fail(ParseError::syntax);return std::nullopt;}
+        n.left=map[n.left];
+        if(n.op!=Op::neg&&n.op!=Op::bnot&&n.op!=Op::refine&&n.op!=Op::copy){
+          if(n.right>=map.size()){fail(ParseError::syntax);return std::nullopt;}
+          n.right=map[n.right];
+        }
+      }
+      map.push_back(out_.nodes.size());out_.nodes.push_back(n);
+      dims_.push_back(h.dims[i]);scales_.push_back(h.scales[i]);ranges_.push_back(h.ranges[i]);
+    }
+    if(map.empty()){fail(ParseError::syntax);return std::nullopt;}
+    auto root=append(Node{Op::copy,map.back(),0,0});
+    if(!root)return std::nullopt;
+    dims_[*root]=h.result.dim;scales_[*root]=h.result.scale;
+    ranges_[*root]=Range{h.result.lo,h.result.hi};
+    return postfix(root);
+  }
+  [[nodiscard]] std::optional<std::size_t> binding_body(std::optional<Refinement> result=std::nullopt){
     while(name("val")){
       if(bindings_.size()>=32||current().kind!=Kind::name){fail(ParseError::syntax);return std::nullopt;}
       auto n=text();++pos_;
@@ -648,7 +699,7 @@ class Parser {
     }
     if(!name("return")&&!take(Kind::caret)){fail(ParseError::syntax);return std::nullopt;}
     auto root=expr(0);
-    if(!root||!scalar_cast(*root)||!take(Kind::semicolon)||!take(Kind::rbrace)){fail(ParseError::syntax);return std::nullopt;}
+    if(!root||(result?!compatible(*root,*result):!scalar_cast(*root))||!take(Kind::semicolon)||!take(Kind::rbrace)){fail(ParseError::syntax);return std::nullopt;}
     // Every initializer is part of the validated graph even if unused.
     // Existing postorder evaluation preserves lexical failure ordering.
     for(auto i=bindings_.rbegin();i!=bindings_.rend();++i){
@@ -656,6 +707,43 @@ class Parser {
       if(!root)return std::nullopt;
     }
     return root;
+  }
+  [[nodiscard]] bool helper_declarations(){
+    while(current().kind==Kind::name&&text()=="fnc"&&pos_+1<tokens_.size()){
+      const auto& next=tokens_[pos_+1];
+      if(source_.substr(next.offset,next.length)=="main")break;
+      if(refinements_.empty()||helpers_.size()>=16)return false;
+      ++pos_;
+      if(current().kind!=Kind::name||!binding_name(text()))return false;
+      const auto fname=text();++pos_;
+      if(!take(Kind::lparen))return false;
+      std::vector<Refinement> params;
+      if(!take(Kind::rparen)){
+        for(;;){
+          if(params.size()>=8||current().kind!=Kind::name)return false;
+          const auto ty=annotation(text());++pos_;
+          if(!ty||current().kind!=Kind::name||!binding_name(text()))return false;
+          const auto param=text();++pos_;
+          const auto n=append(Node{Op::literal,0,0,0});
+          if(!n)return false;
+          dims_[*n]=ty->dim;scales_[*n]=ty->scale;ranges_[*n]=Range{ty->lo,ty->hi};
+          bindings_.emplace_back(param,*n);params.push_back(*ty);
+          if(take(Kind::rparen))break;
+          if(!take(Kind::comma))return false;
+        }
+      }
+      if(!take(Kind::arrow)&&!take(Kind::colon))return false;
+      if(current().kind!=Kind::name)return false;
+      auto result=annotation(text());++pos_;
+      if(!result||!take(Kind::lbrace))return false;
+      auto root=binding_body(*result);
+      if(!root)return false;
+      out_.root=*root;
+      if(!validate_ast(out_))return false;
+      helpers_.push_back(Helper{fname,std::move(params),*result,std::move(out_.nodes),std::move(dims_),std::move(scales_),std::move(ranges_)});
+      out_.nodes.clear();out_.root=0;dims_.clear();scales_.clear();ranges_.clear();bindings_.clear();
+    }
+    return true;
   }
   [[nodiscard]] std::optional<std::size_t> body(std::vector<std::string_view>& aliases) {
     std::optional<std::size_t> root;
@@ -723,6 +811,7 @@ public:
     if (out_.error != ParseError::none) return std::move(out_);
     if (!declarations() || !refinement_declarations()) { fail(ParseError::syntax); return std::move(out_); }
     if(strict_&&refinements_.empty()){fail(ParseError::verify_unsupported);return std::move(out_);}
+    if(!helper_declarations()){fail(ParseError::syntax);return std::move(out_);}
     (void)name("pub");
     const bool fnc = name("fnc");
     bool signature_ok = false;
@@ -745,7 +834,7 @@ public:
       return std::move(out_);
     }
     std::vector<std::string_view> aliases;
-    auto root = strict_||(current().kind==Kind::name&&text()=="val") ? binding_body() : body(aliases);
+    auto root = strict_||!helpers_.empty()||(current().kind==Kind::name&&text()=="val") ? binding_body() : body(aliases);
     if (!root || current().kind != Kind::end) {
       fail(ParseError::syntax);
       return std::move(out_);
