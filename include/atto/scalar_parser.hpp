@@ -25,7 +25,7 @@ struct Node {
   std::vector<std::size_t> states{},effects{},updates{};
 };
 enum class ParseError {
-  none, lexical, syntax, literal_out_of_range, depth_limit, node_limit, telemetry, verify_unproven, verify_unsupported, unit_name, unit_duplicate, unit_dimension, unit_scale, unit_limit, unit_erasure, unit_attachment, unit_inexact, unit_range, refinement_empty, refinement_binding, refinement_precondition, refinement_return, refinement_duplicate, refinement_postcondition, refinement_contract, refinement_export, refinement_body, refinement_call, refinement_cast, i32_range, new_required, lock_unsupported
+  none, lexical, syntax, literal_out_of_range, depth_limit, node_limit, telemetry, verify_unproven, verify_unsupported, unit_name, unit_duplicate, unit_dimension, unit_scale, unit_limit, unit_erasure, unit_attachment, unit_inexact, unit_range, refinement_empty, refinement_binding, refinement_precondition, refinement_return, refinement_duplicate, refinement_postcondition, refinement_contract, refinement_export, refinement_body, refinement_call, refinement_cast, i32_range, new_required, lock_unsupported, task_unsupported, task_return_type
 };
 // Stable sanitized diagnostics; never echo user source bytes.
 [[nodiscard]] constexpr std::string_view parse_error_name(ParseError error) noexcept {
@@ -39,6 +39,8 @@ enum class ParseError {
     case ParseError::telemetry: return "E_TELEMETRY_SCOPE";
     case ParseError::new_required: return "E_NEW_REQUIRED";
     case ParseError::lock_unsupported: return "E_LOCK_UNSUPPORTED";
+    case ParseError::task_unsupported: return "E_TASK_UNSUPPORTED";
+    case ParseError::task_return_type: return "E_TASK_RETURN_TYPE";
     case ParseError::verify_unproven: return "E_VERIFY_UNPROVEN";
     case ParseError::verify_unsupported: return "E_VERIFY_UNSUPPORTED";
     case ParseError::unit_name: return "E_UNIT_NAME";
@@ -761,6 +763,37 @@ class Parser {
       ranges_[*operand].width=Width::i64;
       return operand;
     }
+    // Restricted synchronous task expression: the same scalar DAG and
+    // caller, no independent task identity, allocation or suspension.
+    // Do not admit this into the strict refinement verifier yet.
+    if (name("sync")) {
+      if (!name("task") || strict_ || !helpers_.empty() ||
+          !refinements_.empty() || !units_.empty()) {
+        fail(ParseError::task_unsupported); return std::nullopt;
+      }
+      if (take(Kind::lt)) {
+        if (name("void")) { fail(ParseError::task_return_type); return std::nullopt; }
+        if (!name("int") || !take(Kind::gt)) {
+          fail(ParseError::task_unsupported); return std::nullopt;
+        }
+      }
+      if (!take(Kind::lbrace)) { fail(ParseError::syntax); return std::nullopt; }
+      if (!name("return") && !take(Kind::caret)) {
+        fail(ParseError::task_unsupported); return std::nullopt;
+      }
+      if (current().kind == Kind::semicolon) {
+        fail(ParseError::task_return_type); return std::nullopt;
+      }
+      auto result = expr(depth + 1);
+      if (!result || !scalar_cast(*result) || !take(Kind::semicolon) ||
+          !take(Kind::rbrace)) {
+        fail(ParseError::syntax); return std::nullopt;
+      }
+      return postfix(result);
+    }
+    if (current().kind == Kind::name && text() == "task") {
+      fail(ParseError::task_unsupported); return std::nullopt;
+    }
     if (take(Kind::plus)) return unary(depth + 1);
     if (take(Kind::tilde)) {
       auto rhs = unary(depth + 1);
@@ -813,7 +846,7 @@ class Parser {
   }
   [[nodiscard]] bool binding_name(std::string_view n) const {
     if(n.empty()||n[0]<'a'||n[0]>'z'||known_name(n))return false;
-    for(auto s:{"val","let","int","i64","i32","bool","float","string","void","return","self","main","fnc","pub","define","type","where","as","and","units","in","true","false","if","else","end","begin","while","loop","task","await","suspends","infer","new","match","const","mut","using","unit","dimension","_"})if(n==s)return false;
+    for(auto s:{"val","let","int","i64","i32","bool","float","string","void","return","self","main","fnc","pub","define","type","where","as","and","units","in","true","false","if","else","end","begin","while","loop","sync","task","await","suspends","infer","new","match","const","mut","using","unit","dimension","_"})if(n==s)return false;
     for(const auto& b:bindings_)if(b.first==n)return false;
     for(const auto& h:helpers_)if(h.name==n)return false;
     return true;
@@ -1287,6 +1320,28 @@ class Parser {
   }
   [[nodiscard]] std::optional<std::size_t> body(std::vector<std::string_view>& aliases) {
     std::optional<std::size_t> root;
+    // Empty or bare-return void tasks have no observable effects.
+    // Reject any body requiring local assignment, cleanup or a continuation.
+    while (name("do")) {
+      if (!name("sync") || !name("task") || strict_ ||
+          !helpers_.empty() || !refinements_.empty() || !units_.empty()) {
+        fail(ParseError::task_unsupported); return std::nullopt;
+      }
+      if (take(Kind::lt)) {
+        if (!name("void")) { fail(ParseError::task_return_type); return std::nullopt; }
+        if (!take(Kind::gt)) { fail(ParseError::syntax); return std::nullopt; }
+      }
+      if (!take(Kind::lbrace)) { fail(ParseError::syntax); return std::nullopt; }
+      if (name("return") || take(Kind::caret)) {
+        if (!take(Kind::semicolon)) {
+          fail(ParseError::task_return_type); return std::nullopt;
+        }
+      }
+      if (!take(Kind::rbrace)) {
+        fail(ParseError::task_unsupported); return std::nullopt;
+      }
+      if (!take(Kind::semicolon)) { fail(ParseError::syntax); return std::nullopt; }
+    }
     while (name("using")) {
       if (root || aliases.size() == max_trace_depth ||
           !name("telemetry") || !take(Kind::dot) || !name("span") ||
