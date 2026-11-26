@@ -330,7 +330,8 @@ if(BUILD_TESTING)
   endif()
   add_test(NAME oresforge_actor_owner_lifetime_v1_host
     COMMAND oresforge_actor_owner_lifetime_v1)
-  set_tests_properties(oresforge_actor_owner_lifetime_v1_host PROPERTIES TIMEOUT 240)
+  # Million-cycle sanitizer run needs more time than the old 100k regression.
+  set_tests_properties(oresforge_actor_owner_lifetime_v1_host PROPERTIES TIMEOUT 900)
   add_executable(oresforge_mailbox_model verification/actor_mailbox_model.cpp)
   target_link_libraries(oresforge_mailbox_model PRIVATE oresforge_core)
   add_test(NAME oresforge_actor_mailbox_model COMMAND oresforge_mailbox_model)
