@@ -96,7 +96,7 @@ inline constexpr std::size_t max_tokens = 256;
       i += 2;
     } else if (is_digit(c)) {
       kind = Kind::integer;
-      do { ++i; } while (i < src.size() && is_digit(src[i]));
+      do { ++i; } while (i < src.size() && (is_digit(src[i]) || src[i]=='_'));
     } else if (c == '"') {
       kind = Kind::quoted;
       ++i;

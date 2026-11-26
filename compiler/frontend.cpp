@@ -198,6 +198,12 @@ class Parser {
         error("private abstract hooks require typed native vtables and superclass-only dispatch");
       if (tok_.text=="actor" && previousToken=="virtual")
         error("VIRTUAL_ACTOR_BACKEND_UNSUPPORTED: logical key and activation fencing required");
+      if (tok_.text=="actor" && previousToken=="serial")
+        error("SERIAL_ACTOR_BACKEND_UNSUPPORTED: Forge lacks source serial actor lowering");
+      if (tok_.text=="actor" && previousToken=="http")
+        error("HTTP_ACTOR_BACKEND_UNSUPPORTED: Forge lacks source HTTP actor admission and physical-turn shutdown lowering");
+      if ((tok_.text=="class" || tok_.text=="struct") && previousToken=="inverted")
+        error("inverted struct/class requires one-level typed SoA and ownership lowering");
       if (tok_.text=="class" || tok_.text=="actor")
         error("class/actor methods require typed native lowering");
       if (tok_.text=="InvertedArray")
@@ -269,7 +275,8 @@ class Parser {
     if (source_.substr(at_,2)=="^^")
       throw std::runtime_error("FORGE_XOR_BACKEND_UNSUPPORTED: integer ^^ requires native bitwise lowering at byte "+
                                std::to_string(start));
-    if (std::string_view("()+-*/{};:,?^").find(static_cast<char>(c)) ==
+    // Dot is recognized for precise unsupported namespace diagnostics only.
+    if (std::string_view("()+-*/{};:,?^.").find(static_cast<char>(c)) ==
         std::string_view::npos) error("invalid character");
     ++at_;
     tok_={Kind::Punct,source_.substr(start,1),start};
