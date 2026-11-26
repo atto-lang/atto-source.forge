@@ -7,6 +7,7 @@
 #include <iostream>
 #include <optional>
 #include <stdexcept>
+#include <string_view>
 #include <thread>
 
 using namespace oresforge::runtime;
@@ -225,6 +226,72 @@ int main() {
   require(restarting.stopped() && restartBudget.reserved() == 0 &&
           ActorMemoryAggregateBudgetV1::process().reserved() == initial,
           "handler failure leaked native credits or corrupted process reservation");
+
+  // Sustained actual host-owner lifecycle: keep B alive throughout repeated
+  // frame faults in A, validate budget refund at every physical turn exit,
+  // and require fresh heap/stack capabilities on every reincarnation.
+  {
+    ActorMemoryAggregateBudgetV1 lifetimeBudget(640);
+    ActorIncarnationOwnerV1 a(8405, lifetimeBudget, 256, 64, 4, 2);
+    ActorIncarnationOwnerV1 b(8406, lifetimeBudget, 256, 64, 4, 2);
+    auto live = a.ref();
+    const auto sibling = b.ref();
+    const auto first = live;
+    std::optional<ActorMemoryHeapHandle> previousHeap;
+    for (std::uint64_t cycle = 0; cycle < 100000; ++cycle) {
+      require(lifetimeBudget.reserved() == 640, "active lifetime budget changed");
+      a.send(live, std::array<std::uint8_t,1>{7});
+      require(a.dispatch_one(live, [&](auto& ctx, auto payload) {
+        require(payload.size() == 1 && payload[0] == 7, "new message mismatch");
+        std::array<std::uint8_t,1> out{255};
+        if (previousHeap) denied([&] { ctx.heap_read(*previousHeap, 0, out); },
+                                "retired heap capability was accepted");
+        auto heap = ctx.heap_alloc(8);
+        ctx.heap_read(heap, 0, out);
+        require(out[0] == 0, "replacement heap not zeroed");
+        ctx.heap_write(heap, 0, std::array<std::uint8_t,1>{99});
+        previousHeap = heap;
+        auto e = ctx.begin_frames();
+        auto f = ctx.frame_push(e, 16);
+        ctx.frame_read(e, f, 0, out);
+        require(out[0] == 0, "replacement logical stack not zeroed");
+        ctx.frame_pop(e, f);
+        ctx.finish_frames(e);
+      }), "healthy replacement failed to dispatch");
+      a.send(live, std::array<std::uint8_t,1>{8});
+      bool faulted = false;
+      try {
+        a.dispatch_one(live, [](auto& ctx, auto) {
+          auto e = ctx.begin_frames();
+          (void)ctx.frame_push(e, 64);
+          (void)ctx.frame_push(e, 1);
+        });
+      } catch (const std::runtime_error& error) {
+        faulted = std::string_view(error.what()) == "actor logical frame quota exceeded";
+      }
+      require(faulted, "expected terminal frame quota fault");
+      require(a.stopped() && a.queued() == 0 && lifetimeBudget.reserved() == 320,
+              "failed actor did not retire while sibling kept its budget");
+      const auto retired = live;
+      live = a.restart();
+      require(live.generation == retired.generation + 1,
+              "lifetime restart generation mismatch");
+      denied([&] { a.send(retired, std::array<std::uint8_t,1>{1}); },
+             "retired incarnation accepted DATA");
+      denied([&] { a.send(first, std::array<std::uint8_t,1>{1}); },
+             "initial incarnation revived");
+      b.send(sibling, std::array<std::uint8_t,1>{42});
+      require(b.dispatch_one(sibling, [](auto&, auto payload) {
+        require(payload.size() == 1 && payload[0] == 42, "sibling result mismatch");
+      }), "sibling stopped progressing");
+    }
+    a.stop();
+    b.stop();
+    require(lifetimeBudget.reserved() == 0 &&
+            ActorMemoryAggregateBudgetV1::process().reserved() == initial,
+            "lifetime test leaked aggregate native credits");
+    std::cout << "FORGE_ACTOR_OWNER_LIFETIME_PASS cycles=100000 sibling=42\n";
+  }
 
   std::cout << "FORGE_ACTOR_OWNER_HOST_PASS"
             << "|turn=1|stop_restart=1|sibling=42|guest_atto=0|physical_stack=0\n";

@@ -249,7 +249,7 @@ if(BUILD_TESTING)
   add_test(NAME oresforge_actor_incarnation_owner_v1_host
     COMMAND oresforge_actor_incarnation_owner_v1)
   set_tests_properties(oresforge_actor_incarnation_owner_v1_host
-    PROPERTIES TIMEOUT 30)
+    PROPERTIES TIMEOUT 180)
   # Actual ActorIncarnationOwnerV1 native DATA/STOP fence parity, host only.
   add_executable(oresforge_supervisor_data_fence_parity_v1
     verification/supervisor_data_fence_parity_v1_test.cpp)
