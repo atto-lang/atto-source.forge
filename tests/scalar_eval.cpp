@@ -79,6 +79,41 @@ int main() {
   }
   for(const char* body:{" begin return 84/x; end"," :: return 84/x; }"," :: return 84/x;"," :: begin return 84/x; end"})
     assert(!parse_verified_strict_i64(contract_header+body+contract_tail).ok());
+  // Annotation and keyword clauses share the same proof and scope rules.
+  const std::string annotation_prefix="type R = int where self >= 1 and self <= 42; ";
+  for(const char* declaration:{
+      "@requires(x >= 1) @requires(x <= 42) fnc f(int x) -> int",
+      "@requires(x >= 1) fnc f(int x) -> int requires x <= 42",
+      "@requires(x >= 1) @ensures(result >= 1) fnc f(int x) -> int requires x <= 42"}){
+    const auto parsed=parse_verified_strict_i64(annotation_prefix+declaration+" { return 84/x; }"+contract_tail);
+    assert(parsed.ok()&&validate_ast(parsed)&&evaluate(parsed).value==42);
+  }
+  for(const char* declaration:{
+      "@unknown(x >= 1) fnc f(int x) -> int",
+      "@requires(y >= 1) fnc f(int x) -> int",
+      "@requires(x >= 1 extra) fnc f(int x) -> int",
+      "@requires(x >= 3) @requires(x <= 2) fnc f(int x) -> int",
+      "@requires(x >= 3) fnc f(int x) -> int",
+      "@requires(x >= 1) @ensures(result < 0) fnc f(int x) -> int requires x <= 42"})
+    assert(!parse_verified_strict_i64(annotation_prefix+declaration+" { return 84/x; }"+contract_tail).ok());
+  assert(!parse_source("fnc main(): int {return @;}").ok());
+  // A hole must be proved both in the helper body and at every call site.
+  const std::string exclusion_header =
+      "type R = int where self >= 1 and self <= 42; "
+      "@requires(x != 0) fnc f(int x) -> int requires x != -1 { return 84/x; } ";
+  const auto exclusion = parse_verified_strict_i64(exclusion_header+
+      "pub fnc main() -> int { return f(2); }");
+  assert(exclusion.ok() && validate_ast(exclusion) && evaluate(exclusion).value==42);
+  for(const char* arg:{"0","-1"})
+    assert(!parse_verified_strict_i64(exclusion_header+
+        "pub fnc main() -> int { return f("+arg+"); }").ok());
+  const std::string exclusions_prefix="type R = int where self >= 1 and self <= 42; ";
+  for(const char* header:{
+      "fnc f(int x) -> int requires x != 2",
+      "@requires(x != 0) fnc f(int x) -> int requires x == 0",
+      "@requires(x != -1) fnc f(int x) -> int requires x == -1"})
+    assert(!parse_verified_strict_i64(exclusions_prefix+header+
+        " { return 42; } pub fnc main() -> int { return f(2); }").ok());
   // Host-model controls only: native C++ guest execution is a separate gate.
   const std::string guard = "type R = int where self >= 1 and self <= 42; "
       "fnc f(int x) -> int { if x != 0 && 42 / x > 0 { return 1; } return 42; } "

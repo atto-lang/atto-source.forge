@@ -37,7 +37,11 @@ int main() {
   assert(tokenize("// trailing comment without newline").ok());
   assert(tokenize("//" + std::string(max_source_bytes - 2, '/')).ok());
   assert(tokenize("/* */").tokens.size() == 1);
-  assert(!tokenize("fnc main(){return @;}").ok());
+  // @ is a token, not an expression; the parser rejects it outside contract prefixes.
+  const auto annotation = tokenize("@requires(x >= 1)");
+  assert(annotation.ok() && annotation.tokens.front().kind == Kind::at);
+  assert(annotation.tokens.front().offset == 0 && annotation.tokens.front().length == 1);
+  assert(!tokenize("fnc main(){return `;}").ok());
   const std::string nul("1\0" "2", 3);
   auto bad = tokenize(std::string_view(nul));
   assert(bad.error == LexError::unsupported_byte && bad.error_offset == 1);
