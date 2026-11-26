@@ -9,7 +9,7 @@
 
 namespace oresforge::cli {
 struct OptimizationOptions {
-  std::string escape = "off";
+  std::string escape = "auto";
   std::string jit = "off";
   bool report = false;
   std::vector<char*> positional;
@@ -67,14 +67,22 @@ inline OptimizationOptions parse_optimization_options(int argc, char** argv) {
   if (!seen_report && mapped_report)
     options.report = parse_bool(mapped_report);
 
-  if (options.escape != "off" && options.escape != "safe" &&
+  if (options.escape != "auto" && options.escape != "off" && options.escape != "safe" &&
       options.escape != "verify" && options.escape != "speculative")
-    throw std::runtime_error("invalid --opt-escape mode; expected off|safe|verify|speculative");
+    throw std::runtime_error("invalid --opt-escape mode; expected auto|off|safe|verify|speculative");
   if (options.jit != "on" && options.jit != "off")
     throw std::runtime_error("invalid --jit mode; expected on|off");
   if (options.escape == "speculative" && options.jit != "on")
     throw std::runtime_error("--opt-escape=speculative requires --jit=on");
 
+  // Automatic optimization is admitted only for the closed allocation emitter.
+  // Other commands retain their previous behavior; explicit safe still rejects
+  // unsupported profiles. Architecture and source proof remain checked later.
+  if (options.escape == "auto") {
+    const bool closed = options.positional.size() == 4 &&
+        std::string_view(options.positional[1]) == "emit-alloc-asm";
+    options.escape = closed ? "safe" : "off";
+  }
   return options;
 }
 

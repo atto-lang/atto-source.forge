@@ -39,6 +39,8 @@ def main():
         source.write_text("define pub fnc main():int { return 42; }\n", encoding="utf-8")
         command = ["run", str(source)]
         expect_success(exe, command)
+        expect_success(exe, ["--opt-escape=auto", *command])
+        expect_success(exe, command, {"ORES_OPT_ESCAPE": "auto"})
         expect_success(exe, ["--opt-escape=off", "--jit=off", *command])
         expect_success(exe, [*command, "--opt-escape=off", "--opt-escape-report=false"])
         expect_success(exe, command, {"ORES_OPT_ESCAPE": "off",
