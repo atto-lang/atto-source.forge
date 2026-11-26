@@ -32,7 +32,22 @@ inline constexpr std::size_t max_emitted_bytes = 64 * 1024;
       for(std::size_t j=0;j<n.states.size();++j)
         body+="      c"+var(n.states[j])+" = state"+std::to_string(j)+";\n";
       body+="      if ("+right+" == 0) break;\n";
-      for(auto k:n.effects)body+="      (void)"+var(k)+"();\n";
+      std::size_t exit_index=0;
+      for(std::size_t k=0;k<=n.effects.size();++k){
+        while(exit_index<n.exits.size()&&n.exits[exit_index].position==k){
+          const auto& x=n.exits[exit_index++];
+          body+="      if ("+var(x.condition)+"() != 0) {\n";
+          for(std::size_t j=0;j<x.values.size();++j)
+            body+="        state"+std::to_string(j)+" = "+var(x.values[j])+"();\n";
+          if(x.breaking){
+            for(std::size_t j=0;j<n.states.size();++j)
+              body+="        c"+var(n.states[j])+" = state"+std::to_string(j)+";\n";
+            body+="        break;\n";
+          }else body+="        continue;\n";
+          body+="      }\n";
+        }
+        if(k<n.effects.size())body+="      (void)"+var(n.effects[k])+"();\n";
+      }
       for(std::size_t j=0;j<n.updates.size();++j)
         body+="      state"+std::to_string(j)+" = "+var(n.updates[j])+"();\n";
       body+="    }\n    c"+v+" = state0;\n";
@@ -106,6 +121,20 @@ struct SpanScope {
 )";
   }
   code += "int main() {\n";
+  // Emit genuine native stack storage and a const pointer read. Names from
+  // user source never enter generated C++; the borrow is compiler-authenticated
+  // and nonowning, and unref only invalidates this lexical handle.
+  if (p.local) {
+    const auto initial = std::to_string(p.local->initial);
+    code += "  const atto::forge::i64 __atto_place{" + initial + "};\n";
+    code += "  const atto::forge::i64* __atto_borrow = &__atto_place;\n";
+    code += "  const atto::forge::i64 __atto_copy = *__atto_borrow;\n";
+    code += "  __atto_borrow = nullptr; // non-owning unref, not delete/free\n";
+    code += "  std::printf(\"%lld\\n\", static_cast<long long>(__atto_copy));\n";
+    code += "  return 0;\n}\n";
+    if (code.size() > max_emitted_bytes) return std::nullopt;
+    return code;
+  }
   std::size_t open_spans = 0;
   if (!p.trace_steps.empty()) {
     code += "  atto::forge::i64 answer = 0;\n";

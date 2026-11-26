@@ -103,6 +103,28 @@ int main() {
   auto forged_choice = lazy;
   for(auto& n:forged_choice.nodes)if(n.op==Op::choose){n.value=-1;break;}
   assert(!validate_ast(forged_choice) && evaluate(forged_choice).error==EvalError::invalid_ast);
+  // Transfer state must come from a scheduled, already evaluated version.
+  const auto transfer=parse_verified_strict_i64(
+    "type Count = int where self >= 0 and self <= 42; "
+    "pub fnc main() -> int { let Count x = 0; let Count y = 0; "
+    "while x < 42 { x=x+1; y=x; if x==42 { break; } } return y; }");
+  assert(transfer.ok() && validate_ast(transfer) && evaluate(transfer).value==42);
+  const auto group=std::find_if(transfer.nodes.begin(),transfer.nodes.end(),
+    [](const auto& n){return n.op==Op::loop_group&&!n.exits.empty();});
+  assert(group!=transfer.nodes.end()&&group->states.size()==2&&group->effects.size()>=2);
+  const auto gi=static_cast<std::size_t>(group-transfer.nodes.begin());
+  for(int mutation=0;mutation<6;++mutation){
+    auto bad=transfer;auto& g=bad.nodes[gi];auto& x=g.exits.front();
+    switch(mutation){
+      case 0:x.values[0]=g.states[1];break;
+      case 1:x.values[0]=g.right;break;
+      case 2:x.condition=g.right;break;
+      case 3:std::swap(g.effects[0],g.effects[1]);break;
+      case 4:g.effects[1]=g.effects[0];break;
+      case 5:g.updates[0]=g.states[1];break;
+    }
+    assert(!validate_ast(bad)&&evaluate(bad).error==EvalError::invalid_ast);
+  }
   auto bad_range=range;
   bad_range.nodes.back().value=43;bad_range.nodes.back().upper=42;
   assert(evaluate(bad_range).error==EvalError::invalid_ast);
