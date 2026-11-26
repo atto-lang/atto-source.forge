@@ -477,6 +477,11 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
         "${CMAKE_CURRENT_SOURCE_DIR}/verification/mixed_counted_select_admission.py"
         "$<TARGET_FILE:oresforge>")
     set_tests_properties(oresforge_mixed_counted_select_admission PROPERTIES TIMEOUT 180)
+    add_test(NAME oresforge_protected_state_intrinsic_denial
+      COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/tests/state-intrinsic-denial.sh"
+        "$<TARGET_FILE:oresforge>")
+    set_tests_properties(oresforge_protected_state_intrinsic_denial PROPERTIES
+      WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 90)
     # The pinned core library is executable through the typed callable lane.
     # Keep it in the full GCC/Clang/sanitizer matrix, not just a path-filtered workflow.
     add_test(NAME oresforge_core_types_native

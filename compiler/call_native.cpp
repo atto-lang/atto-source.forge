@@ -192,6 +192,17 @@ class Parser {
       if (take("define")) {if(defining)fail("duplicate define");defining=true;}
       else if (take("pub")) {if(public_)fail("duplicate pub");public_=true;}
     }
+    // A scalar call graph cannot grant a protected region or actor identity.
+    if (take("state")) {
+      if (token_.text=="container")
+        fail("STATE_CONTAINER_BACKEND_UNSUPPORTED: protected heap region and critical guard lowering required");
+      fail("unexpected declaration after state");
+    }
+    if (take("virtual")) {
+      if (token_.text=="actor")
+        fail("VIRTUAL_ACTOR_BACKEND_UNSUPPORTED: logical key and activation fencing required");
+      fail("unexpected declaration after virtual");
+    }
     // This independent native-call frontend must reject the same HTTP actor
     // forms as the scalar Forge parser, before any callable IR is produced.
     if (token_.text=="http")
