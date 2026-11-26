@@ -36,15 +36,15 @@ int main() {
         rejects<std::out_of_range>([&] { a.read(token, suspended, 15, read); });
         rejects<std::logic_error>([&] { b.read(token, suspended, 8, read); });
         // Another physical carrier must not access the active actor turn.
-        std::atomic<bool> denied = false;
+        std::atomic<bool> turn_denied = false, token_denied = false;
         std::thread intruder([&] {
             try { ActorFrameStack::Turn turn(a); }
-            catch (const std::logic_error&) { denied = true; }
+            catch (const std::logic_error&) { turn_denied = true; }
             try { (void)a.current_turn(); }
-            catch (const std::logic_error&) { denied = denied && true; }
+            catch (const std::logic_error&) { token_denied = true; }
         });
         intruder.join();
-        CHECK(denied);
+        CHECK(turn_denied && token_denied);
         // Leave two frames suspended; the owning actor retains their bytes.
         (void)older;
     }
@@ -100,6 +100,36 @@ int main() {
         (void)bounded.push(t, 7);
         rejects<std::length_error>([&] { (void)bounded.push(t, 2); });
         rejects<std::logic_error>([&] { (void)bounded.push(t, 1); });
+    }
+    // Cross-backend boundary: 64 frames and 64 KiB are inclusive.
+    // Separate controls isolate the frame-count and byte-count limits.
+    {
+        ActorFrameStack bounded(14, 1), sibling(15, 1);
+        ActorFrameStack::Turn turn(bounded), peer(sibling);
+        auto t = bounded.current_turn(), p = sibling.current_turn();
+        auto live = sibling.push(p, 1);
+        std::array<std::uint8_t, 1> value{42}, read{};
+        sibling.write(p, live, 0, value);
+        for (std::size_t i = 0; i < ActorFrameStack::max_frames; ++i)
+            (void)bounded.push(t, 1);
+        CHECK(bounded.depth(t) == 64);
+        rejects<std::length_error>([&] { (void)bounded.push(t, 1); });
+        CHECK(bounded.poisoned());
+        sibling.read(p, live, 0, read);
+        CHECK(read == value);
+        sibling.pop(p, live);
+    }
+    {
+        ActorFrameStack bounded(16, 1);
+        ActorFrameStack::Turn turn(bounded);
+        auto t = bounded.current_turn();
+        auto frame = bounded.push(t, ActorFrameStack::max_bytes);
+        std::array<std::uint8_t, 1> value{42}, read{};
+        bounded.write(t, frame, 65535, value);
+        bounded.read(t, frame, 65535, read);
+        CHECK(read == value);
+        rejects<std::length_error>([&] { (void)bounded.push(t, 1); });
+        CHECK(bounded.poisoned());
     }
     // Repeated LIFO reuse and scrubbing without a new storage allocation.
     {
