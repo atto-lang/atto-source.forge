@@ -1,6 +1,7 @@
 #include "runtime/ActorIncarnationMemoryV1.hpp"
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <exception>
 #include <iostream>
@@ -193,6 +194,183 @@ int main() {
   b.retire();
   denied([&]{ b.heap_read(actorB, hb, 0, output); },
          "retired heap accepted a stale read");
+
+  // Malformed compiler-produced frames cannot be caught and resumed. Each
+  // fault is actor-local: the healthy peer still reads its own frame.
+  Mailbox faultMailbox(9108), peerMailbox(9109), readMailbox(9110);
+  const auto faultRef = faultMailbox.ref();
+  const auto peerRef = peerMailbox.ref();
+  const auto readRef = readMailbox.ref();
+  ActorIncarnationMemoryV1 faulted(faultMailbox, faultRef, 128, 64, 2, 2);
+  ActorIncarnationMemoryV1 peer(peerMailbox, peerRef, 128, 64, 2, 2);
+  ActorIncarnationMemoryV1 readFaulted(readMailbox, readRef, 128, 64, 2, 2);
+  auto exFault = faulted.begin(faultRef);
+  auto badFrame = faulted.push(faultRef, exFault, 8);
+  auto exPeer = peer.begin(peerRef);
+  auto goodFrame = peer.push(peerRef, exPeer, 8);
+  auto exRead = readFaulted.begin(readRef);
+  auto readFrame = readFaulted.push(readRef, exRead, 8);
+  std::array<std::uint8_t, 2> crossBoundary{3, 4};
+  denied([&]{ faulted.frame_write(faultRef, exFault, badFrame, 7,
+                                  crossBoundary); },
+         "out-of-bounds frame write must be rejected");
+  denied([&]{ readFaulted.frame_read(readRef, exRead, readFrame, 7,
+                                     crossBoundary); },
+         "out-of-bounds frame read must be rejected");
+  require(faulted.poisoned() && readFaulted.poisoned(),
+          "caught frame bounds violation must be terminal for its actor");
+  denied([&]{ faulted.begin(faultRef); },
+         "a caught frame bounds exception re-admitted a poisoned actor");
+  peer.frame_write(peerRef, exPeer, goodFrame, 0,
+                   std::array<std::uint8_t,1>{42});
+  std::array<std::uint8_t,1> peerAnswer{};
+  peer.frame_read(peerRef, exPeer, goodFrame, 0, peerAnswer);
+  require(peerAnswer[0] == 42 && !peer.poisoned(),
+          "one actor frame boundary failure corrupted the sibling actor");
+  peer.pop(peerRef, exPeer, goodFrame);
+  peer.finish(peerRef, exPeer);
+  peer.verify_handler_exit(peerRef);
+
+  // Reentrant begin is terminal, even when the host catches the denial.
+  Mailbox secondBeginMailbox(9111);
+  const auto secondBeginRef = secondBeginMailbox.ref();
+  ActorIncarnationMemoryV1 secondBegin(
+      secondBeginMailbox, secondBeginRef, 128, 64, 2, 2);
+  auto firstExecution = secondBegin.begin(secondBeginRef);
+  auto firstFrame = secondBegin.push(secondBeginRef, firstExecution, 8);
+  denied([&]{ secondBegin.begin(secondBeginRef); },
+         "second Begin on a live actor was incorrectly admitted");
+  require(secondBegin.poisoned(), "reentrant Begin left original frames live");
+  denied([&]{ secondBegin.pop(secondBeginRef, firstExecution, firstFrame); },
+         "old execution token remained usable after caught reentrancy");
+
+  // A parked actor without a physical-turn lease cannot touch actor heap.
+  Mailbox parkedMailbox(9112);
+  const auto parkedRef = parkedMailbox.ref();
+  ActorIncarnationMemoryV1 parked(parkedMailbox, parkedRef, 128, 64, 2, 2);
+  const auto parkedHeap = parked.alloc(parkedRef, 8);
+  const auto parkedExecution = parked.begin(parkedRef);
+  [[maybe_unused]] auto parkedFrame = parked.push(parkedRef, parkedExecution, 8);
+  [[maybe_unused]] auto parkedContinuation = parked.suspend(
+      parkedRef, parkedExecution);
+  denied([&]{ parked.heap_read(parkedRef, parkedHeap, 0, peerAnswer); },
+         "suspended actor used heap without an admitted actor turn");
+  require(parked.poisoned(),
+          "heap access while suspended must revoke logical stack authority");
+
+  // Every heap entry point must deny a parked actor, not just heap_read.
+  // Give each denial a fresh incarnation because a violation is terminal.
+  for (int operation = 0; operation < 3; ++operation) {
+    Mailbox fencedMailbox(9200 + operation);
+    const auto fencedRef = fencedMailbox.ref();
+    ActorIncarnationMemoryV1 fenced(fencedMailbox, fencedRef, 128, 64, 2, 2);
+    const auto fencedHeap = fenced.alloc(fencedRef, 8);
+    const auto fencedExecution = fenced.begin(fencedRef);
+    [[maybe_unused]] auto fencedFrame = fenced.push(
+        fencedRef, fencedExecution, 8);
+    const auto fencedContinuation = fenced.suspend(
+        fencedRef, fencedExecution);
+    const std::array<std::uint8_t, 1> fencedByte{42};
+    if (operation == 0) {
+      denied([&]{ fenced.alloc(fencedRef, 1); },
+             "suspended actor allocated heap memory");
+    } else if (operation == 1) {
+      denied([&]{ fenced.heap_write(fencedRef, fencedHeap, 0, fencedByte); },
+             "suspended actor wrote heap memory");
+    } else {
+      denied([&]{ fenced.drop(fencedRef, fencedHeap); },
+             "suspended actor dropped heap memory");
+    }
+    require(fenced.poisoned(),
+            "suspended heap mutation must permanently poison actor frames");
+    denied([&]{ fenced.resume(
+        fencedRef, fencedExecution, fencedContinuation); },
+        "poisoned actor continuation recovered after suspended heap mutation");
+  }
+  require(!peer.poisoned(),
+          "suspended heap denials must not fault another actor");
+
+  // STOP and restart reject stale construction before charging native memory.
+  Mailbox stoppedMailbox(9113);
+  const auto stoppedRef = stoppedMailbox.ref();
+  const auto processBeforeStop = processBudget.reserved();
+  stoppedMailbox.close();
+  denied([&]{ ActorIncarnationMemoryV1 invalid(
+                 stoppedMailbox, stoppedRef, 128, 64, 2, 2); },
+         "closed actor memory was admitted");
+  const auto restartedRef = stoppedMailbox.restart();
+  denied([&]{ ActorIncarnationMemoryV1 invalid(
+                 stoppedMailbox, stoppedRef, 128, 64, 2, 2); },
+         "old generation was admitted after restart");
+  require(processBudget.reserved() == processBeforeStop,
+          "stale constructor attempt leaked native budget");
+  {
+    ActorIncarnationMemoryV1 fresh(
+        stoppedMailbox, restartedRef, 128, 64, 2, 2);
+    const auto freshHeap = fresh.alloc(restartedRef, 8);
+    fresh.heap_read(restartedRef, freshHeap, 0, peerAnswer);
+    require(peerAnswer[0] == 0,
+            "fresh incarnation heap was not zero-initialized");
+  }
+  require(processBudget.reserved() == processBeforeStop,
+          "fresh incarnation teardown leaked aggregate native budget");
+
+  // Concurrent admission must serialize the aggregate reservation. Do not
+  // allow both actors to reserve the last available native bytes.
+  ActorMemoryAggregateBudgetV1 competingBudget(176);
+  Mailbox contenderMailboxA(9114), contenderMailboxB(9115);
+  const auto contenderRefA = contenderMailboxA.ref();
+  const auto contenderRefB = contenderMailboxB.ref();
+  std::atomic<int> started{0}, outcomes{0}, admitted{0}, rejected{0};
+  std::atomic<bool> releaseContender{false};
+  std::exception_ptr unexpectedA, unexpectedB;
+  const std::size_t concurrentBaseline = processBudget.reserved();
+  auto contender = [&](Mailbox& mailbox, const ActorRef& ref,
+                       std::exception_ptr& unexpected) {
+    started.fetch_add(1, std::memory_order_acq_rel);
+    while (started.load(std::memory_order_acquire) != 2)
+      std::this_thread::yield();
+    try {
+      ActorIncarnationMemoryV1 owned(
+          mailbox, ref, 128, 48, 2, 2, competingBudget);
+      admitted.fetch_add(1, std::memory_order_acq_rel);
+      outcomes.fetch_add(1, std::memory_order_acq_rel);
+      while (!releaseContender.load(std::memory_order_acquire))
+        std::this_thread::yield();
+    } catch (const std::length_error&) {
+      rejected.fetch_add(1, std::memory_order_acq_rel);
+      outcomes.fetch_add(1, std::memory_order_acq_rel);
+    } catch (...) {
+      unexpected = std::current_exception();
+      outcomes.fetch_add(1, std::memory_order_acq_rel);
+    }
+  };
+  std::thread firstContender([&] {
+    contender(contenderMailboxA, contenderRefA, unexpectedA);
+  });
+  std::thread secondContender([&] {
+    contender(contenderMailboxB, contenderRefB, unexpectedB);
+  });
+  const auto deadline = std::chrono::steady_clock::now() +
+                        std::chrono::seconds(5);
+  while (outcomes.load(std::memory_order_acquire) != 2 &&
+         std::chrono::steady_clock::now() < deadline)
+    std::this_thread::yield();
+  const int completedOutcomes = outcomes.load(std::memory_order_acquire);
+  const int activeReservations = admitted.load(std::memory_order_acquire);
+  const int deniedReservations = rejected.load(std::memory_order_acquire);
+  const std::size_t duringCompetition = competingBudget.reserved();
+  releaseContender.store(true, std::memory_order_release);
+  firstContender.join();
+  secondContender.join();
+  if (unexpectedA) std::rethrow_exception(unexpectedA);
+  if (unexpectedB) std::rethrow_exception(unexpectedB);
+  require(completedOutcomes == 2 && activeReservations == 1 &&
+          deniedReservations == 1 && duringCompetition == 176,
+          "concurrent actor creation overcommitted its native memory budget");
+  require(competingBudget.reserved() == 0 &&
+          processBudget.reserved() == concurrentBaseline,
+          "concurrent actor retirement did not refund process and runtime quota");
 
   std::cout << "FORGE_ACTOR_INCAR_MEMORY_HOST_PASS"
             << "|private_heap=1|logical_stack=1|guest_atto=0|physical_stack=0\n";

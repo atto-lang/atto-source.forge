@@ -43,6 +43,12 @@ reject cleanup 'do sync task {defer {};}; return 42;' E_TASK_UNSUPPORTED
 reject local_escape 'return sync task {val int x=42;return x;}+x;' E_PARSE_SYNTAX
 reject forward_local 'return sync task {val int x=y;val int y=42;return x;};' E_PARSE_SYNTAX
 reject duplicate_local 'return sync task {val int x=1;val int x=42;return x;};' E_TASK_UNSUPPORTED
-reject mutable_local 'return sync task {let int x=42;return x;};' E_TASK_UNSUPPORTED
-printf 'FORGE_INLINE_NATIVE=%s/9 NEGATIVE=%s/10\n' "$pass" "$neg"
-test "$pass" = 9; test "$neg" = 10
+guest mutable_local 'return sync task {let int x=1;x=40;x=x+2;return x;};' 42 0
+guest mutable_snapshot 'return sync task {let int x=20;val int before=x;x=22;return before+x;};' 42 0
+guest mutable_nested 'return sync task {let int x=40;x=sync task {let int y=x;y=y+1;return y;};return x+1;};' 42 0
+guest overwritten_overflow 'return sync task {let int x=0;x=9223372036854775807+1;x=42;return x;};' E_OVERFLOW 70
+reject immutable_write 'return sync task {val int x=1;x=42;return x;};' E_TASK_UNSUPPORTED
+reject nested_outer_write 'return sync task {let int x=1;return sync task {x=42;return x;};};' E_TASK_UNSUPPORTED
+reject unknown_write 'return sync task {x=42;return x;};' E_TASK_UNSUPPORTED
+printf 'FORGE_INLINE_NATIVE=%s/13 NEGATIVE=%s/12\n' "$pass" "$neg"
+test "$pass" = 13; test "$neg" = 12
