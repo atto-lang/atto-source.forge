@@ -7,9 +7,8 @@
 
 namespace atto::forge::scalar {
 enum class Kind {
-  name, integer, lparen, rparen, lbrace, rbrace, colon, semicolon,
-  plus, minus, star, slash, percent, bit_and, bit_or, bit_xor, tilde, shl, lshr, arrow, left_arrow,
-  assign, lt, gt, bang, end
+  name, integer, quoted, lparen, rparen, lbrace, rbrace, colon, double_colon, lt, gt, semicolon, dot, equals, comma, question,
+  plus, minus, star, slash, percent, logical_and, logical_or, not_equal, equal_equal, bit_and, bit_or, caret, bit_xor, tilde, shl, lshr, arrow, left_arrow, bang, end
 };
 struct Token { Kind kind; std::size_t offset; std::size_t length; };
 enum class LexError { none, source_too_large, token_limit, unsupported_byte, unterminated_comment, comment_nesting_limit, ownership_bang_unsupported };
@@ -121,9 +120,33 @@ inline constexpr std::size_t max_tokens = 256;
     } else if (c == '>' && src.substr(i, 3) == ">>>") {
       kind = Kind::lshr;
       i += 3;
+    } else if (c == ':' && src.substr(i, 2) == "::") {
+      kind = Kind::double_colon;
+      i += 2;
+    } else if (src.substr(i, 2) == "&&") {
+      kind = Kind::logical_and; i += 2;
+    } else if (src.substr(i, 2) == "||") {
+      kind = Kind::logical_or; i += 2;
+    } else if (src.substr(i, 2) == "!=") {
+      kind = Kind::not_equal; i += 2;
+    } else if (src.substr(i, 2) == "==") {
+      kind = Kind::equal_equal; i += 2;
+    } else if (c == '^' && src.substr(i, 2) == "^^") {
+      kind = Kind::bit_xor;
+      i += 2;
     } else if (is_digit(c)) {
       kind = Kind::integer;
-      do { ++i; } while (i < src.size() && is_digit(src[i]));
+      do { ++i; } while (i < src.size() && (is_digit(src[i]) || src[i]=='_'));
+    } else if (c == '"') {
+      kind = Kind::quoted;
+      ++i;
+      while (i < src.size() && src[i] != '"') ++i;
+      if (i == src.size()) {
+        out.error = LexError::unsupported_byte;
+        out.error_offset = start;
+        return out;
+      }
+      ++i;
     } else {
       ++i;
       switch (c) {
@@ -132,7 +155,13 @@ inline constexpr std::size_t max_tokens = 256;
         case '{': kind = Kind::lbrace; break;
         case '}': kind = Kind::rbrace; break;
         case ':': kind = Kind::colon; break;
+        case '=': kind = Kind::equals; break;
+        case '<': kind = Kind::lt; break;
+        case '>': kind = Kind::gt; break;
         case ';': kind = Kind::semicolon; break;
+        case ',': kind = Kind::comma; break;
+        case '?': kind = Kind::question; break;
+        case '.': kind = Kind::dot; break;
         case '+': kind = Kind::plus; break;
         case '-': kind = Kind::minus; break;
         case '*': kind = Kind::star; break;
@@ -140,11 +169,8 @@ inline constexpr std::size_t max_tokens = 256;
         case '%': kind = Kind::percent; break;
         case '&': kind = Kind::bit_and; break;
         case '|': kind = Kind::bit_or; break;
-        case '^': kind = Kind::bit_xor; break;
+        case '^': kind = Kind::caret; break;
         case '~': kind = Kind::tilde; break;
-        case '=': kind = Kind::assign; break;
-        case '<': kind = Kind::lt; break;
-        case '>': kind = Kind::gt; break;
         case '!': kind = Kind::bang; break;
         default:
           out.error = LexError::unsupported_byte;

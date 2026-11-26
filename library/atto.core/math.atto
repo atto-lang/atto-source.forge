@@ -1,0 +1,21 @@
+// Forge-native Atto freestanding math module candidate.
+// Production Forge import linker is not yet admitted for this source.
+define module math as
+  pub fnc min_int(int x, int y): int {
+    if x < y; do return x; fi
+    return y;
+  }
+  pub fnc max_int(int x, int y): int {
+    if x > y; do return x; fi
+    return y;
+  }
+  pub fnc signum_int(int n): int {
+    if n < 0; do return -1; fi
+    if n > 0; do return 1; fi
+    return 0;
+  }
+  pub fnc contains_closed_int(int n, int a, int b): bool {
+    if a > b; do return false; fi
+    return n >= a && n <= b;
+  }
+end

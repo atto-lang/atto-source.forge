@@ -44,6 +44,21 @@ int main() {
       "/* module header */ fnc main(): int { // body\n"
       " return 8 / /* denominator */ 2; /* tail */ }");
   assert(commented.ok());
+  // Constructor admission, not a lock implementation.
+  auto bare_mutex = parse_source("pub fnc main(): int {return Mutex<int>(0); }");
+  assert(!bare_mutex.ok() && bare_mutex.error == ParseError::new_required);
+  assert(parse_error_name(bare_mutex.error) == "E_NEW_REQUIRED");
+  auto new_mutex = parse_source("pub fnc main(): int {return new Mutex<int>(0); }");
+  assert(!new_mutex.ok() && new_mutex.error == ParseError::lock_unsupported);
+  assert(parse_error_name(new_mutex.error) == "E_LOCK_UNSUPPORTED");
+  auto nested_mutex = parse_source("pub fnc main(): int {return Mutex<Option<int>>(0); }");
+  assert(!nested_mutex.ok() && nested_mutex.error == ParseError::new_required);
+  assert(parse_source("// Mutex<int>(0) is commented out\nfnc main():int{return 42;}").ok());
+  assert(!parse_source("fnc main():int{return Mutex<int(0);}").ok());
+  assert(!parse_source("fnc main():int{return Mutex<>(0);}").ok());
+  assert(parse_source("fnc main():int{return other.Mutex<int>(0);}").error != ParseError::new_required);
+
+
   auto malformed_comment = parse_source("fnc main(): int {return 1; /*");
   assert(!malformed_comment.ok() && malformed_comment.error == ParseError::lexical);
   for (const auto* signature : {
@@ -81,7 +96,12 @@ int main() {
   auto a = parse_source("pub fnc main(): int { return 4 + 5 * (6 - 1); }");
   assert(a.ok() && a.nodes[a.root].op == Op::add);
   assert(a.nodes.size() == 7);
-  auto ops = parse_source("fnc main(): int {return ~0 & 15 | 1 ^ 2;}");
+  assert(parse_source("fnc main(): int { ^ 12 ^^ 10; }").ok());
+  for (const auto* bad_caret : {"fnc main(): int {return 12 ^ 10;}",
+       "fnc main(): int {return 12 ^ ^ 10;}", "fnc main(): int {^^ 42;}",
+       "fnc main(): int {return true ^^ false;}"})
+    assert(!parse_source(bad_caret).ok());
+  auto ops = parse_source("fnc main(): int {return ~0 & 15 | 1 ^^ 2;}");
   assert(ops.ok() && ops.nodes[ops.root].op == Op::bor);
   auto b = parse_source("fnc main(): int {return -9223372036854775808;}");
   assert(b.ok() && b.nodes[b.root].value == std::numeric_limits<i64>::min());
@@ -107,6 +127,11 @@ int main() {
     "fnc main(): int {return 1;}\nfnc evil():int{return 2;}",
     "fnc main(): int {return @;}"
   }) assert(!parse_source(bad).ok());
+  assert(parse_source("fnc main(): int {return 4_2;}").ok());
+  assert(parse_source("fnc main(): int {return -9_223_372_036_854_775_808;}").ok());
+  for(auto bad : {"1_","1__2","9_223_372_036_854_775_808"}) {
+    assert(!parse_source(std::string("fnc main(): int {return ")+bad+";}").ok());
+  }
   auto overflow = parse_source("fnc main(): int {return 9223372036854775808;}");
   assert(overflow.error == ParseError::literal_out_of_range);
   std::string deep(40, '(');
