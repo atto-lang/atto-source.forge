@@ -562,6 +562,13 @@ if(BUILD_TESTING)
       -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
   endif()
   add_test(NAME oresforge_actor_private_frames_host COMMAND oresforge_actor_frames_tests)
+
+  add_executable(oresforge_select_continuation_lease_host verification/select_continuation_lease_host.cpp)
+  target_include_directories(oresforge_select_continuation_lease_host PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_select_continuation_lease_host PRIVATE cxx_std_20)
+  target_link_libraries(oresforge_select_continuation_lease_host PRIVATE Threads::Threads)
+  add_test(NAME oresforge_select_continuation_lease_host COMMAND oresforge_select_continuation_lease_host)
+
   set_tests_properties(oresforge_actor_private_frames_host PROPERTIES
     TIMEOUT 30 LABELS "host-only;actor-logical-frames")
 
