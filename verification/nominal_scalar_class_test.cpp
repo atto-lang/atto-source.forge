@@ -70,6 +70,38 @@ int main() {
             native.find("jo .Loresforge_nominal_overflow") != std::string::npos &&
             native.find("ud2") != std::string::npos,
             "class codegen omitted stack ownership or native overflow trap");
+    // Both contextual names and explicit/legacy declaration markers resolve
+    // through the very same receiver-erased method identity.
+    const std::string prefix = "define class Box as let int value=40; ";
+    const std::string writer = "add(mut self,int n):void{self.value=self.value+n;} ";
+    const std::string reader = "():int{return self.value;} ";
+    const std::string mainStart =
+        "end fnc main():int{let mut Box b=new Box();b.add(2);return b.";
+    for (const std::string spelling : {"", "mtd ", "fnc ", "method "}) {
+      for (const std::string name : {"read", "mtd", "method"}) {
+        const auto program = parse(prefix + spelling + writer +
+            spelling + name + reader + mainStart + name + "();}");
+        require(interpret(program) == 42, "instance marker changed guest value");
+        require(program.methods[0].name == "add" &&
+                program.methods[1].name == name &&
+                program.methods[1].value_arity == 0,
+                "instance marker changed method identity");
+        require(emit_x86_64_asm(program) == native,
+                "equivalent method spelling changed native instructions");
+        if (!spelling.empty()) {
+          rejects(prefix + writer + name + reader + spelling + name + reader +
+              mainStart + name + "();}", "duplicate native method name/arity");
+          rejects(prefix + writer + spelling + name + reader + name + reader +
+              mainStart + name + "();}", "duplicate native method name/arity");
+        }
+      }
+    }
+    rejects(prefix + writer + "static mtd read" + reader + mainStart + "read();}");
+    rejects(prefix + writer + "mtd fnc read" + reader + mainStart + "read();}");
+    rejects(prefix + writer + "fnc()" + reader + mainStart + "read();}");
+    require(interpret(parse(prefix + "mtd /* marker */ " + writer +
+        "mtd /* name */ mtd" + reader + mainStart + "mtd();}")) == 42,
+        "comments changed contextual method marker admission");
     const auto split = parse(R"ores(
       define class Counter as let int count=40;
         read():int{return self.count;}
