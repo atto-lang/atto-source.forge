@@ -172,6 +172,37 @@ int main() {
   assert(faults.run_ready(1)==0);
   faults.stop_all();
 
+  // Removing head, middle and tail before their first dispatch must
+  // preserve FIFO order for the remaining nodes and permit immediate refill.
+  for (std::uint64_t round=0; round<64; ++round) {
+    ActorCooperativeScheduler queue(8);
+    std::vector<int> seen;
+    std::vector<ActorRef> refs;
+    const auto base=1000+round*16;
+    for (int i=0; i<8; ++i) {
+      refs.push_back(queue.spawn(base+i,128*1024,2048,
+        [&,i](auto&,auto,auto&){seen.push_back(i);}));
+      queue.send(refs.back(),one);
+    }
+    queue.stop_actor(base);
+    queue.stop_actor(base+4);
+    queue.stop_actor(base+7);
+    assert(queue.queued_turns()==5 && queue.live_actors()==5);
+    for (int i=8; i<11; ++i) {
+      refs.push_back(queue.spawn(base+i,128*1024,2048,
+        [&,i](auto&,auto,auto&){seen.push_back(i);}));
+      queue.send(refs.back(),one);
+    }
+    assert(queue.queued_turns()==8);
+    queue.send(refs[2],two);
+    assert(queue.queued_turns()==8); // duplicate wake coalesced
+    assert(queue.run_ready(9)==9);
+    assert((seen==std::vector<int>{1,2,3,5,6,8,9,10,2}));
+    assert(queue.queued_turns()==0);
+    queue.stop_all();
+    assert(queue.live_actors()==0 && queue.queued_turns()==0);
+  }
+
   rejected([&]{ActorCooperativeScheduler invalid(0);});
   rejected([&]{ActorCooperativeScheduler invalid(65537);});
   return 0;
