@@ -28,6 +28,7 @@ reject() {
 guest typed 'return sync task<int> { return 40+2; };' 42 0
 guest nested 'return 1+sync task { return sync task<int> { return 40; }+1; };' 42 0
 guest void 'do sync task {}; do sync task<void> { return; }; return 42;' 42 0
+guest void_no_separator 'do sync task {} do sync task<void> { return; } return 42;' 42 0
 guest overflow 'return sync task<int> { return 9223372036854775807+1; };' E_OVERFLOW 70
 reject discard 'do sync task<int> {return 1;}; return 42;' E_TASK_RETURN_TYPE
 reject inferred_discard 'do sync task {return 1;}; return 42;' E_TASK_RETURN_TYPE
@@ -35,5 +36,5 @@ reject bare 'sync task {}; return 42;' E_PARSE_SYNTAX
 reject void_value 'return sync task<void> {};' E_TASK_RETURN_TYPE
 reject scheduled 'return task<int> {return 42;};' E_TASK_UNSUPPORTED
 reject cleanup 'do sync task {defer {};}; return 42;' E_TASK_UNSUPPORTED
-printf 'FORGE_INLINE_NATIVE=%s/4 NEGATIVE=%s/6\n' "$pass" "$neg"
-test "$pass" = 4; test "$neg" = 6
+printf 'FORGE_INLINE_NATIVE=%s/5 NEGATIVE=%s/6\n' "$pass" "$neg"
+test "$pass" = 5; test "$neg" = 6

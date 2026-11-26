@@ -826,7 +826,7 @@ class Parser {
     // Do not admit this into the strict refinement verifier yet.
     if (name("sync")) {
       if (!name("task") || strict_ || !helpers_.empty() ||
-          !refinements_.empty() || !units_.empty()) {
+          !refinements_.empty() || !units_.empty() || !dimensions_.empty()) {
         fail(ParseError::task_unsupported); return std::nullopt;
       }
       if (take(Kind::lt)) {
@@ -1382,7 +1382,7 @@ class Parser {
     // Reject any body requiring local assignment, cleanup or a continuation.
     while (name("do")) {
       if (!name("sync") || !name("task") || strict_ ||
-          !helpers_.empty() || !refinements_.empty() || !units_.empty()) {
+          !helpers_.empty() || !refinements_.empty() || !units_.empty() || !dimensions_.empty()) {
         fail(ParseError::task_unsupported); return std::nullopt;
       }
       if (take(Kind::lt)) {
@@ -1398,7 +1398,7 @@ class Parser {
       if (!take(Kind::rbrace)) {
         fail(ParseError::task_unsupported); return std::nullopt;
       }
-      if (!take(Kind::semicolon)) { fail(ParseError::syntax); return std::nullopt; }
+      (void)take(Kind::semicolon);
     }
     while (name("using")) {
       if (root || aliases.size() == max_trace_depth ||
