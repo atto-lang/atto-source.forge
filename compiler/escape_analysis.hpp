@@ -189,9 +189,15 @@ inline std::vector<Decision> analyze(const Program& program,
         decisions.push_back({Storage::PreserveAllocation, "stack-budget-or-alignment"});
       } else {
         const std::size_t slot = (alloc.size_bytes + mask) & ~mask;
-        if (slot > stack_remaining) {
+        // Slots are placed in allocation order from a frame base aligned
+        // to the maximum supported alignment. Rounding each slot's size
+        // alone does not align the start of the next, more aligned slot.
+        const std::size_t used = stack_budget_bytes - stack_remaining;
+        const std::size_t padding = (alloc.alignment - (used & mask)) & mask;
+        if (padding > stack_remaining || slot > stack_remaining - padding) {
           decisions.push_back({Storage::PreserveAllocation, "stack-budget-or-alignment"});
         } else {
+          stack_remaining -= padding;
           stack_remaining -= slot;
           decisions.push_back({Storage::StackCandidate, "proven-local-borrow"});
         }
