@@ -22,7 +22,7 @@ struct Node {
   i64 upper = 0;
 };
 enum class ParseError {
-  none, lexical, syntax, literal_out_of_range, depth_limit, node_limit, telemetry, verify_unproven, verify_unsupported, unit_name, unit_duplicate, unit_dimension, unit_scale, unit_limit, unit_erasure, unit_attachment, unit_inexact, unit_range
+  none, lexical, syntax, literal_out_of_range, depth_limit, node_limit, telemetry, verify_unproven, verify_unsupported, unit_name, unit_duplicate, unit_dimension, unit_scale, unit_limit, unit_erasure, unit_attachment, unit_inexact, unit_range, new_required, lock_unsupported
 };
 // Stable sanitized diagnostics; never echo user source bytes.
 [[nodiscard]] constexpr std::string_view parse_error_name(ParseError error) noexcept {
@@ -34,6 +34,8 @@ enum class ParseError {
     case ParseError::depth_limit: return "E_PARSE_DEPTH";
     case ParseError::node_limit: return "E_PARSE_NODES";
     case ParseError::telemetry: return "E_TELEMETRY_SCOPE";
+    case ParseError::new_required: return "E_NEW_REQUIRED";
+    case ParseError::lock_unsupported: return "E_LOCK_UNSUPPORTED";
     case ParseError::verify_unproven: return "E_VERIFY_UNPROVEN";
     case ParseError::verify_unsupported: return "E_VERIFY_UNSUPPORTED";
     case ParseError::unit_name: return "E_UNIT_NAME";
@@ -769,7 +771,36 @@ public:
 };
 
 [[nodiscard]] inline Parsed parse_source(std::string_view src) {
-  return Parser(src, tokenize(src)).parse();
+  auto lexed = tokenize(src);
+  if (!lexed.ok()) return Parser(src, std::move(lexed)).parse();
+  // Preserve the existing constructor diagnostic from #51 without
+  // replacing current-main lexer/shift, cast, telemetry or AST semantics.
+  const auto is = [&](std::size_t i, Kind kind, std::string_view value = {}) {
+    return i < lexed.tokens.size() && lexed.tokens[i].kind == kind &&
+      (value.empty() || src.substr(lexed.tokens[i].offset,
+                                  lexed.tokens[i].length) == value);
+  };
+  for (std::size_t i = 0; i < lexed.tokens.size(); ++i) {
+    if (!is(i, Kind::name, "Mutex") || !is(i + 1, Kind::lt)) continue;
+    if (i > 0 && (is(i - 1, Kind::dot) || is(i - 1, Kind::double_colon)))
+      continue; // no qualified-name authority for this intrinsic
+    std::size_t depth = 0, close = lexed.tokens.size();
+    for (std::size_t j = i + 1; j < lexed.tokens.size(); ++j) {
+      if (is(j, Kind::lt)) ++depth;
+      else if (is(j, Kind::gt)) {
+        if (depth == 0) break;
+        if (--depth == 0) { close = j; break; }
+      } else if (!is(j, Kind::name)) break; // not a supported type-only spelling
+    }
+    if (close == lexed.tokens.size() || !is(close + 1, Kind::lparen) ||
+        close == i + 2) continue;
+    Parsed denied;
+    denied.error = i > 0 && is(i - 1, Kind::name, "new")
+      ? ParseError::lock_unsupported : ParseError::new_required;
+    denied.error_offset = lexed.tokens[i].offset;
+    return denied;
+  }
+  return Parser(src, std::move(lexed)).parse();
 }
 [[nodiscard]] inline Parsed parse_verified_strict_i64(std::string_view src) {
   return Parser(src, tokenize(src), true).parse();
