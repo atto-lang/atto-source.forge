@@ -571,6 +571,24 @@ int main() {
     const auto err=calls::interpret_effect(captured,std::array<std::int64_t,1>{9223372036854775807LL});
     ensure(err.value==0 && err.tag==65537 && err.effect==calls::ArithmeticStatus::Ok,
            "trap converts ordinary effect into Err");
+    auto bool_helper=calls::parse(
+      "use namespace types; pub fnc fits(int x):bool{return x>=-128 && x<=127;}"
+      " fnc main(int x):int{return fits(x) ? 1 : 0;}");
+    ensure(calls::interpret(bool_helper,std::array<std::int64_t,1>{-128})==1,
+           "typed helper preserves inclusive bound");
+    ensure(calls::interpret(bool_helper,std::array<std::int64_t,1>{128})==0,
+           "typed helper rejects out of range");
+    auto wrong_bool_return=bool_helper;
+    wrong_bool_return.functions[0].returns_bool=false;
+    reject_diagnostic([&] { calls::verify(wrong_bool_return); },"callable int return cannot be Boolean or Result");
+    auto wrong_bool_call=bool_helper;
+    for(auto& node:wrong_bool_call.functions[1].nodes)
+      if(node.kind==calls::Kind::BoolCall) node.kind=calls::Kind::Call;
+    reject_diagnostic([&] { calls::verify(wrong_bool_call); },"Boolean target type mismatch");
+    auto wrong_bool_target=bool_helper;
+    for(auto& node:wrong_bool_target.functions[1].nodes)
+      if(node.kind==calls::Kind::BoolCall) {node.callee=1;node.name="main";}
+    reject_diagnostic([&] { calls::verify(wrong_bool_target); },"Boolean target type mismatch");
     auto corrupt=calls::parse("fnc main(x:int):int{return x+1;}");
     corrupt.functions[0].nodes.back().children[0]=999;
     reject_diagnostic([&] { calls::verify(corrupt); },
