@@ -115,7 +115,7 @@ int main() {
            "OWNERSHIP_BANG_BACKEND_UNSUPPORTED");
     not_ownership("pub fnc main(): int { return copy!eq foo; }");
     reject("pub fnc main(): int { return rt borrow mut foo; }",
-           "runtime ownership operation requires typed lowering in Forge");
+           "legacy 'rt borrow mut' is not valid Oreslang; use 'rt mut borrow value'");
     reject("pub fnc main(): int { return rt mut borrow foo; }",
            "runtime ownership operation requires typed lowering in Forge");
     std::cout<<"FORGE_LEGACY_OPERATOR_GRAMMAR_PASS\n";
