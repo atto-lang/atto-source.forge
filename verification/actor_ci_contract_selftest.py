@@ -23,9 +23,13 @@ def main() -> None:
         'missing_lifetime_target': (
             'oresforge_actor_incarnation_owner_v1 oresforge_actor_incarnation_memory_v1 oresforge_supervisor_data_fence_parity_v1 oresforge_mailbox_incarnation_reuse_v1 oresforge_monotonic_domain_v1 oresforge_actor_arena_domain_reuse_v1 oresforge_actor_owner_lifetime_v1',
             'oresforge_actor_incarnation_owner_v1 oresforge_actor_incarnation_memory_v1 oresforge_supervisor_data_fence_parity_v1 oresforge_mailbox_incarnation_reuse_v1 oresforge_monotonic_domain_v1 oresforge_actor_arena_domain_reuse_v1'),
-        'false_ctest_count': (
-            "grep -Fx '100% tests passed, 0 tests failed out of 7'",
-            "grep -Fx '100% tests passed, 0 tests failed out of 6'"),
+        'missing_structured_receipt': (
+            'python3 verification/actor_ctest_receipt.py "$RUNNER_TEMP/actor-ctest.xml"',
+            'true'),
+        'missing_junit_output': (
+            '--output-junit "$RUNNER_TEMP/actor-ctest.xml"', '--verbose'),
+        'missing_receipt_selftest': (
+            'python3 verification/actor_ctest_receipt_selftest.py', 'true'),
         'missing_lifetime_receipt': (
             "grep -Fx 'PASS OWNER_RESTART_CYCLES=100000 SIBLING_STATE=42 BUDGET_LEAK=0'",
             "grep -Fx 'UNRELATED_PASS'"),
@@ -64,7 +68,7 @@ def main() -> None:
                 print('FORGE_ACTOR_CI_NEGATIVE_REJECTED=' + case)
             else:
                 raise AssertionError('CI workflow mutation was admitted: ' + case)
-    print('FORGE_ACTOR_CI_NEGATIVE_MATRIX_PASS=10/10')
+    print('FORGE_ACTOR_CI_NEGATIVE_MATRIX_PASS=12/12')
 
 
 if __name__ == '__main__':
