@@ -27,7 +27,7 @@ struct Node {
   std::vector<LoopExit> exits{};
 };
 enum class ParseError {
-  none, lexical, syntax, literal_out_of_range, depth_limit, node_limit, telemetry, verify_unproven, verify_unsupported, unit_name, unit_duplicate, unit_dimension, unit_scale, unit_limit, unit_erasure, unit_attachment, unit_inexact, unit_range, refinement_empty, refinement_binding, refinement_precondition, refinement_return, refinement_duplicate, refinement_postcondition, refinement_contract, refinement_export, refinement_body, refinement_call, refinement_cast, i32_range, new_required, lock_unsupported
+  none, lexical, syntax, literal_out_of_range, depth_limit, node_limit, telemetry, verify_unproven, verify_unsupported, unit_name, unit_duplicate, unit_dimension, unit_scale, unit_limit, unit_erasure, unit_attachment, unit_inexact, unit_range, refinement_empty, refinement_binding, refinement_precondition, refinement_return, refinement_duplicate, refinement_postcondition, refinement_contract, refinement_export, refinement_body, refinement_call, refinement_cast, i32_range, new_required, lock_unsupported, missing_initializer
 };
 // Stable sanitized diagnostics; never echo user source bytes.
 [[nodiscard]] constexpr std::string_view parse_error_name(ParseError error) noexcept {
@@ -41,6 +41,7 @@ enum class ParseError {
     case ParseError::telemetry: return "E_TELEMETRY_SCOPE";
     case ParseError::new_required: return "E_NEW_REQUIRED";
     case ParseError::lock_unsupported: return "E_LOCK_UNSUPPORTED";
+    case ParseError::missing_initializer: return "E_MISSING_INITIALIZER";
     case ParseError::verify_unproven: return "E_VERIFY_UNPROVEN";
     case ParseError::verify_unsupported: return "E_VERIFY_UNSUPPORTED";
     case ParseError::unit_name: return "E_UNIT_NAME";
@@ -1085,6 +1086,7 @@ class Parser {
           key=text();++pos_;
         }
         if(mut&&!want){fail(ParseError::verify_unsupported);return false;}
+        if(current().kind==Kind::semicolon){fail(ParseError::missing_initializer);return false;}
         if(!binding_name(key)||!take(Kind::equals))return false;
         auto value=expr(0);if(!value||!take(Kind::semicolon))return false;
         if(want&&!compatible(*value,*want,ParseError::refinement_binding))return false;
@@ -1156,6 +1158,7 @@ class Parser {
         n=text();++pos_;
       }
       if(mut&&!want){fail(ParseError::verify_unsupported);return std::nullopt;}
+      if(strict_&&current().kind==Kind::semicolon){fail(ParseError::missing_initializer);return std::nullopt;}
       if(!binding_name(n)||!take(Kind::equals)){fail(ParseError::syntax);return std::nullopt;}
       if(strict_&&name("Array")){
         if(mut||want){fail(ParseError::verify_unsupported);return std::nullopt;}
