@@ -80,14 +80,21 @@ def check(root: pathlib.Path, workflow: pathlib.Path) -> None:
     require("git rev-parse 'HEAD^{tree}'" in admission,
             'missing immutable Git tree provenance')
     require(test.count('cmake --build "$build" --target ') == 1 and
-            'oresforge_actor_incarnation_owner_v1 oresforge_actor_incarnation_memory_v1 oresforge_supervisor_data_fence_parity_v1' in test,
-            'all three native targets must build in one exact-head tree')
+            'oresforge_actor_incarnation_owner_v1 oresforge_actor_incarnation_memory_v1 oresforge_supervisor_data_fence_parity_v1 oresforge_mailbox_incarnation_reuse_v1 oresforge_monotonic_domain_v1 oresforge_actor_arena_domain_reuse_v1 oresforge_actor_owner_lifetime_v1' in test,
+            'all seven native targets must build in one exact-head tree')
     require(test.count('ctest --test-dir ') == 1 and
-            "-R '^(oresforge_actor_incarnation_(owner|memory)_v1_host|oresforge_supervisor_data_fence_parity_v1_host)$'" in test,
-            'one anchored CTest filter must select all three cases')
+            "-R '^(oresforge_actor_incarnation_(owner|memory)_v1_host|oresforge_supervisor_data_fence_parity_v1_host|oresforge_mailbox_incarnation_reuse_v1_host|oresforge_monotonic_domain_v1_host|oresforge_actor_arena_domain_reuse_v1_host|oresforge_actor_owner_lifetime_v1_host)$'" in test,
+            'one anchored CTest filter must select all seven cases')
+    require('--no-tests=error' in test and
+            test.count("grep -Fx '100% tests passed, 0 tests failed out of 7'") == 1,
+            'missing exact seven-test CTest completion receipt')
     require('-fsanitize=address,undefined' in test and '-fno-omit-frame-pointer' in test,
             'sanitized test mode missing')
     markers = (
+        'PASS FORGE_MAILBOX_REUSE_CYCLES=100000 STALE_AUTHORITY=0 SIBLING=42',
+        'PASS DOMAIN_ISSUED=100000 BOUNDARY_ISSUED=64 BOUNDARY_DENIED=960 PERMANENT_DENIALS=100000',
+        'PASS ARENA_REUSE_CYCLES=16384 STALE_DOMAIN_DENIED=1 ACTIVE_RETIRE_DENIED=1 ZEROED=1 SIBLING=42',
+        'PASS OWNER_RESTART_CYCLES=100000 SIBLING_STATE=42 BUDGET_LEAK=0',
         'FORGE_ACTOR_OWNER_HOST_PASS|turn=1|stop_restart=1|sibling=42|guest_atto=0|physical_stack=0',
         'FORGE_ACTOR_INCAR_MEMORY_HOST_PASS|private_heap=1|logical_stack=1|guest_atto=0|physical_stack=0',
     )
@@ -99,19 +106,26 @@ def check(root: pathlib.Path, workflow: pathlib.Path) -> None:
             test.count('"$build/oresforge_supervisor_data_fence_parity_v1"') == 1 and
             test.count("grep -E '^FORGE_SUPERVISOR_DATA_FENCE_HOST_PASS") == 1,
             'host binary must run once per test')
+    for target in ('oresforge_mailbox_incarnation_reuse_v1', 'oresforge_monotonic_domain_v1', 'oresforge_actor_arena_domain_reuse_v1', 'oresforge_actor_owner_lifetime_v1'):
+        require(test.count('"$build/' + target + '"') == 1,
+                'missing or duplicate lifetime binary: ' + target)
     require('test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"' in test,
             'missing post-test source head readback')
 
     cmake = root / 'CMakeLists.txt'
     if cmake.exists():
         value = cmake.read_text(encoding='utf-8')
-        for target in ('oresforge_actor_incarnation_owner_v1', 'oresforge_actor_incarnation_memory_v1', 'oresforge_supervisor_data_fence_parity_v1'):
+        for target in ('oresforge_actor_incarnation_owner_v1', 'oresforge_actor_incarnation_memory_v1', 'oresforge_supervisor_data_fence_parity_v1', 'oresforge_mailbox_incarnation_reuse_v1', 'oresforge_monotonic_domain_v1', 'oresforge_actor_arena_domain_reuse_v1', 'oresforge_actor_owner_lifetime_v1'):
             require('add_executable(' + target in value,
                     'CTest target executable not registered: ' + target)
             require('COMMAND ' + target + ')' in value,
                     'CTest binary command not registered: ' + target)
         print('FORGE_ACTOR_CI_CMAKE_TARGETS_PASS')
     for filename, marker in (
+        ('verification/mailbox_incarnation_reuse_v1_test.cpp', 'PASS FORGE_MAILBOX_REUSE_CYCLES=100000 STALE_AUTHORITY=0 SIBLING=42'),
+        ('verification/monotonic_domain_v1_test.cpp', 'PASS DOMAIN_ISSUED=100000 BOUNDARY_ISSUED=64 BOUNDARY_DENIED=960 PERMANENT_DENIALS=100000'),
+        ('verification/actor_arena_domain_reuse_v1_test.cpp', 'PASS ARENA_REUSE_CYCLES=16384 STALE_DOMAIN_DENIED=1 ACTIVE_RETIRE_DENIED=1 ZEROED=1 SIBLING=42'),
+        ('verification/actor_owner_lifetime_v1_test.cpp', 'PASS OWNER_RESTART_CYCLES=100000 SIBLING_STATE=42 BUDGET_LEAK=0'),
         ('verification/actor_incarnation_owner_v1_test.cpp', 'FORGE_ACTOR_OWNER_HOST_PASS'),
         ('verification/actor_incarnation_memory_v1_test.cpp', 'FORGE_ACTOR_INCAR_MEMORY_HOST_PASS'),
         ('verification/supervisor_data_fence_parity_v1_test.cpp', 'FORGE_SUPERVISOR_DATA_FENCE_HOST_PASS'),

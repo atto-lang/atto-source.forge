@@ -20,15 +20,24 @@ def main() -> None:
     check(root, workflow)
 
     mutations = {
+        'missing_lifetime_target': (
+            'oresforge_actor_incarnation_owner_v1 oresforge_actor_incarnation_memory_v1 oresforge_supervisor_data_fence_parity_v1 oresforge_mailbox_incarnation_reuse_v1 oresforge_monotonic_domain_v1 oresforge_actor_arena_domain_reuse_v1 oresforge_actor_owner_lifetime_v1',
+            'oresforge_actor_incarnation_owner_v1 oresforge_actor_incarnation_memory_v1 oresforge_supervisor_data_fence_parity_v1 oresforge_mailbox_incarnation_reuse_v1 oresforge_monotonic_domain_v1 oresforge_actor_arena_domain_reuse_v1'),
+        'false_ctest_count': (
+            "grep -Fx '100% tests passed, 0 tests failed out of 7'",
+            "grep -Fx '100% tests passed, 0 tests failed out of 6'"),
+        'missing_lifetime_receipt': (
+            "grep -Fx 'PASS OWNER_RESTART_CYCLES=100000 SIBLING_STATE=42 BUDGET_LEAK=0'",
+            "grep -Fx 'UNRELATED_PASS'"),
         'truncated_ctest_quote': (
-            "-R '^(oresforge_actor_incarnation_(owner|memory)_v1_host|oresforge_supervisor_data_fence_parity_v1_host)$'",
+            "-R '^(oresforge_actor_incarnation_(owner|memory)_v1_host|oresforge_supervisor_data_fence_parity_v1_host|oresforge_mailbox_incarnation_reuse_v1_host|oresforge_monotonic_domain_v1_host|oresforge_actor_arena_domain_reuse_v1_host|oresforge_actor_owner_lifetime_v1_host)$'",
             "-R '^oresforge_actor_incarnation_(owner|memory)_v1_host"),
         'duplicate_success_receipt': (
             "grep -Fx 'FORGE_ACTOR_OWNER_HOST_PASS|turn=1|stop_restart=1|sibling=42|guest_atto=0|physical_stack=0'",
             "grep -Fx 'FORGE_ACTOR_OWNER_HOST_PASS|turn=1|stop_restart=1|sibling=42|guest_atto=0|physical_stack=0'\n"
             "          grep -Fx 'FORGE_ACTOR_OWNER_HOST_PASS|turn=1|stop_restart=1|sibling=42|guest_atto=0|physical_stack=0'"),
         'unanchored_ctest_selection': (
-            "-R '^(oresforge_actor_incarnation_(owner|memory)_v1_host|oresforge_supervisor_data_fence_parity_v1_host)$'",
+            "-R '^(oresforge_actor_incarnation_(owner|memory)_v1_host|oresforge_supervisor_data_fence_parity_v1_host|oresforge_mailbox_incarnation_reuse_v1_host|oresforge_monotonic_domain_v1_host|oresforge_actor_arena_domain_reuse_v1_host|oresforge_actor_owner_lifetime_v1_host)$'",
             "-R 'actor'"),
         'persistent_checkout_credentials': (
             '          persist-credentials: false',
@@ -55,7 +64,7 @@ def main() -> None:
                 print('FORGE_ACTOR_CI_NEGATIVE_REJECTED=' + case)
             else:
                 raise AssertionError('CI workflow mutation was admitted: ' + case)
-    print('FORGE_ACTOR_CI_NEGATIVE_MATRIX_PASS=7/7')
+    print('FORGE_ACTOR_CI_NEGATIVE_MATRIX_PASS=10/10')
 
 
 if __name__ == '__main__':
