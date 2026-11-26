@@ -3,6 +3,8 @@ on:
   pull_request:
     paths:
       - 'include/atto/durable_counter_emit.hpp'
+      - 'include/atto/durable_scalar_emit.hpp'
+      - 'tests/durable_scalar_forge_native.cpp'
       - 'tools/forge_scalar.cpp'
       - 'tests/durable_counter_native.mjs'
       - '.github/workflows/durable-counter-native.yml'
@@ -29,3 +31,7 @@ jobs:
           cmake --build build --target forge_scalar --parallel 2
           FORGE_SCALAR="$PWD/build/forge_scalar" node tests/durable_counter_native.mjs
           ctest --test-dir build -R '^scalar_(guest_pipeline|guest_conformance|cli_diagnostics|guest_reproducibility|check_only)$' --output-on-failure
+          printf '%s\n' 'define durable actor Ledger as state balance: int = -9223372036854775808; state open: bool = true; state last: int = 9223372036854775807; end' > "$RUNNER_TEMP/ledger.atto"
+          build/forge_scalar --durable-scalar-codec-v1 "$RUNNER_TEMP/ledger.atto" -o "$RUNNER_TEMP/ledger.cpp"
+          g++ -std=c++17 -Wall -Wextra -Wpedantic -Werror -UNDEBUG -fsanitize=address,undefined -fno-omit-frame-pointer -no-pie tests/durable_scalar_forge_native.cpp "$RUNNER_TEMP/ledger.cpp" -o "$RUNNER_TEMP/ledger-test"
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 timeout 60 "$RUNNER_TEMP/ledger-test"
