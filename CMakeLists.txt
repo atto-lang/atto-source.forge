@@ -905,3 +905,26 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   endif()
   add_test(NAME socket_broker_v1_test COMMAND socket_broker_v1_test)
 endif()
+
+# Restricted independent functional-pipeline Atto frontend. The preexisting
+# forge_scalar syntax and its 100+ oracle/execution cases are unchanged.
+add_executable(forge_functional tools/forge_functional.cpp)
+target_link_libraries(forge_functional PRIVATE atto_forge_checked_i64)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(forge_functional PRIVATE -Wall -Wextra -Werror -pedantic)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(forge_functional PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(forge_functional PRIVATE -fsanitize=address,undefined)
+  endif()
+endif()
+
+# Four *compiled* Atto source guests plus fourteen fail-closed source cases.
+# Real C++ object/native execution, not host-only scalar evaluator tests.
+add_test(NAME functional_pipeline_guests
+  COMMAND "${CMAKE_COMMAND}"
+    "-DROOT=${CMAKE_CURRENT_SOURCE_DIR}"
+    "-DCXX=${CMAKE_CXX_COMPILER}"
+    "-DSANITIZERS=${ATTO_FORGE_SANITIZERS}"
+    "-DFORGE=$<TARGET_FILE:forge_functional>"
+    "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/functional-pipeline-guests"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/functional_pipelines.cmake")
