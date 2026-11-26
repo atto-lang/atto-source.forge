@@ -10,9 +10,9 @@ namespace oresforge {
 // Trusted-host closed scalar provider profile. The caller must first
 // authenticate the complete manifest/inventory and choose an explicit namespace.
 // This function does not resolve imports or establish package authority.
-inline std::string compile_namespace_provider(std::string_view input,
+inline Program admit_namespace_provider(std::string_view input,
                                               std::string_view selected_namespace,
-                                              std::string_view symbol, Arch arch, std::size_t expected_arity=0) {
+                                              std::string_view symbol, std::size_t expected_arity=0) {
   if(input.empty() || input.size()>4096 || input.find('\0')!=std::string_view::npos)
     throw std::runtime_error("E_NAMESPACE_PROFILE: source budget");
   if(selected_namespace.size()>128 || symbol.size()>128)
@@ -54,7 +54,13 @@ inline std::string compile_namespace_provider(std::string_view input,
   // No host evaluation. Dotted namespaces remain outside this profile.
   std::string lowered=source;
   lowered.replace(static_cast<std::size_t>(m.position(4)),static_cast<std::size_t>(m.length(4)),native_params);
-  return emit_runtime_asm(parse_runtime_source("use "+lowered+"fnc main("+native_params+"): int { return "+
-                           std::string(symbol)+"("+args+"); }\n"),arch);
+  auto program=parse_runtime_source("use "+lowered+"fnc main("+native_params+"): int { return "+
+                           std::string(symbol)+"("+args+"); }\n");
+  verify(program);
+  return program;
+}
+inline std::string compile_namespace_provider(std::string_view input,
+    std::string_view selected_namespace,std::string_view symbol,Arch arch,std::size_t expected_arity=0){
+  return emit_runtime_asm(admit_namespace_provider(input,selected_namespace,symbol,expected_arity),arch);
 }
 }
