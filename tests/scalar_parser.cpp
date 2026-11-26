@@ -5,6 +5,23 @@
 using namespace atto::forge;
 using namespace atto::forge::scalar;
 int main() {
+  // All four effect spellings must fail closed in the scalar profile.
+  for (const std::string_view spelling : {"suspends", "susp", "\xE2\xA7\x96", "\xE2\x88\x82"}) {
+    const auto source = std::string("pub ") + std::string(spelling) +
+        " fnc main(): int {return 42;}";
+    const auto lexed = tokenize(source);
+    assert(lexed.error == LexError::suspension_unsupported);
+    assert(lexed.error_offset == 4);
+    const auto rejected = parse_source(source);
+    assert(rejected.error == ParseError::suspension_unsupported);
+    assert(parse_error_name(rejected.error) == "E_SUSPENDS_UNSUPPORTED");
+    const auto comment = std::string("fnc main(): int {return 42;} // ") + std::string(spelling);
+    assert(parse_source(comment).ok());
+    const auto quoted = tokenize(std::string("\"") + std::string(spelling) + "\"");
+    assert(quoted.ok() && quoted.tokens[0].kind == Kind::quoted);
+  }
+  assert(tokenize("suspension susp2").ok());
+
   // Pointer<int> ref!/deref!/unref! is admitted only by the distinct
   // closed-world local-pointer parser, never as an untyped ownership call.
   for (const std::string_view expression : {
