@@ -735,8 +735,25 @@ class Parser {
     if(key.size()<2 || key.front()!='"'||key.back()!='"'){
       fail(ParseError::pair_key_unsupported);return std::nullopt;
     }
-    for(unsigned char c:key.substr(1,key.size()-2))
-      if(c<32||c>126||c=='\\'||c=='
+    for(unsigned char c:key.substr(1,key.size()-2)) {
+      if(c<32||c>126||c==92||c==36||c==34){
+        fail(ParseError::pair_key_unsupported);return std::nullopt;
+      }
+    }
+    ++pos_;
+    if(!take(Kind::comma)){fail(ParseError::syntax);return std::nullopt;}
+    const bool negative=take(Kind::minus);
+    if(current().kind!=Kind::integer){fail(ParseError::syntax);return std::nullopt;}
+    auto n=parse_source_decimal((negative?"-":"")+std::string(text()));
+    if(!n){fail(ParseError::literal_out_of_range);return std::nullopt;}
+    ++pos_;
+    if(!take(Kind::rparen)){fail(ParseError::syntax);return std::nullopt;}
+    if(!take(Kind::dot)){fail(ParseError::pair_escape);return std::nullopt;}
+    if(!name("second")){fail(ParseError::pair_projection);return std::nullopt;}
+    return postfix(append(Node{Op::literal,0,0,*n}));
+  }
+
+  [[nodiscard]] std::optional<std::size_t> unary(int depth) {
     if (depth > max_parse_depth) { fail(ParseError::depth_limit); return std::nullopt; }
     if(current().kind==Kind::name && text()=="Pair" && pos_+1<tokens_.size() && tokens_[pos_+1].kind==Kind::dot) return pair_projection();
     if (take(Kind::lt)) {
