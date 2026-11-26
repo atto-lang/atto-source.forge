@@ -101,6 +101,7 @@ class ActorCooperativeScheduler final {
         if (!actor.stopping) {
           actor.mailbox.close();
           actor.stack.stop();
+          purge_ready(id); // A self-send may have queued this retired actor.
           live_.erase(it);
           throw;
         }
@@ -110,12 +111,14 @@ class ActorCooperativeScheduler final {
             actor.stack.task_state() == ActorStackDomain::TaskState::Running)
           std::terminate(); // Cannot release a live native continuation.
         actor.stack.stop();
+        purge_ready(id); // A self-send may have queued this retired actor.
         live_.erase(it);
         throw;
       }
       if (actor.stack.task_state() == ActorStackDomain::TaskState::Finished) {
         actor.mailbox.close();
         actor.stack.stop();
+        purge_ready(id); // A self-send may have queued this retired actor.
         live_.erase(it);
       } else if (actor.stopping || actor.mailbox.queued() != 0) {
         ready(actor);
