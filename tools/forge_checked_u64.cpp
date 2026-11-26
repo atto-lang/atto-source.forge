@@ -1,4 +1,4 @@
-// Explicit closed unsigned scalar compiler candidate. Emit only validated native C++20.
+// Shared closed unsigned scalar frontend. LLVM and native C++ emitters use one validated tree.
 #include <charconv>
 #include <cstdint>
 #include <iostream>
@@ -96,13 +96,29 @@ class Compiler {
         f.state = 1; f.cost = check_node(*f.body, f, 0); f.state = 2; return f.cost;
     }
     std::string emit_node(const Node& n, const Function& f, std::string& out, unsigned& next) const {
+        if (n.kind == Node::literal) return n.value;
+        if (n.kind == Node::param) {
+            for (std::size_t i = 0; i < f.params.size(); ++i) if (f.params[i] == n.value) return "%p" + std::to_string(i);
+            fail("internal parameter");
+        }
+        std::vector<std::string> args;
+        for (const auto& child : n.children) args.push_back(emit_node(*child, f, out, next));
+        std::string target;
+        if (n.kind == Node::call) target = "f" + std::to_string(index.at(n.value));
+        else target = n.value == "+" ? "checked_add" : n.value == "-" ? "checked_sub" : "checked_mul";
+        auto v = "%v" + std::to_string(next++);
+        out += "  " + v + " = call i64 @" + target + "(";
+        for (std::size_t i = 0; i < args.size(); ++i) out += (i ? ", i64 " : "i64 ") + args[i];
+        out += ")\n"; return v;
+    }
+    std::string emit_cpp_node(const Node& n, const Function& f, std::string& out, unsigned& next) const {
         if (n.kind == Node::literal) return n.value + "ULL";
         if (n.kind == Node::param) {
             for (std::size_t i = 0; i < f.params.size(); ++i) if (f.params[i] == n.value) return "p" + std::to_string(i);
             fail("internal parameter");
         }
         std::vector<std::string> args;
-        for (const auto& child : n.children) args.push_back(emit_node(*child, f, out, next));
+        for (const auto& child : n.children) args.push_back(emit_cpp_node(*child, f, out, next));
         std::string target;
         if (n.kind == Node::call) target = "f" + std::to_string(index.at(n.value));
         else target = n.value == "+" ? "checked_add" : n.value == "-" ? "checked_sub" : "checked_mul";
@@ -144,7 +160,26 @@ public:
         if (m == index.end() || !funcs[m->second].exported || !funcs[m->second].params.empty()) fail("public zero-arity main required");
         for (std::size_t i = 0; i < funcs.size(); ++i) check_function(i);
     }
-    std::string emit() const {
+    std::string emit_llvm() const {
+        std::string out = "declare void @llvm.trap()\n";
+        for (auto op : {"add", "sub"}) {
+            std::string s(op), intrinsic = "@llvm.u" + s + ".with.overflow.i64";
+            out += "declare { i64, i1 } " + intrinsic + "(i64, i64)\n";
+            out += "define internal i64 @checked_" + s + "(i64 %a, i64 %b) {\nentry:\n  %r = call { i64, i1 } " + intrinsic + "(i64 %a, i64 %b)\n  %bad = extractvalue { i64, i1 } %r, 1\n  br i1 %bad, label %overflow, label %ok\noverflow:\n  call void @llvm.trap()\n  unreachable\nok:\n  %v = extractvalue { i64, i1 } %r, 0\n  ret i64 %v\n}\n";
+        }
+        // Avoid a freestanding wasm32 __multi3 dependency at -O0. The
+        // divide-before-multiply guard is unsigned and never divides by zero.
+        out += "define internal i64 @checked_mul(i64 %a, i64 %b) {\nentry:\n  %zero = icmp eq i64 %b, 0\n  br i1 %zero, label %ok, label %guard\nguard:\n  %limit = udiv i64 -1, %b\n  %bad = icmp ugt i64 %a, %limit\n  br i1 %bad, label %overflow, label %ok\noverflow:\n  call void @llvm.trap()\n  unreachable\nok:\n  %v = mul i64 %a, %b\n  ret i64 %v\n}\n";
+        for (std::size_t i = 0; i < funcs.size(); ++i) {
+            const auto& f = funcs[i]; out += "define internal i64 @f" + std::to_string(i) + "(";
+            for (std::size_t p = 0; p < f.params.size(); ++p) out += (p ? ", i64 %p" : "i64 %p") + std::to_string(p);
+            out += ") {\nentry:\n"; unsigned next = 0; auto v = emit_node(*f.body, f, out, next); out += "  ret i64 " + v + "\n}\n";
+        }
+        out += "define i64 @atto_guest_main() {\nentry:\n  %v = call i64 @f" + std::to_string(index.at("main")) + "()\n  ret i64 %v\n}\n";
+        if (out.size() > 131072) fail("emitted IR budget");
+        return out;
+    }
+    std::string emit_cpp() const {
         std::string out = R"(#include <cstdint>
 #include <cinttypes>
 #include <cstdio>
@@ -165,7 +200,7 @@ constexpr U MAX = std::numeric_limits<U>::max();
         for (std::size_t i = 0; i < funcs.size(); ++i) {
             const auto& f = funcs[i]; out += "static U f" + std::to_string(i) + "(";
             for (std::size_t p = 0; p < f.params.size(); ++p) out += (p ? ", [[maybe_unused]] U p" : "[[maybe_unused]] U p") + std::to_string(p);
-            out += ") {\n"; unsigned next = 0; auto v = emit_node(*f.body, f, out, next); out += "  return " + v + ";\n}\n";
+            out += ") {\n"; unsigned next = 0; auto v = emit_cpp_node(*f.body, f, out, next); out += "  return " + v + ";\n}\n";
         }
         out += "int main() { std::printf(\"%\" PRIu64 \"\\n\", f" + std::to_string(index.at("main")) + "()); return 0; }\n";
         if (out.size() > 131072) fail("emitted C++ budget");
@@ -173,12 +208,16 @@ constexpr U MAX = std::numeric_limits<U>::max();
     }
 };
 } // namespace
-int main() {
+int main(int argc, char** argv) {
     try {
+        bool cpp = argc == 2 && std::string_view(argv[1]) == "--emit=cpp";
+        if (argc != 1 && !cpp && !(argc == 2 && std::string_view(argv[1]) == "--emit=llvm")) fail("unsupported target");
         std::string source; char c;
         while (std::cin.get(c)) { if (source.size() == 16384) fail("source budget"); source.push_back(c); }
         if (!std::cin.eof() || std::cin.bad()) fail("input read");
-        const auto cpp = Compiler(source).emit(); std::cout << cpp;
+        const Compiler compiler(source);
+        const auto artifact = cpp ? compiler.emit_cpp() : compiler.emit_llvm();
+        std::cout << artifact;
         if (!std::cout) fail("output write");
         return 0;
     } catch (const std::exception& e) { std::cerr << "E_U64_PROFILE: " << e.what() << '\n'; return 2; }

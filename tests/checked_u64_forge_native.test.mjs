@@ -23,7 +23,7 @@ function success(r) { assert.ifError(r.error); assert.equal(r.signal,null); asse
 try {
   success(run(clangxx,['-std=c++20','-O2','-Wall','-Wextra','-Werror',fileURLToPath(new URL('../tools/forge_checked_u64.cpp',import.meta.url)),'-o',compiler]));
 } catch(e) { rmSync(root,{recursive:true,force:true}); throw e; }
-function lower(source) { return success(run(compiler,[],source)); }
+function lower(source) { return success(run(compiler,['--emit=cpp'],source)); }
 async function observe(source,expected,opt,host) {
   const cpp = lower(source); writeFileSync(join(root,'guest.cpp'),cpp);
   success(run(host,['-std=c++20','-Wall','-Wextra','-Werror',opt,'guest.cpp','-o','guest']));
@@ -44,10 +44,10 @@ try {
   await test('refuse invalid source before emitting C++',()=>{
     const guest=body=>'pub fnc main(): u64 {return '+body+';}';
     for(const source of [guest('18446744073709551616'),guest('-1'),guest('1/2'),guest('x'),guest('main()'),guest('f(1)')+'fnc f():u64{return 1;}',guest('1')+'fnc f(int n):u64{return 1;}',guest('1')+'fnc f(u64 n,u64 n):u64{return n;}',guest('1')+guest('2'),guest('1')+'fnc f():u64{return g();} fnc g():u64{return f();}',guest('1'+'+1'.repeat(100)),guest('('.repeat(40)+'1'+')'.repeat(40)),guest('01'),guest('1')+'\u202e',guest('1')+' // comment',guest('1')+' '.repeat(17000)]) {
-      const r=run(compiler,[],source); assert.ifError(r.error); assert.equal(r.status,2); assert.equal(r.stdout,''); assert.match(r.stderr,/E_U64_PROFILE/);
+      const r=run(compiler,['--emit=cpp'],source); assert.ifError(r.error); assert.equal(r.status,2); assert.equal(r.stdout,''); assert.match(r.stderr,/E_U64_PROFILE/);
     }
     let s=guest('f15()')+'fnc f0():u64{return 1;}';
     for(let i=1;i<=15;i++) s+=`fnc f${i}():u64{return f${i-1}()+f${i-1}();}`;
-    const r=run(compiler,[],s); assert.equal(r.status,2); assert.equal(r.stdout,''); assert.match(r.stderr,/work budget/);
+    const r=run(compiler,['--emit=cpp'],s); assert.equal(r.status,2); assert.equal(r.stdout,''); assert.match(r.stderr,/work budget/);
   });
 } finally { rmSync(root,{recursive:true,force:true}); }
