@@ -86,7 +86,8 @@ def check(root: pathlib.Path, workflow: pathlib.Path) -> None:
             "-R '^(oresforge_actor_incarnation_(owner|memory)_v1_host|oresforge_supervisor_data_fence_parity_v1_host|oresforge_mailbox_incarnation_reuse_v1_host|oresforge_monotonic_domain_v1_host|oresforge_actor_arena_domain_reuse_v1_host|oresforge_actor_owner_lifetime_v1_host)$'" in test,
             'one anchored CTest filter must select all seven cases')
     require('--no-tests=error' in test and
-            test.count("grep -Fx '100% tests passed, 0 tests failed out of 7'") == 1,
+            test.count('--output-junit "$RUNNER_TEMP/actor-ctest.xml"') == 1 and
+            test.count('python3 verification/actor_ctest_receipt.py "$RUNNER_TEMP/actor-ctest.xml"') == 1,
             'missing exact seven-test CTest completion receipt')
     require('-fsanitize=address,undefined' in test and '-fno-omit-frame-pointer' in test,
             'sanitized test mode missing')
