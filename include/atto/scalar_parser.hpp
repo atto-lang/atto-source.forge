@@ -422,7 +422,7 @@ class Parser {
   std::vector<std::string_view> dimensions_;
   struct Unit { std::string_view name; std::size_t dim; Scale scale; };
   std::vector<Unit> units_;
-  struct Refinement { std::string_view name; Dim dim; Scale scale; i64 lo, hi; Width width=Width::i64; };
+  struct Refinement { std::string_view name; Dim dim; Scale scale; i64 lo, hi; Width width=Width::i64; unsigned holes=0; };
   std::vector<Refinement> refinements_;
   struct Helper {
     std::string_view name;
@@ -1131,7 +1131,7 @@ class Parser {
   [[nodiscard]] bool compatible(std::size_t n,const Refinement& want,ParseError category){
     if(dims_[n]!=want.dim){fail(ParseError::unit_dimension);return false;}
     if(scales_[n]!=want.scale){fail(ParseError::unit_scale);return false;}
-    if(!ranges_[n].within(want.lo,want.hi)){fail(category);return false;}
+    if(!ranges_[n].within(want.lo,want.hi)||(want.holes&1u&&ranges_[n].has(0))||(want.holes&2u&&ranges_[n].has(-1))){fail(category);return false;}
     return true;
   }
   [[nodiscard]] std::optional<std::size_t> call(const Helper& h,int depth){
@@ -1565,7 +1565,7 @@ class Parser {
       if(span){pos_=span->start;require=span->requires_clause;}
       else{require=name("requires");if(!require&&!name("ensures"))break;}
       if(++count>16||current().kind!=Kind::name){fail(ParseError::refinement_contract);return std::nullopt;}
-      auto n=text();++pos_;auto op=contract_op();if(!op)return std::nullopt;
+      auto n=text();++pos_;auto op=require&&take(Kind::not_equal)?std::optional<Op>{Op::ne}:contract_op();if(!op)return std::nullopt;
       auto param_index=[&](std::string_view key)->std::optional<std::size_t>{
         for(std::size_t i=0;i<params.size();++i)if(bindings_[i].first==key)return i;
         return std::nullopt;
@@ -1573,13 +1573,16 @@ class Parser {
       if(require){
         auto i=param_index(n);if(!i){fail(ParseError::refinement_contract);return std::nullopt;}
         auto& p=params[*i];auto v=contract_bound(p);if(!v)return std::nullopt;
-        if(*op==Op::eq){p.lo=std::max(p.lo,*v);p.hi=std::min(p.hi,*v);}
+        if(*op==Op::ne){if(!Range::bit(*v)){fail(ParseError::refinement_contract);return std::nullopt;}p.holes|=Range::bit(*v);}
+        else if(*op==Op::eq){p.lo=std::max(p.lo,*v);p.hi=std::min(p.hi,*v);}
         else if(*op==Op::lt){auto b=checked_sub(*v,1);if(!b){fail(ParseError::refinement_empty);return std::nullopt;}p.hi=std::min(p.hi,*b);}
         else if(*op==Op::le)p.hi=std::min(p.hi,*v);
         else if(*op==Op::gt){auto b=checked_add(*v,1);if(!b){fail(ParseError::refinement_empty);return std::nullopt;}p.lo=std::max(p.lo,*b);}
         else if(*op==Op::ge)p.lo=std::max(p.lo,*v);
+        while(p.lo<=p.hi&&(p.holes&Range::bit(p.lo)))++p.lo;
+        while(p.lo<=p.hi&&(p.holes&Range::bit(p.hi)))--p.hi;
         if(p.lo>p.hi){fail(ParseError::refinement_empty);return std::nullopt;}
-        ranges_[bindings_[*i].second]=Range{p.lo,p.hi,p.width};
+        ranges_[bindings_[*i].second]=Range{p.lo,p.hi,p.width,p.holes};
       }else{
         if(n!="result"){fail(ParseError::refinement_contract);return std::nullopt;}
         if(current().kind==Kind::name){
