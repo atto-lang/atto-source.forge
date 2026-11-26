@@ -28,8 +28,22 @@ struct Evaluated {
     else{
       auto a=self(self,n.left);if(!a.ok())return a;
       const auto x=*a.value;
-      if(n.op==Op::choose){auto b=self(self,x!=0?n.right:static_cast<std::size_t>(n.value));if(!b.ok())return b;value=b.value;}
-      else if(n.op==Op::copy)value=x;
+      if(n.op==Op::loop_value){
+        i64 current=x;std::size_t iterations=0;
+        for(;;){
+          cache[n.left]=current;
+          for(std::size_t j=n.left+1;j<i;++j)cache[j].reset();
+          auto cond=self(self,n.right);if(!cond.ok())return cond;
+          if(*cond.value==0)break;
+          // Host diagnostic model is bounded, not a runtime termination proof.
+          if(++iterations>1000000)return {{},EvalError::invalid_ast};
+          auto update=self(self,static_cast<std::size_t>(n.value));if(!update.ok())return update;
+          current=*update.value;
+        }
+        value=current;
+      }
+      else if(n.op==Op::choose){auto b=self(self,x!=0?n.right:static_cast<std::size_t>(n.value));if(!b.ok())return b;value=b.value;}
+      else if(n.op==Op::copy||n.op==Op::loop_state)value=x;
       else if(n.op==Op::neg)value=checked_neg(x);
       else if(n.op==Op::narrow){
         if(x<std::numeric_limits<std::int32_t>::min()||x>std::numeric_limits<std::int32_t>::max())return {{},EvalError::i32_overflow};
@@ -64,7 +78,7 @@ struct Evaluated {
 }
 [[nodiscard]] inline Evaluated evaluate(const Parsed& p) {
   if (!validate_ast(p)) return {{}, EvalError::invalid_ast};
-  for(const auto& n:p.nodes)if(n.op==Op::choose)return evaluate_lazy(p);
+  for(const auto& n:p.nodes)if(n.op==Op::choose||n.op==Op::loop_value)return evaluate_lazy(p);
   std::vector<i64> values;
   values.reserve(p.nodes.size());
   for (std::size_t i = 0; i < p.nodes.size(); ++i) {
