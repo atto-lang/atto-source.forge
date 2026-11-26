@@ -565,6 +565,11 @@ int main() {
     auto bad_option=option;
     bad_option.functions[0].nodes.back().kind=calls::Kind::If;
     reject_diagnostic([&] { calls::verify(bad_option); },"invalid scalar Option return");
+    auto matched=calls::parse("fnc main():int{return match<int> Some(42) over on Some(n):int -> n, on None:int -> 0, end;}");
+    ensure(calls::interpret(matched,{})==42,"Option match payload");
+    auto forged_match=matched;
+    std::swap(forged_match.functions[0].nodes.back().children[1],forged_match.functions[0].nodes.back().children[2]);
+    reject_diagnostic([&] { calls::verify(forged_match); },"Option payload outside Some arm");
     auto bad_ok=calls::parse("fnc main(x:int):Result<int,Error>{return Ok(x);}");
     bad_ok.functions[0].nodes[0].kind=calls::Kind::Boolean;
     bad_ok.functions[0].nodes[0].value=1;
