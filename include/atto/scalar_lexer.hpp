@@ -1,6 +1,7 @@
 #pragma once
 // Stage-0 restricted .atto scalar lexer. No Python, no guest execution claim.
 // Token locations are offsets, never borrowed views into a temporary source.
+#include "portable_unicode_identifier.hpp"
 #include <cstddef>
 #include <string_view>
 #include <vector>
@@ -27,6 +28,15 @@ inline constexpr std::size_t max_tokens = 256;
     out.error = LexError::source_too_large;
     out.error_offset = max_source_bytes;
     return out;
+  }
+  for (std::size_t at = 0; at < src.size();) {
+    const auto scalar = unicode_at(src, at);
+    if (!scalar.width || unicode_source_control(scalar.value)) {
+      out.error = LexError::unsupported_byte;
+      out.error_offset = at;
+      return out;
+    }
+    at += scalar.width;
   }
   auto is_name_start = [](char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
@@ -83,9 +93,11 @@ inline constexpr std::size_t max_tokens = 256;
     }
     const std::size_t start = i;
     Kind kind;
-    if (is_name_start(c)) {
+    if (portable_name_start(unicode_at(src, i).value)) {
       kind = Kind::name;
-      do { ++i; } while (i < src.size() && is_name(src[i]));
+      do {
+        i += unicode_at(src, i).width;
+      } while (i < src.size() && portable_name_part(unicode_at(src, i).value));
       // Only these operations are unlowered in the scalar and bounded
       // pointer profile. Crucially, ref!/deref!/unref! are NOT rejected
       // here: the typed local_pointer parser admits their verified subset.
