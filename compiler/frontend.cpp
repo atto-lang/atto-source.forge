@@ -428,7 +428,7 @@ class Parser {
       if (operation=="borrow") {
         next();
         if (tok_.text=="mut")
-          error("runtime ownership operation requires typed lowering in Forge"); // compatible legacy order
+          error("legacy 'rt borrow mut' is not valid Oreslang; use 'rt mut borrow value'");
         error("runtime ownership operation requires typed lowering in Forge");
       }
       if (operation=="mut") {
