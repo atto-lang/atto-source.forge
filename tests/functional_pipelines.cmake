@@ -16,7 +16,7 @@ if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux")
   file(WRITE "${valid_source}" "pub fnc main(): int -> 83;\n")
   file(REMOVE "${symlink_source}" "${fifo_source}" "${oversize_source}")
   file(CREATE_LINK "${valid_source}" "${symlink_source}" SYMBOLIC
-       RESULT_VARIABLE symlink_status)
+       RESULT symlink_status)
   if(NOT "${symlink_status}" STREQUAL "0")
     message(FATAL_ERROR "Forge source descriptor test cannot create linked fixture")
   endif()
