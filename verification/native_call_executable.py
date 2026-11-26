@@ -113,6 +113,11 @@ POSITIVE = (
      ((84,2,0,42),(84,2,7,49))),
     ("option-lazy-divide", "fnc main(a:int):int{return match<int> None over on Some(n):int -> n/a, on None:int -> 42, end;}",
      ((0,42),(1,42))),
+    ("checked-unwrap-some", "fnc value(a:int):Option<int>{return Some(a);} fnc main(a:int):int{return match<int> trap! value(a).unwrap() over on Ok(n):int -> n, on Err():int -> 7, end;}", ((42,42),(0,0),(-9223372036854775808,-9223372036854775808),(9223372036854775807,9223372036854775807))),
+    ("checked-unwrap-none", "fnc value():Option<int>{return None;} fnc main():int{return match<int> trap value().unwrap() over on Ok(n):int -> n, on Err():int -> 42, end;}", ((42,),)),
+    ("checked-unwrap-callee", "fnc main():int{return match<int> trap! fail() over on Ok(n):int -> n, on Err():int -> 42, end;} fnc fail():int{return missing().unwrap();} fnc missing():Option<int>{return None;}", ((42,),)),
+    ("checked-unwrap-lazy", "fnc missing():Option<int>{return None;} fnc main(a:int):int{return a eq 0 ? 42 : match<int> trap! missing().unwrap() over on Ok(n):int -> n, on Err():int -> 7, end;}", ((0,42),(1,7))),
+    ("checked-unwrap-status-reset", "fnc missing():Option<int>{return None;} fnc main():int{return (match<int> trap! missing().unwrap() over on Ok(n):int -> n, on Err():int -> 41, end)+1;}", ((42,),)),
     ("trap-scalar", "fnc main(a:int):int{return match<int> trap! (84/a) over on Ok(n):int -> n, on Err():int -> 7, end;}", ((2,42),(0,7),(-2,-42))),
     ("trap-callee", "fnc div(a:int):int{return 84/a;} fnc main(a:int):int{return match<int> trap div(a) over on Err():int -> 7, on Ok(n):int -> n, end;}", ((2,42),(0,7))),
     ("trap-overflow", "fnc main(a:int):int{return match<int> trap! (9223372036854775807+a) over on Ok(n):int -> n, on Err():int -> 42, end;}", ((0,9223372036854775807),(1,42))),
@@ -150,6 +155,7 @@ TRAPS = (
     ("division-left-error-first", "fnc main(a:int):int{return (1/a)+(9223372036854775807+1);}", (0,), "i64 division by zero"),
     ("option-payload-division-error", "fnc value(a:int):Option<int>{return Some(42/a);} fnc main(a:int):int{return match<int> value(a) over on Some(n):int -> n, on None:int -> 7, end;}", (0,), "i64 division by zero"),
     ("option-payload-overflow", "fnc value(a:int):Option<int>{return Some(9223372036854775807+a);} fnc main(a:int):int{return match<int> value(a) over on Some(n):int -> n, on None:int -> 7, end;}", (1,), "i64 add overflow"),
+    ("checked-unwrap-untrapped", "fnc missing():Option<int>{return None;} fnc main():int{return missing().unwrap();}", (), "called Option::unwrap() on None"),
     ("result-untrapped-fault", "fnc checked(a:int):Result<int,Error>{return Ok(84/a);} fnc main(a:int):int{return match<int> checked(a) over on Ok(n):int -> n, on Err():int -> 42, end;}", (0,), "i64 division by zero"),
     ("overflow-add", "fnc plus(n:int):int{return n+1;}"
      " fnc main(n:int):int{return plus(n);}",
@@ -213,6 +219,9 @@ INVALID = (
     ("option-payload-not-callable", "fnc main():int{return match<int> Some(42) over on Some(n):int -> n(), on None:int -> 0, end;}", "Option payload is not callable"),
     ("trap-error-binding", "fnc main():int{return match<int> trap! (1/0) over on Ok(n):int -> n, on Err(e):int -> 42, end;}", "guest Error object binding is unsupported"),
     ("trap-option-rejection", "fnc v():Option<int>{return None;} fnc main():int{return match<int> trap v() over on Ok(n):int -> n, on Err():int -> 42, end;}", "callable Option result type mismatch"),
+    ("checked-unwrap-scalar-rejection", "fnc scalar():int{return 42;} fnc main():int{return scalar().unwrap();}", "callable Option result type mismatch"),
+    ("checked-unwrap-result-rejection", "fnc r():Result<int,Error>{return Ok(42);} fnc main():int{return r().unwrap();}", "callable Option result type mismatch"),
+    ("checked-unwrap-arity-rejection", "fnc missing():Option<int>{return None;} fnc main():int{return missing().unwrap(1);}", "unexpected token"),
     ("trap-bool-rejection", "fnc main():int{return match<int> trap true over on Ok(n):int -> n, on Err():int -> 42, end;}", "Boolean is not an int"),
     ("result-scalar-confusion", "fnc checked():Result<int,Error>{return Ok(42);} fnc main():int{return checked();}", "callable Result type mismatch"),
     ("result-option-confusion", "fnc checked():Result<int,Error>{return Ok(42);} fnc main():int{return match<int> checked() over on Some(n):int -> n, on None:int -> 0, end;}", "callable Option result type mismatch"),
@@ -366,7 +375,7 @@ def main():
                 require(native_checked.returncode==-signal.SIGILL and native_checked.stdout==b"",
                         "depth must remain a non-arithmetic terminal fault")
             else:
-                code=65538 if diagnostic=="i64 division by zero" else 65537
+                code=65539 if diagnostic=="called Option::unwrap() on None" else (65538 if diagnostic=="i64 division by zero" else 65537)
                 require((native_checked.returncode,native_checked.stdout,native_checked.stderr)==
                         (0,("0 "+str(code)+"\n").encode(),b""),
                         "checked ABI failure identity mismatch "+label)
