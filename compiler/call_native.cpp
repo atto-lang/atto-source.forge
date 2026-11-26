@@ -101,7 +101,7 @@ class Parser {
       if (space(c)) {++at_; continue;}
       if (c=='/' && at_+1<text_.size() && text_[at_+1]=='/') {
         at_+=2;
-        while (at_<text_.size() && text_[at_]!='\n') ++at_;
+        while (at_<text_.size() && text_[at_]!='\n' && text_[at_]!='\r') ++at_;
         continue;
       }
       break;
@@ -115,6 +115,8 @@ class Parser {
     if (letter(c)) {
       while (at_<text_.size() && (letter(text_[at_])||digit(text_[at_]))) ++at_;
       const auto word=text_.substr(begin,at_-begin);
+      if (word=="unsafe")
+        throw std::runtime_error("UNSAFE_BACKEND_UNSUPPORTED: unsafe requires checked effects and capability lowering at byte "+std::to_string(begin));
       const bool bang_keyword=word=="trap" || word=="throw" || word=="raise" ||
           word=="panic" || word=="copy" || word=="take" || word=="borrow" ||
           word=="share" || word=="pin" || word=="drop" || word=="pipe" ||
