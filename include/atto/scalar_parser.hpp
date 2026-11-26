@@ -836,17 +836,49 @@ class Parser {
         }
       }
       if (!take(Kind::lbrace)) { fail(ParseError::syntax); return std::nullopt; }
-      if (!name("return") && !take(Kind::caret)) {
-        fail(ParseError::task_unsupported); return std::nullopt;
-      }
-      if (current().kind == Kind::semicolon) {
-        fail(ParseError::task_return_type); return std::nullopt;
-      }
-      auto result = expr(depth + 1);
-      if (!result || !scalar_cast(*result) || !take(Kind::semicolon) ||
-          !take(Kind::rbrace)) {
-        fail(ParseError::syntax); return std::nullopt;
-      }
+      // Prefix locals belong to this task alone. Restore the binding table
+      // on every parse outcome, including failure in a nested task.
+      const auto outer = bindings_.size();
+      auto result = [&]() -> std::optional<std::size_t> {
+        std::vector<std::size_t> initializers;
+        while (name("val")) {
+          if (bindings_.size() >= 32 || !name("int") ||
+              current().kind != Kind::name || !binding_name(text())) {
+            fail(ParseError::task_unsupported); return std::nullopt;
+          }
+          const auto local = text();
+          ++pos_;
+          if (!take(Kind::equals)) { fail(ParseError::syntax); return std::nullopt; }
+          auto value = expr(depth + 1);
+          if (!value || !scalar_cast(*value) || !take(Kind::semicolon)) {
+            fail(ParseError::syntax); return std::nullopt;
+          }
+          // Fresh DAG slot owns metadata and is evaluated even if unused.
+          auto slot = append(Node{Op::copy,*value,0,0});
+          if (!slot) return std::nullopt;
+          ranges_[*slot].width = Width::i64;
+          bindings_.emplace_back(local,*slot);
+          initializers.push_back(*slot);
+        }
+        if (!name("return") && !take(Kind::caret)) {
+          fail(ParseError::task_unsupported); return std::nullopt;
+        }
+        if (current().kind == Kind::semicolon) {
+          fail(ParseError::task_return_type); return std::nullopt;
+        }
+        auto root = expr(depth + 1);
+        if (!root || !scalar_cast(*root) || !take(Kind::semicolon) ||
+            !take(Kind::rbrace)) {
+          fail(ParseError::syntax); return std::nullopt;
+        }
+        for (auto i = initializers.rbegin(); i != initializers.rend(); ++i) {
+          root = append(Node{Op::sequence,*i,*root,0});
+          if (!root) return std::nullopt;
+        }
+        return root;
+      }();
+      bindings_.resize(outer);
+      if (!result) return std::nullopt;
       return postfix(result);
     }
     if (current().kind == Kind::name && text() == "task") {
