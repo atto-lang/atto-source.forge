@@ -91,6 +91,19 @@ class Parser {
                                std::to_string(begin));
     if (letter(c)) {
       while (at_<text_.size() && (letter(text_[at_])||digit(text_[at_]))) ++at_;
+      const auto word=text_.substr(begin,at_-begin);
+      if ((word=="trap" || word=="throw" || word=="raise" || word=="panic" ||
+           word=="copy" || word=="take" || word=="move" || word=="borrow" ||
+           word=="share" || word=="pin" || word=="drop" || word=="pipe" ||
+           word=="rpipe" || word=="stop" || word=="expand") &&
+          at_<text_.size() && text_[at_]=='!' && text_.substr(at_,2)!="!=" &&
+          !(text_.substr(at_,3)=="!eq" && (at_+3==text_.size() ||
+              (!letter(text_[at_+3]) && !digit(text_[at_+3]))))) {
+        const auto after=at_+((word=="copy" && text_.substr(at_,2)=="!!") ? 2 : 1);
+        if (after>=text_.size() || std::string_view(" \t\r\n\v\f").find(text_[after])==std::string_view::npos)
+          throw std::runtime_error("E_BANG_KEYWORD_WHITESPACE: whitespace required after bang keyword at byte "+std::to_string(begin));
+        throw std::runtime_error("BANG_KEYWORD_NATIVE_CALL_UNSUPPORTED: typed lowering required at byte "+std::to_string(begin));
+      }
     } else if (digit(c)) {
       while (at_<text_.size() && digit(text_[at_])) ++at_;
     } else if (c=='!' && text_.substr(begin,3)=="!eq" &&
