@@ -1,5 +1,6 @@
 #include "atto/proxy_mailbox_ticket_v1.hpp"
 #include <array>
+#include <barrier>
 #include <cassert>
 #include <cstdint>
 #include <mutex>
@@ -100,6 +101,33 @@ static void concurrent_results() {
     }
     assert(m.conservation());
 }
+static void concurrent_terminal_races() {
+    for (std::uint64_t i = 0; i < 64; ++i) {
+        host_proxy_mailbox_tickets m(11, 13, 14, 2);
+        auto first = admit(m, route(5000 + i), 42);
+        auto turn = m.dispatch();
+        assert(turn);
+        std::barrier start(4);
+        bool committed = false, panicked = false;
+        host_ticket_admission_result foreign{};
+        std::thread commit([&] { start.arrive_and_wait(); committed = m.commit(*turn, 42); });
+        std::thread panic([&] { start.arrive_and_wait(); panicked = m.panic(*turn); });
+        std::thread attack([&] {
+            auto r = route(6000 + i); r.tenant = 88;
+            start.arrive_and_wait(); foreign = m.admit(r, 99);
+        });
+        start.arrive_and_wait();
+        commit.join(); panic.join(); attack.join();
+        assert(committed != panicked);
+        assert(foreign.status == host_ticket_admission::stale && !foreign.ticket);
+        auto snap = m.snapshot(first);
+        assert(snap && snap->state == (committed ? host_ticket_state::processed : host_ticket_state::failed));
+        assert(snap->has_result == committed);
+        if (committed) assert(snap->result == 42);
+        assert(!m.commit(*turn, 99) && !m.panic(*turn));
+        assert(!m.dispatch() && m.conservation());
+    }
+}
 static void panic_restart_close() {
     host_proxy_mailbox_tickets m(11, 13, 14, 2);
     auto failed = admit(m, route(201), -1);
@@ -130,7 +158,9 @@ int main() {
     correlation_and_full();
     cross_tenant_same_actor();
     concurrent_results();
+    concurrent_terminal_races();
     panic_restart_close();
+    std::puts("ATTO_FORGE_HOST_TERMINAL_RACES_64=PASS");
     std::puts("ATTO_FORGE_HOST_PER_MAIL_TICKETS_128_CONCURRENT=PASS");
     std::puts("ATTO_FORGE_SCOPE=HOST_ONLY_NO_COMPILED_ATTO_PROXY");
 }
