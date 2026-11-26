@@ -1235,10 +1235,32 @@ class Parser {
     if(scale!=want.scale){fail(ParseError::unit_scale);return std::nullopt;}
     return n;
   }
-  std::optional<std::vector<Contract>> contracts(std::vector<Refinement>& params,const Refinement& result){
+  struct AnnotationSpan {std::size_t start,end;bool requires_clause;};
+  std::optional<std::vector<AnnotationSpan>> contract_annotations(){
+    std::vector<AnnotationSpan> spans;
+    while(take(Kind::at)){
+      if(spans.size()>=16){fail(ParseError::refinement_contract);return std::nullopt;}
+      const bool req=name("requires");if(!req&&!name("ensures")){fail(ParseError::refinement_contract);return std::nullopt;}
+      if(!take(Kind::lparen)){fail(ParseError::refinement_contract);return std::nullopt;}
+      auto start=pos_;
+      while(current().kind!=Kind::rparen){
+        const auto k=current().kind;
+        if(pos_-start>=32||k==Kind::end||k==Kind::lparen||k==Kind::lbrace||k==Kind::rbrace||k==Kind::semicolon||k==Kind::at){fail(ParseError::refinement_contract);return std::nullopt;}
+        ++pos_;
+      }
+      spans.push_back({start,pos_,req});++pos_;
+    }
+    return spans;
+  }
+  std::optional<std::vector<Contract>> contracts(std::vector<Refinement>& params,const Refinement& result,const std::vector<AnnotationSpan>& spans){
     std::vector<Contract> out;unsigned count=0;
+    std::size_t index=0;
     for(;;){
-      const bool require=name("requires");if(!require&&!name("ensures"))break;
+      const auto resume=pos_;
+      const auto* span=index<spans.size()?&spans[index++]:nullptr;
+      bool require;
+      if(span){pos_=span->start;require=span->requires_clause;}
+      else{require=name("requires");if(!require&&!name("ensures"))break;}
       if(++count>16||current().kind!=Kind::name){fail(ParseError::refinement_contract);return std::nullopt;}
       auto n=text();++pos_;auto op=contract_op();if(!op)return std::nullopt;
       auto param_index=[&](std::string_view key)->std::optional<std::size_t>{
@@ -1267,6 +1289,7 @@ class Parser {
           out.push_back(Contract{*op,std::nullopt,v});
         }
       }
+      if(span){if(pos_!=span->end){fail(ParseError::refinement_contract);return std::nullopt;}pos_=resume;}
     }return out;
   }
   // Parameters occupy the initial placeholder nodes. Never treat a
@@ -1302,12 +1325,14 @@ class Parser {
     }return true;
   }
   [[nodiscard]] bool helper_declarations(){
-    while(current().kind==Kind::name&&text()=="fnc"&&pos_+1<tokens_.size()){
+    while(current().kind==Kind::at||(current().kind==Kind::name&&text()=="fnc"&&pos_+1<tokens_.size())){
+      auto annotations=contract_annotations();if(!annotations)return false;
+      if(current().kind!=Kind::name||text()!="fnc"||pos_+1>=tokens_.size()){fail(ParseError::refinement_contract);return false;}
       const auto& next=tokens_[pos_+1];
       const auto spelling=source_.substr(next.offset,next.length);
-      if(spelling=="main")break;
+      if(spelling=="main"){if(!annotations->empty()){fail(ParseError::refinement_contract);return false;}break;}
       // Keep existing type-first entrypoint spellings on the legacy path.
-      if((spelling=="int"||spelling=="infer")&&pos_+2<tokens_.size()&&tokens_[pos_+2].kind==Kind::left_arrow)break;
+      if((spelling=="int"||spelling=="infer")&&pos_+2<tokens_.size()&&tokens_[pos_+2].kind==Kind::left_arrow){if(!annotations->empty()){fail(ParseError::refinement_contract);return false;}break;}
       if(refinements_.empty()||helpers_.size()>=16)return false;
       ++pos_;
       if(current().kind!=Kind::name||!binding_name(text()))return false;
@@ -1333,9 +1358,9 @@ class Parser {
       auto result=annotation(text());++pos_;
       if(!result)return false;
       const auto contract_start=pos_;
-      auto checks=contracts(params,*result);
+      auto checks=contracts(params,*result,*annotations);
       if(!checks)return false;
-      const bool contracted=pos_!=contract_start;
+      const bool contracted=!annotations->empty()||pos_!=contract_start;
       bool end_delimited=false;
       if(!take(Kind::lbrace)){
         if(take(Kind::double_colon))end_delimited=true;
