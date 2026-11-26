@@ -30,6 +30,10 @@ RESULT_CASES = (
      ((0,0,65538),(1,0,65537))),
 )
 RESULT_INVALID = (
+    ("trap-bang-whitespace-0", "fnc main():Result<int,Error>{return trap!(84/2);}", "E_BANG_KEYWORD_WHITESPACE"),
+    ("trap-bang-whitespace-1", "fnc main():Result<int,Error>{return trap!42;}", "E_BANG_KEYWORD_WHITESPACE"),
+    ("trap-bang-whitespace-2", "fnc main():Result<int,Error>{return trap!/*gap*/ (84/2);}", "E_BANG_KEYWORD_WHITESPACE"),
+    ("trap-bang-whitespace-3", "fnc main():Result<int,Error>{return trap!! (84/2);}", "E_BANG_KEYWORD_WHITESPACE"),
     ("trap-bool", "fnc main():Result<int,Error>{return trap! true;}", "Boolean is not an int"),
     ("trap-int-return", "fnc main():int{return trap! 42;}", "reserved predicate word"),
     ("result-unwrapped", "fnc main():Result<int,Error>{return 42;}", "requires explicit trap"),
