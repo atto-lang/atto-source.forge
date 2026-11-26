@@ -41,6 +41,14 @@ int main() {
   const std::string nul("1\0" "2", 3);
   auto bad = tokenize(std::string_view(nul));
   assert(bad.error == LexError::unsupported_byte && bad.error_offset == 1);
+  const std::string unicode_names = "Φ φ 数量 價格 𠮷 x𠮷2 〇";
+  const auto names = tokenize(unicode_names);
+  assert(names.ok() && names.tokens.size() == 8);
+  assert(names.tokens[4].length == 4 && names.tokens[5].length == 6);
+  for (std::size_t j = 0; j < 7; ++j) assert(names.tokens[j].kind == Kind::name);
+  assert(!tokenize("/* \xe2\x80\xae */").ok());
+  assert(!tokenize("// \xf0\x80\x80\x80").ok());
+  assert(!tokenize("\xed\xa0\x80").ok());
   const auto bits = tokenize("~1 & 2 | 3 ^^ 4");
   assert(bits.ok());
   assert(bits.tokens[0].kind == Kind::tilde);
