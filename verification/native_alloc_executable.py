@@ -93,9 +93,9 @@ def main():
         ir = run_compiler(compiler, ["ir-alloc", str(source)])
         require(ir.returncode == 0 and "closed-world verified" in ir.stdout,
                 f"allocation IR did not compile: {ir!r}")
-        for mode, allocations in (("off", 6), ("safe", 0)):
-            command = ["--opt-escape=" + mode, "emit-alloc-asm",
-                       "x86_64", str(source)]
+        for mode, allocations in (("off", 6), ("safe", 0), ("default", 0)):
+            command = ([] if mode == "default" else ["--opt-escape=" + mode]) + [
+                "emit-alloc-asm", "x86_64", str(source)]
             emitted = run_compiler(compiler, command)
             require(emitted.returncode == 0 and emitted.stdout.startswith(".text\n"),
                     f"assembler emission failed: {emitted!r}")
@@ -114,13 +114,15 @@ def main():
                           "-Wl,--wrap=malloc", "-Wl,--wrap=free",
                           str(folder / "driver.c"), str(asm), "-o", str(native)])
             require(built.returncode == 0, f"link failed: {built.stderr}")
-            executed = call([str(native), mode])
+            executed = call([str(native), "safe" if mode == "default" else mode])
             require(executed.returncode == 0 and
                     f"malloc={allocations} free={allocations}" in executed.stdout,
                     f"native allocation count/value mismatch: {executed!r}")
             overflow = call([str(native), "overflow"])
             require(overflow.returncode == -signal.SIGILL,
                     f"checked overflow did not trap: {overflow!r}")
+        require((folder / "default.s").read_bytes() == (folder / "safe.s").read_bytes(),
+                "default and explicit safe assembly differ")
         invalid = SOURCE + "\nactor.send(p);\n"
         source.write_text(invalid, encoding="utf-8")
         denied = run_compiler(compiler, ["--opt-escape=safe", "emit-alloc-asm",
@@ -128,6 +130,10 @@ def main():
         require(denied.returncode == 1 and not denied.stdout and
                 "unexpected trailing allocation source" in denied.stderr,
                 "unsupported actor effect was silently optimized")
+        denied_default = run_compiler(compiler, ["emit-alloc-asm", "x86_64", str(source)])
+        require(denied_default.returncode == 1 and not denied_default.stdout and
+                "unexpected trailing allocation source" in denied_default.stderr,
+                "default optimization accepted unsupported actor effect")
         bad_arch = run_compiler(compiler, ["--opt-escape=safe", "emit-alloc-asm",
                                            "arm64", str(source)])
         require(bad_arch.returncode == 1 and not bad_arch.stdout,
@@ -136,7 +142,7 @@ def main():
                                                   str(source)])
         require(denied_general.returncode == 1 and not denied_general.stdout,
                 "safe flag incorrectly enabled outside native allocation fixture")
-        print("6 actual x86-64 cases: off 6 malloc/free, safe 0; overflow traps verified")
+        print("6 actual x86-64 cases per mode: off 6 malloc/free, safe/default 0; overflow traps verified")
 
 
 if __name__ == "__main__":
