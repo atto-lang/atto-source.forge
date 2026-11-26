@@ -21,7 +21,7 @@ struct Node {
   i64 upper = 0;
 };
 enum class ParseError {
-  none, lexical, syntax, literal_out_of_range, depth_limit, node_limit, telemetry
+  none, lexical, syntax, literal_out_of_range, depth_limit, node_limit, telemetry, verify_unproven, verify_unsupported
 };
 // Stable sanitized diagnostics; never echo user source bytes.
 [[nodiscard]] constexpr std::string_view parse_error_name(ParseError error) noexcept {
@@ -33,6 +33,8 @@ enum class ParseError {
     case ParseError::depth_limit: return "E_PARSE_DEPTH";
     case ParseError::node_limit: return "E_PARSE_NODES";
     case ParseError::telemetry: return "E_TELEMETRY_SCOPE";
+    case ParseError::verify_unproven: return "E_VERIFY_UNPROVEN";
+    case ParseError::verify_unsupported: return "E_VERIFY_UNSUPPORTED";
   }
   return "E_PARSE_UNKNOWN";
 }
@@ -132,6 +134,7 @@ class Parser {
   std::vector<Token> tokens_;
   std::size_t pos_ = 0;
   Parsed out_;
+  bool strict_ = false;
   // File-local bounded rational dimensions; erased only after scalar admission.
   using Dim = std::array<int, 8>;
   struct Scale {
@@ -165,6 +168,14 @@ class Parser {
     [[nodiscard]] Range neg() const {
       const auto a=checked_neg(hi),b=checked_neg(lo);
       return a&&b?Range{*a,*b}:Range{};
+    }
+    [[nodiscard]] bool proves(Range r, Op op) const {
+      if(op==Op::add)return checked_add(lo,r.lo).has_value()&&checked_add(hi,r.hi).has_value();
+      if(op==Op::sub)return checked_sub(lo,r.hi).has_value()&&checked_sub(hi,r.lo).has_value();
+      if(op==Op::mul){for(auto a:{lo,hi})for(auto b:{r.lo,r.hi})if(!checked_mul(a,b))return false;return true;}
+      if(op==Op::div)return (r.lo>0||r.hi<0)&&
+        !(lo==std::numeric_limits<i64>::min()&&r.lo<=-1&&r.hi>=-1);
+      return false;
     }
     [[nodiscard]] Range binary(Range r,Op op) const {
       if(op==Op::add||op==Op::sub){
@@ -312,6 +323,7 @@ class Parser {
   }
   [[nodiscard]] std::optional<std::size_t> checked_refinement(std::size_t n,const Refinement& r) {
     if (dims_[n]!=r.dim || scales_[n]!=r.scale) {fail(ParseError::syntax);return std::nullopt;}
+    if(strict_&&!ranges_[n].within(r.lo,r.hi)){fail(ParseError::verify_unproven);return std::nullopt;}
     return append(Node{Op::refine,n,0,r.lo,r.hi});
   }
   [[nodiscard]] bool attach(std::size_t n) {
@@ -355,6 +367,20 @@ class Parser {
     if (out_.nodes.size() >= max_nodes) {
       fail(ParseError::node_limit);
       return std::nullopt;
+    }
+    if(strict_){
+      switch(n.op){
+        case Op::literal: case Op::refine: case Op::copy: case Op::sequence: break;
+        case Op::neg:
+          if(ranges_[n.left].lo==std::numeric_limits<i64>::min()){
+            fail(ParseError::verify_unproven);return std::nullopt;
+          }break;
+        case Op::add: case Op::sub: case Op::mul: case Op::div:
+          if(!ranges_[n.left].proves(ranges_[n.right],n.op)){
+            fail(ParseError::verify_unproven);return std::nullopt;
+          }break;
+        default: fail(ParseError::verify_unsupported);return std::nullopt;
+      }
     }
     Dim d{};
     Scale s{};
@@ -692,8 +718,8 @@ class Parser {
     return root;
   }
 public:
-  Parser(std::string_view source, Lexed lexed)
-      : source_(source), tokens_(std::move(lexed.tokens)) {
+  Parser(std::string_view source, Lexed lexed, bool strict = false)
+      : source_(source), tokens_(std::move(lexed.tokens)), strict_(strict) {
     if (!lexed.ok()) {
       out_.error = ParseError::lexical;
       out_.error_offset = lexed.error_offset;
@@ -702,6 +728,7 @@ public:
   [[nodiscard]] Parsed parse() {
     if (out_.error != ParseError::none) return std::move(out_);
     if (!declarations() || !refinement_declarations()) { fail(ParseError::syntax); return std::move(out_); }
+    if(strict_&&refinements_.empty()){fail(ParseError::verify_unsupported);return std::move(out_);}
     (void)name("pub");
     const bool fnc = name("fnc");
     bool signature_ok = false;
@@ -724,7 +751,7 @@ public:
       return std::move(out_);
     }
     std::vector<std::string_view> aliases;
-    auto root = current().kind==Kind::name&&text()=="val" ? binding_body() : body(aliases);
+    auto root = strict_||(current().kind==Kind::name&&text()=="val") ? binding_body() : body(aliases);
     if (!root || current().kind != Kind::end) {
       fail(ParseError::syntax);
       return std::move(out_);
@@ -736,5 +763,8 @@ public:
 
 [[nodiscard]] inline Parsed parse_source(std::string_view src) {
   return Parser(src, tokenize(src)).parse();
+}
+[[nodiscard]] inline Parsed parse_verified_strict_i64(std::string_view src) {
+  return Parser(src, tokenize(src), true).parse();
 }
 }  // namespace atto::forge::scalar
