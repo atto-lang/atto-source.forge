@@ -35,7 +35,7 @@ void reject_diagnostic(const std::function<void()>& fn,std::string_view diagnost
   } catch (const std::exception& error) {
     if (std::string_view(error.what()).find(diagnostic)==std::string_view::npos)
       throw std::runtime_error("source rejected for wrong reason: "+
-                               std::string(error.what()));
+                               std::string(error.what())+" (expected: "+std::string(diagnostic)+")");
     return;
   }
   throw std::runtime_error("malformed source admitted unexpectedly");
@@ -790,8 +790,10 @@ int main() {
       "fnc main():int{do match 1 over on _ -> {return 1;} end}"
     }) {
       reject_diagnostic([&] { (void)parse_source(candidate); },
-          std::string_view(candidate).find("match 1 over")!=std::string_view::npos
-              ? "MATCH_DEFAULT_BACKEND_UNSUPPORTED" : "expected");
+          std::string_view(candidate).find("do match")!=std::string_view::npos
+              ? "unexpected token" // rejected at do, before lexing match
+              : std::string_view(candidate).find("match 1 over")!=std::string_view::npos
+                  ? "MATCH_DEFAULT_BACKEND_UNSUPPORTED" : "expected");
     }
     reject_diagnostic([] {
       (void)parse_source("@structural\nfnc main():int{return 1;}");
