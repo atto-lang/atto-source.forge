@@ -1115,7 +1115,7 @@ class Parser {
     return std::nullopt;
   }
   [[nodiscard]] bool binding_name(std::string_view n) const {
-    if(n.empty()||n[0]<'a'||n[0]>'z'||known_name(n))return false;
+    if(n.empty()||(!(n[0]>='a'&&n[0]<='z')&&!portable_nonascii_name_start(unicode_at(n,0).value))||known_name(n))return false;
     for(auto s:{"val","let","int","i64","i32","bool","float","string","void","return","self","main","fnc","pub","define","type","where","as","and","units","in","true","false","if","else","end","begin","while","loop","sync","task","await","suspends","infer","new","match","const","mut","using","unit","dimension","_"})if(n==s)return false;
     for(const auto& b:bindings_)if(b.first==n)return false;
     for(const auto& a:strict_arrays_)if(a.first==n)return false;
