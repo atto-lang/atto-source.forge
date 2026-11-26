@@ -102,8 +102,24 @@ class Parser {
                                std::to_string(begin));
     if (letter(c)) {
       while (at_<text_.size() && (letter(text_[at_])||digit(text_[at_]))) ++at_;
-      if (text_.substr(begin,at_-begin)=="trap" && at_<text_.size() &&
-          text_[at_]=='!') ++at_;
+      const auto word=text_.substr(begin,at_-begin);
+      const bool bang_keyword=word=="trap" || word=="throw" || word=="raise" ||
+          word=="panic" || word=="copy" || word=="take" || word=="borrow" ||
+          word=="share" || word=="pin" || word=="drop" || word=="pipe" ||
+          word=="rpipe" || word=="stop" || word=="expand";
+      const bool word_neq=text_.substr(at_,3)=="!eq" &&
+          (at_+3==text_.size() || (!letter(text_[at_+3]) && !digit(text_[at_+3])));
+      if (bang_keyword && at_<text_.size() && text_[at_]=='!' &&
+          text_.substr(at_,2)!="!=" && !word_neq) {
+        const auto suffix=word=="copy" && text_.substr(at_,2)=="!!" ? 2u : 1u;
+        const auto after=at_+suffix;
+        if (after>=text_.size() || !space(text_[after]))
+          throw std::runtime_error("E_BANG_KEYWORD_WHITESPACE: whitespace required after bang keyword at byte "+
+                                   std::to_string(begin));
+        // Only trap is admitted by this restricted native-call frontend.
+        // Other keywords keep their existing fail-closed lowering gates.
+        if (word=="trap") ++at_;
+      }
     } else if (digit(c)) {
       while (at_<text_.size() && digit(text_[at_])) ++at_;
     } else if (c=='!' && text_.substr(begin,3)=="!eq" &&
