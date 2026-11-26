@@ -11,6 +11,10 @@ add_executable(oresforge compiler/main.cpp)
 target_link_libraries(oresforge PRIVATE oresforge_core)
 include(CTest)
 if(BUILD_TESTING)
+  add_executable(oresforge_typed_serde_admission verification/typed_serde_admission.cpp)
+  target_link_libraries(oresforge_typed_serde_admission PRIVATE oresforge_core)
+  add_test(NAME oresforge_typed_serde_admission COMMAND oresforge_typed_serde_admission)
+  set_tests_properties(oresforge_typed_serde_admission PROPERTIES TIMEOUT 15)
   # This executes the REAL Forge compiler frontend on the backend-owned Atto
   # module and refuses a false-positive class/time compiler admission.
   add_executable(oresforge_std_time_frontend_admission_test
