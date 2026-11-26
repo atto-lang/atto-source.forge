@@ -1,6 +1,7 @@
 #pragma once
 // Host-only fixed-capacity actor-owned byte arena, not guest allocation lowering.
 // Every actor, including a SHARED actor, owns its own persistent and scratch space.
+#include "runtime/MonotonicDomainV1.hpp"
 #include <array>
 #include <atomic>
 #include <cstddef>
@@ -24,7 +25,7 @@ class ActorArena final {
   static constexpr std::size_t ScratchBytes = 16 * 1024;
   explicit ActorArena(std::uint64_t actor, std::uint64_t incarnation)
       : actor_(actor), incarnation_(incarnation),
-        domain_(next_domain_.fetch_add(1, std::memory_order_relaxed)) {
+        domain_(next_domain_.try_issue()) {
     if (!actor || !incarnation || !domain_ ||
         domain_ == std::numeric_limits<std::uint64_t>::max())
       throw std::invalid_argument("invalid actor arena identity");
@@ -146,7 +147,7 @@ class ActorArena final {
     std::size_t length = 0;
     bool live = false;
   };
-  inline static std::atomic<std::uint64_t> next_domain_{1};
+  inline static MonotonicDomainV1 next_domain_{};
   std::uint64_t actor_, incarnation_, domain_, epoch_ = 0;
   std::array<Slot, Slots> slots_{};
   std::array<std::byte, ScratchBytes> scratch_{};

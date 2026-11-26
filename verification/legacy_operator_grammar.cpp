@@ -61,20 +61,21 @@ int main() {
         if (std::string_view(e.what()).find(expected)!=std::string_view::npos) return;
         throw;
       }
-      throw std::runtime_error("unexpected callable source acceptance");
+      throw std::runtime_error("unexpected callable source acceptance: "+std::string(source));
     };
     reject_callable("pub fnc main(): int { return 7 ^ 3; }","single caret is only a return statement");
-    // The native-call lane now has checked integer XOR; the older scalar
-    // lane below must still reject it. Exercise a live and an unused function,
-    // and keep rejecting Boolean mixing even in unreachable declarations.
-    if (oresforge::calls::interpret(oresforge::calls::parse(
-          "pub fnc main(): int { return 7 ^^ 3; }"),{})!=4)
-      throw std::runtime_error("callable integer XOR result mismatch");
-    if (oresforge::calls::interpret(oresforge::calls::parse(
-          "fnc hidden(): int { return 7 ^^ 3; } pub fnc main(): int { ^ 42; }"),{})!=42)
-      throw std::runtime_error("unused valid callable XOR was not admitted");
-    reject_callable("fnc hidden(): int { return 7 ^^ false; } pub fnc main(): int { ^ 42; }",
-                    "Boolean is not an int");
+    // The native callable profile now supports checked, typed integer XOR.
+    // The separate stage-0 scalar frontend still rejects it below.
+    for (const auto& program : {
+        "pub fnc main(): int { return 7 ^^ 3; }",
+        "fnc helper(): int { return 7 ^^ 3; } pub fnc main(): int { ^ helper(); }"}) {
+      const auto module=oresforge::calls::parse(program);
+      if (oresforge::calls::interpret(module,{})!=4 ||
+          oresforge::calls::emit_asm(module,oresforge::Arch::X86_64).find("xorq")==std::string::npos)
+        throw std::runtime_error("callable integer XOR value/lowering mismatch");
+    }
+    reject_callable("pub fnc main(): int { return 7 ^^ false; }","Boolean is not an int");
+    reject_callable("fnc hidden(): int { return 7 ^^ false; } pub fnc main(): int { ^ 42; }","Boolean is not an int");
     reject("pub fnc main(): int { return 5 / 2; }","FORGE_CHECKED_DIVISION_BACKEND_UNSUPPORTED");
     accept("pub fnc main(): int { ^ 42; }");
     accept("fnc helper(): int { ^ 41; } pub fnc main(): int { ^ helper() + 1; }");
