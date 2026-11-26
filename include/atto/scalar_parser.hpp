@@ -2,8 +2,10 @@
 // Restricted native Atto scalar parser: one main() with a scalar return.
 #include "atto/scalar_lexer.hpp"
 #include "atto/decimal_i64.hpp"
+#include <array>
 #include <cstdint>
 #include <limits>
+#include <numeric>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -119,6 +121,106 @@ class Parser {
   std::vector<Token> tokens_;
   std::size_t pos_ = 0;
   Parsed out_;
+  // File-local, scale-one dimensions; erased only after scalar admission.
+  using Dim = std::array<int, 8>;
+  struct Scale {
+    i64 n = 1, d = 1;
+    bool operator==(const Scale&) const = default;
+    [[nodiscard]] Scale inv() const { return {d,n}; }
+    [[nodiscard]] std::optional<Scale> mul(Scale rhs) const {
+      const i64 a=std::gcd(n,rhs.d), b=std::gcd(rhs.n,d);
+      const i64 x=n/a,y=rhs.n/b,z=d/b,w=rhs.d/a;
+      constexpr auto max=std::numeric_limits<i64>::max();
+      if (x>max/y || z>max/w) return std::nullopt;
+      return Scale{x*y,z*w};
+    }
+    [[nodiscard]] std::optional<i64> convert(i64 value,Scale target) const {
+      const auto ratio=mul(target.inv());
+      if (!ratio || value%ratio->d != 0) return std::nullopt;
+      const i64 q=value/ratio->d;
+      if (q>std::numeric_limits<i64>::max()/ratio->n ||
+          q<std::numeric_limits<i64>::min()/ratio->n) return std::nullopt;
+      return q*ratio->n;
+    }
+  };
+  std::vector<Dim> dims_;
+  std::vector<Scale> scales_;
+  std::vector<std::string_view> dimensions_;
+  struct Unit { std::string_view name; std::size_t dim; Scale scale; };
+  std::vector<Unit> units_;
+  static constexpr int exponent_limit = 32;
+  [[nodiscard]] bool dimensionless(std::size_t n) const { return dims_[n] == Dim{} && scales_[n] == Scale{}; }
+  [[nodiscard]] bool known_name(std::string_view n) const {
+    for (auto d : dimensions_) if (d == n) return true;
+    for (auto u : units_) if (u.name == n) return true;
+    return false;
+  }
+  [[nodiscard]] bool declaration_name(std::string_view n) const {
+    // This bounded profile uses conventional upper-case nominal names.
+    return !n.empty() && n[0] >= 'A' && n[0] <= 'Z' && !known_name(n);
+  }
+  [[nodiscard]] std::optional<i64> factor() {
+    if (current().kind!=Kind::integer) return std::nullopt;
+    auto value=parse_decimal_i64(text());
+    if (!value || *value<=0) return std::nullopt;
+    ++pos_; return value;
+  }
+  [[nodiscard]] bool declarations() {
+    while (name("define")) {
+      const bool dimension = name("dimension");
+      if ((!dimension && !name("unit")) || current().kind != Kind::name || !declaration_name(text())) return false;
+      const auto n = text(); ++pos_;
+      if (dimension) {
+        if (dimensions_.size() == Dim{}.size()) return false;
+        dimensions_.push_back(n);
+      } else {
+        if (units_.size() == 32 || !take(Kind::colon) || current().kind != Kind::name) return false;
+        std::size_t d = 0;
+        while (d < dimensions_.size() && dimensions_[d] != text()) ++d;
+        if (d == dimensions_.size()) return false;
+        ++pos_;
+        Scale scale{};
+        if (take(Kind::equals)) {
+          Scale f{};
+          const bool prefix=current().kind==Kind::integer;
+          if (prefix) {
+            const auto k=factor(); if (!k || !take(Kind::star)) return false;
+            f.n=*k;
+          }
+          if (current().kind != Kind::name) return false;
+          const Unit* base=nullptr;
+          for (const auto& u : units_) if (u.name==text() && u.dim==d) base=&u;
+          if (!base) return false;
+          ++pos_;
+          if (!prefix && (current().kind==Kind::star || current().kind==Kind::slash)) {
+            const bool divide=take(Kind::slash);
+            if (!divide) (void)take(Kind::star);
+            const auto k=factor(); if (!k) return false;
+            if (divide) f.d=*k; else f.n=*k;
+          }
+          const auto normalized=base->scale.mul(f);
+          if (!normalized) return false;
+          scale=*normalized;
+        } else {
+          for (auto u : units_) if (u.dim == d) return false;
+        }
+        units_.push_back(Unit{n,d,scale});
+      }
+      if (!take(Kind::semicolon)) return false;
+    }
+    return true;
+  }
+  [[nodiscard]] bool attach(std::size_t n) {
+    if (!dimensionless(n) || current().kind != Kind::name) { fail(ParseError::syntax); return false; }
+    for (const auto& u : units_) if (u.name == text()) {
+      dims_[n][u.dim] = 1; scales_[n]=u.scale; ++pos_; return true;
+    }
+    fail(ParseError::syntax); return false;
+  }
+  [[nodiscard]] bool scalar_cast(std::size_t n) {
+    if (dimensionless(n)) return true;
+    fail(ParseError::syntax); return false;
+  }
   [[nodiscard]] const Token& current() const { return tokens_[pos_]; }
   [[nodiscard]] std::string_view text() const {
     const auto& t = current();
@@ -150,6 +252,32 @@ class Parser {
       fail(ParseError::node_limit);
       return std::nullopt;
     }
+    Dim d{};
+    Scale s{};
+    if (n.op != Op::literal) {
+      const auto& lhs = dims_[n.left];
+      if (n.op == Op::neg) { d = lhs; s = scales_[n.left]; }
+      else if (n.op == Op::bnot) {
+        if (!dimensionless(n.left)) { fail(ParseError::syntax); return std::nullopt; }
+      } else {
+        const auto& rhs = dims_[n.right];
+        if (n.op == Op::add || n.op == Op::sub) {
+          if (lhs != rhs || scales_[n.left]!=scales_[n.right]) { fail(ParseError::syntax); return std::nullopt; }
+          d = lhs; s=scales_[n.left];
+        } else if (n.op == Op::mul || n.op == Op::div) {
+          const auto scale=scales_[n.left].mul(n.op==Op::div?scales_[n.right].inv():scales_[n.right]);
+          if (!scale) { fail(ParseError::syntax); return std::nullopt; }
+          s=*scale;
+          for (std::size_t i = 0; i < d.size(); ++i) {
+            d[i] = lhs[i] + (n.op == Op::mul ? rhs[i] : -rhs[i]);
+            if (d[i] > exponent_limit || d[i] < -exponent_limit) { fail(ParseError::syntax); return std::nullopt; }
+          }
+        } else if (!dimensionless(n.left) || !dimensionless(n.right)) {
+          fail(ParseError::syntax); return std::nullopt;
+        }
+      }
+    }
+    dims_.push_back(d); scales_.push_back(s);
     out_.nodes.push_back(n);
     return out_.nodes.size() - 1;
   }
@@ -157,7 +285,53 @@ class Parser {
   // Flat precedence tiers do not consume the nesting depth budget.
   // Only actual parenthesized or unary nesting increments depth.
   [[nodiscard]] std::optional<std::size_t> expr(int depth) {
-    return parse_or(depth);
+    auto result = parse_or(depth);
+    if (!result) return std::nullopt;
+    while (name("as")) {
+      if (current().kind == Kind::name && (text() == "int" || text() == "i64")) {
+        if (!cast_target() || !scalar_cast(*result)) return std::nullopt;
+      } else if (!attach(*result)) return std::nullopt;
+    }
+    return result;
+  }
+  // All admitted expressions are signed i64. These casts validate the
+  // carrier and preserve the existing node, including checked arithmetic.
+  // Reject every other carrier and unit; no unchecked erasure.
+  [[nodiscard]] bool cast_target() {
+    if (name("int") || name("i64")) return true;
+    fail(ParseError::syntax);
+    return false;
+  }
+  [[nodiscard]] std::optional<std::size_t> postfix(std::optional<std::size_t> result, bool compact = false, bool conversion = false) {
+    if (!result) return std::nullopt;
+    while (current().kind == Kind::double_colon || current().kind == Kind::dot ||
+           (compact && current().kind == Kind::lt && pos_ > 0 &&
+            tokens_[pos_-1].offset + tokens_[pos_-1].length == current().offset)) {
+      const bool cast = take(Kind::double_colon);
+      if (!cast && take(Kind::dot) && name("to_unit")) {
+        if (!conversion || out_.nodes[*result].op!=Op::literal || !take(Kind::lt) || current().kind!=Kind::name) {
+          fail(ParseError::syntax); return std::nullopt;
+        }
+        const Unit* target=nullptr;
+        for (const auto& u:units_) if (u.name==text()) target=&u;
+        if (!target) { fail(ParseError::syntax); return std::nullopt; }
+        Dim d{}; d[target->dim]=1;
+        if (dims_[*result]!=d) { fail(ParseError::syntax); return std::nullopt; }
+        ++pos_;
+        if (!take(Kind::gt)||!take(Kind::lparen)||!take(Kind::rparen)) { fail(ParseError::syntax); return std::nullopt; }
+        const auto converted=scales_[*result].convert(out_.nodes[*result].value,target->scale);
+        if (!converted) { fail(ParseError::syntax); return std::nullopt; }
+        out_.nodes[*result].value=*converted; scales_[*result]=target->scale;
+        conversion=false;compact=false;continue;
+      }
+      if (!take(Kind::lt)) { fail(ParseError::syntax); return std::nullopt; }
+      if (cast && current().kind == Kind::name && (text() == "int" || text() == "i64")) {
+        if (!cast_target() || !scalar_cast(*result)) return std::nullopt;
+      } else if (!attach(*result)) return std::nullopt;
+      if (!take(Kind::gt)) { fail(ParseError::syntax); return std::nullopt; }
+      compact = false;
+    }
+    return result;
   }
   [[nodiscard]] std::optional<std::size_t> parse_or(int depth) {
     auto lhs = parse_xor(depth);
@@ -240,6 +414,14 @@ class Parser {
   }
   [[nodiscard]] std::optional<std::size_t> unary(int depth) {
     if (depth > max_parse_depth) { fail(ParseError::depth_limit); return std::nullopt; }
+    if (take(Kind::lt)) {
+      if (!cast_target() || !take(Kind::gt)) {
+        fail(ParseError::syntax); return std::nullopt;
+      }
+      auto operand = unary(depth + 1);
+      if (!operand || !scalar_cast(*operand)) return std::nullopt;
+      return operand;
+    }
     if (take(Kind::plus)) return unary(depth + 1);
     if (take(Kind::tilde)) {
       auto rhs = unary(depth + 1);
@@ -258,7 +440,7 @@ class Parser {
         const auto minimum = parse_decimal_i64(signed_digits);
         if (minimum && *minimum == std::numeric_limits<i64>::min()) {
           ++pos_;
-          return append(Node{Op::literal, 0, 0, *minimum});
+          return postfix(append(Node{Op::literal, 0, 0, *minimum}), true);
         }
       }
       auto rhs = unary(depth + 1);
@@ -269,13 +451,13 @@ class Parser {
       auto inside = expr(depth + 1);
       if (!inside) return std::nullopt;
       if (!take(Kind::rparen)) { fail(ParseError::syntax); return std::nullopt; }
-      return inside;
+      return postfix(inside);
     }
     if (current().kind == Kind::integer) {
       auto n = parse_decimal_i64(text());
       if (!n) { fail(ParseError::literal_out_of_range); return std::nullopt; }
       ++pos_;
-      return append(Node{Op::literal, 0, 0, *n});
+      return postfix(append(Node{Op::literal, 0, 0, *n}), true, true);
     }
     fail(ParseError::syntax);
     return std::nullopt;
@@ -318,7 +500,7 @@ class Parser {
     if (name("return") || take(Kind::caret)) {
       const auto previous_size = out_.nodes.size();
       auto value = expr(0);
-      if (!value || !take(Kind::semicolon)) {
+      if (!value || !scalar_cast(*value) || !take(Kind::semicolon)) {
         fail(ParseError::syntax);
         return std::nullopt;
       }
@@ -326,6 +508,7 @@ class Parser {
         // Parse the unreachable fallback after a terminal scope, then
         // discard those unreachable scalar nodes.
         out_.nodes.resize(previous_size);
+        dims_.resize(previous_size); scales_.resize(previous_size);
       } else {
         root = value;
       }
@@ -343,6 +526,7 @@ public:
   }
   [[nodiscard]] Parsed parse() {
     if (out_.error != ParseError::none) return std::move(out_);
+    if (!declarations()) { fail(ParseError::syntax); return std::move(out_); }
     (void)name("pub");
     const bool fnc = name("fnc");
     bool signature_ok = false;
