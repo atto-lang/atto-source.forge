@@ -39,10 +39,19 @@ static void publish(int root,const std::string& name,const Bytes& b){
  // Separate open-file description serializes cooperating writers.
  Fd lock(openat(root,".",O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC));require(lock.fd>=0);
  require(flock(lock.fd,LOCK_EX|LOCK_NB)==0);
- if(unlinkat(root,".pending",0)!=0)require(errno==ENOENT);Fd f(openat(root,".pending",O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600));require(f.fd>=0);
+ require(b.size()>=112&&b.size()<=112+4*1024*1024);
+ // Cold rebuild is not permission to replace a symlink, FIFO, hard link
+ // or malformed physical slot. Validate again under the writer lock.
+ (void)read_slot(root,name);
+ // Never reclaim an unknown staging entry (even an abandoned regular file).
+ // Cleanup is offline under a trusted maintenance policy.
+ Fd f(openat(root,".pending",O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600));require(f.fd>=0);
+ struct stat created{};require(fstat(f.fd,&created)==0);private_inode(created);
+ auto owns_pending=[&](){struct stat current{};return fstatat(root,".pending",&current,AT_SYMLINK_NOFOLLOW)==0&&
+  current.st_dev==created.st_dev&&current.st_ino==created.st_ino&&current.st_nlink==1&&S_ISREG(current.st_mode)&&current.st_uid==geteuid()&&(current.st_mode&077)==0;};
  try{std::size_t p=0;while(p<b.size()){auto n=write(f.fd,b.data()+p,b.size()-p);require(n>0);p+=static_cast<std::size_t>(n);}
- require(fsync(f.fd)==0);require(renameat(root,".pending",root,name.c_str())==0);require(fsync(root)==0);}
- catch(...){unlinkat(root,".pending",0);throw;}
+ require(fsync(f.fd)==0);require(owns_pending());require(renameat(root,".pending",root,name.c_str())==0);require(fsync(root)==0);}
+ catch(...){if(owns_pending())unlinkat(root,".pending",0);throw;}
 }
 
 struct Wipe {Secret value;~Wipe(){OPENSSL_cleanse(value.data(),value.size());}};
