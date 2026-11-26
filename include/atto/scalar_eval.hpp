@@ -7,7 +7,7 @@
 #include <vector>
 
 namespace atto::forge::scalar {
-enum class EvalError { none, parse_error, invalid_ast, overflow, divide_by_zero, shift_distance };
+enum class EvalError { none, parse_error, invalid_ast, overflow, divide_by_zero, shift_distance, refinement_violation };
 struct Evaluated {
   std::optional<i64> value;
   EvalError error = EvalError::none;
@@ -25,13 +25,20 @@ struct Evaluated {
       values.push_back(node.value);
       continue;
     }
-    if (node.left >= i || (node.op != Op::neg && node.op != Op::bnot && node.op != Op::local && node.right >= i))
+    if(node.op==Op::copy||node.op==Op::sequence){
+      const auto value=values[node.op==Op::copy?node.left:node.right];
+      values.push_back(value);continue;
+    }
+    if (node.op==Op::refine) {
+      const auto value=values[node.left];
+      if (value<node.value || value>node.upper) return {{},EvalError::refinement_violation};
+      values.push_back(value);continue;
+    }
+    if (node.left >= i || (node.op != Op::neg && node.op != Op::bnot && node.right >= i))
       return {{}, EvalError::invalid_ast};
     const i64 lhs = values[node.left];
     std::optional<i64> result;
     switch (node.op) {
-      case Op::local: result=lhs; break;
-      case Op::seq: result=values[node.right]; break;
       case Op::bnot:
         result = bit_not(lhs);
         break;
