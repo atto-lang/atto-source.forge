@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <numeric>
 #include <optional>
@@ -15,12 +16,13 @@
 #include <vector>
 
 namespace atto::forge::scalar {
-enum class Op { literal, add, sub, mul, div, rem, neg, refine, narrow, copy, sequence, band, bor, bxor, bnot, shl, lshr, ashr, eq, ne, lt, le, gt, ge, choose, loop_state, loop_value };
+enum class Op { literal, add, sub, mul, div, rem, neg, refine, narrow, copy, sequence, band, bor, bxor, bnot, shl, lshr, ashr, eq, ne, lt, le, gt, ge, choose, loop_state, loop_value, loop_group, loop_read };
 struct Node {
   Op op;
   std::size_t left = 0, right = 0;
   i64 value = 0;
   i64 upper = 0;
+  std::vector<std::size_t> states{},effects{},updates{};
 };
 enum class ParseError {
   none, lexical, syntax, literal_out_of_range, depth_limit, node_limit, telemetry, verify_unproven, verify_unsupported, unit_name, unit_duplicate, unit_dimension, unit_scale, unit_limit, unit_erasure, unit_attachment, unit_inexact, unit_range, refinement_empty, refinement_binding, refinement_precondition, refinement_return, refinement_duplicate, refinement_postcondition, refinement_contract, refinement_export, refinement_body, refinement_call, refinement_cast, i32_range, new_required, lock_unsupported
@@ -104,26 +106,53 @@ inline constexpr std::size_t max_trace_depth = 16;
       --trace_depth;
     }
   }
-  // A loop region owns its private state node and all guard/update nodes.
-  // No use outside the region may refer to these transient cache entries.
+  // Each loop owns a private contiguous cache region. Nested regions must
+  // be strictly contained; only the completed group and projections escape.
   std::vector<std::pair<std::size_t,std::size_t>> regions;
+  std::vector<unsigned> owners(p.nodes.size(),0);
   for(std::size_t i=0;i<p.nodes.size();++i){
     const auto& n=p.nodes[i];
-    if(n.op!=Op::loop_value)continue;
-    if(n.left>=i||p.nodes[n.left].op!=Op::loop_state||n.right<=n.left||n.right>=i||n.value<0||
-       static_cast<std::uint64_t>(n.value)<=n.left||static_cast<std::uint64_t>(n.value)>=i)return false;
-    for(const auto& [a,b]:regions)if(n.left<=b&&a<=i)return false;
-    regions.emplace_back(n.left,i);
+    if(n.op!=Op::loop_group&&(!n.states.empty()||!n.effects.empty()||!n.updates.empty()))return false;
+    if(n.op==Op::loop_value){
+      if(n.left>=i||p.nodes[n.left].op!=Op::loop_state||n.right<=n.left||n.right>=i||n.value<0||
+         static_cast<std::uint64_t>(n.value)<=n.left||static_cast<std::uint64_t>(n.value)>=i)return false;
+      if(++owners[n.left]!=1)return false;
+      regions.emplace_back(n.left,i);
+    }
+    if(n.op==Op::loop_group){
+      if(n.states.empty()||n.states.size()>32||n.states.size()!=n.updates.size()||
+         n.left!=n.states.front()||n.left>=i||n.right<n.left+n.states.size()||n.right>=i||n.value!=0)return false;
+      for(std::size_t j=0;j<n.states.size();++j){
+        auto k=n.states[j];
+        if(k!=n.left+j||k>=i||p.nodes[k].op!=Op::loop_state||p.nodes[k].left>=n.left||++owners[k]!=1)return false;
+      }
+      for(auto k:n.effects)if(k<n.left+n.states.size()||k>=i)return false;
+      for(auto k:n.updates)if(k<n.left||k>=i)return false;
+      regions.emplace_back(n.left,i);
+    }
+    if(n.op==Op::loop_read){
+      if(n.left>=i||n.right!=0||n.value<0||p.nodes[n.left].op!=Op::loop_group||
+         static_cast<std::uint64_t>(n.value)>=p.nodes[n.left].states.size())return false;
+    }
   }
   if(!regions.empty()&&!p.trace_steps.empty())return false;
+  for(std::size_t j=0;j<regions.size();++j)for(std::size_t k=j+1;k<regions.size();++k){
+    auto [a,b]=regions[j];auto [c,d]=regions[k];
+    if(a<=d&&c<=b&&!((a<c&&d<b)||(c<a&&b<d)))return false;
+  }
   for(std::size_t i=0;i<p.nodes.size();++i){
     const auto& n=p.nodes[i];
-    if(n.op==Op::loop_state&&std::none_of(regions.begin(),regions.end(),[&](auto r){return r.first==i;}))return false;
+    if(n.op==Op::loop_state&&owners[i]!=1)return false;
     auto edge=[&](std::size_t k){for(auto [a,b]:regions)if(k>=a&&k<b&&(i<=a||i>b))return false;return true;};
     if(n.op==Op::literal)continue;
     if(!edge(n.left))return false;
-    if(n.op==Op::refine||n.op==Op::narrow||n.op==Op::neg||n.op==Op::bnot||n.op==Op::copy||n.op==Op::loop_state)continue;
+    if(n.op==Op::refine||n.op==Op::narrow||n.op==Op::neg||n.op==Op::bnot||n.op==Op::copy||n.op==Op::loop_state||n.op==Op::loop_read)continue;
     if(!edge(n.right))return false;
+    if(n.op==Op::loop_group){
+      for(auto k:n.states)if(!edge(k))return false;
+      for(auto k:n.effects)if(!edge(k))return false;
+      for(auto k:n.updates)if(!edge(k))return false;
+    }
     if((n.op==Op::choose||n.op==Op::loop_value)&&(n.value<0||!edge(static_cast<std::size_t>(n.value))))return false;
   }
   std::vector<unsigned char> reachable(p.nodes.size(), 0);
@@ -152,6 +181,14 @@ inline constexpr std::size_t max_trace_depth = 16;
         if (node.left >= index || node.right != 0) return false;
         pending.push_back(node.left);
         break;
+      case Op::loop_group:
+        pending.push_back(node.right);
+        for(auto k:node.states)pending.push_back(k);
+        for(auto k:node.effects)pending.push_back(k);
+        for(auto k:node.updates)pending.push_back(k);
+        break;
+      case Op::loop_read:
+        pending.push_back(node.left);break;
       case Op::loop_value:
       case Op::choose:
         if (node.left >= index || node.right >= index || node.value < 0 ||
@@ -231,7 +268,14 @@ class Parser {
       switch(op){
         case Op::eq:r.lo=std::max(r.lo,n);r.hi=std::min(r.hi,n);break;
         case Op::ne:
-          if(!r.has(n)||r.lo==r.hi)return *this;
+          if(!r.has(n))return *this;
+          if(r.lo==r.hi){
+            // Contradictory singleton on a split path: retain only the
+            // representable guard domain, never certify arbitrary dead code.
+            if(!bit(n))return *this;
+            return width==Width::i32?Range{INT32_MIN,INT32_MAX,width,bit(n)}:
+                Range{std::numeric_limits<i64>::min(),std::numeric_limits<i64>::max(),width,bit(n)};
+          }
           if(r.lo==n)++r.lo;else if(r.hi==n)--r.hi;else r.holes|=bit(n);break;
         case Op::lt:if(n==std::numeric_limits<i64>::min())return *this;r.hi=std::min(r.hi,n-1);break;
         case Op::le:r.hi=std::min(r.hi,n);break;
@@ -481,7 +525,7 @@ class Parser {
     if(strict_){
       switch(n.op){
         case Op::literal: case Op::refine: case Op::narrow: case Op::copy: case Op::sequence:
-        case Op::eq: case Op::ne: case Op::lt: case Op::le: case Op::gt: case Op::ge: case Op::choose: case Op::loop_state: case Op::loop_value: break;
+        case Op::eq: case Op::ne: case Op::lt: case Op::le: case Op::gt: case Op::ge: case Op::choose: case Op::loop_state: case Op::loop_value: case Op::loop_group: case Op::loop_read: break;
         case Op::neg:
           if(ranges_[n.left].lo==std::numeric_limits<i64>::min()){
             fail(ParseError::verify_unproven);return std::nullopt;
@@ -504,7 +548,10 @@ class Parser {
         r=n.op==Op::neg?ranges_[n.left].neg():n.op==Op::refine?Range{n.value,n.upper}:ranges_[n.left];
         if(n.op==Op::neg)r.width=ranges_[n.left].width;
         if(n.op==Op::narrow)r=r.intersect(i32_lo,i32_hi,Width::i32);
-      } else if(n.op==Op::loop_value){
+      } else if(n.op==Op::loop_read){
+        const auto state=out_.nodes[n.left].states[static_cast<std::size_t>(n.value)];
+        d=dims_[state];s=scales_[state];r=ranges_[state];
+      } else if(n.op==Op::loop_value||n.op==Op::loop_group){
         d=lhs;s=scales_[n.left];r=ranges_[n.left];
       } else if(n.op==Op::choose){
         auto z=static_cast<std::size_t>(n.value);
@@ -804,11 +851,17 @@ class Parser {
       if(n.op!=Op::literal){
         if(n.left>=map.size()){fail(ParseError::syntax);return std::nullopt;}
         n.left=map[n.left];
-        if(n.op!=Op::neg&&n.op!=Op::bnot&&n.op!=Op::refine&&n.op!=Op::narrow&&n.op!=Op::copy){
+        if(n.op!=Op::neg&&n.op!=Op::bnot&&n.op!=Op::refine&&n.op!=Op::narrow&&n.op!=Op::copy&&n.op!=Op::loop_state&&n.op!=Op::loop_read){
           if(n.right>=map.size()){fail(ParseError::syntax);return std::nullopt;}
           n.right=map[n.right];
         }
-        if(n.op==Op::choose){if(n.value<0||static_cast<std::size_t>(n.value)>=map.size())return std::nullopt;n.value=static_cast<i64>(map[static_cast<std::size_t>(n.value)]);}
+        if(n.op==Op::choose||n.op==Op::loop_value){if(n.value<0||static_cast<std::size_t>(n.value)>=map.size())return std::nullopt;n.value=static_cast<i64>(map[static_cast<std::size_t>(n.value)]);}
+        if(n.op==Op::loop_group){
+          for(auto* refs:{&n.states,&n.effects,&n.updates})for(auto& k:*refs){
+            if(k>=map.size())return std::nullopt;
+            k=map[k];
+          }
+        }
       }
       map.push_back(out_.nodes.size());out_.nodes.push_back(n);
       dims_.push_back(h.dims[i]);scales_.push_back(h.scales[i]);ranges_.push_back(h.ranges[i]);
@@ -891,31 +944,97 @@ class Parser {
     if(!name("return")&&!take(Kind::caret)){fail(ParseError::syntax);return std::nullopt;}
     auto root=expr(0);if(!root||!take(Kind::semicolon))return std::nullopt;return root;
   }
-  [[nodiscard]] std::optional<std::size_t> binding_body(std::optional<Refinement> result=std::nullopt){
-    // Each assignment creates a new graph identity; earlier snapshots remain
-    // immutable and every executed initializer stays in lexical order.
-    std::vector<std::pair<std::string_view,Refinement>> mutable_types;
-    std::vector<std::size_t> effects;
-    for(const auto& binding:bindings_)effects.push_back(binding.second);
+  using MutableTypes=std::vector<std::pair<std::string_view,Refinement>>;
+  using ContinueBranch=std::function<std::optional<std::size_t>(int)>;
+  bool strict_loop(MutableTypes mutable_types,std::vector<std::size_t>& effects,int depth){
+    if(depth>16){fail(ParseError::depth_limit);return false;}
+    auto brace=pos_;
+    while(brace<tokens_.size()&&tokens_[brace].kind!=Kind::lbrace)++brace;
+    if(brace==tokens_.size()){fail(ParseError::verify_unsupported);return false;}
+    unsigned nesting=1;std::vector<std::string_view> writes;
+    for(auto k=brace+1;k<tokens_.size()&&nesting;++k){
+      const auto& t=tokens_[k];
+      if(t.kind==Kind::lbrace)++nesting;
+      else if(t.kind==Kind::rbrace)--nesting;
+      else if(t.kind==Kind::name&&k+1<tokens_.size()&&tokens_[k+1].kind==Kind::equals){
+        const auto key=source_.substr(t.offset,t.length);
+        if(std::any_of(mutable_types.begin(),mutable_types.end(),[&](auto& x){return x.first==key;})&&
+           std::find(writes.begin(),writes.end(),key)==writes.end())writes.push_back(key);
+      }
+    }
+    if(nesting||writes.empty()){fail(ParseError::verify_unsupported);return false;}
+    const auto outer=bindings_;
+    Node group{Op::loop_group};
+    for(auto key:writes){
+      auto binding=std::find_if(bindings_.begin(),bindings_.end(),[&](auto& x){return x.first==key;});
+      auto want=std::find_if(mutable_types.begin(),mutable_types.end(),[&](auto& x){return x.first==key;})->second;
+      if(binding==bindings_.end()||!compatible(binding->second,want,ParseError::refinement_binding))return false;
+      auto state=append(Node{Op::loop_state,binding->second,0,0});if(!state)return false;
+      binding->second=*state;ranges_[*state]=Range{want.lo,want.hi,want.width};group.states.push_back(*state);
+    }
+    group.left=group.states.front();
+    const bool old=guarded_;guarded_=true;
+    auto p=guard_or(facts(),0);if(!p||!take(Kind::lbrace))return false;
+    group.right=p->node;set_facts(p->yes);
+    while(!take(Kind::rbrace)){
+      if(name("while")){
+        if(!strict_loop(mutable_types,group.effects,depth+1))return false;
+        continue;
+      }
+      const bool imm=name("val"),mut=!imm&&name("let");
+      if(imm||mut){
+        if(bindings_.size()>=32||current().kind!=Kind::name){fail(ParseError::syntax);return false;}
+        auto key=text();++pos_;std::optional<Refinement> want;
+        if(take(Kind::colon)){
+          if(current().kind!=Kind::name){fail(ParseError::syntax);return false;}
+          want=annotation(text());++pos_;if(!want)return false;
+        }else if(current().kind!=Kind::equals){
+          want=annotation(key);
+          if(!want||current().kind!=Kind::name){fail(ParseError::syntax);return false;}
+          key=text();++pos_;
+        }
+        if(mut&&!want){fail(ParseError::verify_unsupported);return false;}
+        if(!binding_name(key)||!take(Kind::equals))return false;
+        auto value=expr(0);if(!value||!take(Kind::semicolon))return false;
+        if(want&&!compatible(*value,*want,ParseError::refinement_binding))return false;
+        auto version=append(Node{Op::copy,*value,0,0});if(!version)return false;
+        if(want)ranges_[*version].width=want->width;
+        else if(ranges_[*version].width==Width::literal)ranges_[*version].width=Width::i64;
+        bindings_.emplace_back(key,*version);group.effects.push_back(*version);
+        if(mut)mutable_types.emplace_back(key,*want);
+        continue;
+      }
+      if(current().kind!=Kind::name||pos_+1>=tokens_.size()||tokens_[pos_+1].kind!=Kind::equals){fail(ParseError::verify_unsupported);return false;}
+      const auto key=text();pos_+=2;
+      auto binding=std::find_if(bindings_.begin(),bindings_.end(),[&](auto& x){return x.first==key;});
+      auto decl=std::find_if(mutable_types.begin(),mutable_types.end(),[&](auto& x){return x.first==key;});
+      if(binding==bindings_.end()||decl==mutable_types.end()){fail(ParseError::verify_unsupported);return false;}
+      auto value=expr(0);if(!value||!take(Kind::semicolon)||!compatible(*value,decl->second,ParseError::refinement_binding))return false;
+      auto version=append(Node{Op::copy,*value,0,0});if(!version)return false;
+      ranges_[*version].width=decl->second.width;binding->second=*version;group.effects.push_back(*version);
+    }
+    for(auto key:writes){
+      auto binding=std::find_if(bindings_.begin(),bindings_.end(),[&](auto& x){return x.first==key;});
+      auto want=std::find_if(mutable_types.begin(),mutable_types.end(),[&](auto& x){return x.first==key;})->second;
+      if(binding==bindings_.end()||!compatible(binding->second,want,ParseError::refinement_binding))return false;
+      group.updates.push_back(binding->second);
+    }
+    set_facts(p->no);guarded_=old;bindings_=outer;
+    auto loop=append(std::move(group));if(!loop)return false;
+    effects.push_back(*loop);
+    for(std::size_t j=0;j<writes.size();++j){
+      auto projection=append(Node{Op::loop_read,*loop,0,static_cast<i64>(j)});if(!projection)return false;
+      auto binding=std::find_if(bindings_.begin(),bindings_.end(),[&](auto& x){return x.first==writes[j];});
+      binding->second=*projection;effects.push_back(*projection);
+    }
+    return true;
+  }
+  std::optional<std::size_t> strict_sequence(std::optional<Refinement> result,MutableTypes mutable_types,
+      std::vector<std::size_t> effects,int depth,ContinueBranch on_exit={}){
+    if(depth>16){fail(ParseError::depth_limit);return std::nullopt;}
     for(;;){
       if(strict_&&name("while")){
-        // Main-only single direct update. Helper graph instantiation of a
-        // loop requires a separate scoped-state remapper; deny for now.
-        if(result||mutable_types.size()!=1){fail(ParseError::verify_unsupported);return std::nullopt;}
-        const auto [key,want]=mutable_types.front();
-        auto binding=std::find_if(bindings_.begin(),bindings_.end(),[&](const auto& x){return x.first==key;});
-        if(binding==bindings_.end()||!compatible(binding->second,want,ParseError::refinement_binding))return std::nullopt;
-        auto state=append(Node{Op::loop_state,binding->second,0,0});if(!state)return std::nullopt;
-        binding->second=*state;ranges_[*state]=Range{want.lo,want.hi,want.width};
-        const auto incoming=facts();const bool old=guarded_;guarded_=true;
-        auto p=guard_or(incoming,0);if(!p||!take(Kind::lbrace))return std::nullopt;
-        if(current().kind!=Kind::name||text()!=key){fail(ParseError::verify_unsupported);return std::nullopt;}++pos_;
-        if(!take(Kind::equals))return std::nullopt;
-        set_facts(p->yes);auto update=expr(0);
-        if(!update||!compatible(*update,want,ParseError::refinement_binding)||!take(Kind::semicolon)||!take(Kind::rbrace))return std::nullopt;
-        set_facts(p->no);guarded_=old;
-        auto loop=append(Node{Op::loop_value,*state,p->node,static_cast<i64>(*update)});if(!loop)return std::nullopt;
-        binding->second=*loop;effects.push_back(*loop);
+        if(!strict_loop(mutable_types,effects,depth+1))return std::nullopt;
         continue;
       }
       const bool immutable=name("val");
@@ -959,14 +1078,80 @@ class Parser {
       bindings_.emplace_back(n,*value);effects.push_back(*value);
       if(mut)mutable_types.emplace_back(n,*want);
     }
-    if(current().kind==Kind::name&&text()=="let"){fail(ParseError::refinement_body);return std::nullopt;}
-    auto root=returning(0);
-    if(!root||(result?!compatible(*root,*result,ParseError::refinement_return):!scalar_cast(*root))||!take(Kind::rbrace)){fail(ParseError::syntax);return std::nullopt;}
-    // Every initializer is part of the validated graph even if unused.
-    // Existing postorder evaluation preserves lexical failure ordering.
+
+    std::optional<std::size_t> root;
+    if(strict_&&current().kind==Kind::rbrace&&on_exit){
+      root=on_exit(depth);
+    }else if(strict_&&name("if")){
+      // Split the bounded continuation into the selected native DAG arm.
+      // Do not evaluate untaken assignments or leak branch-local declarations.
+      const auto incoming=bindings_;const auto incoming_facts=facts();
+      const bool old=guarded_;guarded_=true;
+      auto p=guard_or(incoming_facts,0);if(!p)return std::nullopt;
+      const auto close=[&](std::size_t open)->std::optional<std::size_t>{
+        if(open>=tokens_.size()||tokens_[open].kind!=Kind::lbrace)return std::nullopt;
+        unsigned nesting=0;
+        for(auto k=open;k<tokens_.size();++k){
+          if(tokens_[k].kind==Kind::lbrace)++nesting;
+          else if(tokens_[k].kind==Kind::rbrace&&--nesting==0)return k;
+        }return std::nullopt;
+      };
+      const auto yes_open=pos_;const auto yc=close(yes_open);
+      if(!yc){fail(ParseError::syntax);return std::nullopt;}
+      const auto next=*yc+1;
+      const bool has_else=next<tokens_.size()&&tokens_[next].kind==Kind::name&&
+        source_.substr(tokens_[next].offset,tokens_[next].length)=="else";
+      const auto no_open=next+1;const auto nc=has_else?close(no_open):yc;
+      if(!nc){fail(ParseError::syntax);return std::nullopt;}
+      const auto resume=*nc+1;std::optional<std::size_t> tail_end;
+      ContinueBranch continuation=[&](int d)->std::optional<std::size_t>{
+        const auto saved=pos_;
+        auto scoped=incoming;
+        for(auto& item:scoped){
+          auto it=std::find_if(bindings_.begin(),bindings_.end(),[&](const auto& x){return x.first==item.first;});
+          if(it==bindings_.end()){fail(ParseError::verify_unsupported);return std::nullopt;}
+          item.second=it->second;
+        }
+        bindings_=std::move(scoped);pos_=resume;
+        auto tail=strict_sequence(result,mutable_types,{},d+1,on_exit);
+        if(!tail)return std::nullopt;
+        if(tail_end&&*tail_end!=pos_){fail(ParseError::verify_unsupported);return std::nullopt;}
+        tail_end=pos_;pos_=saved;return tail;
+      };
+      pos_=yes_open+1;set_facts(p->yes);
+      auto y=strict_sequence(result,mutable_types,{},depth+1,continuation);
+      if(!y||pos_!=*yc){fail(ParseError::syntax);return std::nullopt;}
+      const auto yr=ranges_[*y];const auto yd=dims_[*y];const auto ys=scales_[*y];
+      bindings_=incoming;set_facts(p->no);
+      pos_=has_else?no_open+1:resume;
+      auto n=strict_sequence(result,mutable_types,{},depth+1,has_else?continuation:on_exit);
+      if(!n||(has_else&&pos_!=*nc)){fail(ParseError::syntax);return std::nullopt;}
+      if(!has_else){
+        if(tail_end&&*tail_end!=pos_){fail(ParseError::verify_unsupported);return std::nullopt;}
+        tail_end=pos_;
+      }
+      const auto nr=ranges_[*n];
+      pos_=tail_end.value_or(resume);
+      bindings_=incoming;set_facts(incoming_facts);guarded_=old;
+      if(yd!=dims_[*n]||ys!=scales_[*n]){fail(ParseError::unit_dimension);return std::nullopt;}
+      root=append(Node{Op::choose,p->node,*y,static_cast<i64>(*n)});
+      if(root)ranges_[*root]=yr.join(nr);
+    }else{
+      root=returning(depth);
+    }
+    if(!root)return std::nullopt;
     for(auto i=effects.rbegin();i!=effects.rend();++i){
       root=append(Node{Op::sequence,*i,*root,0});
       if(!root)return std::nullopt;
+    }
+    return root;
+  }
+  [[nodiscard]] std::optional<std::size_t> binding_body(std::optional<Refinement> result=std::nullopt){
+    std::vector<std::size_t> effects;
+    for(const auto& binding:bindings_)effects.push_back(binding.second);
+    auto root=strict_sequence(result,{},std::move(effects),0);
+    if(!root||(result?!compatible(*root,*result,ParseError::refinement_return):!scalar_cast(*root))||!take(Kind::rbrace)){
+      fail(ParseError::syntax);return std::nullopt;
     }
     return root;
   }
