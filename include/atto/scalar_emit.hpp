@@ -13,7 +13,7 @@ inline constexpr std::size_t max_emitted_bytes = 64 * 1024;
 // prefixes execute at most once, in source order. No guest-supplied C++.
 [[nodiscard]] inline std::optional<std::string> emit_lazy_cpp(const Parsed& p) {
   if (!validate_ast(p) || !p.trace_steps.empty()) return std::nullopt;
-  std::string code = "#include <atto/checked_i64.hpp>\n#include <cstdio>\n#include <cstdlib>\n#include <limits>\n#include <optional>\nint main(){\n";
+  std::string code = "#include <atto/checked_i64.hpp>\n#include <cstdio>\n#include <cstdlib>\n#include <cstring>\n#include <limits>\n#include <optional>\nint main(){\n";
   auto var=[](std::size_t i){return "v"+std::to_string(i);};
   auto literal=[](i64 n)->std::string{
     return n==std::numeric_limits<i64>::min()?"std::numeric_limits<atto::forge::i64>::min()":std::to_string(n);
@@ -24,6 +24,17 @@ inline constexpr std::size_t max_emitted_bytes = 64 * 1024;
     code+="  std::optional<atto::forge::i64> c"+v+";\n  auto "+v+" = [&]() -> atto::forge::i64 {\n    if (c"+v+") return *c"+v+";\n";
     std::string body;
     if(n.op==Op::literal) body="    c"+v+" = "+literal(n.value)+";\n";
+    else if(n.op==Op::static_string_equal){
+      auto bytes=[](std::string_view text){
+        std::string init="{";
+        for(unsigned char byte:text)init+=std::to_string(byte)+",";
+        return init+"0}";
+      };
+      body="    static const unsigned char a[] = "+bytes(n.bytes_a)+";\n"
+           "    static const unsigned char b[] = "+bytes(n.bytes_b)+";\n"
+           "    const bool equal = sizeof(a)==sizeof(b) && std::memcmp(a,b,sizeof(a)-1)==0;\n"
+           "    c"+v+" = "+(n.value?"!equal":"equal")+";\n";
+    }
     else if(n.op==Op::loop_group){
       for(std::size_t j=0;j<n.states.size();++j)
         body+="    auto state"+std::to_string(j)+" = "+var(n.states[j])+"();\n";
@@ -102,7 +113,7 @@ inline constexpr std::size_t max_emitted_bytes = 64 * 1024;
 }
 [[nodiscard]] inline std::optional<std::string> emit_cpp(const Parsed& p) {
   if (!validate_ast(p)) return std::nullopt;
-  for(const auto& n:p.nodes)if(n.op==Op::choose||n.op==Op::loop_value||n.op==Op::loop_group)return emit_lazy_cpp(p);
+  for(const auto& n:p.nodes)if(n.op==Op::static_string_equal||n.op==Op::choose||n.op==Op::loop_value||n.op==Op::loop_group)return emit_lazy_cpp(p);
   std::string code = R"(#include <atto/checked_i64.hpp>
 #include <cstdio>
 #include <cstdint>

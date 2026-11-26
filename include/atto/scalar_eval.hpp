@@ -25,6 +25,7 @@ struct Evaluated {
     const auto& n=p.nodes[i];
     std::optional<i64> value;
     if(n.op==Op::literal)value=n.value;
+    else if(n.op==Op::static_string_equal)value=(n.bytes_a==n.bytes_b)!=(n.value!=0);
     else{
       auto a=self(self,n.left);if(!a.ok())return a;
       const auto x=*a.value;
@@ -117,7 +118,7 @@ struct Evaluated {
 }
 [[nodiscard]] inline Evaluated evaluate(const Parsed& p) {
   if (!validate_ast(p)) return {{}, EvalError::invalid_ast};
-  for(const auto& n:p.nodes)if(n.op==Op::choose||n.op==Op::loop_value||n.op==Op::loop_group)return evaluate_lazy(p);
+  for(const auto& n:p.nodes)if(n.op==Op::static_string_equal||n.op==Op::choose||n.op==Op::loop_value||n.op==Op::loop_group)return evaluate_lazy(p);
   std::vector<i64> values;
   values.reserve(p.nodes.size());
   for (std::size_t i = 0; i < p.nodes.size(); ++i) {
