@@ -58,7 +58,7 @@ fn main(){
         ("bad-type","(1,2) |> |(a:bool,b)| -> b","E_PARSE"),
     ];
     for (name,expr,code) in negative {
-        let src=dir.0.join(format!("{name}.atto"));let cpp=dir.0.join(format!("{name}.cpp"));
+        let src=dir.0.join(format!("negative-{name}.atto"));let cpp=dir.0.join(format!("negative-{name}.cpp"));
         fs::write(&src,format!("pub fnc main(): int {{ return {expr}; }}\n")).unwrap();
         let r=compile(&forge,&src,&cpp);
         assert_eq!(r.status.code(),Some(2),"{name}");assert!(r.stdout.is_empty());assert_eq!(String::from_utf8_lossy(&r.stderr).trim(),code,"{name}");
