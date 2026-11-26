@@ -1204,11 +1204,11 @@ class Parser {
     }
     return root;
   }
-  [[nodiscard]] std::optional<std::size_t> binding_body(std::optional<Refinement> result=std::nullopt){
+  [[nodiscard]] std::optional<std::size_t> binding_body(std::optional<Refinement> result=std::nullopt,bool end_delimited=false){
     std::vector<std::size_t> effects;
     for(const auto& binding:bindings_)effects.push_back(binding.second);
     auto root=strict_sequence(result,{},std::move(effects),0);
-    if(!root||(result?!compatible(*root,*result,ParseError::refinement_return):!scalar_cast(*root))||!take(Kind::rbrace)){
+    if(!root||(result?!compatible(*root,*result,ParseError::refinement_return):!scalar_cast(*root))||!(end_delimited?name("end"):take(Kind::rbrace))){
       fail(ParseError::syntax);return std::nullopt;
     }
     return root;
@@ -1332,9 +1332,24 @@ class Parser {
       if(current().kind!=Kind::name)return false;
       auto result=annotation(text());++pos_;
       if(!result)return false;
+      const auto contract_start=pos_;
       auto checks=contracts(params,*result);
-      if(!checks||!take(Kind::lbrace))return false;
-      auto root=binding_body(*result);
+      if(!checks)return false;
+      const bool contracted=pos_!=contract_start;
+      bool end_delimited=false;
+      if(!take(Kind::lbrace)){
+        if(take(Kind::double_colon))end_delimited=true;
+        else if(current().kind==Kind::name&&text()=="begin"){
+          const auto& previous=tokens_[pos_-1];
+          const auto start=previous.offset+previous.length;
+          if(contracted&&(start>current().offset||
+              source_.substr(start,current().offset-start).find('\n')==std::string_view::npos)){
+            fail(ParseError::syntax);return false;
+          }
+          ++pos_;end_delimited=true;
+        }else{fail(ParseError::syntax);return false;}
+      }
+      auto root=binding_body(*result,end_delimited);
       if(!root||!prove_contracts(*checks,*root,params))return false;
       out_.root=*root;
       if(!validate_ast(out_))return false;
