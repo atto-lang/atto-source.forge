@@ -55,7 +55,13 @@ class Parser {
     while (token_.text != "end") {
       if (token_.text.empty()) fail("unterminated nominal class");
       take("pub");
-      const std::string name = identifier();
+      std::string name = identifier();
+      // Explicit instance markers share the same method slot as bare names.
+      // mtd() and method() are contextual identifiers, not introducers.
+      if (name == "fnc" ||
+          ((name == "mtd" || name == "method") && token_.text != "("))
+        name = identifier();
+      if (name == "fnc") fail("reserved nominal method name");
       expect("(");
       if (take("mut")) {
         expect("self");
