@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <numeric>
 #include <optional>
@@ -891,17 +892,16 @@ class Parser {
     if(!name("return")&&!take(Kind::caret)){fail(ParseError::syntax);return std::nullopt;}
     auto root=expr(0);if(!root||!take(Kind::semicolon))return std::nullopt;return root;
   }
-  [[nodiscard]] std::optional<std::size_t> binding_body(std::optional<Refinement> result=std::nullopt){
-    // Each assignment creates a new graph identity; earlier snapshots remain
-    // immutable and every executed initializer stays in lexical order.
-    std::vector<std::pair<std::string_view,Refinement>> mutable_types;
-    std::vector<std::size_t> effects;
-    for(const auto& binding:bindings_)effects.push_back(binding.second);
+  using MutableTypes=std::vector<std::pair<std::string_view,Refinement>>;
+  using ContinueBranch=std::function<std::optional<std::size_t>(int)>;
+  std::optional<std::size_t> strict_sequence(std::optional<Refinement> result,MutableTypes mutable_types,
+      std::vector<std::size_t> effects,int depth,ContinueBranch on_exit={}){
+    if(depth>16){fail(ParseError::depth_limit);return std::nullopt;}
     for(;;){
       if(strict_&&name("while")){
         // Main-only single direct update. Helper graph instantiation of a
         // loop requires a separate scoped-state remapper; deny for now.
-        if(result||mutable_types.size()!=1){fail(ParseError::verify_unsupported);return std::nullopt;}
+        if(result||depth!=0||mutable_types.size()!=1){fail(ParseError::verify_unsupported);return std::nullopt;}
         const auto [key,want]=mutable_types.front();
         auto binding=std::find_if(bindings_.begin(),bindings_.end(),[&](const auto& x){return x.first==key;});
         if(binding==bindings_.end()||!compatible(binding->second,want,ParseError::refinement_binding))return std::nullopt;
@@ -959,14 +959,80 @@ class Parser {
       bindings_.emplace_back(n,*value);effects.push_back(*value);
       if(mut)mutable_types.emplace_back(n,*want);
     }
-    if(current().kind==Kind::name&&text()=="let"){fail(ParseError::refinement_body);return std::nullopt;}
-    auto root=returning(0);
-    if(!root||(result?!compatible(*root,*result,ParseError::refinement_return):!scalar_cast(*root))||!take(Kind::rbrace)){fail(ParseError::syntax);return std::nullopt;}
-    // Every initializer is part of the validated graph even if unused.
-    // Existing postorder evaluation preserves lexical failure ordering.
+
+    std::optional<std::size_t> root;
+    if(strict_&&current().kind==Kind::rbrace&&on_exit){
+      root=on_exit(depth);
+    }else if(strict_&&name("if")){
+      // Split the bounded continuation into the selected native DAG arm.
+      // Do not evaluate untaken assignments or leak branch-local declarations.
+      const auto incoming=bindings_;const auto incoming_facts=facts();
+      const bool old=guarded_;guarded_=true;
+      auto p=guard_or(incoming_facts,0);if(!p)return std::nullopt;
+      const auto close=[&](std::size_t open)->std::optional<std::size_t>{
+        if(open>=tokens_.size()||tokens_[open].kind!=Kind::lbrace)return std::nullopt;
+        unsigned nesting=0;
+        for(auto k=open;k<tokens_.size();++k){
+          if(tokens_[k].kind==Kind::lbrace)++nesting;
+          else if(tokens_[k].kind==Kind::rbrace&&--nesting==0)return k;
+        }return std::nullopt;
+      };
+      const auto yes_open=pos_;const auto yc=close(yes_open);
+      if(!yc){fail(ParseError::syntax);return std::nullopt;}
+      const auto next=*yc+1;
+      const bool has_else=next<tokens_.size()&&tokens_[next].kind==Kind::name&&
+        source_.substr(tokens_[next].offset,tokens_[next].length)=="else";
+      const auto no_open=next+1;const auto nc=has_else?close(no_open):yc;
+      if(!nc){fail(ParseError::syntax);return std::nullopt;}
+      const auto resume=*nc+1;std::optional<std::size_t> tail_end;
+      ContinueBranch continuation=[&](int d)->std::optional<std::size_t>{
+        const auto saved=pos_;
+        auto scoped=incoming;
+        for(auto& item:scoped){
+          auto it=std::find_if(bindings_.begin(),bindings_.end(),[&](const auto& x){return x.first==item.first;});
+          if(it==bindings_.end()){fail(ParseError::verify_unsupported);return std::nullopt;}
+          item.second=it->second;
+        }
+        bindings_=std::move(scoped);pos_=resume;
+        auto tail=strict_sequence(result,mutable_types,{},d+1,on_exit);
+        if(!tail)return std::nullopt;
+        if(tail_end&&*tail_end!=pos_){fail(ParseError::verify_unsupported);return std::nullopt;}
+        tail_end=pos_;pos_=saved;return tail;
+      };
+      pos_=yes_open+1;set_facts(p->yes);
+      auto y=strict_sequence(result,mutable_types,{},depth+1,continuation);
+      if(!y||pos_!=*yc){fail(ParseError::syntax);return std::nullopt;}
+      const auto yr=ranges_[*y];const auto yd=dims_[*y];const auto ys=scales_[*y];
+      bindings_=incoming;set_facts(p->no);
+      pos_=has_else?no_open+1:resume;
+      auto n=strict_sequence(result,mutable_types,{},depth+1,has_else?continuation:on_exit);
+      if(!n||(has_else&&pos_!=*nc)){fail(ParseError::syntax);return std::nullopt;}
+      if(!has_else){
+        if(tail_end&&*tail_end!=pos_){fail(ParseError::verify_unsupported);return std::nullopt;}
+        tail_end=pos_;
+      }
+      const auto nr=ranges_[*n];
+      pos_=tail_end.value_or(resume);
+      bindings_=incoming;set_facts(incoming_facts);guarded_=old;
+      if(yd!=dims_[*n]||ys!=scales_[*n]){fail(ParseError::unit_dimension);return std::nullopt;}
+      root=append(Node{Op::choose,p->node,*y,static_cast<i64>(*n)});
+      if(root)ranges_[*root]=yr.join(nr);
+    }else{
+      root=returning(depth);
+    }
+    if(!root)return std::nullopt;
     for(auto i=effects.rbegin();i!=effects.rend();++i){
       root=append(Node{Op::sequence,*i,*root,0});
       if(!root)return std::nullopt;
+    }
+    return root;
+  }
+  [[nodiscard]] std::optional<std::size_t> binding_body(std::optional<Refinement> result=std::nullopt){
+    std::vector<std::size_t> effects;
+    for(const auto& binding:bindings_)effects.push_back(binding.second);
+    auto root=strict_sequence(result,{},std::move(effects),0);
+    if(!root||(result?!compatible(*root,*result,ParseError::refinement_return):!scalar_cast(*root))||!take(Kind::rbrace)){
+      fail(ParseError::syntax);return std::nullopt;
     }
     return root;
   }
