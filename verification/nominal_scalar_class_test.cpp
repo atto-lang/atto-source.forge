@@ -77,7 +77,7 @@ int main() {
     const std::string reader = "():int{return self.value;} ";
     const std::string mainStart =
         "end fnc main():int{let mut Box b=new Box();b.add(2);return b.";
-    for (const std::string spelling : {"", "mtd ", "fnc ", "method "}) {
+    for (const std::string spelling : {"", "mtd ", "fnc "}) {
       for (const std::string name : {"read", "mtd", "method"}) {
         const auto program = parse(prefix + spelling + writer +
             spelling + name + reader + mainStart + name + "();}");
@@ -96,6 +96,12 @@ int main() {
         }
       }
     }
+    for (const std::string name : {"read", "mtd", "method"}) {
+      rejects(prefix + writer + "method " + name + reader +
+          mainStart + name + "();}", "obsolete method introducer");
+    }
+    rejects(prefix + "method " + writer + "read" + reader +
+        mainStart + "read();}", "obsolete method introducer");
     rejects(prefix + writer + "static mtd read" + reader + mainStart + "read();}");
     rejects(prefix + writer + "mtd fnc read" + reader + mainStart + "read();}");
     rejects(prefix + writer + "fnc()" + reader + mainStart + "read();}");
