@@ -13,7 +13,9 @@ static std::int64_t blocked_guest(std::int64_t old, std::int64_t delta){
   return old+delta;
 }
 int main(){
- OresVM vm{2};auto a=vm.create_isolate("tenant-a",1),b=vm.create_isolate("tenant-b",1);
+ OresVM vm{2};OresVM::TenantVMHandle a=vm.create_tenant_vm("tenant-a",1),b=vm.create_isolate("tenant-b",1);
+ assert(rejected([&]{vm.create_tenant_vm(".",1);}));
+ assert(rejected([&]{vm.create_tenant_vm("..",1);}));
  assert(rejected([&]{vm.create_isolate("bad\nnamespace",1);}));
  assert(rejected([&]{vm.create_isolate("bad\ttenant",1);}));
  assert(rejected([&]{vm.create_isolate("non\x7fprint",1);}));

@@ -1,4 +1,6 @@
-# OresVM / IsolateVM contract v0 (backend admission)
+# OresVM / TenantVM contract v0 (legacy IsolateVM backend admission)
+
+**Canonical naming (2026-11-11): TenantVM** is the tenant execution unit beneath OresVM. `IsolateVM` and the existing host type spellings remain historical/compatible; the Forge JIT does not gain untrusted isolation by renaming. See [TenantVM naming](TENANT_VM_NAMING_V1.md).
 
 **Status: experimental host substrate.** Not full actor VM execution,
 complete cross-backend parity, per-tenant physical resource enforcement or
