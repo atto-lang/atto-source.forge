@@ -25,7 +25,8 @@ class Parser final {
                 next_byte_ += 2;
                 while (next_byte_ < source_.size() && source_[next_byte_] != '\n') {
                     const auto b = static_cast<unsigned char>(source_[next_byte_++]);
-                    if (b < 32 || b > 126) fail("non-ASCII source byte");
+                    if ((b < 32 && b != 9 && b != 13) || b > 126)
+                            fail("non-ASCII source byte");
                 }
                 continue;
             }
@@ -61,10 +62,21 @@ class Parser final {
         if (token_.empty() || !letter(token_[0])) fail("expected identifier");
         const std::string name(token_);
         advance();
-        if (name == "end" || name == "receive" || name == "return" ||
-            name == "define" || name == "as" || name == "actor" ||
-            name == "int" || name == "let" || name == "suspends")
-            fail("reserved actor identifier");
+        // Fail closed on language keywords, not merely the words in the
+        // stage-0 grammar. A keyword admitted as a field or message could
+        // acquire different meaning when this profile grows.
+        static constexpr std::string_view reserved[] = {
+            "actor", "and", "as", "async", "await", "borrow", "break",
+            "case", "catch", "class", "const", "continue", "copy",
+            "critical", "define", "defer", "dyn", "else", "end",
+            "enum", "false", "fnc", "for", "guard", "if", "import",
+            "in", "int", "let", "match", "mut", "null", "or", "pub",
+            "receive", "recover", "return", "routine", "rt", "select",
+            "self", "share", "state", "struct", "suspends", "take",
+            "then", "trait", "true", "type", "void", "while", "xor"
+        };
+        for (const auto keyword : reserved)
+            if (name == keyword) fail("reserved actor identifier");
         return name;
     }
     std::int64_t literal() {

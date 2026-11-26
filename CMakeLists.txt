@@ -65,6 +65,32 @@ if(BUILD_TESTING)
   add_test(NAME oresforge_actor_private_frames_host COMMAND oresforge_actor_frames_tests)
   set_tests_properties(oresforge_actor_private_frames_host PROPERTIES TIMEOUT 30)
 
+  # Sealed, stackless typed actor frame VM and negative bytecode admission.
+  # Host VM foundation only: not yet compiler-lowered native Forge actors.
+  add_executable(oresforge_actor_frame_vm_tests verification/actor_frame_vm.cpp)
+  target_link_libraries(oresforge_actor_frame_vm_tests PRIVATE oresforge_scalar_actor Threads::Threads)
+  target_compile_features(oresforge_actor_frame_vm_tests PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_actor_frame_vm_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+  endif()
+  add_test(NAME oresforge_actor_frame_vm_host COMMAND oresforge_actor_frame_vm_tests)
+  set_tests_properties(oresforge_actor_frame_vm_host PROPERTIES TIMEOUT 40)
+
+  # In-process scalar actor compiler admission; much more comprehensive than
+  # merely requiring a nonzero process exit on one malformed input.
+  add_executable(oresforge_actor_source_admission_tests
+    verification/actor_source_admission.cpp)
+  target_link_libraries(oresforge_actor_source_admission_tests PRIVATE oresforge_core)
+  target_compile_features(oresforge_actor_source_admission_tests PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_actor_source_admission_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+  endif()
+  add_test(NAME oresforge_actor_source_admission
+    COMMAND oresforge_actor_source_admission_tests)
+  set_tests_properties(oresforge_actor_source_admission PROPERTIES TIMEOUT 30)
+
   add_executable(oresforge_scalar_actor_frames_tests verification/scalar_actor_frames.cpp)
   target_link_libraries(oresforge_scalar_actor_frames_tests PRIVATE oresforge_scalar_actor)
   target_compile_features(oresforge_scalar_actor_frames_tests PRIVATE cxx_std_20)

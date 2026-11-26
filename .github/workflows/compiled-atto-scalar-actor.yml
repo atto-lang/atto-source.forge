@@ -63,9 +63,15 @@ jobs:
             -DCMAKE_C_FLAGS="$flags" -DCMAKE_CXX_FLAGS="$flags" \
             -DCMAKE_EXE_LINKER_FLAGS="$flags"
       - name: Compile actual source-owning oresforge executable
-        run: cmake --build build-actor --target oresforge --parallel 2
+        run: >-
+          cmake --build build-actor --target
+          oresforge oresforge_actor_source_admission_tests
+          oresforge_actor_frame_vm_tests --parallel 2
       - name: Execute emitted native .atto actor, adversarial admissions, and mutation checks
         env:
           ASAN_OPTIONS: detect_leaks=0:halt_on_error=1
           UBSAN_OPTIONS: halt_on_error=1
-        run: ctest --test-dir build-actor --output-on-failure -V -R '^oresforge_compiled_atto_scalar_actor_native$'
+        run: >-
+          ctest --test-dir build-actor --output-on-failure -V
+          -R '^(oresforge_compiled_atto_scalar_actor_native|oresforge_actor_source_admission|oresforge_actor_frame_vm_host)
+
