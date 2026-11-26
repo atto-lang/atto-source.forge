@@ -597,6 +597,22 @@ endif()
 add_test(NAME forge_error_arena_host COMMAND forge_error_arena_test)
 set_tests_properties(forge_error_arena_host PROPERTIES TIMEOUT 15 LABELS "host-only;error-representation")
 
+# Host-only arithmetic status to Error identity bridge, not a guest ABI.
+add_executable(forge_arithmetic_error_bridge_test verification/arithmetic_error_bridge_test.cpp)
+target_include_directories(forge_arithmetic_error_bridge_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_features(forge_arithmetic_error_bridge_test PRIVATE cxx_std_20)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(forge_arithmetic_error_bridge_test PRIVATE -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(forge_arithmetic_error_bridge_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(forge_arithmetic_error_bridge_test PRIVATE -fsanitize=address,undefined)
+  endif()
+elseif(MSVC)
+  target_compile_options(forge_arithmetic_error_bridge_test PRIVATE /UNDEBUG)
+endif()
+add_test(NAME forge_arithmetic_error_bridge_host COMMAND forge_arithmetic_error_bridge_test)
+set_tests_properties(forge_arithmetic_error_bridge_host PROPERTIES TIMEOUT 15 LABELS "host-only;error-representation")
+
 # Restricted native lexer has no Python or borrowed source buffers.
 add_executable(scalar_lexer_test tests/scalar_lexer.cpp)
 target_link_libraries(scalar_lexer_test PRIVATE atto_forge_checked_i64)
