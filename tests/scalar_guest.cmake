@@ -478,3 +478,12 @@ verify_pair_case(entry_witness [=[Entry.of<string,int>(1,2).value]=] "" E_ENTRY_
 verify_pair_case(entry_unknown [=[Entry.of(42,missing).key]=] "" E_PARSE_SYNTAX)
 verify_local_body(entry-key-trap "return Entry.of(42,1/0).key;" 71 "" "E_DIVZERO\n")
 verify_local_body(entry-value-trap "return Entry.of(1/0,42).value;" 71 "" "E_DIVZERO\n")
+
+# Entry projections must preserve eager left-to-right faults even when the
+# other member is selected. Distinct diagnostics make reordering observable.
+verify_local_body(entry-key-order "return Entry.of(1/0,9223372036854775807+1).key;" 71 "" "E_DIVZERO\n")
+verify_local_body(entry-value-order "return Entry.of(1/0,9223372036854775807+1).value;" 71 "" "E_DIVZERO\n")
+verify_local_body(entry-key-order-reversed "return Entry.of(9223372036854775807+1,1/0).key;" 70 "" "E_OVERFLOW\n")
+verify_local_body(entry-value-order-reversed "return Entry.of(9223372036854775807+1,1/0).value;" 70 "" "E_OVERFLOW\n")
+verify_pair_case(entry_nested [=[Entry.of(Entry.of(20,21).value,Entry.of(21,22).key).key+21]=] 42 "")
+verify_local_body(entry-reused-binding "val x=21; return Entry.of(x,x+1).key+x;" 0 "42\n" "")
