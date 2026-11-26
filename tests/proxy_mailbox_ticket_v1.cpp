@@ -48,6 +48,29 @@ static void correlation_and_full() {
     assert(a.snapshot(first)->result == 111 && a.snapshot(queued)->result == 112);
     assert(a.conservation() && b.conservation());
 }
+static void cross_tenant_same_actor() {
+    bool rejected = false;
+    try { host_proxy_mailbox_tickets invalid(0, 13, 14, 1); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    assert(rejected);
+    host_proxy_mailbox_tickets a(11, 13, 14, 1), b(88, 13, 14, 1);
+    auto ra = route(400), rb = ra;
+    rb.tenant = 88;
+    auto ta = admit(a, ra, 41);
+    auto tb = admit(b, rb, 42);
+    auto foreign_a = a.admit(rb, 99), foreign_b = b.admit(ra, 99);
+    assert(foreign_a.status == host_ticket_admission::stale && !foreign_a.ticket);
+    assert(foreign_b.status == host_ticket_admission::stale && !foreign_b.ticket);
+    auto va = a.dispatch(), vb = b.dispatch();
+    assert(va && vb && va->value() == 41 && vb->value() == 42);
+    assert(!a.commit(*vb, 99) && !b.commit(*va, 99));
+    assert(!a.snapshot(tb) && !b.snapshot(ta));
+    assert(a.commit(*va, 41) && b.commit(*vb, 42));
+    assert(a.snapshot(ta)->result == 41 && b.snapshot(tb)->result == 42);
+    a.close();
+    assert(a.admit(rb, 99).status == host_ticket_admission::stale);
+    assert(a.conservation() && b.conservation());
+}
 static void concurrent_results() {
     host_proxy_mailbox_tickets m(11, 13, 14, 256);
     std::mutex sent_lock;
@@ -105,6 +128,7 @@ static void panic_restart_close() {
 }
 int main() {
     correlation_and_full();
+    cross_tenant_same_actor();
     concurrent_results();
     panic_restart_close();
     std::puts("ATTO_FORGE_HOST_PER_MAIL_TICKETS_128_CONCURRENT=PASS");
