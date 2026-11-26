@@ -132,7 +132,7 @@ class Parser {
   std::vector<Token> tokens_;
   std::size_t pos_ = 0;
   Parsed out_;
-  // File-local, scale-one dimensions; erased only after scalar admission.
+  // File-local bounded rational dimensions; erased only after scalar admission.
   using Dim = std::array<int, 8>;
   struct Scale {
     i64 n = 1, d = 1;
@@ -146,6 +146,8 @@ class Parser {
       return Scale{x*y,z*w};
     }
     [[nodiscard]] std::optional<i64> convert(i64 value,Scale target) const {
+      // Zero converts exactly even when the intermediate ratio exceeds i64.
+      if (value==0) return 0;
       const auto ratio=mul(target.inv());
       if (!ratio || value%ratio->d != 0) return std::nullopt;
       const i64 q=value/ratio->d;
@@ -562,7 +564,7 @@ class Parser {
         const auto minimum = parse_decimal_i64(signed_digits);
         if (minimum && *minimum == std::numeric_limits<i64>::min()) {
           ++pos_;
-          return postfix(append(Node{Op::literal, 0, 0, *minimum}), true);
+          return postfix(append(Node{Op::literal, 0, 0, *minimum}), true, true);
         }
       }
       auto rhs = unary(depth + 1);
@@ -593,8 +595,8 @@ class Parser {
     return std::nullopt;
   }
   [[nodiscard]] bool binding_name(std::string_view n) const {
-    if(n.empty()||known_name(n))return false;
-    for(auto s:{"val","let","int","i64","i32","bool","float","string","void","return","self","main","fnc","pub","define","type","where","as","and","units","in","true","false","if","else","end","begin","while","loop","task","await","suspends","infer","new","match","const","mut","_"})if(n==s)return false;
+    if(n.empty()||n[0]<'a'||n[0]>'z'||known_name(n))return false;
+    for(auto s:{"val","let","int","i64","i32","bool","float","string","void","return","self","main","fnc","pub","define","type","where","as","and","units","in","true","false","if","else","end","begin","while","loop","task","await","suspends","infer","new","match","const","mut","using","unit","dimension","_"})if(n==s)return false;
     for(const auto& b:bindings_)if(b.first==n)return false;
     return true;
   }
@@ -605,7 +607,7 @@ class Parser {
   }
   [[nodiscard]] std::optional<std::size_t> binding_body(){
     while(name("val")){
-      if(bindings_.size()==64||current().kind!=Kind::name){fail(ParseError::syntax);return std::nullopt;}
+      if(bindings_.size()>=32||current().kind!=Kind::name){fail(ParseError::syntax);return std::nullopt;}
       auto n=text();++pos_;
       std::optional<Refinement> want;
       if(take(Kind::colon)){
