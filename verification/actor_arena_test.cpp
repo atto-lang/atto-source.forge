@@ -1,6 +1,8 @@
 #include "runtime/actor_arena.hpp"
 #include <array>
 #include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <thread>
 #include <atomic>
@@ -25,6 +27,15 @@ int main() {
   foreign.join();
   a.read(ta, h, output);
   ensure(output == value);
+  ensure(a.try_read_byte(ta,h,0).has_value());
+  ensure(a.try_read_byte(ta,h,0).value() == std::byte{42});
+  ensure(a.try_read_byte(ta,h,1).value() == std::byte{9});
+  for (const std::int64_t invalid : {std::int64_t{-1}, std::int64_t{2},
+      std::numeric_limits<std::int64_t>::min(),
+      std::numeric_limits<std::int64_t>::max()})
+    ensure(!a.try_read_byte(ta,h,invalid).has_value());
+  rejects([&] { (void)b.try_read_byte(tb,h,-1); });
+  rejects([&] { (void)a.try_read_byte(tb,h,-1); });
   auto scratch = a.scratch_alloc(ta, 2);
   a.scratch_write(ta, scratch, value);
   a.end_turn(ta);
@@ -37,6 +48,7 @@ int main() {
   a.read(t2, h, output);
   ensure(output == value);
   a.drop(t2, h);
+  rejects([&] { (void)a.try_read_byte(t2,h,-1); });
   rejects([&] { a.read(t2, h, output); });
   auto replacement = a.allocate(t2, 2);
   rejects([&] { a.read(t2, h, output); });

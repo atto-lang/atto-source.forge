@@ -9,6 +9,7 @@ on:
       - 'runtime/actor.cpp'
       - 'verification/actor_incarnation_owner_v1_test.cpp'
       - 'verification/actor_incarnation_memory_v1_test.cpp'
+      - 'verification/supervisor_data_fence_parity_v1_test.cpp'
       - 'verification/actor_ci_contract.py'
       - 'verification/actor_ci_contract_selftest.py'
       - 'CMakeLists.txt'
@@ -54,10 +55,13 @@ jobs:
           fi
           build="$RUNNER_TEMP/actor-owner-$MODE"
           cmake -S . -B "$build" -DCMAKE_CXX_COMPILER="$CXX" -DCMAKE_CXX_FLAGS="$flags"
-          cmake --build "$build" --target oresforge_actor_incarnation_owner_v1 oresforge_actor_incarnation_memory_v1 --parallel 2
-          ASAN_OPTIONS=detect_leaks=1 ctest --test-dir "$build" --output-on-failure -R '^oresforge_actor_incarnation_(owner|memory)_v1_host$'
+          cmake --build "$build" --target oresforge_actor_incarnation_owner_v1 oresforge_actor_incarnation_memory_v1 oresforge_supervisor_data_fence_parity_v1 --parallel 2
+          ASAN_OPTIONS=detect_leaks=1 ctest --test-dir "$build" --output-on-failure -R '^(oresforge_actor_incarnation_(owner|memory)_v1_host|oresforge_supervisor_data_fence_parity_v1_host)$'
           "$build/oresforge_actor_incarnation_owner_v1" | tee "$RUNNER_TEMP/actor-owner-host.txt"
           grep -Fx 'FORGE_ACTOR_OWNER_HOST_PASS|turn=1|stop_restart=1|sibling=42|guest_atto=0|physical_stack=0' "$RUNNER_TEMP/actor-owner-host.txt"
           "$build/oresforge_actor_incarnation_memory_v1" | tee "$RUNNER_TEMP/actor-memory-host.txt"
           grep -Fx 'FORGE_ACTOR_INCAR_MEMORY_HOST_PASS|private_heap=1|logical_stack=1|guest_atto=0|physical_stack=0' "$RUNNER_TEMP/actor-memory-host.txt"
+          "$build/oresforge_supervisor_data_fence_parity_v1" | tee "$RUNNER_TEMP/actor-fence-host.txt"
+          grep -E '^FORGE_SUPERVISOR_DATA_FENCE_HOST_PASS\|attempts=6144\|admitted=[0-9]+\|sibling=1\|native_guest=0\|supervision_tree=0
+ "$RUNNER_TEMP/actor-fence-host.txt"
           test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"

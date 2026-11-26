@@ -86,11 +86,20 @@ class Parser {
       ++at_;
     } else if (c=='-' && at_<text_.size() && text_[at_]=='>') {
       ++at_;
-    } else if (std::string_view("()+-*{};:,<>=").find(c)==std::string_view::npos) {
+    } else if (c=='^' && at_<text_.size() && text_[at_]=='^') {
+      token_={text_.substr(begin,2),begin};
+      fail("FORGE_XOR_BACKEND_UNSUPPORTED: integer ^^ requires native bitwise lowering");
+    } else if (std::string_view("()+-*{};:,<>=^").find(c)==std::string_view::npos) {
       at_=begin;
       fail("invalid character");
     }
     token_={text_.substr(begin,at_-begin),begin};
+    // The native-call profile has no trusted module graph, typed symbol table,
+    // or verified compiler-owned std module bindings. Reject imports at the
+    // token boundary, including inside unreachable declarations, instead of
+    // misreporting them as malformed scalar function definitions.
+    if (token_.text=="import")
+      fail("source imports require verified module graph lowering");
   }
   bool take(std::string_view s) {
     if (token_.text!=s) return false;
@@ -115,6 +124,15 @@ class Parser {
     while (token_.text=="define" || token_.text=="pub") {
       if (take("define")) {if(defining)fail("duplicate define");defining=true;}
       else if (take("pub")) {if(public_)fail("duplicate pub");public_=true;}
+    }
+    // This independent native-call frontend must reject the same HTTP actor
+    // forms as the scalar Forge parser, before any callable IR is produced.
+    if (token_.text=="http")
+      fail("HTTP_ACTOR_BACKEND_UNSUPPORTED: Forge native-call source has no HTTP actor scheduling or physical shutdown lowering");
+    if (take("serial")) {
+      if (token_.text=="http")
+        fail("HTTP_ACTOR_BACKEND_UNSUPPORTED: Forge native-call source has no HTTP actor scheduling or physical shutdown lowering");
+      fail("SERIAL_ACTOR_BACKEND_UNSUPPORTED: Forge native-call compiler has no source serial actor lowering");
     }
     expect("fnc");
     const std::string name=identifier();
@@ -142,8 +160,9 @@ class Parser {
     }
     expect(")");
     if(!take(":"))expect("->");
-    expect("int");expect("{");expect("return");
+    expect("int");expect("{");if (!take("^")) expect("return");
     current_->result=expr(0);
+    if (token_.text=="^") fail("single caret is only a return statement; integer XOR uses ^^");
     expect(";");expect("}");
   }
   void depth(std::size_t n) {if(n>kMaxDepth)fail("callable expression nesting too deep");}

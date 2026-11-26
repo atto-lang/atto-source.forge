@@ -80,11 +80,11 @@ def check(root: pathlib.Path, workflow: pathlib.Path) -> None:
     require("git rev-parse 'HEAD^{tree}'" in admission,
             'missing immutable Git tree provenance')
     require(test.count('cmake --build "$build" --target ') == 1 and
-            'oresforge_actor_incarnation_owner_v1 oresforge_actor_incarnation_memory_v1' in test,
-            'both native targets must build in one exact-head tree')
+            'oresforge_actor_incarnation_owner_v1 oresforge_actor_incarnation_memory_v1 oresforge_supervisor_data_fence_parity_v1' in test,
+            'all three native targets must build in one exact-head tree')
     require(test.count('ctest --test-dir ') == 1 and
-            "-R '^oresforge_actor_incarnation_(owner|memory)_v1_host$'" in test,
-            'one anchored CTest filter must select both cases')
+            "-R '^(oresforge_actor_incarnation_(owner|memory)_v1_host|oresforge_supervisor_data_fence_parity_v1_host)$'" in test,
+            'one anchored CTest filter must select all three cases')
     require('-fsanitize=address,undefined' in test and '-fno-omit-frame-pointer' in test,
             'sanitized test mode missing')
     markers = (
@@ -95,7 +95,9 @@ def check(root: pathlib.Path, workflow: pathlib.Path) -> None:
         require(test.count("grep -Fx '" + marker + "'") == 1,
                 'missing or duplicate exact success marker: ' + marker)
     require(test.count('"$build/oresforge_actor_incarnation_owner_v1"') == 1 and
-            test.count('"$build/oresforge_actor_incarnation_memory_v1"') == 1,
+            test.count('"$build/oresforge_actor_incarnation_memory_v1"') == 1 and
+            test.count('"$build/oresforge_supervisor_data_fence_parity_v1"') == 1 and
+            test.count("grep -E '^FORGE_SUPERVISOR_DATA_FENCE_HOST_PASS") == 1,
             'host binary must run once per test')
     require('test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"' in test,
             'missing post-test source head readback')
@@ -103,7 +105,7 @@ def check(root: pathlib.Path, workflow: pathlib.Path) -> None:
     cmake = root / 'CMakeLists.txt'
     if cmake.exists():
         value = cmake.read_text(encoding='utf-8')
-        for target in ('oresforge_actor_incarnation_owner_v1', 'oresforge_actor_incarnation_memory_v1'):
+        for target in ('oresforge_actor_incarnation_owner_v1', 'oresforge_actor_incarnation_memory_v1', 'oresforge_supervisor_data_fence_parity_v1'):
             require('add_executable(' + target in value,
                     'CTest target executable not registered: ' + target)
             require('COMMAND ' + target + ')' in value,
@@ -112,6 +114,7 @@ def check(root: pathlib.Path, workflow: pathlib.Path) -> None:
     for filename, marker in (
         ('verification/actor_incarnation_owner_v1_test.cpp', 'FORGE_ACTOR_OWNER_HOST_PASS'),
         ('verification/actor_incarnation_memory_v1_test.cpp', 'FORGE_ACTOR_INCAR_MEMORY_HOST_PASS'),
+        ('verification/supervisor_data_fence_parity_v1_test.cpp', 'FORGE_SUPERVISOR_DATA_FENCE_HOST_PASS'),
     ):
         path = root / filename
         if path.exists():

@@ -21,14 +21,14 @@ def main() -> None:
 
     mutations = {
         'truncated_ctest_quote': (
-            "-R '^oresforge_actor_incarnation_(owner|memory)_v1_host$'",
+            "-R '^(oresforge_actor_incarnation_(owner|memory)_v1_host|oresforge_supervisor_data_fence_parity_v1_host)$'",
             "-R '^oresforge_actor_incarnation_(owner|memory)_v1_host"),
         'duplicate_success_receipt': (
             "grep -Fx 'FORGE_ACTOR_OWNER_HOST_PASS|turn=1|stop_restart=1|sibling=42|guest_atto=0|physical_stack=0'",
             "grep -Fx 'FORGE_ACTOR_OWNER_HOST_PASS|turn=1|stop_restart=1|sibling=42|guest_atto=0|physical_stack=0'\n"
             "          grep -Fx 'FORGE_ACTOR_OWNER_HOST_PASS|turn=1|stop_restart=1|sibling=42|guest_atto=0|physical_stack=0'"),
         'unanchored_ctest_selection': (
-            "-R '^oresforge_actor_incarnation_(owner|memory)_v1_host$'",
+            "-R '^(oresforge_actor_incarnation_(owner|memory)_v1_host|oresforge_supervisor_data_fence_parity_v1_host)$'",
             "-R 'actor'"),
         'persistent_checkout_credentials': (
             '          persist-credentials: false',

@@ -14,6 +14,7 @@
 #include <span>
 #include <stdexcept>
 #include <thread>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -282,7 +283,8 @@ class ActorIncarnationOwnerV1 final {
   bool quarantined_ = false;
 
   template <typename Operation>
-  decltype(auto) with_memory(const Turn& turn, Operation&& op) {
+  std::invoke_result_t<Operation, ActorIncarnationMemoryV1&, const ActorRef&>
+  with_memory(const Turn& turn, Operation&& op) {
     std::scoped_lock lock(gate_);
     if (!in_turn_ || stopping_ || quarantined_ || !memory_ ||
         carrier_ != std::this_thread::get_id() ||
