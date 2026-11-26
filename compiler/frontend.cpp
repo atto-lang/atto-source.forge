@@ -46,6 +46,7 @@ using ExprPtr = std::unique_ptr<Expr>;
 struct Function {
   std::vector<std::string> parameters;
   ExprPtr body;
+  std::string generic_parameter; // nonempty only for the checked identity slice
 };
 
 class Parser {
@@ -269,7 +270,7 @@ class Parser {
     if (source_.substr(at_,2)=="^^")
       throw std::runtime_error("FORGE_XOR_BACKEND_UNSUPPORTED: integer ^^ requires native bitwise lowering at byte "+
                                std::to_string(start));
-    if (std::string_view("()+-*/{};:,?^").find(static_cast<char>(c)) ==
+    if (std::string_view("()+-*/{};:,?^<>=").find(static_cast<char>(c)) ==
         std::string_view::npos) error("invalid character");
     ++at_;
     tok_={Kind::Punct,source_.substr(start,1),start};
@@ -349,8 +350,32 @@ class Parser {
     const std::string name=identifier();
     if (name=="int" || name=="fnc" || name=="return")
       error("reserved function name");
-    expect("(");
     Function fn;
+    if (take("<")) {
+      if (public_ || name=="main" || name=="init" || functions_.size()>=64)
+        error("E_GENERIC_UNSUPPORTED: private root identity profile required");
+      fn.generic_parameter=identifier();
+      if (fn.generic_parameter==name || fn.generic_parameter=="int" ||
+          fn.generic_parameter=="bool" || fn.generic_parameter=="_" ||
+          fn.generic_parameter=="fnc" || fn.generic_parameter=="return")
+        error("E_GENERIC_BINDER: invalid type binder");
+      expect(">"); expect("(");
+      const std::string first=identifier();
+      std::string parameter;
+      if (take(":")) { parameter=first; expect(fn.generic_parameter); }
+      else { if(first!=fn.generic_parameter) error("E_GENERIC_BINDER: expected type parameter"); parameter=identifier(); }
+      if(parameter==name || parameter==fn.generic_parameter || parameter=="_" ||
+         parameter=="int" || parameter=="bool" || parameter=="return" || parameter=="fnc")
+        error("E_GENERIC_BINDER: invalid value binder");
+      fn.parameters.push_back(parameter);
+      expect(")"); if(!take(":")) expect("->"); expect(fn.generic_parameter);
+      expect("{"); expect("return"); expect(parameter); expect(";"); expect("}");
+      fn.body=node(Expr::Tag::Parameter,{},0,parameter);
+      if(functions_.contains(name)) error("duplicate function");
+      functions_.emplace(name,std::move(fn));
+      return;
+    }
+    expect("(");
     if (tok_.text!=")") {
       do {
         if (tok_.text=="tuple" || tok_.text=="structural" || tok_.text=="(")
@@ -466,8 +491,29 @@ class Parser {
       // instead of accepting it as an unbound scalar variable.
       if ((name=="ets" || name=="pg") && tok_.text==".")
         error("Forge ETS/pg guest APIs require authenticated isolate, table and mailbox lowering");
+      const auto found=functions_.find(name);
+      const bool generic=found!=functions_.end()&&!found->second.generic_parameter.empty();
+      if(take("<")){
+        if(!generic) error("E_GENERIC_BINDER: expected earlier generic identity");
+        if(tok_.text!="int"){
+          const auto label=identifier();
+          expect("=");
+          if(label!=found->second.generic_parameter) error("E_GENERIC_BINDER: unknown generic name");
+        }
+        expect("int"); expect(">");
+        if(tok_.text!="(") error("E_GENERIC_BINDER: expected call");
+      }
       if (!take("(")) return node(Expr::Tag::Parameter,{},0,name,offset);
       std::vector<ExprPtr> args;
+      // Named labels on the single-slot generic profile. Look ahead using
+      // the real lexer, restoring its cursor if this is an ordinary operand.
+      if(generic && tok_.kind==Kind::Word){
+        const auto saved=tok_; const auto saved_at=at_;
+        const auto label=identifier();
+        if(take(":")){
+          if(label!=found->second.parameters[0]) error("E_GENERIC_BINDER: unknown value label");
+        }else{tok_=saved; at_=saved_at;}
+      }
       if (tok_.text!=")") {
         do {
           args.push_back(expression(depth+1));
@@ -497,6 +543,9 @@ class Parser {
       auto found=functions_.find(e.name);
       if (found==functions_.end())
         throw std::runtime_error("unknown function: "+e.name);
+      if (!found->second.generic_parameter.empty() &&
+          std::find(owner.parameters.begin(),owner.parameters.end(),e.name)!=owner.parameters.end())
+        throw std::runtime_error("E_GENERIC_BINDER: local shadows generic callable");
       if (found->second.parameters.size()!=e.children.size())
         throw std::runtime_error("function arity mismatch: "+e.name);
       validate_calls(e.name,active,complete);
