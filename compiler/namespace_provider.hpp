@@ -26,7 +26,7 @@ inline std::string compile_namespace_provider(std::string_view input,
     throw std::runtime_error("E_NAMESPACE_PROFILE: explicit public provider required");
   // Split only the bounded, exact typed parameter list. The frontend still
   // validates the original function and body, including names and types.
-  std::string params=m[4].str(), args;
+  std::string params=m[4].str(), args, native_params;
   std::set<std::string> names;
   static const std::regex param(R"(^int ([A-Za-z_][A-Za-z0-9_]{0,127})$)");
   std::size_t pos=0;
@@ -36,8 +36,8 @@ inline std::string compile_namespace_provider(std::string_view input,
     std::smatch p;
     if(!std::regex_match(part,p,param)||!names.insert(p[1].str()).second)
       throw std::runtime_error("E_NAMESPACE_PROFILE: exact integer parameters required");
-    if(!args.empty())args+=", ";
-    args+=p[1].str();
+    if(!args.empty()){args+=", ";native_params+=", ";}
+    args+=p[1].str();native_params+=p[1].str()+": int";
     if(names.size()>4)throw std::runtime_error("E_NAMESPACE_ARITY: runtime parameter budget");
     if(end==std::string::npos)break;
     pos=end+2;
@@ -49,10 +49,12 @@ inline std::string compile_namespace_provider(std::string_view input,
   if(!std::regex_match(m[5].str(),expression))
     throw std::runtime_error("E_NAMESPACE_PROFILE: closed integer expression required");
   // The stage-0 parser currently requires 'use namespace' and a single
-  // identifier. Translate only that verified header spelling; preserve the
-  // original declaration/body and invoke it through the checked compiler.
+  // identifier and name-first typed parameters. Translate only verified
+  // header spelling; preserve the original declaration identity and body.
   // No host evaluation. Dotted namespaces remain outside this profile.
-  return emit_runtime_asm(parse_runtime_source("use "+source+"fnc main("+params+"): int { return "+
+  std::string lowered=source;
+  lowered.replace(static_cast<std::size_t>(m.position(4)),static_cast<std::size_t>(m.length(4)),native_params);
+  return emit_runtime_asm(parse_runtime_source("use "+lowered+"fnc main("+native_params+"): int { return "+
                            std::string(symbol)+"("+args+"); }\n"),arch);
 }
 }
