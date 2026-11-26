@@ -8,7 +8,7 @@
 namespace atto::forge::scalar {
 enum class Kind {
   name, integer, quoted, lparen, rparen, lbrace, rbrace, colon, double_colon, lt, gt, semicolon, dot, equals, comma,
-  plus, minus, star, slash, percent, bit_and, bit_or, caret, bit_xor, tilde, shl, lshr, arrow, left_arrow, end
+  plus, minus, star, slash, percent, logical_and, logical_or, not_equal, equal_equal, bit_and, bit_or, caret, bit_xor, tilde, shl, lshr, arrow, left_arrow, end
 };
 struct Token { Kind kind; std::size_t offset; std::size_t length; };
 enum class LexError { none, source_too_large, token_limit, unsupported_byte, unterminated_comment };
@@ -91,6 +91,14 @@ inline constexpr std::size_t max_tokens = 256;
     } else if (c == ':' && src.substr(i, 2) == "::") {
       kind = Kind::double_colon;
       i += 2;
+    } else if (src.substr(i, 2) == "&&") {
+      kind = Kind::logical_and; i += 2;
+    } else if (src.substr(i, 2) == "||") {
+      kind = Kind::logical_or; i += 2;
+    } else if (src.substr(i, 2) == "!=") {
+      kind = Kind::not_equal; i += 2;
+    } else if (src.substr(i, 2) == "==") {
+      kind = Kind::equal_equal; i += 2;
     } else if (c == '^' && src.substr(i, 2) == "^^") {
       kind = Kind::bit_xor;
       i += 2;
