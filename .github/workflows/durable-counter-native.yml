@@ -1,5 +1,8 @@
 name: Native Forge durable Counter profile
 on:
+  push:
+    branches:
+      - 'feat/durable-counter-native-profile-20261125'
   pull_request:
     paths:
       - 'include/atto/durable_counter_emit.hpp'
@@ -17,11 +20,11 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Build exact source and execute emitted native code
         env:
-          EXPECTED: ${{ github.event.pull_request.head.sha }}
+          EXPECTED: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED"
