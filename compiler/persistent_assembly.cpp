@@ -1,5 +1,8 @@
 #include "compiler/persistent_assembly.hpp"
 #include "compiler/frontend.hpp"
+#include "compiler/namespace_provider.hpp"
+#include <map>
+#include <set>
 #include <openssl/evp.h>
 #include <openssl/crypto.h>
 #include <algorithm>
@@ -68,5 +71,66 @@ AssemblyBuild compile_cached_assembly(const fs::path& root,std::string_view sour
  auto payload=verify(a,*b,secret.value);if(a==k)return {std::move(payload),true};}}
  auto assembly=emit_runtime_asm(parse_runtime_source(std::string(source)),Arch::X86_64);
  Bytes bytes(assembly.begin(),assembly.end());publish(dir.fd,name,seal(k,bytes,secret.value));return {std::move(bytes),false};
+}
+
+namespace {
+bool provider_ident(std::string_view v){
+ if(v.empty()||v.size()>128)return false;
+ auto alpha=[](char c){return (c>='a'&&c<='z')||(c>='A'&&c<='Z')||c=='_';};
+ if(!alpha(v.front()))return false;
+ return std::all_of(v.begin()+1,v.end(),[&](char c){return alpha(c)||(c>='0'&&c<='9');});
+}
+bool provider_path(std::string_view v){
+ if(v.size()>256||!v.ends_with(".atto"))return false;
+ v.remove_suffix(5);
+ for(;;){auto slash=v.find('/');if(!provider_ident(v.substr(0,slash)))return false;
+  if(slash==std::string_view::npos)return true;v.remove_prefix(slash+1);}
+}
+}
+AssemblyBuild compile_cached_namespace_provider(const fs::path& root,
+ std::span<const ProviderInput> inventory,std::string_view expected_manifest,std::string_view expected_sources,
+ std::string_view name_space,std::string_view symbol,std::size_t arity,
+ std::string_view scope,std::string_view compiler,std::string_view toolchain,
+ std::span<const std::uint8_t> record,const Secret& pin,const Secret& master,bool cold){
+ Wipe secret{ledger_admit(scope,record,pin,master)};
+ if(inventory.empty()||inventory.size()>128)throw std::runtime_error("E_NAMESPACE_INVENTORY: member budget");
+ std::map<std::string_view,const ProviderInput*> ordered;
+ std::set<std::pair<std::string_view,std::string_view>> names;
+ for(const auto& p:inventory){
+  if(!provider_path(p.path)||!provider_ident(p.name_space)||!provider_ident(p.symbol)||p.arity>4||
+     p.source.size()>4096||!ordered.emplace(p.path,&p).second||!names.emplace(p.name_space,p.symbol).second)
+   throw std::runtime_error("E_NAMESPACE_INVENTORY: invalid or duplicate member");
+ }
+ std::string manifest="atto.forge.provider-inventory.v1\n",sources="atto.forge.provider-sources.v1\n";
+ for(auto [path,p]:ordered){
+  manifest+=std::string(path)+"\n"+std::string(p->name_space)+"\n"+std::string(p->symbol)+"\n"+std::to_string(p->arity)+"\n";
+  sources+=std::string(path)+"\n"+digest(p->source)+"\n";
+ }
+ auto manifest_hash=digest(manifest);
+ if(manifest_hash!=expected_manifest||digest(sources)!=expected_sources)
+  throw std::runtime_error("E_NAMESPACE_PIN: inventory mismatch");
+ const ProviderInput* selected=nullptr;std::optional<Program> program;
+ for(auto [path,p]:ordered){
+  auto checked=admit_namespace_provider(p->source,p->name_space,p->symbol,p->arity);
+  if(p->name_space==name_space&&p->symbol==symbol){
+   if(p->arity!=arity)throw std::runtime_error("E_NAMESPACE_ARITY: incompatible selected call");
+   selected=p;program=std::move(checked);
+  }
+ }
+ if(!selected||!program)throw std::runtime_error("E_NAMESPACE_SYMBOL: selected provider absent");
+ auto target=digest("linux-x86_64"),config=digest("closed-provider-checked-i64-assembly-v1"),
+      selected_hash=digest(selected->source),bindings=digest(std::string(selected->path)+"\n"+std::string(name_space)+"\n"+std::string(symbol)+"\n"+std::to_string(arity));
+ const std::array<Dependency,1> deps{{{"provider-inventory",manifest_hash}}};
+ auto k=encode(Input{"native-provider-asm-bound-input-v2",scope,"source-unit",selected->path,
+  compiler,toolchain,target,config,selected_hash,bindings,std::nullopt,deps});
+ auto slot="slot-"+k.substr(0,1);
+ Fd dir(open_root(root));struct stat st{};require(fstat(dir.fd,&st)==0&&st.st_uid==geteuid()&&(st.st_mode&077)==0);
+ if(!cold){auto b=read_slot(dir.fd,slot);if(b){
+  Secret actual{};std::copy_n(b->begin()+8,32,actual.begin());auto a=hex(actual);require(a[0]==k[0]);
+  auto payload=verify(a,*b,secret.value);if(a==k)return {std::move(payload),true};
+ }}
+ auto assembly=emit_runtime_asm(*program,Arch::X86_64);
+ Bytes bytes(assembly.begin(),assembly.end());publish(dir.fd,slot,seal(k,bytes,secret.value));
+ return {std::move(bytes),false};
 }
 }
