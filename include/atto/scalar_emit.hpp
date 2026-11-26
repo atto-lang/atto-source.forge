@@ -63,6 +63,9 @@ struct SpanScope {
     } else if(n.op==Op::copy||n.op==Op::sequence){
       if(n.op==Op::sequence)code+="  (void)"+var(n.left)+";\n";
       code+="  auto "+var(i)+" = "+var(n.op==Op::copy?n.left:n.right)+";\n";
+    } else if(n.op==Op::narrow){
+      code += "  if (*" + var(n.left) + " < -2147483648LL || *" + var(n.left) + " > 2147483647LL) { std::fputs(\"E_I32_OVERFLOW\\n\", stderr); return 74; }\n";
+      code += "  auto " + var(i) + " = " + var(n.left) + ";\n";
     } else if (n.op==Op::refine) {
       code += "  if (*" + var(n.left) + " < " + literal(n.value) +
           " || *" + var(n.left) + " > " + literal(n.upper) +

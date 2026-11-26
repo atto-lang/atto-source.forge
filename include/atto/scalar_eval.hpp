@@ -7,7 +7,7 @@
 #include <vector>
 
 namespace atto::forge::scalar {
-enum class EvalError { none, parse_error, invalid_ast, overflow, divide_by_zero, shift_distance, refinement_violation };
+enum class EvalError { none, parse_error, invalid_ast, overflow, divide_by_zero, shift_distance, refinement_violation, i32_overflow };
 struct Evaluated {
   std::optional<i64> value;
   EvalError error = EvalError::none;
@@ -27,6 +27,11 @@ struct Evaluated {
     }
     if(node.op==Op::copy||node.op==Op::sequence){
       const auto value=values[node.op==Op::copy?node.left:node.right];
+      values.push_back(value);continue;
+    }
+    if(node.op==Op::narrow){
+      const auto value=values[node.left];
+      if(value<std::numeric_limits<std::int32_t>::min()||value>std::numeric_limits<std::int32_t>::max())return {{},EvalError::i32_overflow};
       values.push_back(value);continue;
     }
     if (node.op==Op::refine) {

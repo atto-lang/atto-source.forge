@@ -14,7 +14,7 @@
 #include <vector>
 
 namespace atto::forge::scalar {
-enum class Op { literal, add, sub, mul, div, rem, neg, refine, copy, sequence, band, bor, bxor, bnot, shl, lshr, ashr };
+enum class Op { literal, add, sub, mul, div, rem, neg, refine, narrow, copy, sequence, band, bor, bxor, bnot, shl, lshr, ashr };
 struct Node {
   Op op;
   std::size_t left = 0, right = 0;
@@ -22,7 +22,7 @@ struct Node {
   i64 upper = 0;
 };
 enum class ParseError {
-  none, lexical, syntax, literal_out_of_range, depth_limit, node_limit, telemetry, verify_unproven, verify_unsupported, unit_name, unit_duplicate, unit_dimension, unit_scale, unit_limit, unit_erasure, unit_attachment, unit_inexact, unit_range, refinement_empty, refinement_binding, refinement_precondition, refinement_return, new_required, lock_unsupported
+  none, lexical, syntax, literal_out_of_range, depth_limit, node_limit, telemetry, verify_unproven, verify_unsupported, unit_name, unit_duplicate, unit_dimension, unit_scale, unit_limit, unit_erasure, unit_attachment, unit_inexact, unit_range, refinement_empty, refinement_binding, refinement_precondition, refinement_return, refinement_duplicate, i32_range, new_required, lock_unsupported
 };
 // Stable sanitized diagnostics; never echo user source bytes.
 [[nodiscard]] constexpr std::string_view parse_error_name(ParseError error) noexcept {
@@ -51,6 +51,8 @@ enum class ParseError {
     case ParseError::refinement_binding: return "E_REFINEMENT_BINDING";
     case ParseError::refinement_precondition: return "E_REFINEMENT_PRECONDITION";
     case ParseError::refinement_return: return "E_REFINEMENT_RETURN";
+    case ParseError::refinement_duplicate: return "E_REFINEMENT_DUPLICATE";
+    case ParseError::i32_range: return "E_I32_RANGE";
   }
   return "E_PARSE_UNKNOWN";
 }
@@ -113,6 +115,7 @@ inline constexpr std::size_t max_trace_depth = 16;
         if (node.value > node.upper || node.left >= index || node.right != 0) return false;
         pending.push_back(node.left);
         break;
+      case Op::narrow:
       case Op::copy:
       case Op::neg:
       case Op::bnot:
@@ -169,10 +172,17 @@ class Parser {
   using Scale = ExactScale;
   std::vector<Dim> dims_;
   std::vector<Scale> scales_;
+  enum class Width {literal,i32,i64};
+  static constexpr i64 i32_lo=std::numeric_limits<std::int32_t>::min(), i32_hi=std::numeric_limits<std::int32_t>::max();
   struct Range {
     i64 lo=std::numeric_limits<i64>::min(),hi=std::numeric_limits<i64>::max();
+    Width width=Width::i64;
+    [[nodiscard]] Range intersect(i64 l,i64 h,Width w)const{
+      const i64 a=lo>l?lo:l,b=hi<h?hi:h;
+      return a>b?Range{l,h,w}:Range{a,b,w};
+    }
     [[nodiscard]] bool within(i64 l,i64 h) const {return lo>=l&&hi<=h;}
-    [[nodiscard]] static Range exact(i64 n){return {n,n};}
+    [[nodiscard]] static Range exact(i64 n){return {n,n,Width::literal};}
     [[nodiscard]] Range neg() const {
       const auto a=checked_neg(hi),b=checked_neg(lo);
       return a&&b?Range{*a,*b}:Range{};
@@ -209,7 +219,7 @@ class Parser {
   std::vector<std::string_view> dimensions_;
   struct Unit { std::string_view name; std::size_t dim; Scale scale; };
   std::vector<Unit> units_;
-  struct Refinement { std::string_view name; Dim dim; Scale scale; i64 lo, hi; };
+  struct Refinement { std::string_view name; Dim dim; Scale scale; i64 lo, hi; Width width=Width::i64; };
   std::vector<Refinement> refinements_;
   struct Helper {
     std::string_view name;
@@ -297,15 +307,20 @@ class Parser {
   }
   [[nodiscard]] bool refinement_declarations() {
     while (name("type")) {
+      if(current().kind==Kind::name&&(text()=="int"||text()=="i64"||text()=="i32")){fail(ParseError::refinement_duplicate);return false;}
       if (refinements_.size()==32 || current().kind!=Kind::name || !declaration_name(text())) return false;
       const auto n=text();++pos_;
-      if (!take(Kind::equals) || (!name("int")&&!name("i64")) || !name("where")) return false;
-      i64 lo=std::numeric_limits<i64>::min(),hi=std::numeric_limits<i64>::max();
+      if(!take(Kind::equals))return false;
+      const auto width=name("i32")?Width::i32:Width::i64;
+      if(width==Width::i64&&!name("int")&&!name("i64"))return false;
+      if(!name("where"))return false;
+      i64 lo=width==Width::i32?i32_lo:std::numeric_limits<i64>::min(),hi=width==Width::i32?i32_hi:std::numeric_limits<i64>::max();
       std::size_t count=0;
       bool has_units=false;
       for (;;) {
         if(name("units")){has_units=true;break;}
         if (++count>16 || !name("self")) return false;
+        if(name("eq")){const auto n=signed_bound();if(!n)return false;lo=lo>*n?lo:*n;hi=hi<*n?hi:*n;if(lo>hi){fail(ParseError::refinement_empty);return false;}if(!name("and"))break;continue;}
         const bool lower=take(Kind::gt);
         if (!lower && !take(Kind::lt)) return false;
         const bool inclusive=current().kind==Kind::equals && tokens_[pos_-1].offset+tokens_[pos_-1].length==current().offset;
@@ -334,7 +349,7 @@ class Parser {
         dim[unit->dim]=1;scale=unit->scale;++pos_;
       }
       if (!take(Kind::semicolon)) return false;
-      refinements_.push_back(Refinement{n,dim,scale,lo,hi});
+      refinements_.push_back(Refinement{n,dim,scale,lo,hi,width});
     }
     return true;
   }
@@ -344,9 +359,12 @@ class Parser {
     return nullptr;
   }
   [[nodiscard]] std::optional<std::size_t> checked_refinement(std::size_t n,const Refinement& r) {
-    if (dims_[n]!=r.dim || scales_[n]!=r.scale) {fail(ParseError::syntax);return std::nullopt;}
+    if(dims_[n]!=r.dim){fail(ParseError::unit_dimension);return std::nullopt;}
+    if(scales_[n]!=r.scale){fail(ParseError::unit_scale);return std::nullopt;}
     if(strict_&&!ranges_[n].within(r.lo,r.hi)){fail(ParseError::verify_unproven);return std::nullopt;}
-    return append(Node{Op::refine,n,0,r.lo,r.hi});
+    auto result=append(Node{Op::refine,n,0,r.lo,r.hi});
+    if(result)ranges_[*result]=ranges_[n].intersect(r.lo,r.hi,r.width);
+    return result;
   }
   [[nodiscard]] bool attach(std::size_t n) {
     if (!dimensionless(n)) {fail(ParseError::unit_attachment);return false;}
@@ -393,7 +411,7 @@ class Parser {
     }
     if(strict_){
       switch(n.op){
-        case Op::literal: case Op::refine: case Op::copy: case Op::sequence: break;
+        case Op::literal: case Op::refine: case Op::narrow: case Op::copy: case Op::sequence: break;
         case Op::neg:
           if(ranges_[n.left].lo==std::numeric_limits<i64>::min()){
             fail(ParseError::verify_unproven);return std::nullopt;
@@ -411,9 +429,11 @@ class Parser {
     if(n.op==Op::literal)r=Range::exact(n.value);
     if (n.op != Op::literal) {
       const auto& lhs = dims_[n.left];
-      if (n.op == Op::neg || n.op == Op::refine || n.op==Op::copy) {
+      if (n.op == Op::neg || n.op == Op::refine || n.op==Op::narrow || n.op==Op::copy) {
         d = lhs; s = scales_[n.left];
         r=n.op==Op::neg?ranges_[n.left].neg():n.op==Op::refine?Range{n.value,n.upper}:ranges_[n.left];
+        if(n.op==Op::neg)r.width=ranges_[n.left].width;
+        if(n.op==Op::narrow)r=r.intersect(i32_lo,i32_hi,Width::i32);
       } else if(n.op==Op::sequence){
         d=dims_[n.right];s=scales_[n.right];r=ranges_[n.right];
       }
@@ -438,9 +458,22 @@ class Parser {
         }
       }
     }
+    const bool arithmetic=n.op==Op::add||n.op==Op::sub||n.op==Op::mul||n.op==Op::div;
+    if(arithmetic){
+      const auto a=ranges_[n.left],b=ranges_[n.right];
+      r.width=(a.width==Width::i64||b.width==Width::i64)?Width::i64:
+              (a.width==Width::i32||b.width==Width::i32)?Width::i32:Width::i64;
+      if(r.width==Width::i32&&((a.width==Width::literal&&!a.within(i32_lo,i32_hi))||(b.width==Width::literal&&!b.within(i32_lo,i32_hi)))){
+        fail(ParseError::i32_range);return std::nullopt;
+      }
+    }
+    const bool check32=(arithmetic||n.op==Op::neg)&&r.width==Width::i32;
+    if(check32&&strict_&&!r.within(i32_lo,i32_hi)){fail(ParseError::verify_unproven);return std::nullopt;}
     dims_.push_back(d); scales_.push_back(s); ranges_.push_back(r);
     out_.nodes.push_back(n);
-    return out_.nodes.size() - 1;
+    const auto i=out_.nodes.size()-1;
+    if(check32)return append(Node{Op::narrow,i,0,0});
+    return i;
   }
   // bit_or < bit_xor < bit_and < addition < multiplication < unary.
   // Flat precedence tiers do not consume the nesting depth budget.
@@ -451,6 +484,7 @@ class Parser {
     while (name("as")) {
       if (current().kind == Kind::name && (text() == "int" || text() == "i64")) {
         if (!cast_target() || !scalar_cast(*result)) return std::nullopt;
+        ranges_[*result].width=Width::i64;
       } else if (const auto* r=refinement_target()) {
         ++pos_;result=checked_refinement(*result,*r);
         if (!result) return std::nullopt;
@@ -491,6 +525,7 @@ class Parser {
       if (!take(Kind::lt)) { fail(ParseError::syntax); return std::nullopt; }
       if (cast && current().kind == Kind::name && (text() == "int" || text() == "i64")) {
         if (!cast_target() || !scalar_cast(*result)) return std::nullopt;
+        ranges_[*result].width=Width::i64;
       } else if (const auto* r=cast?refinement_target():nullptr) {
         ++pos_;result=checked_refinement(*result,*r);
         if (!result) return std::nullopt;
@@ -594,6 +629,7 @@ class Parser {
       }
       auto operand = unary(depth + 1);
       if (!operand || !scalar_cast(*operand)) return std::nullopt;
+      ranges_[*operand].width=Width::i64;
       return operand;
     }
     if (take(Kind::plus)) return unary(depth + 1);
@@ -653,7 +689,8 @@ class Parser {
     return true;
   }
   [[nodiscard]] std::optional<Refinement> annotation(std::string_view n) const {
-    if(n=="int"||n=="i64")return Refinement{n,Dim{},Scale{},std::numeric_limits<i64>::min(),std::numeric_limits<i64>::max()};
+    if(n=="int"||n=="i64")return Refinement{n,Dim{},Scale{},std::numeric_limits<i64>::min(),std::numeric_limits<i64>::max(),Width::i64};
+    if(n=="i32")return Refinement{n,Dim{},Scale{},i32_lo,i32_hi,Width::i32};
     for(const auto& r:refinements_)if(r.name==n)return r;
     return std::nullopt;
   }
@@ -681,7 +718,7 @@ class Parser {
       if(n.op!=Op::literal){
         if(n.left>=map.size()){fail(ParseError::syntax);return std::nullopt;}
         n.left=map[n.left];
-        if(n.op!=Op::neg&&n.op!=Op::bnot&&n.op!=Op::refine&&n.op!=Op::copy){
+        if(n.op!=Op::neg&&n.op!=Op::bnot&&n.op!=Op::refine&&n.op!=Op::narrow&&n.op!=Op::copy){
           if(n.right>=map.size()){fail(ParseError::syntax);return std::nullopt;}
           n.right=map[n.right];
         }
@@ -693,7 +730,7 @@ class Parser {
     auto root=append(Node{Op::copy,map.back(),0,0});
     if(!root)return std::nullopt;
     dims_[*root]=h.result.dim;scales_[*root]=h.result.scale;
-    ranges_[*root]=Range{h.result.lo,h.result.hi};
+    ranges_[*root]=Range{h.result.lo,h.result.hi,h.result.width};
     return postfix(root);
   }
   [[nodiscard]] std::optional<std::size_t> binding_body(std::optional<Refinement> result=std::nullopt){
@@ -715,6 +752,8 @@ class Parser {
       if(want&&!compatible(*value,*want,ParseError::refinement_binding)){
         fail(ParseError::syntax);return std::nullopt;
       }
+      if(want)ranges_[*value].width=want->width;
+      else if(ranges_[*value].width==Width::literal)ranges_[*value].width=Width::i64;
       bindings_.emplace_back(n,*value);
     }
     if(!name("return")&&!take(Kind::caret)){fail(ParseError::syntax);return std::nullopt;}
@@ -749,7 +788,7 @@ class Parser {
           const auto param=text();++pos_;
           const auto n=append(Node{Op::literal,0,0,0});
           if(!n)return false;
-          dims_[*n]=ty->dim;scales_[*n]=ty->scale;ranges_[*n]=Range{ty->lo,ty->hi};
+          dims_[*n]=ty->dim;scales_[*n]=ty->scale;ranges_[*n]=Range{ty->lo,ty->hi,ty->width};
           bindings_.emplace_back(param,*n);params.push_back(*ty);
           if(take(Kind::rparen))break;
           if(!take(Kind::comma))return false;
