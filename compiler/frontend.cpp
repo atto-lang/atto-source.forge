@@ -575,5 +575,13 @@ Program parse_runtime_source(std::string_view source) {
   oresforge::source::validate_utf8(source);
   return Parser(source,true).parse();
 }
-}
 
+IncrementalBuild IncrementalSession::build(std::string_view source, Arch arch, bool cold) {
+  if (!cold && prior_ && prior_->arch==arch && prior_->source==source)
+    return {prior_->assembly,true};
+  auto assembly=emit_runtime_asm(parse_runtime_source(source),arch);
+  Entry next{std::string(source),arch,assembly};
+  prior_=std::move(next);
+  return {std::move(assembly),false};
+}
+}

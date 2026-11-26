@@ -1,0 +1,29 @@
+name: Incremental compiler session candidate
+on:
+  pull_request:
+    paths:
+      - 'compiler/frontend.hpp'
+      - 'compiler/frontend.cpp'
+      - 'tests/incremental_session.cpp'
+      - '.github/workflows/incremental-session-candidate.yml'
+  workflow_dispatch:
+permissions: {contents: read}
+jobs:
+  candidate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Execute real compiler candidate
+        run: |
+          set -eu
+          c++ -std=c++20 -I. compiler/frontend.cpp compiler/ir.cpp codegen/native.cpp tests/incremental_session.cpp -o /tmp/atto-forge-session
+          /tmp/atto-forge-session /tmp/atto-forge-cold.s /tmp/atto-forge-edit.s
+          printf '%s\n' '#include <stdint.h>' 'extern int64_t oresforge_entry(int64_t);' 'int main(void){return (int)oresforge_entry(41);}' > /tmp/atto-forge-host.c
+          for name in cold edit; do
+            cc /tmp/atto-forge-host.c /tmp/atto-forge-$name.s -o /tmp/atto-forge-$name
+            rc=0; /tmp/atto-forge-$name || rc=$?
+            if [ "$name" = cold ]; then test "$rc" = 42; else test "$rc" = 43; fi
+          done
+          echo INCREMENTAL_FORGE_NATIVE_42_43
