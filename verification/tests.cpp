@@ -460,7 +460,7 @@ int main() {
     // Both source frontends must validate bytes before ignoring comments.
     // A lexical skip is not permission to admit malformed source encodings.
     const std::string callable_comment="fnc main():int{return 1;} // ";
-    for (const std::string bad : {
+    for (const std::string& bad : {
         std::string("\xc0\xaf",2), std::string("\xed\xa0\x80",3),
         std::string("\xe2\x82",2), std::string("\xf4\x90\x80\x80",4),
         std::string("\x80",1)}) {
