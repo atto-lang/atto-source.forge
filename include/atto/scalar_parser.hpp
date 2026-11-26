@@ -3,6 +3,7 @@
 #include "atto/scalar_lexer.hpp"
 #include "atto/decimal_i64.hpp"
 #include "atto/exact_quantity_scale.hpp"
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <limits>
@@ -764,7 +765,8 @@ class Parser {
     auto b=expr(0);if(!b)return std::nullopt;
     auto yes=incoming,no=incoming;
     if(ranges_[*b].lo==ranges_[*b].hi){
-      for(std::size_t i=0;i<incoming.size();++i)if(incoming[i].first==*a){
+      for(std::size_t i=0;i<incoming.size();++i)if(out_.nodes[*a].op==Op::copy&&
+        out_.nodes[*a].left==incoming[i].first&&dims_[*a]==dims_[incoming[i].first]&&scales_[*a]==scales_[incoming[i].first]){
         yes[i].second=incoming[i].second.restrict(op,ranges_[*b].lo);
         no[i].second=incoming[i].second.restrict(inverse,ranges_[*b].lo);
       }
