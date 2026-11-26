@@ -24,6 +24,23 @@ inline constexpr std::size_t max_emitted_bytes = 64 * 1024;
     code+="  std::optional<atto::forge::i64> c"+v+";\n  auto "+v+" = [&]() -> atto::forge::i64 {\n    if (c"+v+") return *c"+v+";\n";
     std::string body;
     if(n.op==Op::literal) body="    c"+v+" = "+literal(n.value)+";\n";
+    else if(n.op==Op::loop_group){
+      for(std::size_t j=0;j<n.states.size();++j)
+        body+="    auto state"+std::to_string(j)+" = "+var(n.states[j])+"();\n";
+      body+="    for (;;) {\n";
+      for(std::size_t j=n.left;j<i;++j)body+="      c"+var(j)+".reset();\n";
+      for(std::size_t j=0;j<n.states.size();++j)
+        body+="      c"+var(n.states[j])+" = state"+std::to_string(j)+";\n";
+      body+="      if ("+right+" == 0) break;\n";
+      for(auto k:n.effects)body+="      (void)"+var(k)+"();\n";
+      for(std::size_t j=0;j<n.updates.size();++j)
+        body+="      state"+std::to_string(j)+" = "+var(n.updates[j])+"();\n";
+      body+="    }\n    c"+v+" = state0;\n";
+    }
+    else if(n.op==Op::loop_read){
+      const auto& group=p.nodes[n.left];auto state=var(group.states[static_cast<std::size_t>(n.value)]);
+      body="    (void)"+left+";\n    c"+v+" = *c"+state+";\n";
+    }
     else if(n.op==Op::loop_value){
       const auto state=var(n.left),update=var(static_cast<std::size_t>(n.value));
       body="    auto state = "+left+";\n    for (;;) {\n      c"+state+" = state;\n";
@@ -70,7 +87,7 @@ inline constexpr std::size_t max_emitted_bytes = 64 * 1024;
 }
 [[nodiscard]] inline std::optional<std::string> emit_cpp(const Parsed& p) {
   if (!validate_ast(p)) return std::nullopt;
-  for(const auto& n:p.nodes)if(n.op==Op::choose||n.op==Op::loop_value)return emit_lazy_cpp(p);
+  for(const auto& n:p.nodes)if(n.op==Op::choose||n.op==Op::loop_value||n.op==Op::loop_group)return emit_lazy_cpp(p);
   std::string code = R"(#include <atto/checked_i64.hpp>
 #include <cstdio>
 #include <cstdint>
