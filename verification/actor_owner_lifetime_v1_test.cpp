@@ -21,7 +21,7 @@ template <typename E, typename F> static void denied(F&& f, std::string_view rea
 }
 
 int main() {
-  constexpr std::uint64_t cycles = 100000;
+  constexpr std::uint64_t cycles = 1000000;
   const auto baseline = ActorMemoryAggregateBudgetV1::process().reserved();
   ActorMemoryAggregateBudgetV1 budget(640);
   ActorIncarnationOwnerV1 a(8405, budget, 256, 64, 4, 2);
@@ -90,5 +90,5 @@ int main() {
   check(budget.reserved() == 0 &&
         ActorMemoryAggregateBudgetV1::process().reserved() == baseline,
         "final owner budget leak");
-  std::cout << "PASS OWNER_RESTART_CYCLES=100000 SIBLING_STATE=42 BUDGET_LEAK=0\n";
+  std::cout << "PASS OWNER_RESTART_CYCLES=1000000 SIBLING_STATE=42 BUDGET_LEAK=0\n";
 }

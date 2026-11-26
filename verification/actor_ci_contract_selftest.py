@@ -31,7 +31,7 @@ def main() -> None:
         'missing_receipt_selftest': (
             'python3 verification/actor_ctest_receipt_selftest.py', 'true'),
         'missing_lifetime_receipt': (
-            "grep -Fx 'PASS OWNER_RESTART_CYCLES=100000 SIBLING_STATE=42 BUDGET_LEAK=0'",
+            "grep -Fx 'PASS OWNER_RESTART_CYCLES=1000000 SIBLING_STATE=42 BUDGET_LEAK=0'",
             "grep -Fx 'UNRELATED_PASS'"),
         'truncated_ctest_quote': (
             "-R '^(oresforge_actor_incarnation_(owner|memory)_v1_host|oresforge_supervisor_data_fence_parity_v1_host|oresforge_mailbox_incarnation_reuse_v1_host|oresforge_monotonic_domain_v1_host|oresforge_actor_arena_domain_reuse_v1_host|oresforge_actor_owner_lifetime_v1_host)$'",

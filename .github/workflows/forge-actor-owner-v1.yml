@@ -81,5 +81,5 @@ jobs:
           "$build/oresforge_actor_arena_domain_reuse_v1" | tee "$RUNNER_TEMP/oresforge_actor_arena_domain_reuse_v1.txt"
           grep -Fx 'PASS ARENA_REUSE_CYCLES=16384 STALE_DOMAIN_DENIED=1 ACTIVE_RETIRE_DENIED=1 ZEROED=1 SIBLING=42' "$RUNNER_TEMP/oresforge_actor_arena_domain_reuse_v1.txt"
           "$build/oresforge_actor_owner_lifetime_v1" | tee "$RUNNER_TEMP/oresforge_actor_owner_lifetime_v1.txt"
-          grep -Fx 'PASS OWNER_RESTART_CYCLES=100000 SIBLING_STATE=42 BUDGET_LEAK=0' "$RUNNER_TEMP/oresforge_actor_owner_lifetime_v1.txt"
+          grep -Fx 'PASS OWNER_RESTART_CYCLES=1000000 SIBLING_STATE=42 BUDGET_LEAK=0' "$RUNNER_TEMP/oresforge_actor_owner_lifetime_v1.txt"
           test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"

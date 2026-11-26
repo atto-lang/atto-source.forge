@@ -97,7 +97,7 @@ def check(root: pathlib.Path, workflow: pathlib.Path) -> None:
         'PASS FORGE_MAILBOX_REUSE_CYCLES=100000 STALE_AUTHORITY=0 SIBLING=42',
         'PASS DOMAIN_ISSUED=100000 BOUNDARY_ISSUED=64 BOUNDARY_DENIED=960 PERMANENT_DENIALS=100000',
         'PASS ARENA_REUSE_CYCLES=16384 STALE_DOMAIN_DENIED=1 ACTIVE_RETIRE_DENIED=1 ZEROED=1 SIBLING=42',
-        'PASS OWNER_RESTART_CYCLES=100000 SIBLING_STATE=42 BUDGET_LEAK=0',
+        'PASS OWNER_RESTART_CYCLES=1000000 SIBLING_STATE=42 BUDGET_LEAK=0',
         'FORGE_ACTOR_OWNER_HOST_PASS|turn=1|stop_restart=1|sibling=42|guest_atto=0|physical_stack=0',
         'FORGE_ACTOR_INCAR_MEMORY_HOST_PASS|private_heap=1|logical_stack=1|guest_atto=0|physical_stack=0',
     )
@@ -128,7 +128,7 @@ def check(root: pathlib.Path, workflow: pathlib.Path) -> None:
         ('verification/mailbox_incarnation_reuse_v1_test.cpp', 'PASS FORGE_MAILBOX_REUSE_CYCLES=100000 STALE_AUTHORITY=0 SIBLING=42'),
         ('verification/monotonic_domain_v1_test.cpp', 'PASS DOMAIN_ISSUED=100000 BOUNDARY_ISSUED=64 BOUNDARY_DENIED=960 PERMANENT_DENIALS=100000'),
         ('verification/actor_arena_domain_reuse_v1_test.cpp', 'PASS ARENA_REUSE_CYCLES=16384 STALE_DOMAIN_DENIED=1 ACTIVE_RETIRE_DENIED=1 ZEROED=1 SIBLING=42'),
-        ('verification/actor_owner_lifetime_v1_test.cpp', 'PASS OWNER_RESTART_CYCLES=100000 SIBLING_STATE=42 BUDGET_LEAK=0'),
+        ('verification/actor_owner_lifetime_v1_test.cpp', 'PASS OWNER_RESTART_CYCLES=1000000 SIBLING_STATE=42 BUDGET_LEAK=0'),
         ('verification/actor_incarnation_owner_v1_test.cpp', 'FORGE_ACTOR_OWNER_HOST_PASS'),
         ('verification/actor_incarnation_memory_v1_test.cpp', 'FORGE_ACTOR_INCAR_MEMORY_HOST_PASS'),
         ('verification/supervisor_data_fence_parity_v1_test.cpp', 'FORGE_SUPERVISOR_DATA_FENCE_HOST_PASS'),
