@@ -43,6 +43,22 @@ extern "C" void __sanitizer_finish_switch_fiber(void*, const void**, std::size_t
 
 namespace oresforge::runtime {
 
+namespace detail {
+// Never mutate an exhausted allocator. Relaxed CAS suffices for uniqueness;
+// actor publication and lifetime synchronization are independent boundaries.
+inline std::uint64_t reserve_stack_incarnation(std::atomic<std::uint64_t>& next) {
+  auto value = next.load(std::memory_order_relaxed);
+  for (;;) {
+    if (value == 0 || value == std::numeric_limits<std::uint64_t>::max())
+      throw std::overflow_error("actor incarnation exhausted");
+    if (next.compare_exchange_weak(value, value + 1,
+          std::memory_order_relaxed, std::memory_order_relaxed))
+      return value;
+  }
+}
+} // namespace detail
+
+
 // An opaque logical heap allocation, never a transferable pointer.
 // Its fields cannot be synthesized by native users through the public API.
 class ActorHeapHandle final {
@@ -95,10 +111,7 @@ class ActorStackDomain final {
       heap_ = std::make_unique<std::byte[]>(heap_bytes);
       std::memset(heap_.get(), 0, heap_bytes);
       heap_size_ = heap_bytes;
-      const auto next = next_incarnation_.fetch_add(1, std::memory_order_relaxed);
-      if (next == 0 || next == std::numeric_limits<std::uint64_t>::max())
-        throw std::overflow_error("actor incarnation exhausted");
-      incarnation_ = next;
+      incarnation_ = detail::reserve_stack_incarnation(next_incarnation_);
     } catch (...) {
       ::munmap(region_, map_size_);
       region_ = nullptr;
