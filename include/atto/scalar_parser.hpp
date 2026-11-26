@@ -25,7 +25,7 @@ struct Node {
   std::vector<std::size_t> states{},effects{},updates{};
 };
 enum class ParseError {
-  none, lexical, syntax, literal_out_of_range, depth_limit, node_limit, telemetry, verify_unproven, verify_unsupported, unit_name, unit_duplicate, unit_dimension, unit_scale, unit_limit, unit_erasure, unit_attachment, unit_inexact, unit_range, refinement_empty, refinement_binding, refinement_precondition, refinement_return, refinement_duplicate, refinement_postcondition, refinement_contract, refinement_export, refinement_body, refinement_call, refinement_cast, i32_range, new_required, lock_unsupported, task_unsupported, task_return_type
+  none, lexical, syntax, literal_out_of_range, depth_limit, node_limit, telemetry, verify_unproven, verify_unsupported, unit_name, unit_duplicate, unit_dimension, unit_scale, unit_limit, unit_erasure, unit_attachment, unit_inexact, unit_range, refinement_empty, refinement_binding, refinement_precondition, refinement_return, refinement_duplicate, refinement_postcondition, refinement_contract, refinement_export, refinement_body, refinement_call, refinement_cast, i32_range, new_required, lock_unsupported, task_unsupported, task_return_type, pair_key_type, pair_scope, pair_escape, pair_projection, pair_key_unsupported
 };
 // Stable sanitized diagnostics; never echo user source bytes.
 [[nodiscard]] constexpr std::string_view parse_error_name(ParseError error) noexcept {
@@ -41,6 +41,11 @@ enum class ParseError {
     case ParseError::lock_unsupported: return "E_LOCK_UNSUPPORTED";
     case ParseError::task_unsupported: return "E_TASK_UNSUPPORTED";
     case ParseError::task_return_type: return "E_TASK_RETURN_TYPE";
+    case ParseError::pair_key_type: return "E_PAIR_KEY_TYPE";
+    case ParseError::pair_scope: return "E_PAIR_SCOPE_UNSUPPORTED";
+    case ParseError::pair_escape: return "E_PAIR_ESCAPE_UNSUPPORTED";
+    case ParseError::pair_projection: return "E_PAIR_PROJECTION_UNSUPPORTED";
+    case ParseError::pair_key_unsupported: return "E_PAIR_KEY_UNSUPPORTED";
     case ParseError::verify_unproven: return "E_VERIFY_UNPROVEN";
     case ParseError::verify_unsupported: return "E_VERIFY_UNSUPPORTED";
     case ParseError::unit_name: return "E_UNIT_NAME";
@@ -745,8 +750,61 @@ class Parser {
     }
     return lhs;
   }
+  // Only pure, immediately projected scalar Pair factories. This parser
+  // does not allocate or expose an owned product or execute runtime keys.
+  [[nodiscard]] std::optional<std::size_t> pair_projection() {
+    // The bounded token vector makes this conservative ambiguity scan cheap.
+    // A name in declarations, qualified access or parameters must not be
+    // mistaken for a builtin. Quoted text and comments are inert.
+    for (std::size_t i=0;i<tokens_.size();++i) {
+      const auto& t=tokens_[i];
+      if(t.kind!=Kind::name || source_.substr(t.offset,t.length)!="Pair") continue;
+      if(i+2>=tokens_.size() || tokens_[i+1].kind!=Kind::dot ||
+         tokens_[i+2].kind!=Kind::name ||
+         source_.substr(tokens_[i+2].offset,tokens_[i+2].length)!="of" ||
+         (i>0 && (tokens_[i-1].kind==Kind::dot || tokens_[i-1].kind==Kind::double_colon))) {
+        fail(ParseError::pair_scope); return std::nullopt;
+      }
+    }
+    ++pos_;
+    if(!take(Kind::dot)||!name("of")) {fail(ParseError::syntax);return std::nullopt;}
+    if(take(Kind::lt)){
+      if(name("string")){
+        if(!take(Kind::comma)||!name("int")) {fail(ParseError::syntax);return std::nullopt;}
+      } else {
+        if(!name("int")||current().kind==Kind::comma){fail(ParseError::pair_key_type);return std::nullopt;}
+      }
+      if(!take(Kind::gt)){fail(ParseError::syntax);return std::nullopt;}
+    }
+    if(!take(Kind::lparen)){fail(ParseError::syntax);return std::nullopt;}
+    if(current().kind!=Kind::quoted){fail(ParseError::pair_key_type);return std::nullopt;}
+    const auto key=text();
+    // The stage-0 lexer has no escape decoder. Reject escapes and control
+    // bytes rather than accepting a string whose meaning cannot be proven.
+    if(key.size()<2 || key.front()!='"'||key.back()!='"'){
+      fail(ParseError::pair_key_unsupported);return std::nullopt;
+    }
+    for(unsigned char c:key.substr(1,key.size()-2)) {
+      if(c<32||c>126||c==92||c==36||c==34){
+        fail(ParseError::pair_key_unsupported);return std::nullopt;
+      }
+    }
+    ++pos_;
+    if(!take(Kind::comma)){fail(ParseError::syntax);return std::nullopt;}
+    const bool negative=take(Kind::minus);
+    if(current().kind!=Kind::integer){fail(ParseError::syntax);return std::nullopt;}
+    auto n=parse_source_decimal((negative?"-":"")+std::string(text()));
+    if(!n){fail(ParseError::literal_out_of_range);return std::nullopt;}
+    ++pos_;
+    if(!take(Kind::rparen)){fail(ParseError::syntax);return std::nullopt;}
+    if(!take(Kind::dot)){fail(ParseError::pair_escape);return std::nullopt;}
+    if(!name("second")){fail(ParseError::pair_projection);return std::nullopt;}
+    return postfix(append(Node{Op::literal,0,0,*n}));
+  }
+
   [[nodiscard]] std::optional<std::size_t> unary(int depth) {
     if (depth > max_parse_depth) { fail(ParseError::depth_limit); return std::nullopt; }
+    if(current().kind==Kind::name && text()=="Pair" && pos_+1<tokens_.size() && tokens_[pos_+1].kind==Kind::dot) return pair_projection();
     if (take(Kind::lt)) {
       if (const auto* r=refinement_target()) {
         ++pos_;
