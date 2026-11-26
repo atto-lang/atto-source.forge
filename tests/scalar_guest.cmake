@@ -468,3 +468,13 @@ if(NOT "${rc}" STREQUAL "0" OR NOT "${out}" STREQUAL "42\n" OR NOT "${err}" STRE
 endif()
 
 verify_local_body(pair-trap "return Pair.of<int>(\"key\",1/0).second;" 71 "" "E_DIVZERO\n")
+
+# Eager scalar Entry: both selected and discarded arithmetic reach native C++.
+verify_pair_case(entry_value [=[Entry.of<int,int>(10+1,(10+11)*2).value]=] 42 "")
+verify_pair_case(entry_key [=[Entry.of(40+2,3*5).key]=] 42 "")
+verify_pair_case(entry_escape [=[Entry.of(1,2)]=] "" E_ENTRY_ESCAPE_UNSUPPORTED)
+verify_pair_case(entry_member [=[Entry.of(1,2).second]=] "" E_ENTRY_PROJECTION_UNSUPPORTED)
+verify_pair_case(entry_witness [=[Entry.of<string,int>(1,2).value]=] "" E_ENTRY_PROJECTION_UNSUPPORTED)
+verify_pair_case(entry_unknown [=[Entry.of(42,missing).key]=] "" E_PARSE_SYNTAX)
+verify_local_body(entry-key-trap "return Entry.of(42,1/0).key;" 71 "" "E_DIVZERO\n")
+verify_local_body(entry-value-trap "return Entry.of(1/0,42).value;" 71 "" "E_DIVZERO\n")
