@@ -88,6 +88,8 @@ RESULT_CASES = (
      ((5,2,2,0),(0,1,0,0),(42,0,0,65538),(-9223372036854775808,-1,0,65537))),
     ("trap-bang-tab", "fnc main(a:int,b:int):Result<int,Error>{return trap!\t(a/b);}",
      ((7,2,3,0),(-7,3,-2,0),(42,0,0,65538))),
+    ("trap-bang-linebreak", "fnc main(a:int,b:int):Result<int,Error>{return trap!\n(a/b);}",
+     ((5,2,2,0),(42,0,0,65538),(-9223372036854775808,-1,0,65537))),
     ("trap-flat", "fnc main(a:int,b:int):Result<int,Error>{return trap! trap (a/b);}",
      ((5,2,2,0),(42,0,0,65538),(-9223372036854775808,-1,0,65537))),
     ("trap-call", "fnc q(a:int,b:int):int{return a/b;} fnc wrap(a:int,b:int):int{return q(a,b)+1;} fnc main(a:int,b:int):Result<int,Error>{return trap! wrap(a,b);}",
@@ -106,6 +108,8 @@ RESULT_INVALID = (
     ("ok-bool", "fnc main():Result<int,Error>{return Ok(false);}", "Boolean is not an int"),
     ("err-numeric", "fnc main():Result<int,Error>{return Err(65538);}", "Err requires typed Error payload lowering"),
 
+    ("trap-bang-block-comment", "fnc main():Result<int,Error>{return trap!/*gap*/ (84/2);}", "E_BANG_KEYWORD_WHITESPACE"),
+    ("trap-bang-double", "fnc main():Result<int,Error>{return trap!! (84/2);}", "E_BANG_KEYWORD_WHITESPACE"),
     ("trap-bool", "fnc main():Result<int,Error>{return trap! true;}", "Boolean is not an int"),
     ("trap-int-return", "fnc main():int{return trap! 42;}", "reserved predicate word"),
     ("result-unwrapped", "fnc main():Result<int,Error>{return 42;}", "requires explicit trap"),
@@ -120,7 +124,9 @@ RESULT_INVALID = (
 POSITIVE = (
     ("signed-division", "fnc main(a:int,b:int):int{return a/b;}",
      ((5,2,2),(-5,2,-2),(5,-2,-2),(-5,-2,2),(9007199254740993,1,9007199254740993),
-      (-9223372036854775808,1,-9223372036854775808),(9223372036854775807,3,3074457345618258602))),
+      (-9223372036854775808,1,-9223372036854775808),(9223372036854775807,3,3074457345618258602),
+      (0,-1,0),(-9223372036854775808,2,-4611686018427387904),
+      (9223372036854775807,-1,-9223372036854775807))),
     ("division-precedence", "fnc main(a:int):int{return 2+a/3*4;}", ((8,10),(-8,-6))),
     ("division-lazy", "fnc main(a:int):int{return a eq 0 ? 42 : 84/a;}", ((0,42),(2,42),(-2,-42))),
     ("division-third-argument", "fnc q(a:int,b:int,c:int):int{return a/b+c;} fnc main(a:int,b:int,c:int):int{return q(a,b,c);}",
@@ -203,6 +209,7 @@ TRAPS = (
     ("division-overflow", "fnc main(a:int,b:int):int{return a/b;}", (-9223372036854775808,-1), "i64 division overflow"),
     ("division-propagates", "fnc q(a:int,b:int):int{return a/b;} fnc wrap(a:int,b:int):int{return q(a,b)+9223372036854775807;} fnc main(a:int,b:int):int{return wrap(a,b);}", (42,0), "i64 division by zero"),
     ("division-left-error-first", "fnc main(a:int):int{return (1/a)+(9223372036854775807+1);}", (0,), "i64 division by zero"),
+    ("division-left-overflow-first", "fnc main(a:int):int{return (9223372036854775807+a)+(1/(a-1));}", (1,), "i64 add overflow"),
     ("overflow-add", "fnc plus(n:int):int{return n+1;}"
      " fnc main(n:int):int{return plus(n);}",
      (9223372036854775807,), "i64 add overflow"),
@@ -359,6 +366,16 @@ def build(compiler,cc,root,label,source,param_count,result_entry=False,option_en
     suffix=", "+arguments if param_count else ""
     driver=driver.replace("EFFECT_PARAMS",effect_params).replace("EFFECT_ARGS","&result"+suffix).replace("REPEAT_ARGS","&again"+suffix)
     driver=driver.replace("PARAMS",signature).replace("COUNT",str(param_count)).replace("ARGS",arguments)
+    if label in ("division-zero", "division-overflow"):
+        require(not result_entry and not option_entry and param_count==2,
+                "checked scalar recovery requires two i64 parameters")
+        anchor = '  if(printf("%" PRId64 " %" PRIu64 "\\n",result.value,result.status)'
+        require(driver.count(anchor) == 1, "checked ABI recovery anchor drift")
+        driver = driver.replace(anchor, '''  const struct result_pair recovered=oresforge_entry_checked(84,2);
+  if (recovered.value!=42 || recovered.status!=0) return 7;
+  const struct result_pair failed_again=oresforge_entry_checked(v[0],v[1]);
+  if (failed_again.value!=result.value || failed_again.status!=result.status) return 8;
+''' + anchor, 1)
     (root/"driver.c").write_text(driver,encoding="ascii")
     executable=root/"native"
     link=execute([cc,"-std=c11","-Wall","-Wextra","-Werror",
