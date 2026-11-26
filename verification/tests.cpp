@@ -47,6 +47,44 @@ oresforge::Program source(const std::string& expr) {
 int main() {
   try {
     using namespace oresforge;
+    // Checked literal aggregate aliases reach the existing scalar IR and
+    // native emitter, not a host-language aggregate evaluator.
+    const auto named_aggregates=parse_source(
+      "pub fnc main():int{"
+      "const Record<infer R> r=(a=1,b=true);"
+      "const Tuple<infer T> t=(true,2);"
+      "const struct<infer S> s={a:3};"
+      "const Record<R> r2=(b=false,a=10);"
+      "const Tuple<T> t2=(false,12);"
+      "const struct<S> s2={a:20};"
+      "return r2.a+t2[1]+s2.a;}");
+    ensure(interpret(named_aggregates)==42,"named aggregate scalar interpreter");
+    ensure(emit_asm(named_aggregates,Arch::X86_64).find("movabs $42")!=std::string::npos,
+           "named aggregate x86_64 emission");
+    ensure(emit_asm(named_aggregates,Arch::ARM64).find("movz x0, #42")!=std::string::npos,
+           "named aggregate arm64 emission");
+    ensure(interpret(parse_source("fnc main():int{const Record r=(a=10);"
+      "const Tuple t=(true,12);const struct s={a:20};return r.a+t[1]+s.a;}"))==42,
+      "anonymous aggregate has no type binding");
+    for (const auto* body : {
+      "const Record<infer> r=(a=1);return 0;",
+      "const Record<R> r=(a=1);return 0;",
+      "const Record<infer Map> r=(a=1);return 0;",
+      "const Record<infer R> r=(a=1);const Tuple<infer R> t=(1,2);return 0;",
+      "const Record<infer R> r=(a=1);const Record<R> s=(a=true);return 0;",
+      "const Record<infer R> r=(a=1);const Record<R> s=(a=1,b=2);return 0;",
+      "const Record<infer R> r=(a=1,b=2);const Record<R> s=(a=1);return 0;",
+      "const Record<infer R> r=(a=1,a=2);return 0;",
+      "const Tuple<infer T> t=(1,true);const Tuple<T> s=(true,1);return 0;",
+      "const Tuple<infer T> t=(1,true);const Tuple<T> s=(1);return 0;",
+      "const struct<infer S> s={a:1};const Record<S> r=(a=1);return 0;",
+      "const Record<infer R> r=(a=1);return r;",
+      "const Record<infer R> r=(a=true);return r.a;",
+      "const Tuple<infer T> t=(1,true);return t[2];",
+      "const Record<infer R> r=(a=unknown);return 0;"
+    }) reject([&] { (void)parse_source(std::string("fnc main():int{")+body+"}"); });
+    reject([&] { (void)parse_source("fnc first():int{const Record<infer R> r=(a=1);return r.a;}"
+      "fnc main():int{const Record<R> r=(a=42);return r.a;}"); });
     // Two-word contextual declarations are not executable stage-0 scalar
     // functions; every mode must reject with the correct semantic capability.
     for (std::string_view source_text : {
