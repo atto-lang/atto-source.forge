@@ -13,7 +13,7 @@ namespace oresforge::calls {
 // legacy scalar IR; no misleading claims about the general Oreslang ABI.
 enum class Kind {
   Constant, Parameter, Add, Sub, Mul, Less, LessEqual, Greater,
-  GreaterEqual, Equal, NotEqual, If, Call, Boolean, Not, Ternary, And, Or, BooleanXor, Div, Trap, ResultCall, BindResult, Local, Ok, Some, None, OptionIf, OptionCall
+  GreaterEqual, Equal, NotEqual, If, Call, Boolean, Not, Ternary, And, Or, BooleanXor, Div, Trap, ResultCall, BindResult, Local, Ok, Some, None, OptionIf, OptionCall, BoolCall
 };
 // Provisional scalar native status ABI. Two INTEGER-class eightbytes on
 // SysV x86-64: value in RAX, error code in RDX. No heap allocation.
@@ -60,6 +60,7 @@ struct Function {
   int result = -1;
   bool returns_scalar_result = false;
   bool returns_scalar_option = false;
+  bool returns_bool = false;
 };
 struct Module {
   std::vector<Function> functions;
