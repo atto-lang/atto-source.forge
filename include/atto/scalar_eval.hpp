@@ -7,7 +7,7 @@
 #include <vector>
 
 namespace atto::forge::scalar {
-enum class EvalError { none, parse_error, invalid_ast, overflow, divide_by_zero, shift_distance, refinement_violation };
+enum class EvalError { none, parse_error, invalid_ast, overflow, divide_by_zero, shift_distance, refinement_violation, i32_overflow };
 struct Evaluated {
   std::optional<i64> value;
   EvalError error = EvalError::none;
@@ -31,6 +31,10 @@ struct Evaluated {
       if(n.op==Op::choose){auto b=self(self,x!=0?n.right:static_cast<std::size_t>(n.value));if(!b.ok())return b;value=b.value;}
       else if(n.op==Op::copy)value=x;
       else if(n.op==Op::neg)value=checked_neg(x);
+      else if(n.op==Op::narrow){
+        if(x<std::numeric_limits<std::int32_t>::min()||x>std::numeric_limits<std::int32_t>::max())return {{},EvalError::i32_overflow};
+        value=x;
+      }
       else if(n.op==Op::refine){
         if(x<n.value||x>n.upper)return {{},EvalError::refinement_violation};
         value=x;
@@ -71,6 +75,11 @@ struct Evaluated {
     }
     if(node.op==Op::copy||node.op==Op::sequence){
       const auto value=values[node.op==Op::copy?node.left:node.right];
+      values.push_back(value);continue;
+    }
+    if(node.op==Op::narrow){
+      const auto value=values[node.left];
+      if(value<std::numeric_limits<std::int32_t>::min()||value>std::numeric_limits<std::int32_t>::max())return {{},EvalError::i32_overflow};
       values.push_back(value);continue;
     }
     if (node.op==Op::refine) {
