@@ -3,6 +3,7 @@
 #include <string_view>
 #include <type_traits>
 #include <utility>
+#include <optional>
 
 using oresforge::runtime::ErrorAllocation;
 using oresforge::runtime::ErrorArena;
@@ -61,5 +62,18 @@ int main() {
   const auto exact = boundary.create(ErrorKind::Error, "abc");
   assert(exact.status == ErrorAllocation::Created);
   assert(boundary.view(exact.handle)->message() == "abc");
+  // Storage reuse must not revive a handle from an expired invocation.
+  std::optional<Arena> reused;
+  reused.emplace();
+  const auto stale = reused->create(ErrorKind::Error, "old").handle;
+  const auto address = static_cast<const void*>(&*reused);
+  reused.reset();
+  reused.emplace();
+  assert(static_cast<const void*>(&*reused) == address);
+  const auto fresh = reused->create(ErrorKind::Error, "new").handle;
+  assert(reused->view(stale) == nullptr);
+  assert(!reused->same_identity(stale, fresh));
+  assert(reused->view(fresh)->message() == "new");
+  assert(reused->same_identity(fresh, fresh));
   return 0;
 }
