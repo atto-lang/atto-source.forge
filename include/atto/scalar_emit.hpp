@@ -8,8 +8,62 @@
 
 namespace atto::forge::scalar {
 inline constexpr std::size_t max_emitted_bytes = 64 * 1024;
+// Conditional DAGs are evaluated lazily with a bounded cache per node.
+// Only the chosen successor executes; shared nodes and eager sequence
+// prefixes execute at most once, in source order. No guest-supplied C++.
+[[nodiscard]] inline std::optional<std::string> emit_lazy_cpp(const Parsed& p) {
+  if (!validate_ast(p) || !p.trace_steps.empty()) return std::nullopt;
+  std::string code = "#include <atto/checked_i64.hpp>\n#include <cstdio>\n#include <cstdlib>\n#include <limits>\n#include <optional>\nint main(){\n";
+  auto var=[](std::size_t i){return "v"+std::to_string(i);};
+  auto literal=[](i64 n)->std::string{
+    return n==std::numeric_limits<i64>::min()?"std::numeric_limits<atto::forge::i64>::min()":std::to_string(n);
+  };
+  for(std::size_t i=0;i<p.nodes.size();++i){
+    const auto& n=p.nodes[i];auto v=var(i);
+    auto left=var(n.left)+"()",right=var(n.right)+"()";
+    code+="  std::optional<atto::forge::i64> c"+v+";\n  auto "+v+" = [&]() -> atto::forge::i64 {\n    if (c"+v+") return *c"+v+";\n";
+    std::string body;
+    if(n.op==Op::literal) body="    c"+v+" = "+literal(n.value)+";\n";
+    else if(n.op==Op::choose)body="    c"+v+" = "+left+" != 0 ? "+right+" : "+var(static_cast<std::size_t>(n.value))+"();\n";
+    else if(n.op==Op::copy)body="    c"+v+" = "+left+";\n";
+    else if(n.op==Op::sequence)body="    (void)"+left+";\n    c"+v+" = "+right+";\n";
+    else if(n.op==Op::refine)body="    auto a = "+left+";\n    if (a < "+literal(n.value)+" || a > "+literal(n.upper)+") { std::fputs(\"E_REFINEMENT_VIOLATION\\n\", stderr); std::exit(73); }\n    c"+v+" = a;\n";
+    else {
+      body="    auto a = "+left+";\n";
+      if(n.op!=Op::neg&&n.op!=Op::bnot)body+="    auto b = "+right+";\n";
+      std::string op;
+      switch(n.op){
+        case Op::eq:op="==";break;case Op::ne:op="!=";break;
+        case Op::lt:op="<";break;case Op::le:op="<=";break;
+        case Op::gt:op=">";break;case Op::ge:op=">=";break;
+        default:break;
+      }
+      if(!op.empty())body+="    c"+v+" = a "+op+" b;\n";
+      else {
+        std::string call;
+        switch(n.op){
+          case Op::neg:call="checked_neg(a)";break;
+          case Op::add:call="checked_add(a,b)";break;
+          case Op::sub:call="checked_sub(a,b)";break;
+          case Op::mul:call="checked_mul(a,b)";break;
+          case Op::div:
+            body+="    if (b == 0) { std::fputs(\"E_DIVZERO\\n\", stderr); std::exit(71); }\n";
+            call="checked_div(a,b)";break;
+          default:return std::nullopt; // strict conditional profile only
+        }
+        body+="    c"+v+" = atto::forge::"+call+";\n    if (!c"+v+") { std::fputs(\"E_OVERFLOW\\n\", stderr); std::exit(70); }\n";
+      }
+    }
+    code+=body+"    return *c"+v+";\n  };\n";
+    if(code.size()>max_emitted_bytes)return std::nullopt;
+  }
+  code+="  std::printf(\"%lld\\n\", static_cast<long long>("+var(p.root)+"()));\n  return 0;\n}\n";
+  if(code.size()>max_emitted_bytes)return std::nullopt;
+  return code;
+}
 [[nodiscard]] inline std::optional<std::string> emit_cpp(const Parsed& p) {
   if (!validate_ast(p)) return std::nullopt;
+  for(const auto& n:p.nodes)if(n.op==Op::choose)return emit_lazy_cpp(p);
   std::string code = R"(#include <atto/checked_i64.hpp>
 #include <cstdio>
 #include <cstdint>
