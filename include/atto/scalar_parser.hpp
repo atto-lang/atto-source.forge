@@ -17,12 +17,14 @@
 
 namespace atto::forge::scalar {
 enum class Op { literal, add, sub, mul, div, rem, neg, refine, narrow, copy, sequence, band, bor, bxor, bnot, shl, lshr, ashr, eq, ne, lt, le, gt, ge, choose, loop_state, loop_value, loop_group, loop_read };
+struct LoopExit { std::size_t position=0, condition=0; bool breaking=false; std::vector<std::size_t> values{}; };
 struct Node {
   Op op;
   std::size_t left = 0, right = 0;
   i64 value = 0;
   i64 upper = 0;
   std::vector<std::size_t> states{},effects{},updates{};
+  std::vector<LoopExit> exits{};
 };
 enum class ParseError {
   none, lexical, syntax, literal_out_of_range, depth_limit, node_limit, telemetry, verify_unproven, verify_unsupported, unit_name, unit_duplicate, unit_dimension, unit_scale, unit_limit, unit_erasure, unit_attachment, unit_inexact, unit_range, refinement_empty, refinement_binding, refinement_precondition, refinement_return, refinement_duplicate, refinement_postcondition, refinement_contract, refinement_export, refinement_body, refinement_call, refinement_cast, i32_range, new_required, lock_unsupported
@@ -112,7 +114,7 @@ inline constexpr std::size_t max_trace_depth = 16;
   std::vector<unsigned> owners(p.nodes.size(),0);
   for(std::size_t i=0;i<p.nodes.size();++i){
     const auto& n=p.nodes[i];
-    if(n.op!=Op::loop_group&&(!n.states.empty()||!n.effects.empty()||!n.updates.empty()))return false;
+    if(n.op!=Op::loop_group&&(!n.states.empty()||!n.effects.empty()||!n.updates.empty()||!n.exits.empty()))return false;
     if(n.op==Op::loop_value){
       if(n.left>=i||p.nodes[n.left].op!=Op::loop_state||n.right<=n.left||n.right>=i||n.value<0||
          static_cast<std::uint64_t>(n.value)<=n.left||static_cast<std::uint64_t>(n.value)>=i)return false;
@@ -128,6 +130,16 @@ inline constexpr std::size_t max_trace_depth = 16;
       }
       for(auto k:n.effects)if(k<n.left+n.states.size()||k>=i)return false;
       for(auto k:n.updates)if(k<n.left||k>=i)return false;
+      if(n.exits.size()>128)return false;
+      std::size_t prior_position=0,prior_condition=0;
+      for(const auto& x:n.exits){
+        if(x.position<prior_position||x.position>n.effects.size()||x.condition<=prior_condition||
+           x.condition<n.left+n.states.size()||x.condition>=i||x.values.size()!=n.states.size())return false;
+        if(x.position&&n.effects[x.position-1]>=x.condition)return false;
+        if(x.position<n.effects.size()&&n.effects[x.position]<=x.condition)return false;
+        for(auto k:x.values)if(k<n.left||k>=x.condition)return false;
+        prior_position=x.position;prior_condition=x.condition;
+      }
       regions.emplace_back(n.left,i);
     }
     if(n.op==Op::loop_read){
@@ -152,6 +164,7 @@ inline constexpr std::size_t max_trace_depth = 16;
       for(auto k:n.states)if(!edge(k))return false;
       for(auto k:n.effects)if(!edge(k))return false;
       for(auto k:n.updates)if(!edge(k))return false;
+      for(const auto& x:n.exits){if(!edge(x.condition))return false;for(auto k:x.values)if(!edge(k))return false;}
     }
     if((n.op==Op::choose||n.op==Op::loop_value)&&(n.value<0||!edge(static_cast<std::size_t>(n.value))))return false;
   }
@@ -186,6 +199,7 @@ inline constexpr std::size_t max_trace_depth = 16;
         for(auto k:node.states)pending.push_back(k);
         for(auto k:node.effects)pending.push_back(k);
         for(auto k:node.updates)pending.push_back(k);
+        for(const auto& x:node.exits){pending.push_back(x.condition);for(auto k:x.values)pending.push_back(k);}
         break;
       case Op::loop_read:
         pending.push_back(node.left);break;
@@ -882,6 +896,11 @@ class Parser {
             if(k>=map.size())return std::nullopt;
             k=map[k];
           }
+          for(auto& x:n.exits){
+            if(x.condition>=map.size())return std::nullopt;
+            x.condition=map[x.condition];
+            for(auto& k:x.values){if(k>=map.size())return std::nullopt;k=map[k];}
+          }
         }
       }
       map.push_back(out_.nodes.size());out_.nodes.push_back(n);
@@ -983,7 +1002,7 @@ class Parser {
            std::find(writes.begin(),writes.end(),key)==writes.end())writes.push_back(key);
       }
     }
-    if(nesting||writes.empty()){fail(ParseError::verify_unsupported);return false;}
+    if(nesting){fail(ParseError::verify_unsupported);return false;}
     const auto outer=bindings_;
     Node group{Op::loop_group};
     for(auto key:writes){
@@ -993,11 +1012,44 @@ class Parser {
       auto state=append(Node{Op::loop_state,binding->second,0,0});if(!state)return false;
       binding->second=*state;ranges_[*state]=Range{want.lo,want.hi,want.width};group.states.push_back(*state);
     }
+    // A state-free loop still needs a private cache region and group result.
+    if(group.states.empty()){
+      auto zero=append(Node{Op::literal,0,0,0});if(!zero)return false;
+      auto state=append(Node{Op::loop_state,*zero,0,0});if(!state)return false;
+      group.states.push_back(*state);
+    }
     group.left=group.states.front();
     const bool old=guarded_;guarded_=true;
-    auto p=guard_or(facts(),0);if(!p||!take(Kind::lbrace))return false;
+    const auto header=facts();
+    bool has_break=false;
+    auto p=guard_or(header,0);if(!p||!take(Kind::lbrace))return false;
     group.right=p->node;set_facts(p->yes);
     while(!take(Kind::rbrace)){
+      if(current().kind==Kind::name&&(text()=="if"||text()=="break"||text()=="continue")){
+        const bool guarded=name("if");
+        std::optional<Predicate> edge;
+        if(guarded){edge=guard_or(facts(),0);if(!edge||!take(Kind::lbrace))return false;}
+        else{
+          auto yes=append(Node{Op::literal,0,0,1});if(!yes)return false;
+          edge=Predicate{*yes,facts(),facts()};
+        }
+        const bool breaking=name("break");
+        if(!breaking&&!name("continue")){fail(ParseError::verify_unsupported);return false;}
+        if(!take(Kind::semicolon))return false;
+        if(guarded){if(!take(Kind::rbrace))return false;}
+        else if(current().kind!=Kind::rbrace){fail(ParseError::verify_unsupported);return false;}
+        set_facts(edge->yes);
+        LoopExit x{group.effects.size(),edge->node,breaking,{}};
+        for(auto key:writes){
+          auto binding=std::find_if(bindings_.begin(),bindings_.end(),[&](auto& b){return b.first==key;});
+          auto want=std::find_if(mutable_types.begin(),mutable_types.end(),[&](auto& b){return b.first==key;})->second;
+          if(binding==bindings_.end()||!compatible(binding->second,want,ParseError::refinement_binding))return false;
+          x.values.push_back(binding->second);
+        }
+        if(writes.empty())x.values.push_back(group.states.front());
+        group.exits.push_back(std::move(x));has_break|=breaking;
+        set_facts(edge->no);continue;
+      }
       if(name("while")){
         if(!strict_loop(mutable_types,group.effects,depth+1))return false;
         continue;
@@ -1040,7 +1092,8 @@ class Parser {
       if(binding==bindings_.end()||!compatible(binding->second,want,ParseError::refinement_binding))return false;
       group.updates.push_back(binding->second);
     }
-    set_facts(p->no);guarded_=old;bindings_=outer;
+    if(writes.empty())group.updates.push_back(group.states.front());
+    set_facts(has_break?header:p->no);guarded_=old;bindings_=outer;
     auto loop=append(std::move(group));if(!loop)return false;
     effects.push_back(*loop);
     for(std::size_t j=0;j<writes.size();++j){
@@ -1116,6 +1169,7 @@ class Parser {
     }
 
     std::optional<std::size_t> root;
+    if(strict_&&current().kind==Kind::name&&(text()=="break"||text()=="continue")){fail(ParseError::verify_unsupported);return std::nullopt;}
     if(strict_&&current().kind==Kind::rbrace&&on_exit){
       root=on_exit(depth);
     }else if(strict_&&name("if")){

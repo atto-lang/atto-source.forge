@@ -32,7 +32,22 @@ inline constexpr std::size_t max_emitted_bytes = 64 * 1024;
       for(std::size_t j=0;j<n.states.size();++j)
         body+="      c"+var(n.states[j])+" = state"+std::to_string(j)+";\n";
       body+="      if ("+right+" == 0) break;\n";
-      for(auto k:n.effects)body+="      (void)"+var(k)+"();\n";
+      std::size_t exit_index=0;
+      for(std::size_t k=0;k<=n.effects.size();++k){
+        while(exit_index<n.exits.size()&&n.exits[exit_index].position==k){
+          const auto& x=n.exits[exit_index++];
+          body+="      if ("+var(x.condition)+"() != 0) {\n";
+          for(std::size_t j=0;j<x.values.size();++j)
+            body+="        state"+std::to_string(j)+" = "+var(x.values[j])+"();\n";
+          if(x.breaking){
+            for(std::size_t j=0;j<n.states.size();++j)
+              body+="        c"+var(n.states[j])+" = state"+std::to_string(j)+";\n";
+            body+="        break;\n";
+          }else body+="        continue;\n";
+          body+="      }\n";
+        }
+        if(k<n.effects.size())body+="      (void)"+var(n.effects[k])+"();\n";
+      }
       for(std::size_t j=0;j<n.updates.size();++j)
         body+="      state"+std::to_string(j)+" = "+var(n.updates[j])+"();\n";
       body+="    }\n    c"+v+" = state0;\n";
