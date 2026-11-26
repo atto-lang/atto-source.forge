@@ -175,6 +175,7 @@ class Parser {
         ++at_;
       }
       tok_={Kind::Word,source_.substr(start,at_-start),start};
+      if (tok_.text=="unsafe") error("UNSAFE_BACKEND_UNSUPPORTED: unsafe requires checked effects and capability lowering");
       // A contextual ownership operator requires the verb immediately next
       // to '!'. The stage-0 scalar IR has no ownership kind or runtime loan
       // authority; never reinterpret copy!/take!/borrow!/share! as a call.
