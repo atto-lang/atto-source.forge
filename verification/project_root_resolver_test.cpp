@@ -1,0 +1,297 @@
+#include "compiler/project_root_resolver.hpp"
+#include <chrono>
+#include <fstream>
+#include <functional>
+#include <iostream>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+using namespace oresforge::imports;
+static void check(bool value, const char* why) {
+    if (!value) throw std::runtime_error(why);
+}
+static void reject(const std::function<void()>& fn, const char* why) {
+    try { fn(); } catch (const std::invalid_argument&) { return; }
+    throw std::runtime_error(why);
+}
+static void write(const fs::path& file, const char* text) {
+    fs::create_directories(file.parent_path());
+    std::ofstream out(file);
+    if (!out) throw std::runtime_error("cannot create fixture");
+    out << text;
+    if (!out) throw std::runtime_error("cannot write fixture");
+}
+int main() {
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto tmp = fs::canonical(fs::temp_directory_path()) /
+        ("oresforge-root-contract-" + std::to_string(stamp));
+    fs::create_directories(tmp);
+    struct Cleanup {
+        fs::path root;
+        ~Cleanup() { std::error_code ec; fs::remove_all(root, ec); }
+    } cleanup{tmp};
+    try {
+        const auto project = tmp / "app";
+        write(project / "src" / "lib" / "answer.ores", "fnc answer():int{return 42;}\n");
+        write(tmp / "other" / "answer.ores", "fnc answer():int{return 0;}\n");
+        reject([&] { (void)project_root_source(project, "+/src/lib/answer"); },
+               "missing manifest gained package-root authority");
+        write(project / ".ores.pkg.toml", "schema_version = \"2\"\n");
+        reject([&] { (void)project_root_source(project, "+/src/lib/answer"); },
+               "unsupported manifest schema admitted");
+        write(project / ".ores.pkg.toml", "schema_version = \"1\"\nschema_version = \"1\"\n");
+        reject([&] { (void)project_root_source(project, "+/src/lib/answer"); },
+               "duplicate manifest schema admitted");
+        write(project / ".ores.pkg.toml", "name = \"test\"\n");
+        reject([&] { (void)project_root_source(project, "+/src/lib/answer"); },
+               "missing manifest schema admitted");
+        // Blank lines count toward the 64 KiB manifest byte budget.
+        const auto oversized = std::string("schema_version = \"1\"\n") +
+                               std::string(65536, '\n');
+        write(project / ".ores.pkg.toml", oversized.c_str());
+        reject([&] { (void)project_root_source(project, "+/src/lib/answer"); },
+               "newline-only manifest exceeded 64 KiB budget");
+        // Exactly 64 KiB is valid even without a final LF. The old
+        // getline accounting incorrectly charged one nonexistent byte.
+        // Keep this fixture as many short blank lines to avoid unrelated
+        // std::regex recursion on a single enormous comment.
+        const auto valid_prefix = std::string("schema_version = \"1\"\n");
+        const auto exactly_max = valid_prefix +
+            std::string(65536 - valid_prefix.size() - 1, '\n') + " ";
+        check(exactly_max.size() == 65536, "manifest budget fixture size");
+        write(project / ".ores.pkg.toml", exactly_max.c_str());
+        check(project_root_source(project, "+/src/lib/answer") ==
+                  fs::canonical(project / "src/lib/answer.ores"),
+              "exact 64 KiB manifest without final LF was rejected");
+        // A legal exact-budget single line previously crashed GCC/Clang
+        // libstdc++'s recursive std::regex engine before completing admission.
+        const auto long_schema_prefix = std::string("schema_version = \"1\" #");
+        const auto exact_long_schema = long_schema_prefix +
+            std::string(65536 - long_schema_prefix.size(), 'x');
+        check(exact_long_schema.size() == 65536, "single-line schema fixture size");
+        write(project / ".ores.pkg.toml", exact_long_schema.c_str());
+        check(project_root_source(project, "+/src/lib/answer") ==
+                  fs::canonical(project / "src/lib/answer.ores"),
+              "64 KiB single-line schema comment crashed or was denied");
+        const auto long_table_prefix = valid_prefix + "[project] #";
+        const auto exact_long_table = long_table_prefix +
+            std::string(65536 - long_table_prefix.size(), 'x');
+        write(project / ".ores.pkg.toml", exact_long_table.c_str());
+        check(project_root_source(project, "+/src/lib/answer") ==
+                  fs::canonical(project / "src/lib/answer.ores"),
+              "64 KiB project table comment crashed or was denied");
+        const auto long_root_prefix = valid_prefix + "[project]\nroot = \"";
+        const auto exact_long_root = long_root_prefix +
+            std::string(65536 - long_root_prefix.size() - 1, 'x') + "\"";
+        check(exact_long_root.size() == 65536, "long root fixture size");
+        write(project / ".ores.pkg.toml", exact_long_root.c_str());
+        reject([&] { (void)project_root_source(project, "+/src/lib/answer"); },
+               "overlong project.root bypassed 1024-byte cap");
+        const auto over_max = exactly_max + "\n";
+        write(project / ".ores.pkg.toml", over_max.c_str());
+        reject([&] { (void)project_root_source(project, "+/src/lib/answer"); },
+               "65,537-byte manifest without final LF was admitted");
+        const auto oversized_single_line = valid_prefix + std::string(65537, 'a');
+        write(project / ".ores.pkg.toml", oversized_single_line.c_str());
+        reject([&] { (void)project_root_source(project, "+/src/lib/answer"); },
+               "oversized single-line manifest escaped bounded snapshot read");
+        write(project / ".ores.pkg.toml", "schema_version = \"1\"\n");
+        // Schema and root extraction must use the same frozen snapshot,
+        // even if the path is changed between individual parser calls.
+        const auto captured = read_bounded_manifest_text(project / ".ores.pkg.toml");
+        write(project / ".ores.pkg.toml",
+              "schema_version = \"2\"\n[project]\nroot = \"../outside\"\n");
+        require_v1_manifest_text(captured);
+        check(configured_project_root_text(project, captured) ==
+                  fs::canonical(project),
+              "manifest snapshot root depended on a later pathname read");
+        reject([&] { (void)project_root_source(project, "+/src/lib/answer"); },
+               "changed schema admitted despite bounded manifest snapshot");
+        write(project / ".ores.pkg.toml", "schema_version = \"1\"\n");
+        // TOML only permits LF and CRLF line endings. Bare CR after '#'
+        // must not hide a nested [project] table or an unsafe root setting.
+        write(project / ".ores.pkg.toml",
+              "schema_version = \"1\" # comment\r[project]\rroot = \"../outside\"\n");
+        reject([&] { (void)project_root_source(project, "+/src/lib/answer"); },
+               "bare CR smuggled a hidden root table behind a comment");
+        write(project / ".ores.pkg.toml", "schema_version = \"1\"\r");
+        reject([&] { (void)project_root_source(project, "+/src/lib/answer"); },
+               "bare CR at EOF gained project authority");
+        write(project / ".ores.pkg.toml", "schema_version = \"1\"\r\n");
+        check(project_root_source(project, "+/src/lib/answer") ==
+                  fs::canonical(project / "src/lib/answer.ores"),
+              "legal CRLF manifest was denied");
+        const auto expected = fs::canonical(project / "src" / "lib" / "answer.ores");
+        check(project_root_source(project, "+/src/lib/answer") == expected,
+              "canonical root source unresolved");
+        // A modern package marker must not inherit authority through a
+        // same-directory symlink to the otherwise valid legacy config.
+        write(project / ".oreslangc.cfg.toml", "schema_version = \"1\"\n");
+        fs::remove(project / ".ores.pkg.toml");
+        std::error_code manifest_link_error;
+        fs::create_symlink(project / ".oreslangc.cfg.toml",
+                           project / ".ores.pkg.toml", manifest_link_error);
+        if (!manifest_link_error)
+            reject([&] { (void)project_root_source(project, "+/src/lib/answer"); },
+                   "symlinked modern manifest alias gained package authority");
+        fs::remove(project / ".ores.pkg.toml");
+        fs::create_directory(project / ".ores.pkg.toml");
+        reject([&] { (void)project_root_source(project, "+/src/lib/answer"); },
+               "directory marker silently inherited legacy authority");
+        fs::remove(project / ".ores.pkg.toml");
+        write(project / ".ores.pkg.toml", "schema_version = \"1\"\n");
+        // Host-only ./ and ../ resolve relative to the importer, never CWD.
+        write(project / "src/routes/main.ores", "fnc main():int{return 42;}\n");
+        write(project / "src/routes/local.ores", "fnc local():int{return 42;}\n");
+        const auto importer = project / "src/routes/main.ores";
+        check(relative_source(importer, "./local", project) ==
+                  fs::canonical(project / "src/routes/local.ores"),
+              "relative ./ import did not resolve");
+        check(relative_source(importer, "../lib/answer", project) == expected,
+              "relative ../ import did not resolve");
+        for (const auto& bad_relative : {"local", ".hidden/local", "./", "../",
+                                          "./missing", "./local.java", "./main",
+                                          "../../../../other/answer",
+                                          "./local//alias", "./local\\\\alias"}) {
+            reject([&] { (void)relative_source(importer, bad_relative, project); },
+                   "malformed or escaping relative source admitted");
+        }
+        write(project / "src/routes/child/hidden.ores", "fnc hidden():int{return 1;}\n");
+        write(project / "src/routes/child/.oreslangc.cfg.toml", "legacy marker\\n");
+        reject([&] { (void)relative_source(importer, "./child/hidden", project); },
+               "relative import crossed legacy nested-package boundary");
+        reject([&] { (void)project_root_source(project, "+/src/routes/child/hidden"); },
+               "rooted import crossed legacy nested-package boundary");
+        // A symlink target located in a nested legacy package remains
+        // child-owned even when spelled as a relative parent-directory file.
+        std::error_code nested_target_error;
+        fs::create_symlink(project / "src/routes/child/hidden.ores",
+                           project / "src/routes/child-alias.ores",
+                           nested_target_error);
+        if (!nested_target_error)
+            reject([&] { (void)relative_source(importer, "./child-alias", project); },
+                   "relative target alias bypassed nested package boundary");
+        // A physical alias into the parent does not erase its spelled
+        // importer path through the child package's legacy marker.
+        std::error_code relative_alias_error;
+        const auto child_alias = project / "src/routes/child/main-alias.ores";
+        fs::create_symlink(importer, child_alias, relative_alias_error);
+        if (!relative_alias_error)
+            reject([&] { (void)relative_source(child_alias, "../local", project); },
+                   "relative importer context laundered through nested symlink");
+        // The manifest's explicit project.root changes the authority anchor.
+        write(project / "appdata" / "lib" / "answer.ores",
+              "fnc answer():int{return 42;}\n");
+        write(project / ".ores.pkg.toml",
+              "schema_version = \"1\"\n[project]\nroot = \"appdata\"\n");
+        check(project_root_source(project, "+/lib/answer") ==
+                  fs::canonical(project / "appdata/lib/answer.ores"),
+              "explicit project.root ignored");
+        write(project / "appdata/src/entry.ores", "fnc main():int{return 42;}\n");
+        check(relative_source(project / "appdata/src/entry.ores", "../lib/answer",
+                              project / "appdata") ==
+                  fs::canonical(project / "appdata/lib/answer.ores"),
+              "relative import did not use selected physical project root");
+        reject([&] { (void)relative_source(project / "appdata/src/entry.ores",
+                                          "../../src/lib/answer", project / "appdata"); },
+               "relative source crossed configured project root boundary");
+        write(project / "appdata" / ".ores.pkg.toml", "schema_version = \"1\"\n");
+        reject([&] { (void)project_root_source(project, "+/lib/answer"); },
+               "nested package reused parent-root authority");
+        fs::remove(project / "appdata" / ".ores.pkg.toml");
+        write(project / "parent" / "appdata" / "lib" / "answer.ores",
+              "fnc answer():int{return 42;}\n");
+        write(project / "parent" / ".ores.pkg.toml", "schema_version = \"1\"\n");
+        write(project / ".ores.pkg.toml",
+              "schema_version = \"1\"\n[project]\nroot = \"parent/appdata\"\n");
+        reject([&] { (void)project_root_source(project, "+/lib/answer"); },
+               "intermediate nested package marker ignored");
+        fs::remove(project / "parent" / ".ores.pkg.toml");
+        write(project / ".ores.pkg.toml",
+              "schema_version = \"1\"\n[project]\nroot = \"appdata\"\n");
+        reject([&] { (void)project_root_source(project, "+/src/lib/answer"); },
+               "rooted import leaked manifest parent after explicit root");
+        for (const char* bad_root : {"../other", "/tmp", "appdata/../src", "",
+                                     "appdata\\outside", "appdata//lib", "appdata/", "appdata/."}) {
+            write(project / ".ores.pkg.toml",
+                  ("schema_version = \"1\"\n[project]\nroot = \"" +
+                   std::string(bad_root) + "\"\n").c_str());
+            reject([&] { (void)project_root_source(project, "+/lib/answer"); },
+                   "unsafe project.root admitted");
+        }
+        write(project / ".ores.pkg.toml",
+              "schema_version = \"1\"\n[project]\nroot = \"appdata\"\nroot = \"appdata\"\n");
+        reject([&] { (void)project_root_source(project, "+/lib/answer"); },
+               "duplicate project.root admitted");
+        write(project / ".ores.pkg.toml",
+              "schema_version = \"1\"\n[ project ]\nroot = \"appdata\"\n");
+        reject([&] { (void)project_root_source(project, "+/lib/answer"); },
+               "unsupported project table silently ignored");
+        write(project / ".ores.pkg.toml",
+              "schema_version = \"1\"\n[project]\n[project]\nroot = \"appdata\"\n");
+        reject([&] { (void)project_root_source(project, "+/lib/answer"); },
+               "duplicate project table admitted");
+        write(project / ".ores.pkg.toml",
+              "schema_version = \"1\"\nproject.root = \"appdata\"\n");
+        reject([&] { (void)project_root_source(project, "+/lib/answer"); },
+               "unsupported dotted project.root accepted");
+        write(project / ".ores.pkg.toml", "schema_version = \"1\"\n");
+
+        check(project_root_source(project, "+/src/lib/answer.ores") == expected,
+              "exact .ores source unresolved");
+        for (const std::string& bad : std::vector<std::string>{
+            "", "+", "+src/lib/answer", "@/", "@/src/lib/answer",
+            "+/", "+//src/lib/answer", "+/src//answer", "+/src/./lib/answer",
+            "+/src/../src/lib/answer", "+/src/lib/answer/",
+            "+/src\\lib\\answer", "+/src:lib/answer", "+/unknown",
+            "+/src/lib/answer.java", std::string("+/src/") + char(0) + "thing"
+        }) {
+            reject([&] { (void)project_root_source(project, bad); },
+                   "invalid canonical +/ source accepted");
+        }
+        reject([&] { (void)project_root_source(project, std::string("+/") +
+            std::string(4096, 'x')); }, "oversized rooted import accepted");
+        std::error_code error;
+        fs::create_symlink(tmp / "other" / "answer.ores",
+                           project / "src" / "lib" / "foreign.ores", error);
+        if (!error)
+            reject([&] { (void)project_root_source(project, "+/src/lib/foreign"); },
+                   "foreign source symlink escaped package boundary");
+        fs::create_symlink(tmp / "other" / "answer.ores",
+                           project / ".ores.pkg.toml.injected", error);
+        // A manifest symlink to a nested file must not confer project-root
+        // authority, even if the target contains a plausible v1 marker.
+        write(project / "src" / "foreign-manifest.toml", "schema_version = \"1\"\n");
+        fs::remove(project / ".ores.pkg.toml");
+        error.clear();
+        fs::create_symlink(project / "src" / "foreign-manifest.toml",
+                           project / ".ores.pkg.toml", error);
+        if (!error) {
+            reject([&] { (void)project_root_source(project, "+/src/lib/answer"); },
+                   "manifest symlink delegated root authority into child directory");
+            fs::remove(project / ".ores.pkg.toml");
+        }
+        write(project / ".ores.pkg.toml", "schema_version = \"1\"\n");
+        // Lexical nested-package crossing cannot be legalized by a symlink
+        // pointing back to the parent-owned physical source.
+        write(project / "nested" / ".ores.pkg.toml", "schema_version = \"1\"\n");
+        error.clear();
+        fs::create_symlink(project / "src" / "lib" / "answer.ores",
+                           project / "nested" / "backref.ores", error);
+        if (!error)
+            reject([&] { (void)project_root_source(project, "+/nested/backref"); },
+                   "nested-package symlink alias escaped namespace boundary");
+        check(project_root_source(project, "+/src/lib/answer") == expected,
+              "legal parent-owned source rejected after nested checks");
+        fs::create_directories(tmp / "another");
+        write(tmp / "another" / ".ores.pkg.toml", "schema_version = \"1\"\n");
+        check(project_root_source(project, "+/src/lib/answer") == expected,
+              "unrelated sibling manifest changed package identity");
+        std::cout << "Forge canonical +/ resolver host cases passed\n";
+        return 0;
+    } catch (const std::exception& ex) {
+        std::cerr << "Forge root resolver failed: " << ex.what() << '\n';
+        return 1;
+    }
+}
