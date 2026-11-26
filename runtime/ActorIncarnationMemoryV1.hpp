@@ -45,6 +45,7 @@ class ActorMemoryContinuation {
 // frame slabs. Scope budgets must outlive every actor memory object using them.
 // A process-wide ledger is always charged, even for a custom runtime budget.
 class ActorMemoryAggregateBudgetV1 final {
+  friend class ActorIncarnationMemoryV1;
   const std::size_t limit_;
   mutable std::mutex gate_;
   std::size_t reserved_ = 0;
@@ -59,6 +60,10 @@ class ActorMemoryAggregateBudgetV1 final {
     static ActorMemoryAggregateBudgetV1 ledger(512ULL * 1024 * 1024);
     return ledger;
   }
+
+ private:
+  // Only trusted actor-memory admission may alter aggregate credits.
+  // Public refund would permit one host component to erase another's charge.
   void reserve(std::size_t bytes) {
     std::scoped_lock lock(gate_);
     if (!bytes || bytes > limit_ - reserved_)
@@ -70,6 +75,8 @@ class ActorMemoryAggregateBudgetV1 final {
     if (bytes > reserved_) std::terminate(); // never hide double refunds
     reserved_ -= bytes;
   }
+
+ public:
   std::size_t reserved() const {
     std::scoped_lock lock(gate_);
     return reserved_;
@@ -148,6 +155,11 @@ class ActorIncarnationMemoryV1 final {
     if (stack_) clear(stack_.get(), stack_bytes_);
     throw std::runtime_error(why);
   }
+  void heap_active() {
+    // A paused logical execution has no active actor turn. Without a
+    // scheduler's physical-turn lease, host heap access must fail closed.
+    if (suspended_) poison("suspended actor cannot access its heap");
+  }
   void execution_active(const ActorMemoryExecution& token) {
     frame_healthy();
     if (suspended_ || !execution_ || execution_ != token.token_)
@@ -157,6 +169,11 @@ class ActorIncarnationMemoryV1 final {
                           std::size_t length) {
     if (offset > total || length > total - offset)
       throw std::out_of_range("actor memory byte range");
+  }
+  void check_frame_range(std::size_t total, std::size_t offset,
+                         std::size_t length) {
+    if (offset > total || length > total - offset)
+      poison("out-of-bounds actor logical frame access");
   }
   std::size_t find_heap(const ActorMemoryHeapHandle& handle) const {
     for (std::size_t i = 0; i < slots_.size(); ++i)
@@ -201,6 +218,9 @@ class ActorIncarnationMemoryV1 final {
       frame_limit_ = max_frames;
       heap_ = std::make_unique<std::uint8_t[]>(heap_bytes);
       stack_ = std::make_unique<std::uint8_t[]>(stack_bytes);
+      // Reject stale incarnation if STOP/restart raced allocation.
+      if (!mailbox_.authorizes(owner_))
+        throw std::runtime_error("actor incarnation changed during admission");
       process_charged_ = true;
       aggregate_charged_ = charged_local;
     } catch (...) {
@@ -242,6 +262,7 @@ class ActorIncarnationMemoryV1 final {
   ActorMemoryHeapHandle alloc(const ActorRef& actor, std::size_t bytes) {
     std::scoped_lock lock(gate_);
     [[maybe_unused]] auto mailbox_lease = authorize(actor);
+    heap_active();
     if (!bytes || bytes > heap_bytes_ - heap_top_)
       throw std::length_error("actor heap quota");
     auto it = std::find_if(slots_.begin(), slots_.end(),
@@ -263,14 +284,16 @@ class ActorIncarnationMemoryV1 final {
                   std::size_t offset, std::span<const std::uint8_t> bytes) {
     std::scoped_lock lock(gate_);
     [[maybe_unused]] auto mailbox_lease = authorize(actor);
+    heap_active();
     const Slot& slot = slots_[find_heap(handle)];
     check_range(slot.length, offset, bytes.size());
     std::copy(bytes.begin(), bytes.end(), heap_.get() + slot.offset + offset);
   }
   void heap_read(const ActorRef& actor, const ActorMemoryHeapHandle& handle,
-                 std::size_t offset, std::span<std::uint8_t> out) const {
+                 std::size_t offset, std::span<std::uint8_t> out) {
     std::scoped_lock lock(gate_);
     [[maybe_unused]] auto mailbox_lease = authorize(actor);
+    heap_active();
     const Slot& slot = slots_[find_heap(handle)];
     check_range(slot.length, offset, out.size());
     std::copy_n(heap_.get() + slot.offset + offset, out.size(), out.begin());
@@ -278,6 +301,7 @@ class ActorIncarnationMemoryV1 final {
   void drop(const ActorRef& actor, const ActorMemoryHeapHandle& handle) {
     std::scoped_lock lock(gate_);
     [[maybe_unused]] auto mailbox_lease = authorize(actor);
+    heap_active();
     Slot& slot = slots_[find_heap(handle)];
     clear(heap_.get() + slot.offset, slot.length);
     slot = Slot{};
@@ -291,7 +315,7 @@ class ActorIncarnationMemoryV1 final {
     std::scoped_lock lock(gate_);
     [[maybe_unused]] auto mailbox_lease = authorize(actor);
     frame_healthy();
-    if (execution_) throw std::runtime_error("actor already has a logical stack");
+    if (execution_) poison("reentrant begin on live or suspended actor stack");
     execution_ = issue();
     return ActorMemoryExecution(execution_);
   }
@@ -317,7 +341,7 @@ class ActorIncarnationMemoryV1 final {
     [[maybe_unused]] auto mailbox_lease = authorize(actor);
     execution_active(execution);
     const Frame& frame = frames_[find_frame(handle)];
-    check_range(frame.length, offset, bytes.size());
+    check_frame_range(frame.length, offset, bytes.size());
     std::copy(bytes.begin(), bytes.end(), stack_.get() + frame.offset + offset);
   }
   void frame_read(const ActorRef& actor, const ActorMemoryExecution& execution,
@@ -327,7 +351,7 @@ class ActorIncarnationMemoryV1 final {
     [[maybe_unused]] auto mailbox_lease = authorize(actor);
     execution_active(execution);
     const Frame& frame = frames_[find_frame(handle)];
-    check_range(frame.length, offset, out.size());
+    check_frame_range(frame.length, offset, out.size());
     std::copy_n(stack_.get() + frame.offset + offset, out.size(), out.begin());
   }
   void pop(const ActorRef& actor, const ActorMemoryExecution& execution,
