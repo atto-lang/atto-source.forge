@@ -313,13 +313,15 @@ class Parser {
         if(token_.text!=")") {
           auto name=identifier();
           if(name=="Xor")fail("unsupported Option payload binding name");
-          payload_bindings_.emplace_back(std::move(name),subject);
-          bound=true;
+          if(name!="_") {
+            payload_bindings_.emplace_back(std::move(name),subject);
+            bound=true;
+          }
         }
         expect(")");
       } else if(result) {
         expect("(");
-        if(token_.text!=")")fail("Err binding requires nominal Error payload lowering");
+        if(token_.text!=")" && !take("_"))fail("Err binding requires nominal Error payload lowering");
         expect(")");
       }
       if(take(":"))expect("int");
@@ -353,7 +355,7 @@ class Parser {
     while (token_.text=="trap" || token_.text=="trap!") {
       depth(++d); next();
     }
-    const int operand=factor(d+1);
+    const int operand=token_.text=="Ok"?trapped_return(d+1):factor(d+1);
     require_integer(operand);
     return add(Kind::Trap,0,{}, {operand});
   }
@@ -1134,8 +1136,9 @@ void verify(const Module& m) {
         const bool match_subject=p&&p->kind==Kind::ResultMatch&&p->children[0]==static_cast<int>(i);
         const bool terminal=!p&&fn.returns_scalar_result;
         const bool bound_terminal=p&&p->kind==Kind::BindResult&&p->children[1]==static_cast<int>(i);
-        const bool call_operand=n.kind==Kind::ResultCall&&p&&
-            (p->kind==Kind::Trap||p->kind==Kind::BindResult);
+        const bool call_operand=p&&((n.kind==Kind::ResultCall&&
+            (p->kind==Kind::Trap||p->kind==Kind::BindResult))||
+            (n.kind==Kind::Ok&&p->kind==Kind::Trap));
         if(!(match_subject||terminal||bound_terminal||call_operand)) {
           if(n.kind==Kind::Ok)throw std::runtime_error("Ok requires terminal Result return");
           if(n.kind==Kind::Trap)throw std::runtime_error("scalar trap must be a terminal Result boundary");
@@ -1146,6 +1149,12 @@ void verify(const Module& m) {
         const auto& root=fn.nodes[static_cast<std::size_t>(fn.result)];
         if(root.kind!=Kind::BindResult || n.value!=root.children[0] ||
            n.value<0 || static_cast<std::size_t>(n.value)>=i)
+          throw std::runtime_error("invalid scalar Result local use");
+        int current=static_cast<int>(i);
+        while(parent[static_cast<std::size_t>(current)]>=0 &&
+              parent[static_cast<std::size_t>(current)]!=fn.result)
+          current=parent[static_cast<std::size_t>(current)];
+        if(current!=root.children[1])
           throw std::runtime_error("invalid scalar Result local use");
       }
     }
