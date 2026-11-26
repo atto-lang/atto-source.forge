@@ -12,7 +12,7 @@ enum class Kind {
   plus, minus, star, slash, percent, logical_and, logical_or, not_equal, equal_equal, bit_and, bit_or, caret, bit_xor, tilde, shl, lshr, arrow, left_arrow, bang, unicode_not, end
 };
 struct Token { Kind kind; std::size_t offset; std::size_t length; };
-enum class LexError { none, source_too_large, token_limit, unsupported_byte, unterminated_comment, comment_nesting_limit, ownership_bang_unsupported };
+enum class LexError { none, source_too_large, token_limit, unsupported_byte, unterminated_comment, comment_nesting_limit, ownership_bang_unsupported, suspension_unsupported };
 struct Lexed {
   std::vector<Token> tokens;
   LexError error = LexError::none;
@@ -93,6 +93,12 @@ inline constexpr std::size_t max_tokens = 256;
     }
     const std::size_t start = i;
     Kind kind;
+    // Exact UTF-8 aliases are effects, never an ordinary scalar identifier.
+    if (src.substr(i, 3) == "\xE2\xA7\x96" || src.substr(i, 3) == "\xE2\x88\x82") {
+      out.error = LexError::suspension_unsupported;
+      out.error_offset = start;
+      return out;
+    }
     if (portable_name_start(unicode_at(src, i).value)) {
       kind = Kind::name;
       do {
@@ -102,6 +108,11 @@ inline constexpr std::size_t max_tokens = 256;
       // pointer profile. Crucially, ref!/deref!/unref! are NOT rejected
       // here: the typed local_pointer parser admits their verified subset.
       const auto word = src.substr(start, i - start);
+      if (word == "suspends" || word == "susp") {
+        out.error = LexError::suspension_unsupported;
+        out.error_offset = start;
+        return out;
+      }
       const bool unlowered_ownership =
           word == "copy" || word == "take" || word == "borrow" ||
           word == "share" || word == "pin" || word == "drop" ||
