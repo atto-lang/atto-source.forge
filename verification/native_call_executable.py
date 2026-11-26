@@ -221,6 +221,11 @@ POSITIVE = (
      ((11,4,8),(7,7,7))),
     ("integer-xor-caret", "fnc main(a:int,b:int):int{^ (a ^^ b) eq 15 ? 42 : 7;}",
      ((11,4,42),(1,2,7))),
+    ("option-match-endpoints", "fnc main(a:int):int{return match<int> value(a) over on Some(n):int -> n, on None:int -> 7, end;} fnc value(a:int):Option<int>{return Some(a);}", ((0,0),(-9223372036854775808,-9223372036854775808),(9223372036854775807,9223372036854775807))),
+    ("option-match-reversed", "fnc main():int{return match<int> None over on None:int -> 42, on Some(n):int -> 0, end;}", ((42,),)),
+    ("option-match-lazy", "fnc main(a:int):int{return match<int> Some(a) over on Some(n):int -> n, on None:int -> 1/0, end;}", ((42,42),(0,0))),
+    ("option-match-nested", "fnc main(a:int):int{return match<int> Some(a) over on Some(n):int -> match<int> Some(2) over on Some(m):int -> n+m, on None:int -> 0, end, on None:int -> 0, end;}", ((40,42),(0,2))),
+    ("option-match-tag-after-div", "fnc value(a:int):Option<int>{return Some(84/a);} fnc main(a:int):int{return match<int> value(a) over on Some(n):int -> n, on None:int -> 0, end;}", ((2,42),(-2,-42))),
     ("no-args", "fnc main():int{return 42;}", ((42,),)),
 )
 # Exact shared Git blobs, including the final newline added by build().
@@ -236,6 +241,7 @@ GUARD_FIXTURE_BLOBS = {
     "guard-canonical-scalar": "e2344e360ac643e25df7ca14eb01432929cecbe5",
 }
 TRAPS = (
+    ("option-match-propagates-effect", "fnc value(a:int):Option<int>{return Some(84/a);} fnc main(a:int):int{return match<int> value(a) over on Some(n):int -> n, on None:int -> 42, end;}", (0,), "i64 division by zero"),
     ("division-zero", "fnc main(a:int,b:int):int{return a/b;}", (42,0), "i64 division by zero"),
     ("division-overflow", "fnc main(a:int,b:int):int{return a/b;}", (-9223372036854775808,-1), "i64 division overflow"),
     ("division-propagates", "fnc q(a:int,b:int):int{return a/b;} fnc wrap(a:int,b:int):int{return q(a,b)+9223372036854775807;} fnc main(a:int,b:int):int{return wrap(a,b);}", (42,0), "i64 division by zero"),
@@ -263,6 +269,11 @@ TRAPS = (
      (1,), "call depth exceeded"),
 )
 INVALID = (
+    ("option-match-duplicate", "fnc main():int{return match<int> Some(42) over on Some(n):int -> n, on Some(m):int -> m, end;}", "duplicate Option match arm"),
+    ("option-match-scope", "fnc main():int{return match<int> None over on Some(n):int -> n, on None:int -> n, end;}", "unknown parameter"),
+    ("option-match-not-callable", "fnc main():int{return match<int> Some(42) over on Some(n):int -> n(), on None:int -> 0, end;}", "Option payload is not callable"),
+    ("option-match-bool-arm", "fnc main():int{return match<int> Some(42) over on Some(n):int -> true, on None:int -> 0, end;}", "Boolean is not an int"),
+    ("option-match-scalar-subject", "fnc main():int{return match<int> f() over on Some(n):int -> n, on None:int -> 0, end;} fnc f():int{return 42;}", "scalar Option call type mismatch"),
     ("nested-guard-fallthrough", "fnc main():int{guard true {guard false {return 7;}} return 42;}", "unexpected token"),
     ("nested-guard-bool-return", "fnc main():int{guard true {guard false {return true;} return 7;} return 42;}", "Boolean is not an int"),
     ("nested-guard-failure-no-return", "fnc main():int{guard true else guard false {} return 7; end return 42;}", "guard_failure_requires_return"),
