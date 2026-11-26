@@ -121,7 +121,7 @@ class Parser {
   std::vector<Token> tokens_;
   std::size_t pos_ = 0;
   Parsed out_;
-  // File-local, scale-one dimensions; erased only after scalar admission.
+  // File-local bounded rational dimensions; erased only after scalar admission.
   using Dim = std::array<int, 8>;
   struct Scale {
     i64 n = 1, d = 1;
@@ -135,6 +135,9 @@ class Parser {
       return Scale{x*y,z*w};
     }
     [[nodiscard]] std::optional<i64> convert(i64 value,Scale target) const {
+      // Zero is exact for every valid positive ratio, even when the
+      // intermediate scale ratio itself exceeds this profile's i64 bound.
+      if (value==0) return 0;
       const auto ratio=mul(target.inv());
       if (!ratio || value%ratio->d != 0) return std::nullopt;
       const i64 q=value/ratio->d;
@@ -440,7 +443,7 @@ class Parser {
         const auto minimum = parse_decimal_i64(signed_digits);
         if (minimum && *minimum == std::numeric_limits<i64>::min()) {
           ++pos_;
-          return postfix(append(Node{Op::literal, 0, 0, *minimum}), true);
+          return postfix(append(Node{Op::literal, 0, 0, *minimum}), true, true);
         }
       }
       auto rhs = unary(depth + 1);
