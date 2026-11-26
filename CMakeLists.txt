@@ -235,6 +235,35 @@ if(BUILD_TESTING)
     COMMAND oresforge_actor_incarnation_memory_v1)
   set_tests_properties(oresforge_actor_incarnation_memory_v1_host
     PROPERTIES TIMEOUT 30)
+  # One trusted owner binds mailbox generation, the physical actor turn and
+  # separate native heap/frame memory. This is a host-only lifecycle check.
+  add_executable(oresforge_actor_incarnation_owner_v1
+    verification/actor_incarnation_owner_v1_test.cpp)
+  target_link_libraries(oresforge_actor_incarnation_owner_v1
+    PRIVATE oresforge_core Threads::Threads)
+  target_compile_features(oresforge_actor_incarnation_owner_v1 PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_actor_incarnation_owner_v1 PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME oresforge_actor_incarnation_owner_v1_host
+    COMMAND oresforge_actor_incarnation_owner_v1)
+  set_tests_properties(oresforge_actor_incarnation_owner_v1_host
+    PROPERTIES TIMEOUT 30)
+  # Actual ActorIncarnationOwnerV1 native DATA/STOP fence parity, host only.
+  add_executable(oresforge_supervisor_data_fence_parity_v1
+    verification/supervisor_data_fence_parity_v1_test.cpp)
+  target_link_libraries(oresforge_supervisor_data_fence_parity_v1
+    PRIVATE oresforge_core Threads::Threads)
+  target_compile_features(oresforge_supervisor_data_fence_parity_v1 PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_supervisor_data_fence_parity_v1 PRIVATE
+      -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+  endif()
+  add_test(NAME oresforge_supervisor_data_fence_parity_v1_host
+    COMMAND oresforge_supervisor_data_fence_parity_v1)
+  set_tests_properties(oresforge_supervisor_data_fence_parity_v1_host
+    PROPERTIES TIMEOUT 45)
   add_executable(oresforge_mailbox_model verification/actor_mailbox_model.cpp)
   target_link_libraries(oresforge_mailbox_model PRIVATE oresforge_core)
   add_test(NAME oresforge_actor_mailbox_model COMMAND oresforge_mailbox_model)
