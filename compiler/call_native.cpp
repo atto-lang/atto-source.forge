@@ -25,6 +25,18 @@ bool digit(char c) { return c >= '0' && c <= '9'; }
 bool space(char c) { return c == ' ' || c == '\r' || c == '\n' || c == '\t' || c == '\v' || c == '\f'; }
 struct Token { std::string_view text; std::size_t offset=0; };
 
+// Predicate types are statically derived from verified opcode identity.
+// The native ABI remains i64-only at function boundaries.
+bool boolean_kind(Kind k) {
+  return k==Kind::Boolean || k==Kind::Not || k==Kind::And || k==Kind::Or || k==Kind::BooleanXor ||
+         k==Kind::Less || k==Kind::LessEqual || k==Kind::Greater ||
+         k==Kind::GreaterEqual || k==Kind::Equal || k==Kind::NotEqual;
+}
+bool reserved_predicate_word(std::string_view s) {
+  return s=="true" || s=="false" || s=="ifnot" || s=="unless" ||
+         s=="eq" || s=="neq" || s=="fi" || s=="guard" || s=="end";
+}
+
 class Parser {
  public:
   explicit Parser(std::string_view text) : text_(text) { next(); }
@@ -81,15 +93,19 @@ class Parser {
       while (at_<text_.size() && (letter(text_[at_])||digit(text_[at_]))) ++at_;
     } else if (digit(c)) {
       while (at_<text_.size() && digit(text_[at_])) ++at_;
+    } else if (c=='!' && text_.substr(begin,3)=="!eq" &&
+               (begin+3==text_.size() || (!letter(text_[begin+3]) && !digit(text_[begin+3])))) {
+      at_=begin+3;
     } else if ((c=='<'||c=='>'||c=='='||c=='!') &&
                at_<text_.size() && text_[at_]=='=') {
+      ++at_;
+    } else if ((c=='&'||c=='|') && at_<text_.size() && text_[at_]==c) {
       ++at_;
     } else if (c=='-' && at_<text_.size() && text_[at_]=='>') {
       ++at_;
     } else if (c=='^' && at_<text_.size() && text_[at_]=='^') {
-      token_={text_.substr(begin,2),begin};
-      fail("FORGE_XOR_BACKEND_UNSUPPORTED: integer ^^ requires native bitwise lowering");
-    } else if (std::string_view("()+-*{};:,<>=^").find(c)==std::string_view::npos) {
+      ++at_;
+    } else if (std::string_view("()+-*{};:,<>=^?").find(c)==std::string_view::npos) {
       at_=begin;
       fail("invalid character");
     }
@@ -108,6 +124,7 @@ class Parser {
   void expect(std::string_view s) {if(!take(s))fail("unexpected token");}
   std::string identifier() {
     if (token_.text.empty() || !letter(token_.text[0])) fail("expected identifier");
+    if (reserved_predicate_word(token_.text)) fail("reserved predicate word");
     const std::string result(token_.text);
     next();
     return result;
@@ -118,6 +135,15 @@ class Parser {
     const int idx=static_cast<int>(current_->nodes.size());
     current_->nodes.push_back({kind,value,std::move(name),std::move(children),-1});
     return idx;
+  }
+  bool is_boolean(int id) const {
+    return boolean_kind(current_->nodes.at(static_cast<std::size_t>(id)).kind);
+  }
+  void require_integer(int id) const {
+    if (is_boolean(id)) fail("Boolean is not an int in the Forge callable subset");
+  }
+  void require_boolean(int id) const {
+    if (!is_boolean(id)) fail("condition_not_bool: conditional requires bool");
   }
   void definition() {
     bool defining=false,public_=false;
@@ -147,12 +173,13 @@ class Parser {
     expect("(");
     if (token_.text!=")") {
       do {
+        const bool type_first=take("int");
         const std::string param=identifier();
         if (param=="int"||param=="if"||param=="then"||param=="else"||
             param=="return"||param=="fnc"||
             std::find(current_->parameters.begin(),current_->parameters.end(),param)
             !=current_->parameters.end())fail("invalid or duplicate parameter");
-        expect(":");expect("int");
+        if(!type_first) { expect(":");expect("int"); }
         current_->parameters.push_back(param);
         if(current_->parameters.size()>4)fail("function parameter budget exceeded");
         if (!take(","))break;
@@ -160,38 +187,142 @@ class Parser {
     }
     expect(")");
     if(!take(":"))expect("->");
-    expect("int");expect("{");if (!take("^")) expect("return");
-    current_->result=expr(0);
+    expect("int");expect("{");
+    current_->result=terminal_body(0);
+    expect("}");
+  }
+  // This scalar subset has no local state, effects, or general statements.
+  // Every admitted guard failure body is exactly one explicit typed return.
+  // Reuse the verified lazy If tree: true continues, false returns early.
+  int terminal_body(std::size_t d) {
+    depth(d);
+    if (!take("guard")) return terminal_return(d+1);
+    int condition=logical_or(d+1);
+    require_boolean(condition);
+    while (take(",")) {
+      const int next_check=logical_or(d+1);
+      require_boolean(next_check);
+      condition=add(Kind::And,0,{}, {condition,next_check});
+    }
+    const bool braced=take("{");
+    if(!braced) expect("else");
+    if(token_.text!="return" && token_.text!="^")
+      fail("guard_failure_requires_return: scalar guard failure must return from callable");
+    const int failure=terminal_return(d+1);
+    expect(braced?"}":"end");
+    const int continuation=terminal_body(d+1);
+    return add(Kind::If,0,{}, {condition,continuation,failure});
+  }
+  int terminal_return(std::size_t d) {
+    depth(d);
+    if (!take("^")) expect("return");
+    const int value=expr(d+1);
+    require_integer(value);
     if (token_.text=="^") fail("single caret is only a return statement; integer XOR uses ^^");
-    expect(";");expect("}");
+    expect(";");
+    return value;
   }
   void depth(std::size_t n) {if(n>kMaxDepth)fail("callable expression nesting too deep");}
   int expr(std::size_t d) {
     depth(d);
-    if (take("if")) {
-      const int condition=comparison(d+1);
+    if (token_.text=="if" || token_.text=="ifnot" || token_.text=="unless") {
+      const bool negated=token_.text!="if";
+      next();
+      int condition=logical_or(d+1);
+      require_boolean(condition);
+      if (negated) condition=add(Kind::Not,0,{}, {condition});
       expect("then");
       const int yes=expr(d+1);
       expect("else");
       const int no=expr(d+1);
+      // Legacy if expressions retain the unclosed stage-0 spelling.
+      // Negated value forms require their explicit canonical terminator.
+      if (negated) expect("fi");
+      require_integer(yes);
+      require_integer(no);
       return add(Kind::If,0,{}, {condition,yes,no});
     }
-    return comparison(d+1);
+    const int condition=logical_or(d+1);
+    if (take("?")) {
+      require_boolean(condition);
+      const int yes=ternary_arm(d+1);
+      expect(":");
+      const int no=ternary_arm(d+1);
+      require_integer(yes);
+      require_integer(no);
+      return add(Kind::Ternary,0,{}, {condition,yes,no});
+    }
+    return condition;
+  }
+  // Direct braces commit to a single explicit result, not an aggregate
+  // or callable return. Keep the verified lazy Ternary tree and native ABI.
+  int ternary_arm(std::size_t d) {
+    depth(d);
+    if (!take("{")) return expr(d+1);
+    if (!take("return") && !take("^"))
+      fail("E_VALUE_ARM: ternary block requires explicit return or ^; lexical prefixes are not lowered");
+    const int value=expr(d+1);
+    take(";");
+    if (!take("}"))
+      fail("E_VALUE_ARM: single-result ternary block requires closing '}'");
+    return value;
+  }
+  int logical_or(std::size_t d) {
+    depth(d);
+    int left=logical_and(d+1);
+    while (take("||")) {
+      require_boolean(left);
+      const int right=logical_and(d+1);
+      require_boolean(right);
+      left=add(Kind::Or,0,{}, {left,right});
+    }
+    return left;
+  }
+  int logical_and(std::size_t d) {
+    depth(d);
+    int left=integer_xor(d+1);
+    while (take("&&")) {
+      require_boolean(left);
+      const int right=integer_xor(d+1);
+      require_boolean(right);
+      left=add(Kind::And,0,{}, {left,right});
+    }
+    return left;
+  }
+  // Java's equality/comparison expressions bind more tightly than integer XOR.
+  // No implicit conversion of predicate results to signed i64.
+  int integer_xor(std::size_t d) {
+    depth(d);
+    int left=comparison(d+1);
+    while (take("^^")) {
+      const int right=comparison(d+1);
+      require_integer(left); require_integer(right);
+      left=add(Kind::IntegerXor,0,{}, {left,right});
+    }
+    return left;
   }
   int comparison(std::size_t d) {
     depth(d);
     int left=sum(d+1);
     if (token_.text=="<"||token_.text=="<="||token_.text==">"||
-        token_.text==">="||token_.text=="=="||token_.text=="!=") {
+        token_.text==">="||token_.text=="=="||token_.text=="!="||
+        token_.text=="eq"||token_.text=="neq"||token_.text=="!eq") {
       const std::string op(token_.text);
       next();
       const int right=sum(d+1);
+      const bool equality=op=="eq"||op=="neq"||op=="!eq"||op=="=="||op=="!=";
+      if (equality) {
+        if (is_boolean(left)!=is_boolean(right)) fail("comparison operand type mismatch");
+      } else {
+        require_integer(left);
+        require_integer(right);
+      }
       Kind k=Kind::Equal;
       if(op=="<") k=Kind::Less;
       else if(op=="<=") k=Kind::LessEqual;
       else if(op==">") k=Kind::Greater;
       else if(op==">=") k=Kind::GreaterEqual;
-      else if(op=="!=") k=Kind::NotEqual;
+      else if(op=="!="||op=="neq"||op=="!eq") k=Kind::NotEqual;
       left=add(k,0,{}, {left,right});
     }
     return left;
@@ -203,6 +334,7 @@ class Parser {
       const bool plus=take("+");
       if (!plus)expect("-");
       const int right=term(d+1);
+      require_integer(left); require_integer(right);
       left=add(plus?Kind::Add:Kind::Sub,0,{}, {left,right});
     }
     return left;
@@ -213,19 +345,21 @@ class Parser {
     while (token_.text=="*") {
       next();
       const int right=factor(d+1);
+      require_integer(left); require_integer(right);
       left=add(Kind::Mul,0,{}, {left,right});
     }
     return left;
   }
   int factor(std::size_t d) {
     depth(d);
-    if(take("+"))return factor(d+1);
+    if(take("+")) { const int value=factor(d+1); require_integer(value); return value; }
     if(take("-")) {
       if(token_.text=="9223372036854775808"){
         next();return add(Kind::Constant,std::numeric_limits<std::int64_t>::min());
       }
       const int zero=add(Kind::Constant,0);
       const int other=factor(d+1);
+      require_integer(other);
       return add(Kind::Sub,0,{}, {zero,other});
     }
     if(take("(")) {
@@ -233,7 +367,9 @@ class Parser {
       expect(")");
       return x;
     }
-    if (token_.text=="if") return expr(d+1);
+    if (token_.text=="if" || token_.text=="ifnot" || token_.text=="unless") return expr(d+1);
+    if (take("true")) return add(Kind::Boolean,1);
+    if (take("false")) return add(Kind::Boolean,0);
     if (!token_.text.empty() && digit(token_.text.front())) {
       std::int64_t value=0;
       auto bytes=token_.text;
@@ -253,12 +389,23 @@ class Parser {
       std::vector<int> args;
       if (token_.text!=")") {
         do {
-          args.push_back(expr(d+1));
+          const int arg=expr(d+1); args.push_back(arg);
           if(args.size()>4)fail("call argument budget exceeded");
           if(!take(","))break;
         }while(true);
       }
       expect(")");
+      // Xor is the named Boolean operation, never an infix ^^ alias.
+      // Do not hijack ordinary i64 callables. The verifier independently
+      // rejects intrinsic binding if a source function/formal shadows Xor.
+      if(name=="Xor" && std::any_of(args.begin(),args.end(),
+                                    [&](int arg){return is_boolean(arg);})) {
+        if(args.size()!=2) fail("Boolean Xor requires two bool operands");
+        if(!is_boolean(args[0])||!is_boolean(args[1]))
+          fail("Boolean Xor requires two bool operands");
+        return add(Kind::BooleanXor,0,{},std::move(args));
+      }
+      for(int arg:args) require_integer(arg);
       return add(Kind::Call,0,name,std::move(args));
     }
     fail("expected callable expression");
@@ -277,12 +424,13 @@ std::int64_t checked(Kind k,std::int64_t a,std::int64_t b) {
     case Kind::Mul:
       if(__builtin_mul_overflow(a,b,&out))throw std::runtime_error("i64 mul overflow");
       return out;
+    case Kind::IntegerXor: return a^b;
     case Kind::Less: return a<b;
     case Kind::LessEqual: return a<=b;
     case Kind::Greater: return a>b;
     case Kind::GreaterEqual: return a>=b;
     case Kind::Equal: return a==b;
-    case Kind::NotEqual: return a!=b;
+    case Kind::NotEqual: case Kind::BooleanXor: return a!=b;
     default: throw std::runtime_error("invalid binary callable opcode");
   }
 }
@@ -299,9 +447,18 @@ struct Evaluator {
                      std::size_t depth) {
     if (remaining--==0)throw std::runtime_error("callable execution budget exceeded");
     const auto& n=fn.nodes.at(static_cast<std::size_t>(id));
-    if(n.kind==Kind::Constant)return n.value;
+    if(n.kind==Kind::Constant||n.kind==Kind::Boolean)return n.value;
+    if(n.kind==Kind::Not)return !visit(fn,n.children[0],args,depth);
+    if(n.kind==Kind::And) {
+      if(!visit(fn,n.children[0],args,depth)) return 0;
+      return visit(fn,n.children[1],args,depth);
+    }
+    if(n.kind==Kind::Or) {
+      if(visit(fn,n.children[0],args,depth)) return 1;
+      return visit(fn,n.children[1],args,depth);
+    }
     if(n.kind==Kind::Parameter)return args[static_cast<std::size_t>(n.value)];
-    if(n.kind==Kind::If) {
+    if(n.kind==Kind::If||n.kind==Kind::Ternary) {
       const auto pred=visit(fn,n.children[0],args,depth);
       return visit(fn,n.children[pred ? 1u:2u],args,depth);
     }
@@ -322,6 +479,7 @@ const char* argument_reg(std::size_t i) {
 }
 struct Native {
   const Module& program;
+  explicit Native(const Module& module) : program(module) {}
   std::ostringstream out;
   std::size_t label=0;
   std::string value_slot(int id) const {
@@ -332,11 +490,21 @@ struct Native {
   }
   void emit_node(const Function& fn,int index) {
     const auto& n=fn.nodes.at(static_cast<std::size_t>(index));
-    if(n.kind==Kind::Constant) {
+    if(n.kind==Kind::Constant||n.kind==Kind::Boolean) {
       out<<"  movabsq $"<<n.value<<", %rax\n";
     } else if(n.kind==Kind::Parameter) {
       out<<"  movq "<<parameter_slot(static_cast<int>(n.value))<<", %rax\n";
-    } else if(n.kind==Kind::If) {
+    } else if(n.kind==Kind::Not) {
+      emit_node(fn,n.children[0]);
+      out<<"  xorq $1, %rax\n";
+    } else if(n.kind==Kind::And||n.kind==Kind::Or) {
+      const auto tag=label++;
+      emit_node(fn,n.children[0]);
+      out<<"  cmpq $0, %rax\n  "<<(n.kind==Kind::And?"je":"jne")
+         <<" .Lores_logical_end_"<<tag<<"\n";
+      emit_node(fn,n.children[1]);
+      out<<".Lores_logical_end_"<<tag<<":\n";
+    } else if(n.kind==Kind::If||n.kind==Kind::Ternary) {
       const auto tag=label++;
       emit_node(fn,n.children[0]);
       out<<"  cmpq $0, %rax\n  je .Lores_else_"<<tag<<"\n";
@@ -360,12 +528,13 @@ struct Native {
         case Kind::Add: out<<"  addq ";break;
         case Kind::Sub: out<<"  subq ";break;
         case Kind::Mul: out<<"  imulq ";break;
+        case Kind::IntegerXor: out<<"  xorq ";break;
         default: out<<"  cmpq ";break;
       }
       out<<value_slot(n.children[1])<<", %rax\n";
       if(n.kind==Kind::Add||n.kind==Kind::Sub||n.kind==Kind::Mul) {
         out<<"  jo .Lores_overflow\n";
-      } else {
+      } else if(n.kind!=Kind::IntegerXor) {
         const char* cc="e";
         switch(n.kind) {
           case Kind::Less: cc="l";break;
@@ -373,7 +542,7 @@ struct Native {
           case Kind::Greater: cc="g";break;
           case Kind::GreaterEqual: cc="ge";break;
           case Kind::Equal: cc="e";break;
-          case Kind::NotEqual: cc="ne";break;
+          case Kind::NotEqual: case Kind::BooleanXor: cc="ne";break;
           default: throw std::runtime_error("invalid native comparison");
         }
         out<<"  set"<<cc<<" %al\n  movzbq %al, %rax\n";
@@ -430,6 +599,8 @@ void verify(const Module& m) {
     if(total>kMaxNodes)throw std::runtime_error("callable AST node budget exceeded");
     if(fn.result<0||static_cast<std::size_t>(fn.result)!=fn.nodes.size()-1)
       throw std::runtime_error("invalid callable return/root");
+    if (boolean_kind(fn.nodes[static_cast<std::size_t>(fn.result)].kind))
+      throw std::runtime_error("callable int return cannot be Boolean");
     // This stage-0 AST must be an owned tree, not an arbitrary dataflow DAG.
     // Otherwise a node on an untaken if-branch could be reused without ever
     // initializing its stack slot. Enforce one reachable parent per child.
@@ -440,7 +611,9 @@ void verify(const Module& m) {
         case Kind::Constant: case Kind::Parameter: case Kind::Add:
         case Kind::Sub: case Kind::Mul: case Kind::Less: case Kind::LessEqual:
         case Kind::Greater: case Kind::GreaterEqual: case Kind::Equal:
-        case Kind::NotEqual: case Kind::If: case Kind::Call: break;
+        case Kind::NotEqual: case Kind::If: case Kind::Call:
+        case Kind::Boolean: case Kind::Not: case Kind::Ternary:
+         case Kind::And: case Kind::Or: case Kind::BooleanXor: case Kind::IntegerXor: break;
         default: throw std::runtime_error("unknown callable opcode");
       }
       if(n.kind!=Kind::Call && !n.name.empty())
@@ -452,10 +625,41 @@ void verify(const Module& m) {
           throw std::runtime_error("callable AST shared node");
       }
       std::size_t size=2;
-      if(n.kind==Kind::Constant||n.kind==Kind::Parameter)size=0;
-      else if(n.kind==Kind::If)size=3;
+      if(n.kind==Kind::Constant||n.kind==Kind::Boolean||n.kind==Kind::Parameter)size=0;
+      else if(n.kind==Kind::Not)size=1;
+      else if(n.kind==Kind::If||n.kind==Kind::Ternary)size=3;
       else if(n.kind==Kind::Call)size=n.children.size();
       if(n.children.size()!=size)throw std::runtime_error("callable operand arity mismatch");
+      if(n.kind==Kind::Boolean && n.value!=0 && n.value!=1)
+        throw std::runtime_error("invalid Boolean literal");
+      const auto child_bool=[&](std::size_t pos) {
+        return boolean_kind(fn.nodes.at(static_cast<std::size_t>(n.children.at(pos))).kind);
+      };
+      if(n.kind==Kind::Not && !child_bool(0))
+        throw std::runtime_error("condition_not_bool: negation requires bool");
+      if(n.kind==Kind::If||n.kind==Kind::Ternary) {
+        if(!child_bool(0)) throw std::runtime_error("condition_not_bool: conditional requires bool");
+        if(child_bool(1)||child_bool(2)) throw std::runtime_error("conditional branch is not int");
+      } else if(n.kind==Kind::And||n.kind==Kind::Or) {
+        if(!child_bool(0)||!child_bool(1))
+          throw std::runtime_error("condition_not_bool: logical operands require bool");
+      } else if(n.kind==Kind::BooleanXor) {
+        if(!child_bool(0)||!child_bool(1))
+          throw std::runtime_error("Boolean Xor requires two bool operands");
+        if(std::any_of(m.functions.begin(),m.functions.end(),
+                       [](const Function& f){return f.name=="Xor";}) ||
+           std::find(fn.parameters.begin(),fn.parameters.end(),"Xor")!=fn.parameters.end())
+          throw std::runtime_error("Boolean Xor intrinsic is shadowed by a source declaration");
+      } else if(n.kind==Kind::Equal||n.kind==Kind::NotEqual) {
+        if(child_bool(0)!=child_bool(1)) throw std::runtime_error("comparison operand type mismatch");
+      } else if(n.kind==Kind::IntegerXor||n.kind==Kind::Add||n.kind==Kind::Sub||n.kind==Kind::Mul||
+                n.kind==Kind::Less||n.kind==Kind::LessEqual||n.kind==Kind::Greater||
+                n.kind==Kind::GreaterEqual) {
+        if(child_bool(0)||child_bool(1)) throw std::runtime_error("Boolean is not an int");
+      } else if(n.kind==Kind::Call) {
+        for(std::size_t j=0;j<n.children.size();++j)
+          if(child_bool(j)) throw std::runtime_error("Boolean is not an int argument");
+      }
       if(n.kind==Kind::Parameter && (n.value<0 ||
          static_cast<std::uint64_t>(n.value)>=fn.parameters.size()))
         throw std::runtime_error("invalid callable parameter");

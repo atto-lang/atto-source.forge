@@ -40,11 +40,12 @@ int main(int argc, char** argv) {
       return deny("E_AST: scalar AST rejected");
     return 0;
   }
+  const bool strict = argc == 5 && std::string(argv[1]) == "--verify=strict";
   const bool scalar_codec = argc == 5 && std::string(argv[1]) == "--durable-scalar-codec-v1";
   const bool durable = scalar_codec || (argc == 5 && std::string(argv[1]) == "--durable-counter-actor-v1");
-  const int offset = durable ? 1 : 0;
+  const int offset = (strict || durable) ? 1 : 0;
   if (argc != 4 + offset || std::string(argv[2+offset]) != "-o")
-    return deny("E_USAGE: forge_scalar [--durable-counter-actor-v1|--durable-scalar-codec-v1] input.atto -o output.cpp");
+    return deny("E_USAGE: forge_scalar [--verify=strict|--durable-counter-actor-v1|--durable-scalar-codec-v1] input.atto -o output.cpp");
   const fs::path input(argv[1+offset]), output(argv[3+offset]);
   if (input.extension() != ".atto" || output.extension() != ".cpp")
     return deny("E_PATH: expected .atto and .cpp");
@@ -123,7 +124,7 @@ int main(int argc, char** argv) {
       return deny("E_DURABLE_COUNTER_ACTOR_ABI");
     }
   } else {
-    const auto parsed = atto::forge::scalar::parse_source(source);
+    const auto parsed = strict ? atto::forge::scalar::parse_verified_strict_i64(source) : atto::forge::scalar::parse_source(source);
     if (!parsed.ok()) {
       ec.clear(); fs::remove(output, ec);
       std::cerr << atto::forge::scalar::parse_error_name(parsed.error)

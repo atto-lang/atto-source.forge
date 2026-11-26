@@ -44,6 +44,13 @@ void verify_guard_page_fault() {
   assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGSEGV);
 }
 #endif
+// Address-taken locals may reside on ASan's fake stack. Test physical
+// containment with the machine stack pointer; keep instrumented accesses.
+static std::uintptr_t physical_stack_pointer() {
+  std::uintptr_t sp;
+  asm volatile("mov %%rsp, %0" : "=r"(sp));
+  return sp;
+}
 int main() {
   ActorStackDomain a(1, 128*1024, 4096), b(2, 128*1024, 4096);
   int host_local = 0;
@@ -52,9 +59,9 @@ int main() {
   must_fail([&]{ a.allocate(8); });
   a.run_turn([&](ActorStackDomain& actor){
     int local=41;
-    a_addr=reinterpret_cast<std::uintptr_t>(&local);
-    assert(actor.contains_stack_address(&local));
-    assert(!b.contains_stack_address(&local));
+    a_addr=physical_stack_pointer();
+    assert(actor.contains_stack_address(reinterpret_cast<void*>(a_addr)));
+    assert(!b.contains_stack_address(reinterpret_cast<void*>(a_addr)));
     a_handle=actor.allocate(sizeof(local));
     actor.write(a_handle, 0, &local, sizeof(local));
     must_fail([&]{ b.allocate(1); });
@@ -63,9 +70,9 @@ int main() {
   });
   b.run_turn([&](ActorStackDomain& actor){
     int local=13;
-    b_addr=reinterpret_cast<std::uintptr_t>(&local);
-    assert(actor.contains_stack_address(&local));
-    assert(!a.contains_stack_address(&local));
+    b_addr=physical_stack_pointer();
+    assert(actor.contains_stack_address(reinterpret_cast<void*>(b_addr)));
+    assert(!a.contains_stack_address(reinterpret_cast<void*>(b_addr)));
     b_handle=actor.allocate(sizeof(local));
     actor.write(b_handle, 0, &local, sizeof(local));
     must_fail([&]{ actor.read(a_handle,0,&local,sizeof(local)); });
@@ -82,7 +89,9 @@ int main() {
   });
   must_fail([&]{ a.run_turn([](auto&){throw std::runtime_error("actor failure");}); });
   // An exception unwinds on the actor's own stack; later turns still work.
-  a.run_turn([&](ActorStackDomain& actor){int n=1;assert(actor.contains_stack_address(&n));});
+  a.run_turn([&](ActorStackDomain& actor){
+    assert(actor.contains_stack_address(reinterpret_cast<void*>(physical_stack_pointer())));
+  });
   std::thread outsider([&]{must_fail([&]{a.run_turn([](auto&){});});});
   outsider.join();
   b.stop();b.stop();

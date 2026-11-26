@@ -7,7 +7,7 @@
 #include <vector>
 
 namespace atto::forge::scalar {
-enum class EvalError { none, parse_error, invalid_ast, overflow, divide_by_zero, shift_distance };
+enum class EvalError { none, parse_error, invalid_ast, overflow, divide_by_zero, shift_distance, refinement_violation, i32_overflow };
 struct Evaluated {
   std::optional<i64> value;
   EvalError error = EvalError::none;
@@ -15,8 +15,56 @@ struct Evaluated {
     return error == EvalError::none && value.has_value();
   }
 };
+// Host-only diagnostic model for the lazy DAG; actual guest gates compile
+// emitted C++ separately. Backward-only validated edges bound recursion.
+[[nodiscard]] inline Evaluated evaluate_lazy(const Parsed& p) {
+  if (!validate_ast(p) || !p.trace_steps.empty()) return {{}, EvalError::invalid_ast};
+  std::vector<std::optional<i64>> cache(p.nodes.size());
+  auto run=[&](auto&& self,std::size_t i)->Evaluated {
+    if(cache[i])return {cache[i],EvalError::none};
+    const auto& n=p.nodes[i];
+    std::optional<i64> value;
+    if(n.op==Op::literal)value=n.value;
+    else{
+      auto a=self(self,n.left);if(!a.ok())return a;
+      const auto x=*a.value;
+      if(n.op==Op::choose){auto b=self(self,x!=0?n.right:static_cast<std::size_t>(n.value));if(!b.ok())return b;value=b.value;}
+      else if(n.op==Op::copy)value=x;
+      else if(n.op==Op::neg)value=checked_neg(x);
+      else if(n.op==Op::narrow){
+        if(x<std::numeric_limits<std::int32_t>::min()||x>std::numeric_limits<std::int32_t>::max())return {{},EvalError::i32_overflow};
+        value=x;
+      }
+      else if(n.op==Op::refine){
+        if(x<n.value||x>n.upper)return {{},EvalError::refinement_violation};
+        value=x;
+      }else{
+        if(n.op==Op::bnot)return {{},EvalError::invalid_ast};
+        auto b=self(self,n.right);if(!b.ok())return b;
+        const auto y=*b.value;
+        switch(n.op){
+          case Op::sequence:value=y;break;
+          case Op::eq:value=x==y;break;case Op::ne:value=x!=y;break;
+          case Op::lt:value=x<y;break;case Op::le:value=x<=y;break;
+          case Op::gt:value=x>y;break;case Op::ge:value=x>=y;break;
+          case Op::add:value=checked_add(x,y);break;
+          case Op::sub:value=checked_sub(x,y);break;
+          case Op::mul:value=checked_mul(x,y);break;
+          case Op::div:
+            if(y==0)return {{},EvalError::divide_by_zero};
+            value=checked_div(x,y);break;
+          default:return {{},EvalError::invalid_ast};
+        }
+      }
+    }
+    if(!value)return {{},EvalError::overflow};
+    cache[i]=value;return {value,EvalError::none};
+  };
+  return run(run,p.root);
+}
 [[nodiscard]] inline Evaluated evaluate(const Parsed& p) {
   if (!validate_ast(p)) return {{}, EvalError::invalid_ast};
+  for(const auto& n:p.nodes)if(n.op==Op::choose)return evaluate_lazy(p);
   std::vector<i64> values;
   values.reserve(p.nodes.size());
   for (std::size_t i = 0; i < p.nodes.size(); ++i) {
@@ -24,6 +72,20 @@ struct Evaluated {
     if (node.op == Op::literal) {
       values.push_back(node.value);
       continue;
+    }
+    if(node.op==Op::copy||node.op==Op::sequence){
+      const auto value=values[node.op==Op::copy?node.left:node.right];
+      values.push_back(value);continue;
+    }
+    if(node.op==Op::narrow){
+      const auto value=values[node.left];
+      if(value<std::numeric_limits<std::int32_t>::min()||value>std::numeric_limits<std::int32_t>::max())return {{},EvalError::i32_overflow};
+      values.push_back(value);continue;
+    }
+    if (node.op==Op::refine) {
+      const auto value=values[node.left];
+      if (value<node.value || value>node.upper) return {{},EvalError::refinement_violation};
+      values.push_back(value);continue;
     }
     if (node.left >= i || (node.op != Op::neg && node.op != Op::bnot && node.right >= i))
       return {{}, EvalError::invalid_ast};
