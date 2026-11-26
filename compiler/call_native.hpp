@@ -14,12 +14,12 @@ namespace oresforge::calls {
 enum class Kind {
   Constant, Parameter, Add, Sub, Mul, Less, LessEqual, Greater,
   GreaterEqual, Equal, NotEqual, If, Call, Boolean, Not, Ternary, And, Or, BooleanXor, IntegerXor,
-  OptionSome, OptionNone, OptionCall, OptionMatch, OptionPayload, Div, ResultTrap, ResultMatch, ResultOk, ResultCall
+  OptionSome, OptionNone, OptionCall, OptionMatch, OptionPayload, Div, ResultTrap, ResultMatch, ResultOk, ResultCall, OptionUnwrap
 };
 // Provisional scalar native status ABI. Two INTEGER-class eightbytes on
 // SysV x86-64: value in RAX, error code in RDX. No heap allocation.
 enum class ArithmeticStatus : std::uint64_t {
-  Ok=0, Overflow=65537, DivisionByZero=65538
+  Ok=0, Overflow=65537, DivisionByZero=65538, OptionUnwrap=65539
 };
 struct ArithmeticResult {
   std::int64_t value;
