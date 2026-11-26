@@ -278,6 +278,18 @@ if(BUILD_TESTING)
     COMMAND oresforge_mailbox_incarnation_reuse_v1)
   set_tests_properties(oresforge_mailbox_incarnation_reuse_v1_host
     PROPERTIES TIMEOUT 60)
+  add_executable(oresforge_monotonic_domain_v1
+    verification/monotonic_domain_v1_test.cpp)
+  target_link_libraries(oresforge_monotonic_domain_v1 PRIVATE Threads::Threads)
+  target_include_directories(oresforge_monotonic_domain_v1 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_monotonic_domain_v1 PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_monotonic_domain_v1 PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME oresforge_monotonic_domain_v1_host
+    COMMAND oresforge_monotonic_domain_v1)
+  set_tests_properties(oresforge_monotonic_domain_v1_host PROPERTIES TIMEOUT 30)
   add_executable(oresforge_mailbox_model verification/actor_mailbox_model.cpp)
   target_link_libraries(oresforge_mailbox_model PRIVATE oresforge_core)
   add_test(NAME oresforge_actor_mailbox_model COMMAND oresforge_mailbox_model)
