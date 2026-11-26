@@ -1378,19 +1378,28 @@ class Parser {
     }return true;
   }
   [[nodiscard]] bool helper_declarations(){
-    while(current().kind==Kind::name&&text()=="fnc"&&pos_+1<tokens_.size()){
-      const auto& next=tokens_[pos_+1];
-      const auto spelling=source_.substr(next.offset,next.length);
+    for(;;){
+      const auto word=[&](std::size_t i)->std::string_view{
+        if(i>=tokens_.size()||tokens_[i].kind!=Kind::name)return {};
+        return source_.substr(tokens_[i].offset,tokens_[i].length);
+      };
+      const bool public_scalar=!strict_&&refinements_.empty()&&word(pos_)=="pub";
+      const auto fn=pos_+(public_scalar?1:0);
+      if(word(fn)!="fnc"||fn+1>=tokens_.size())break;
+      const auto spelling=word(fn+1);
       if(spelling=="main")break;
       // Keep existing type-first entrypoint spellings on the legacy path.
-      if((spelling=="int"||spelling=="infer")&&pos_+2<tokens_.size()&&tokens_[pos_+2].kind==Kind::left_arrow)break;
-      if(refinements_.empty()||helpers_.size()>=16)return false;
-      ++pos_;
+      if((spelling=="int"||spelling=="infer")&&fn+2<tokens_.size()&&tokens_[fn+2].kind==Kind::left_arrow)break;
+      if((refinements_.empty()&&!public_scalar)||helpers_.size()>=16)return false;
+      pos_=fn+1;
       if(current().kind!=Kind::name||!binding_name(text()))return false;
       const auto fname=text();++pos_;
       if(!take(Kind::lparen))return false;
       std::vector<Refinement> params;
       if(!take(Kind::rparen)){
+        // Ordinary public helpers currently have a closed, zero-argument
+        // scalar ABI; refined/private helper admission is unchanged.
+        if(public_scalar)return false;
         for(;;){
           if(params.size()>=8||current().kind!=Kind::name)return false;
           const auto ty=annotation(text());++pos_;
@@ -1407,7 +1416,8 @@ class Parser {
       if(!take(Kind::arrow)&&!take(Kind::colon))return false;
       if(current().kind!=Kind::name)return false;
       auto result=annotation(text());++pos_;
-      if(!result)return false;
+      if(!result||(public_scalar&&result->name!="int"))return false;
+      if(public_scalar&&current().kind!=Kind::lbrace)return false;
       auto checks=contracts(params,*result);
       if(!checks||!take(Kind::lbrace))return false;
       auto root=binding_body(*result);
