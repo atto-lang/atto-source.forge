@@ -1,0 +1,31 @@
+name: Native Forge durable Counter profile
+on:
+  pull_request:
+    paths:
+      - 'include/atto/durable_counter_emit.hpp'
+      - 'tools/forge_scalar.cpp'
+      - 'tests/durable_counter_native.mjs'
+      - '.github/workflows/durable-counter-native.yml'
+permissions:
+  contents: read
+jobs:
+  native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Build exact source and execute emitted native code
+        env:
+          EXPECTED: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED"
+          test -z "$(git status --porcelain)"
+          git rev-parse HEAD^{tree}
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target forge_scalar --parallel 2
+          FORGE_SCALAR="$PWD/build/forge_scalar" node tests/durable_counter_native.mjs
+          ctest --test-dir build -R '^scalar_(guest_pipeline|guest_conformance|cli_diagnostics|guest_reproducibility|check_only)$' --output-on-failure
