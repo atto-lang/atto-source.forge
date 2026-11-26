@@ -450,7 +450,7 @@ set(dynamic_pair_source "${OUT_DIR}/pair-dynamic-local.atto")
 set(dynamic_pair_cpp "${OUT_DIR}/pair-dynamic-local.cpp")
 set(dynamic_pair_binary "${OUT_DIR}/pair-dynamic-local")
 file(REMOVE "${dynamic_pair_cpp}" "${dynamic_pair_cpp}.part" "${dynamic_pair_binary}")
-file(WRITE "${dynamic_pair_source}" "fnc twice(int n): int { return n*2; }\npub fnc main(): int { val int n = 21; return Pair.of<int>(\"key\",twice(n)).second; }\n")
+file(WRITE "${dynamic_pair_source}" "${quantity_declarations}\nfnc twice(Bounded n): int { return n*2; }\npub fnc main(): int { val Bounded n = 21; return Pair.of<int>(\"key\",twice(n)).second; }\n")
 execute_process(COMMAND "${FORGE}" "${dynamic_pair_source}" -o "${dynamic_pair_cpp}"
   RESULT_VARIABLE rc ERROR_VARIABLE err TIMEOUT 15)
 if(NOT "${rc}" STREQUAL "0" OR NOT EXISTS "${dynamic_pair_cpp}")
@@ -466,3 +466,5 @@ execute_process(COMMAND "${dynamic_pair_binary}" RESULT_VARIABLE rc OUTPUT_VARIA
 if(NOT "${rc}" STREQUAL "0" OR NOT "${out}" STREQUAL "42\n" OR NOT "${err}" STREQUAL "")
   message(FATAL_ERROR "dynamic Pair helper native mismatch: ${rc}, ${out}, ${err}")
 endif()
+
+verify_local_body(pair-trap "return Pair.of<int>(\"key\",1/0).second;" 71 "" "E_DIVZERO\n")
