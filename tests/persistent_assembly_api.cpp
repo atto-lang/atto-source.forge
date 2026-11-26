@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <stdexcept>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -27,6 +28,27 @@ int main(int argc,char**argv){
   auto pending=root/".pending";std::ofstream(pending)<<"abandoned";require(chmod(pending.c_str(),0600)==0);
   deny([&]{build(a,true);});std::ifstream in(pending);std::string text;in>>text;require(text=="abandoned");fs::remove(pending);
   require(build(a).reused);
+  std::ifstream original_in(slot,std::ios::binary);
+  Bytes original((std::istreambuf_iterator<char>(original_in)),{});
+  original_in.close();
+  require(original.size()>=112);
+  const char* digits="0123456789abcdef";
+  std::string key;
+  for(std::size_t i=8;i<40;++i){key+=digits[original[i]>>4];key+=digits[original[i]&15];}
+  auto secret=ledger_admit("tenant/api",record,pin,master);
+  auto malformed=[&](std::string text){
+   Bytes bytes(text.begin(),text.end());auto signed_bytes=seal(key,bytes,secret);
+   require(verify(key,signed_bytes,secret)==bytes);
+   {std::ofstream f(slot,std::ios::binary|std::ios::trunc);f.write(reinterpret_cast<const char*>(signed_bytes.data()),signed_bytes.size());require(bool(f));}
+   bool denied=false;try{(void)build(a);}catch(const std::runtime_error& e){denied=std::string(e.what()).find("E_ASM_ADMISSION")!=std::string::npos;}
+   require(denied);
+  };
+  std::string assembly(result.bytes.begin(),result.bytes.end());
+  malformed(assembly+".byte 0\n");
+  auto forged=assembly;auto offset=forged.find("0(%rsp)");require(offset!=std::string::npos);forged.replace(offset,7,"999999(%rsp)");malformed(forged);
+  {std::ofstream f(slot,std::ios::binary|std::ios::trunc);f.write(reinterpret_cast<const char*>(original.data()),original.size());require(bool(f));}
+  require(build(a).reused);
+  std::cout<<"FORGE_PINNED_ASSEMBLY|signed-malformed-denied|restored-hit\n";
   std::cout<<"FORGE_COLD_DESTINATION|symlink|hardlink|fifo|staging-preserved|rollback\n";
  }
  if(lane=="edit"){

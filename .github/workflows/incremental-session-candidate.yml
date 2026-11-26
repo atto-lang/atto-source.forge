@@ -9,6 +9,8 @@ on:
       - 'tests/persistent_assembly.cpp'
       - 'compiler/persistent_assembly.hpp'
       - 'compiler/persistent_assembly.cpp'
+      - 'compiler/scalar_assembly_admission.hpp'
+      - 'tests/persistent_namespace_provider.cpp'
       - 'tests/persistent_assembly_api.cpp'
       - 'compiler/cache_envelope.hpp'
       - 'compiler/cache_envelope.cpp'
@@ -64,3 +66,15 @@ jobs:
             readelf -W -l "$exe" | awk '$1 == "GNU_STACK" { seen++; if ($7 != "RW") bad=1 } END { exit !(seen==1 && !bad) }'
           done
           echo 'FORGE_NATIVE_NONEXEC_STACK=8_VERIFIED'
+          c++ -std=c++20 -I. compiler/frontend.cpp compiler/ir.cpp codegen/native.cpp compiler/cache_envelope.cpp compiler/persistent_assembly.cpp tests/persistent_namespace_provider.cpp -lcrypto -o "$work/provider"
+          mkdir -m 700 "$work/provider-cache"
+          compiler="$(sha256sum "$work/provider" | cut -d' ' -f1)"
+          printf '%s\n' '#include <stdint.h>' 'extern int64_t oresforge_entry(int64_t,int64_t);' 'int main(void){return (int)oresforge_entry(5,8);}' > "$work/provider.c"
+          for lane in cold warm edit; do
+            "$work/provider" "$work/provider-cache" "$lane" "$compiler" "$work/provider-$lane.s"
+            cc "$work/provider.c" "$work/provider-$lane.s" -o "$work/provider-$lane"
+            rc=0; "$work/provider-$lane" || rc=$?
+            if [ "$lane" = edit ]; then test "$rc" = 43; else test "$rc" = 42; fi
+            echo "FORGE_PROVIDER_NATIVE|$lane|$rc"
+          done
+          cmp "$work/provider-cold.s" "$work/provider-warm.s"
