@@ -10,6 +10,22 @@ endif()
 add_executable(oresforge compiler/main.cpp)
 target_link_libraries(oresforge PRIVATE oresforge_core)
 include(CTest)
+option(ORESFORGE_EXPERIMENTAL_STAGE0_NATIVE_TESTS "Enable legacy scalar actor source-to-native witness (not production actor support)" OFF)
+if(BUILD_TESTING AND ORESFORGE_EXPERIMENTAL_STAGE0_NATIVE_TESTS)
+  if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    message(FATAL_ERROR "Stage-0 native actor witness currently requires Linux")
+  endif()
+  enable_language(C)
+  if(NOT CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" OR NOT CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    message(FATAL_ERROR "Stage-0 native actor witness requires GCC or Clang")
+  endif()
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  add_test(NAME forge_stage0_compiled_native_actor
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/scalar_actor_stage0_native.py"
+      --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}")
+  set_tests_properties(forge_stage0_compiled_native_actor PROPERTIES
+    TIMEOUT 180 LABELS "experimental;compiled-guest;legacy-syntax")
+endif()
 if(BUILD_TESTING)
   # This executes the REAL Forge compiler frontend on the backend-owned Atto
   # module and refuses a false-positive class/time compiler admission.
@@ -501,6 +517,51 @@ if(BUILD_TESTING)
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic -Werror>)
   add_test(NAME forge_wrapper_option_host_conformance COMMAND oresforge_wrapper_flatten_option_host)
   set_tests_properties(forge_wrapper_option_host_conformance PROPERTIES TIMEOUT 20)
+endif()
+
+# Actor-owned logical byte frames, host runtime foundation only.
+if(BUILD_TESTING)
+  find_package(Threads REQUIRED)
+  add_executable(oresforge_actor_frames_tests verification/actor_frames.cpp)
+  target_include_directories(oresforge_actor_frames_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_actor_frames_tests PRIVATE cxx_std_20)
+  target_link_libraries(oresforge_actor_frames_tests PRIVATE Threads::Threads)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_actor_frames_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+  endif()
+  add_test(NAME oresforge_actor_private_frames_host COMMAND oresforge_actor_frames_tests)
+  set_tests_properties(oresforge_actor_private_frames_host PROPERTIES
+    TIMEOUT 30 LABELS "host-only;actor-logical-frames")
+
+  # A separate executable keeps the allocation instrumentation local to the probe.
+  add_executable(oresforge_actor_frame_allocations verification/actor_frames_allocations.cpp)
+  target_include_directories(oresforge_actor_frame_allocations PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_actor_frame_allocations PRIVATE cxx_std_20)
+  target_link_libraries(oresforge_actor_frame_allocations PRIVATE Threads::Threads)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_actor_frame_allocations PRIVATE
+      -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+  endif()
+  add_test(NAME oresforge_actor_frames_ordinary_allocations_host COMMAND oresforge_actor_frame_allocations)
+  set_tests_properties(oresforge_actor_frames_ordinary_allocations_host PROPERTIES
+    TIMEOUT 30 LABELS "host-only;actor-logical-frames;allocation")
+
+  # Host typed scalar frame interpreter; never a compiled guest receipt.
+  foreach(vm_test IN ITEMS actor_frame_vm_host actor_frame_vm_quota)
+    add_executable(oresforge_${vm_test} verification/${vm_test}.cpp)
+    target_include_directories(oresforge_${vm_test} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_compile_features(oresforge_${vm_test} PRIVATE cxx_std_20)
+    target_link_libraries(oresforge_${vm_test} PRIVATE Threads::Threads)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+      target_compile_options(oresforge_${vm_test} PRIVATE
+        -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+    endif()
+    add_test(NAME oresforge_${vm_test} COMMAND oresforge_${vm_test})
+    set_tests_properties(oresforge_${vm_test} PROPERTIES TIMEOUT 30 LABELS "host-only;actor-logical-frames")
+  endforeach()
+
+
 endif()
 
 # Linux x86-64 native actor stack/heap substrate. HOST CALLBACKS ONLY:
