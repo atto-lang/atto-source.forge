@@ -226,6 +226,11 @@ POSITIVE = (
     ("option-match-lazy", "fnc main(a:int):int{return match<int> Some(a) over on Some(n):int -> n, on None:int -> 1/0, end;}", ((42,42),(0,0))),
     ("option-match-nested", "fnc main(a:int):int{return match<int> Some(a) over on Some(n):int -> match<int> Some(2) over on Some(m):int -> n+m, on None:int -> 0, end, on None:int -> 0, end;}", ((40,42),(0,2))),
     ("option-match-tag-after-div", "fnc value(a:int):Option<int>{return Some(84/a);} fnc main(a:int):int{return match<int> value(a) over on Some(n):int -> n, on None:int -> 0, end;}", ((2,42),(-2,-42))),
+    ("result-match-local-trap", "fnc main(a:int):int{return match<int> trap!(84/a) over on Ok(n):int -> n, on Err():int -> 7, end;}", ((2,42),(0,7),(-2,-42))),
+    ("result-match-flat-forward", "fnc main(a:int):int{return match<int> trap value(a) over on Err():int -> 7, on Ok(n):int -> n, end;} fnc value(a:int):Result<int,Error>{return trap!(84/a);}", ((2,42),(0,7))),
+    ("result-match-direct-call", "fnc main(a:int):int{return match<int> value(a) over on Ok(n):int -> n, on Err():int -> 7, end;} fnc value(a:int):Result<int,Error>{return trap!(84/a);}", ((2,42),(0,7))),
+    ("result-match-lazy", "fnc main(a:int):int{return match<int> Ok(a) over on Ok(n):int -> n, on Err():int -> 1/0, end;}", ((42,42),(0,0))),
+    ("result-match-nested", "fnc main(a:int):int{return match<int> Ok(a) over on Ok(n):int -> match<int> trap!(2/0) over on Ok(m):int -> m, on Err():int -> n+2, end, on Err():int -> 0, end;}", ((40,42),(0,2))),
     ("no-args", "fnc main():int{return 42;}", ((42,),)),
 )
 # Exact shared Git blobs, including the final newline added by build().
@@ -242,6 +247,8 @@ GUARD_FIXTURE_BLOBS = {
 }
 TRAPS = (
     ("option-match-propagates-effect", "fnc value(a:int):Option<int>{return Some(84/a);} fnc main(a:int):int{return match<int> value(a) over on Some(n):int -> n, on None:int -> 42, end;}", (0,), "i64 division by zero"),
+    ("result-match-arm-effect", "fnc main(a:int):int{return match<int> trap!(84/a) over on Ok(n):int -> n, on Err():int -> 1/a, end;}", (0,), "i64 division by zero"),
+    ("result-match-uncaptured-subject", "fnc main(a:int):int{return match<int> Ok(84/a) over on Ok(n):int -> n, on Err():int -> 42, end;}", (0,), "i64 division by zero"),
     ("division-zero", "fnc main(a:int,b:int):int{return a/b;}", (42,0), "i64 division by zero"),
     ("division-overflow", "fnc main(a:int,b:int):int{return a/b;}", (-9223372036854775808,-1), "i64 division overflow"),
     ("division-propagates", "fnc q(a:int,b:int):int{return a/b;} fnc wrap(a:int,b:int):int{return q(a,b)+9223372036854775807;} fnc main(a:int,b:int):int{return wrap(a,b);}", (42,0), "i64 division by zero"),
@@ -269,6 +276,10 @@ TRAPS = (
      (1,), "call depth exceeded"),
 )
 INVALID = (
+    ("result-match-duplicate", "fnc main():int{return match<int> Ok(42) over on Ok(n):int -> n, on Ok(m):int -> m, end;}", "duplicate Result match arm"),
+    ("result-match-error-binding", "fnc main():int{return match<int> Ok(42) over on Ok(n):int -> n, on Err(e):int -> 0, end;}", "Err binding requires nominal Error payload lowering"),
+    ("result-match-scope", "fnc main():int{return match<int> Ok(42) over on Ok(n):int -> n, on Err():int -> n, end;}", "unknown parameter"),
+    ("result-match-wrong-family", "fnc main():int{return match<int> Some(42) over on Ok(n):int -> n, on Err():int -> 0, end;}", "Result match requires Result subject"),
     ("option-match-duplicate", "fnc main():int{return match<int> Some(42) over on Some(n):int -> n, on Some(m):int -> m, end;}", "duplicate Option match arm"),
     ("option-match-scope", "fnc main():int{return match<int> None over on Some(n):int -> n, on None:int -> n, end;}", "unknown parameter"),
     ("option-match-not-callable", "fnc main():int{return match<int> Some(42) over on Some(n):int -> n(), on None:int -> 0, end;}", "Option payload is not callable"),

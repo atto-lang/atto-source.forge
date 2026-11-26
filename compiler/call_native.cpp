@@ -287,17 +287,26 @@ class Parser {
   }
   // A match owns its subject and both lazy arms; the payload reference is
   // a non-owning IR index, independently checked for lexical dominance.
-  int option_match(std::size_t d) {
+  int scalar_match(std::size_t d) {
     depth(d);
     expect("<");expect("int");expect(">");
-    const int subject=option_return(d+1);
+    const bool explicit_result=token_.text=="trap" || token_.text=="trap!" || token_.text=="Ok";
+    const int subject=explicit_result?trapped_return(d+1):option_return(d+1);
     expect("over");
+    expect("on");
+    const bool result=token_.text=="Ok" || token_.text=="Err";
+    if(explicit_result && !result) fail("Result match requires Ok and Err arms");
+    if(result && !explicit_result) {
+      auto& node=current_->nodes.at(static_cast<std::size_t>(subject));
+      if(node.kind!=Kind::OptionCall) fail("Result match requires Result subject");
+      node.kind=Kind::ResultCall;
+    }
     int some=-1,none=-1;
     for(int arm=0;arm<2;++arm) {
-      expect("on");
-      const bool is_some=take("Some");
-      if(!is_some)expect("None");
-      if((is_some?some:none)>=0)fail("duplicate Option match arm");
+      if(arm!=0)expect("on");
+      const bool is_some=take(result?"Ok":"Some");
+      if(!is_some)expect(result?"Err":"None");
+      if((is_some?some:none)>=0)fail(result?"duplicate Result match arm":"duplicate Option match arm");
       bool bound=false;
       if(is_some) {
         expect("(");
@@ -307,6 +316,10 @@ class Parser {
           payload_bindings_.emplace_back(std::move(name),subject);
           bound=true;
         }
+        expect(")");
+      } else if(result) {
+        expect("(");
+        if(token_.text!=")")fail("Err binding requires nominal Error payload lowering");
         expect(")");
       }
       if(take(":"))expect("int");
@@ -319,7 +332,7 @@ class Parser {
     }
     expect("end");
     if(some<0||none<0)fail("nonexhaustive Option match");
-    return add(Kind::OptionMatch,0,{}, {subject,some,none});
+    return add(result?Kind::ResultMatch:Kind::OptionMatch,0,{}, {subject,some,none});
   }
   // Java parses trap as a unary operator. This terminal Result
   // admission accepts repeated trap aliases as one flat capture boundary.
@@ -522,7 +535,7 @@ class Parser {
       return x;
     }
     if (token_.text=="if" || token_.text=="ifnot" || token_.text=="unless") return expr(d+1);
-    if(take("match"))return option_match(d+1);
+    if(take("match"))return scalar_match(d+1);
     if (take("true")) return add(Kind::Boolean,1);
     if (take("false")) return add(Kind::Boolean,0);
     if (!token_.text.empty() && digit(token_.text.front())) {
@@ -538,7 +551,11 @@ class Parser {
       const auto binding=std::find_if(payload_bindings_.rbegin(),payload_bindings_.rend(),
           [&](const auto& entry){return entry.first==name;});
       if (!take("(")) {
-        if(binding!=payload_bindings_.rend())return add(Kind::OptionPayload,binding->second);
+        if(binding!=payload_bindings_.rend()) {
+          const auto kind=current_->nodes.at(static_cast<std::size_t>(binding->second)).kind;
+          const bool result=kind==Kind::Trap||kind==Kind::ResultCall||kind==Kind::Ok;
+          return add(result?Kind::ResultPayload:Kind::OptionPayload,binding->second);
+        }
         if(local_source_>=0 && name==local_name_)
           return add(Kind::Local,local_source_);
         auto& params=current_->parameters;
@@ -666,7 +683,20 @@ struct Evaluator {
     }
     if(n.kind==Kind::Ok)return visit(fn,n.children[0],args,depth,local);
     if(n.kind==Kind::Local)return local.value;
-    if(n.kind==Kind::OptionPayload)return local.payloads.at(static_cast<int>(n.value));
+    if(n.kind==Kind::OptionPayload||n.kind==Kind::ResultPayload)
+      return local.payloads.at(static_cast<int>(n.value));
+    if(n.kind==Kind::ResultMatch) {
+      std::int64_t subject=0;
+      bool error=false;
+      // Only the subject's Result variant is caught; arm effects escape.
+      try { subject=visit(fn,n.children[0],args,depth,local); }
+      catch(const ResultFailure&) { error=true; }
+      if(error)return visit(fn,n.children[2],args,depth,local);
+      local.payloads.emplace(n.children[0],subject);
+      const auto value=visit(fn,n.children[1],args,depth,local);
+      local.payloads.erase(n.children[0]);
+      return value;
+    }
     if(n.kind==Kind::OptionMatch) {
       const auto subject=option_visit(fn,n.children[0],args,depth,local);
       if(subject.tag==0)return visit(fn,n.children[2],args,depth,local);
@@ -719,6 +749,7 @@ struct Native {
   std::ostringstream out;
   std::size_t label=0;
   std::string effect_target=".Lores_return_effect";
+  std::string variant_target=".Lores_return_variant";
   std::string value_slot(int id) const {
     return "-"+std::to_string(8u*(static_cast<std::size_t>(id)+6u))+"(%rbp)";
   }
@@ -745,7 +776,20 @@ struct Native {
          <<".Lores_option_none_"<<tag<<":\n";
       emit_node(fn,n.children[2]);
       out<<".Lores_option_end_"<<tag<<":\n";
-    } else if(n.kind==Kind::Local||n.kind==Kind::OptionPayload) {
+    } else if(n.kind==Kind::ResultMatch) {
+      const auto tag=label++;
+      const auto old_target=variant_target;
+      const auto failure=".Lores_result_err_"+std::to_string(tag);
+      variant_target=failure;
+      emit_node(fn,n.children[0]);
+      variant_target=old_target;
+      out<<"  testq %rdx, %rdx\n  jne "<<failure<<"\n";
+      emit_node(fn,n.children[1]);
+      out<<"  jmp .Lores_result_end_"<<tag<<"\n"
+         <<failure<<":\n  xorl %r9d, %r9d\n";
+      emit_node(fn,n.children[2]);
+      out<<".Lores_result_end_"<<tag<<":\n";
+    } else if(n.kind==Kind::Local||n.kind==Kind::OptionPayload||n.kind==Kind::ResultPayload) {
       out<<"  movq "<<value_slot(static_cast<int>(n.value))<<", %rax\n";
     } else if(n.kind==Kind::BindResult) {
       emit_node(fn,n.children[0]);
@@ -760,7 +804,7 @@ struct Native {
       emit_node(fn,n.children[0]);
       effect_target=old_target;
       out<<"  xorl %edx, %edx\n  jmp .Lores_trap_end_"<<tag<<"\n"
-         <<handler<<":\n  movq %r9, %rdx\n  jmp .Lores_return_variant\n"
+         <<handler<<":\n  movq %r9, %rdx\n  jmp "<<variant_target<<"\n"
          <<".Lores_trap_end_"<<tag<<":\n";
     } else if(n.kind==Kind::Not) {
       emit_node(fn,n.children[0]);
@@ -790,7 +834,7 @@ struct Native {
          <<"  call .Lores_fn_"<<n.callee<<"\n";
       out<<"  testq %r9, %r9\n  jne "<<effect_target<<"\n";
       if(n.kind==Kind::ResultCall)
-        out<<"  testq %rdx, %rdx\n  jne .Lores_return_variant\n";
+        out<<"  testq %rdx, %rdx\n  jne "<<variant_target<<"\n";
     } else if(n.kind==Kind::Div) {
       emit_node(fn,n.children[0]);
       emit_node(fn,n.children[1]);
@@ -915,6 +959,9 @@ void verify(const Module& m) {
     const auto option_kind=[](Kind k) {
       return k==Kind::Some||k==Kind::None||k==Kind::OptionIf||k==Kind::OptionCall;
     };
+    const auto result_kind=[](Kind k) {
+      return k==Kind::Trap||k==Kind::ResultCall||k==Kind::Ok;
+    };
     if(static_cast<int>(fn.returns_scalar_result)+static_cast<int>(fn.returns_scalar_option)+
        static_cast<int>(fn.returns_bool)>1)
       throw std::runtime_error("conflicting scalar return types");
@@ -942,7 +989,7 @@ void verify(const Module& m) {
         case Kind::Greater: case Kind::GreaterEqual: case Kind::Equal:
         case Kind::NotEqual: case Kind::If: case Kind::Call:
         case Kind::Boolean: case Kind::Not: case Kind::Ternary:
-         case Kind::And: case Kind::Or: case Kind::BooleanXor: case Kind::Div: case Kind::Trap: case Kind::ResultCall: case Kind::BindResult: case Kind::Local: case Kind::Ok: case Kind::Some: case Kind::None: case Kind::OptionIf: case Kind::OptionCall: case Kind::BoolCall: case Kind::IntegerXor: case Kind::OptionMatch: case Kind::OptionPayload: break;
+         case Kind::And: case Kind::Or: case Kind::BooleanXor: case Kind::Div: case Kind::Trap: case Kind::ResultCall: case Kind::BindResult: case Kind::Local: case Kind::Ok: case Kind::Some: case Kind::None: case Kind::OptionIf: case Kind::OptionCall: case Kind::BoolCall: case Kind::IntegerXor: case Kind::OptionMatch: case Kind::OptionPayload: case Kind::ResultMatch: case Kind::ResultPayload: break;
         default: throw std::runtime_error("unknown callable opcode");
       }
       if(n.kind!=Kind::Call && n.kind!=Kind::ResultCall && n.kind!=Kind::OptionCall && n.kind!=Kind::BoolCall && !n.name.empty())
@@ -955,9 +1002,9 @@ void verify(const Module& m) {
           throw std::runtime_error("callable AST shared node");
       }
       std::size_t size=2;
-      if(n.kind==Kind::Constant||n.kind==Kind::Boolean||n.kind==Kind::Parameter||n.kind==Kind::Local||n.kind==Kind::None||n.kind==Kind::OptionPayload)size=0;
+      if(n.kind==Kind::Constant||n.kind==Kind::Boolean||n.kind==Kind::Parameter||n.kind==Kind::Local||n.kind==Kind::None||n.kind==Kind::OptionPayload||n.kind==Kind::ResultPayload)size=0;
       else if(n.kind==Kind::Not||n.kind==Kind::Trap||n.kind==Kind::Some||n.kind==Kind::Ok)size=1;
-      else if(n.kind==Kind::If||n.kind==Kind::Ternary||n.kind==Kind::OptionIf||n.kind==Kind::OptionMatch)size=3;
+      else if(n.kind==Kind::If||n.kind==Kind::Ternary||n.kind==Kind::OptionIf||n.kind==Kind::OptionMatch||n.kind==Kind::ResultMatch)size=3;
       else if(n.kind==Kind::Call||n.kind==Kind::ResultCall||n.kind==Kind::OptionCall||n.kind==Kind::BoolCall)size=n.children.size();
       if(n.children.size()!=size)throw std::runtime_error("callable operand arity mismatch");
       if(n.kind==Kind::Boolean && n.value!=0 && n.value!=1)
@@ -982,12 +1029,21 @@ void verify(const Module& m) {
             throw std::runtime_error("Option match requires int arms");
         }
       }
+      if(n.kind==Kind::ResultMatch) {
+        if(!result_kind(fn.nodes.at(static_cast<std::size_t>(n.children[0])).kind))
+          throw std::runtime_error("Result match requires Result subject");
+        for(std::size_t j=1;j<3;++j) {
+          const auto arm=fn.nodes.at(static_cast<std::size_t>(n.children[j])).kind;
+          if(child_bool(j)||option_kind(arm)||result_kind(arm)||arm==Kind::BindResult)
+            throw std::runtime_error("Result match requires int arms");
+        }
+      }
       if(n.kind==Kind::OptionIf) {
         if(!child_bool(0)||!option_kind(fn.nodes.at(static_cast<std::size_t>(n.children[1])).kind)||
            !option_kind(fn.nodes.at(static_cast<std::size_t>(n.children[2])).kind))
           throw std::runtime_error("Option conditional requires bool and Option arms");
       }
-      if(n.kind==Kind::Trap && (!fn.returns_scalar_result || child_bool(0)))
+      if(n.kind==Kind::Trap && child_bool(0))
         throw std::runtime_error("scalar trap must be an int or Result operand");
       if(n.kind==Kind::BindResult) {
         if(!fn.returns_scalar_result || i!=static_cast<std::size_t>(fn.result) ||
@@ -1058,28 +1114,34 @@ void verify(const Module& m) {
                                : fn.returns_scalar_option;
         if(!permitted)throw std::runtime_error("scalar Option value requires typed terminal return or match subject");
       }
-      if(n.kind==Kind::OptionPayload) {
+      if(n.kind==Kind::OptionPayload||n.kind==Kind::ResultPayload) {
+        const bool result=n.kind==Kind::ResultPayload;
         if(n.value<0 || static_cast<std::uint64_t>(n.value)>=i ||
-           !option_kind(fn.nodes[static_cast<std::size_t>(n.value)].kind))
-          throw std::runtime_error("invalid Option payload subject");
+           !(result?result_kind(fn.nodes[static_cast<std::size_t>(n.value)].kind):
+                    option_kind(fn.nodes[static_cast<std::size_t>(n.value)].kind)))
+          throw std::runtime_error(result?"invalid Result payload subject":"invalid Option payload subject");
         bool dominated=false;
         int current=static_cast<int>(i);
         for(int owner_id=parent[i];owner_id>=0;owner_id=parent[static_cast<std::size_t>(owner_id)]) {
           const auto& owner=fn.nodes[static_cast<std::size_t>(owner_id)];
-          if(owner.kind==Kind::OptionMatch && owner.children[0]==n.value &&
+          if(owner.kind==(result?Kind::ResultMatch:Kind::OptionMatch) && owner.children[0]==n.value &&
              owner.children[1]==current) {dominated=true;break;}
           current=owner_id;
         }
-        if(!dominated)throw std::runtime_error("Option payload outside Some arm");
+        if(!dominated)throw std::runtime_error(result?"Result payload outside Ok arm":"Option payload outside Some arm");
       }
-      if(n.kind==Kind::Ok && (!fn.returns_scalar_result ||
-         (p && (p->kind!=Kind::BindResult || p->children[1]!=static_cast<int>(i)))))
-        throw std::runtime_error("Ok requires terminal Result return");
-      if(n.kind==Kind::ResultCall && (!fn.returns_scalar_result ||
-         (p && p->kind!=Kind::Trap && p->kind!=Kind::BindResult)))
-        throw std::runtime_error("scalar Result value requires return or postfix propagation");
-      if(n.kind==Kind::Trap && p && (p->kind!=Kind::BindResult || p->children[1]!=static_cast<int>(i)))
-        throw std::runtime_error("scalar trap must be a terminal Result boundary");
+      if(result_kind(n.kind)) {
+        const bool match_subject=p&&p->kind==Kind::ResultMatch&&p->children[0]==static_cast<int>(i);
+        const bool terminal=!p&&fn.returns_scalar_result;
+        const bool bound_terminal=p&&p->kind==Kind::BindResult&&p->children[1]==static_cast<int>(i);
+        const bool call_operand=n.kind==Kind::ResultCall&&p&&
+            (p->kind==Kind::Trap||p->kind==Kind::BindResult);
+        if(!(match_subject||terminal||bound_terminal||call_operand)) {
+          if(n.kind==Kind::Ok)throw std::runtime_error("Ok requires terminal Result return");
+          if(n.kind==Kind::Trap)throw std::runtime_error("scalar trap must be a terminal Result boundary");
+          throw std::runtime_error("scalar Result value requires return or postfix propagation");
+        }
+      }
       if(n.kind==Kind::Local) {
         const auto& root=fn.nodes[static_cast<std::size_t>(fn.result)];
         if(root.kind!=Kind::BindResult || n.value!=root.children[0] ||
