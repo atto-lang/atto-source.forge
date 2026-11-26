@@ -49,6 +49,10 @@ struct SpanScope {
     }
   }
   auto var = [](std::size_t n) { return "v" + std::to_string(n); };
+  auto literal = [](i64 value) -> std::string {
+    if (value==std::numeric_limits<i64>::min()) return "std::numeric_limits<atto::forge::i64>::min()";
+    return std::to_string(value);
+  };
   for (std::size_t i = 0; i < p.nodes.size(); ++i) {
     const auto& n = p.nodes[i];
     if (n.op == Op::literal) {
@@ -56,6 +60,11 @@ struct SpanScope {
           ? "std::numeric_limits<atto::forge::i64>::min()"
           : std::to_string(n.value);
       code += "  std::optional<atto::forge::i64> " + var(i) + "{" + value + "};\n";
+    } else if (n.op==Op::refine) {
+      code += "  if (*" + var(n.left) + " < " + literal(n.value) +
+          " || *" + var(n.left) + " > " + literal(n.upper) +
+          ") { std::fputs(\"E_REFINEMENT_VIOLATION\\n\", stderr); return 73; }\n";
+      code += "  auto " + var(i) + " = " + var(n.left) + ";\n";
     } else {
       if (n.left >= i || (n.op != Op::neg && n.op != Op::bnot && n.right >= i)) return std::nullopt;
       std::string call;

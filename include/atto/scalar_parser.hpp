@@ -13,11 +13,12 @@
 #include <vector>
 
 namespace atto::forge::scalar {
-enum class Op { literal, add, sub, mul, div, rem, neg, band, bor, bxor, bnot, shl, lshr, ashr };
+enum class Op { literal, add, sub, mul, div, rem, neg, refine, band, bor, bxor, bnot, shl, lshr, ashr };
 struct Node {
   Op op;
   std::size_t left = 0, right = 0;
   i64 value = 0;
+  i64 upper = 0;
 };
 enum class ParseError {
   none, lexical, syntax, literal_out_of_range, depth_limit, node_limit, telemetry
@@ -85,9 +86,14 @@ inline constexpr std::size_t max_trace_depth = 16;
     if (reachable[index]) continue;
     reachable[index] = 1;
     const auto& node = p.nodes[index];
+    if (node.op != Op::refine && node.upper != 0) return false;
     switch (node.op) {
       case Op::literal:
         if (node.left != 0 || node.right != 0) return false;
+        break;
+      case Op::refine:
+        if (node.value > node.upper || node.left >= index || node.right != 0) return false;
+        pending.push_back(node.left);
         break;
       case Op::neg:
       case Op::bnot:
@@ -148,11 +154,14 @@ class Parser {
   std::vector<std::string_view> dimensions_;
   struct Unit { std::string_view name; std::size_t dim; Scale scale; };
   std::vector<Unit> units_;
+  struct Refinement { std::string_view name; Dim dim; Scale scale; i64 lo, hi; };
+  std::vector<Refinement> refinements_;
   static constexpr int exponent_limit = 32;
   [[nodiscard]] bool dimensionless(std::size_t n) const { return dims_[n] == Dim{} && scales_[n] == Scale{}; }
   [[nodiscard]] bool known_name(std::string_view n) const {
     for (auto d : dimensions_) if (d == n) return true;
     for (auto u : units_) if (u.name == n) return true;
+    for (const auto& r : refinements_) if (r.name==n) return true;
     return false;
   }
   [[nodiscard]] bool declaration_name(std::string_view n) const {
@@ -210,6 +219,65 @@ class Parser {
     }
     return true;
   }
+  [[nodiscard]] std::optional<i64> signed_bound() {
+    const bool neg=take(Kind::minus);
+    if (current().kind!=Kind::integer) return std::nullopt;
+    const std::string digits=(neg?"-":"")+std::string(text());
+    const auto result=parse_decimal_i64(digits);
+    if (result) ++pos_;
+    return result;
+  }
+  [[nodiscard]] bool refinement_declarations() {
+    while (name("type")) {
+      if (refinements_.size()==32 || current().kind!=Kind::name || !declaration_name(text())) return false;
+      const auto n=text();++pos_;
+      if (!take(Kind::equals) || (!name("int")&&!name("i64")) || !name("where")) return false;
+      i64 lo=std::numeric_limits<i64>::min(),hi=std::numeric_limits<i64>::max();
+      std::size_t count=0;
+      bool has_units=false;
+      for (;;) {
+        if (++count>16 || !name("self")) return false;
+        const bool lower=take(Kind::gt);
+        if (!lower && !take(Kind::lt)) return false;
+        const bool inclusive=current().kind==Kind::equals && tokens_[pos_-1].offset+tokens_[pos_-1].length==current().offset;
+        if (inclusive) ++pos_;
+        const auto bound=signed_bound();
+        if (!bound) return false;
+        if (lower) {
+          if (!inclusive && *bound==std::numeric_limits<i64>::max()) return false;
+          const i64 b=inclusive?*bound:*bound+1;
+          if (b>lo) lo=b;
+        } else {
+          if (!inclusive && *bound==std::numeric_limits<i64>::min()) return false;
+          const i64 b=inclusive?*bound:*bound-1;
+          if (b<hi) hi=b;
+        }
+        if (lo>hi) return false;
+        if (!name("and")) break;
+        if (name("units")) {has_units=true;break;}
+      }
+      Dim dim{};Scale scale{};
+      if (has_units) {
+        if (!name("in") || current().kind!=Kind::name) return false;
+        const Unit* unit=nullptr;
+        for (const auto& u:units_) if (u.name==text()) unit=&u;
+        if (!unit) return false;
+        dim[unit->dim]=1;scale=unit->scale;++pos_;
+      }
+      if (!take(Kind::semicolon)) return false;
+      refinements_.push_back(Refinement{n,dim,scale,lo,hi});
+    }
+    return true;
+  }
+  [[nodiscard]] const Refinement* refinement_target() const {
+    if (current().kind!=Kind::name) return nullptr;
+    for (const auto& r:refinements_) if (r.name==text()) return &r;
+    return nullptr;
+  }
+  [[nodiscard]] std::optional<std::size_t> checked_refinement(std::size_t n,const Refinement& r) {
+    if (dims_[n]!=r.dim || scales_[n]!=r.scale) {fail(ParseError::syntax);return std::nullopt;}
+    return append(Node{Op::refine,n,0,r.lo,r.hi});
+  }
   [[nodiscard]] bool attach(std::size_t n) {
     if (!dimensionless(n) || current().kind != Kind::name) { fail(ParseError::syntax); return false; }
     for (const auto& u : units_) if (u.name == text()) {
@@ -256,7 +324,7 @@ class Parser {
     Scale s{};
     if (n.op != Op::literal) {
       const auto& lhs = dims_[n.left];
-      if (n.op == Op::neg) { d = lhs; s = scales_[n.left]; }
+      if (n.op == Op::neg || n.op == Op::refine) { d = lhs; s = scales_[n.left]; }
       else if (n.op == Op::bnot) {
         if (!dimensionless(n.left)) { fail(ParseError::syntax); return std::nullopt; }
       } else {
@@ -290,6 +358,9 @@ class Parser {
     while (name("as")) {
       if (current().kind == Kind::name && (text() == "int" || text() == "i64")) {
         if (!cast_target() || !scalar_cast(*result)) return std::nullopt;
+      } else if (const auto* r=refinement_target()) {
+        ++pos_;result=checked_refinement(*result,*r);
+        if (!result) return std::nullopt;
       } else if (!attach(*result)) return std::nullopt;
     }
     return result;
@@ -327,6 +398,9 @@ class Parser {
       if (!take(Kind::lt)) { fail(ParseError::syntax); return std::nullopt; }
       if (cast && current().kind == Kind::name && (text() == "int" || text() == "i64")) {
         if (!cast_target() || !scalar_cast(*result)) return std::nullopt;
+      } else if (const auto* r=cast?refinement_target():nullptr) {
+        ++pos_;result=checked_refinement(*result,*r);
+        if (!result) return std::nullopt;
       } else if (!attach(*result)) return std::nullopt;
       if (!take(Kind::gt)) { fail(ParseError::syntax); return std::nullopt; }
       compact = false;
@@ -415,6 +489,13 @@ class Parser {
   [[nodiscard]] std::optional<std::size_t> unary(int depth) {
     if (depth > max_parse_depth) { fail(ParseError::depth_limit); return std::nullopt; }
     if (take(Kind::lt)) {
+      if (const auto* r=refinement_target()) {
+        ++pos_;
+        if (!take(Kind::gt)) {fail(ParseError::syntax);return std::nullopt;}
+        auto operand=unary(depth+1);
+        if (!operand) return std::nullopt;
+        return checked_refinement(*operand,*r);
+      }
       if (!cast_target() || !take(Kind::gt)) {
         fail(ParseError::syntax); return std::nullopt;
       }
@@ -526,7 +607,7 @@ public:
   }
   [[nodiscard]] Parsed parse() {
     if (out_.error != ParseError::none) return std::move(out_);
-    if (!declarations()) { fail(ParseError::syntax); return std::move(out_); }
+    if (!declarations() || !refinement_declarations()) { fail(ParseError::syntax); return std::move(out_); }
     (void)name("pub");
     const bool fnc = name("fnc");
     bool signature_ok = false;

@@ -50,4 +50,8 @@ int main() {
   forged.nodes.back().op = static_cast<Op>(900);
   assert(!validate_ast(forged));
   assert(!emit_cpp(forged));
+  const auto checked=parse_source("type R = int where self >= 1 and self <= 42; fnc main(): int {return 42::<R>;}");
+  assert(checked.ok() && emit_cpp(checked));
+  auto bad_range=checked;bad_range.nodes.back().value=43;bad_range.nodes.back().upper=42;
+  assert(!emit_cpp(bad_range));
 }
