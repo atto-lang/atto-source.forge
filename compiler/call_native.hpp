@@ -14,7 +14,7 @@ namespace oresforge::calls {
 enum class Kind {
   Constant, Parameter, Add, Sub, Mul, Less, LessEqual, Greater,
   GreaterEqual, Equal, NotEqual, If, Call, Boolean, Not, Ternary, And, Or, BooleanXor, IntegerXor,
-  OptionSome, OptionNone, OptionCall, OptionMatch, OptionPayload, Div
+  OptionSome, OptionNone, OptionCall, OptionMatch, OptionPayload, Div, ResultTrap, ResultMatch, ResultOk, ResultCall
 };
 // Provisional scalar native status ABI. Two INTEGER-class eightbytes on
 // SysV x86-64: value in RAX, error code in RDX. No heap allocation.
@@ -41,6 +41,7 @@ struct Function {
   std::vector<Node> nodes;
   int result = -1;
   bool returns_option_int = false;
+  bool returns_result_int = false;
 };
 struct Module {
   std::vector<Function> functions;

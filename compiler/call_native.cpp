@@ -37,11 +37,14 @@ bool boolean_kind(Kind k) {
 bool option_kind(Kind k) {
   return k==Kind::OptionSome || k==Kind::OptionNone || k==Kind::OptionCall;
 }
-bool call_kind(Kind k) { return k==Kind::Call || k==Kind::OptionCall; }
+bool result_kind(Kind k) { return k==Kind::ResultTrap || k==Kind::ResultOk || k==Kind::ResultCall; }
+bool match_kind(Kind k) { return k==Kind::OptionMatch || k==Kind::ResultMatch; }
+bool call_kind(Kind k) { return k==Kind::Call || k==Kind::OptionCall || k==Kind::ResultCall; }
 bool reserved_predicate_word(std::string_view s) {
   return s=="true" || s=="false" || s=="ifnot" || s=="unless" ||
          s=="eq" || s=="neq" || s=="fi" || s=="guard" || s=="end" ||
-         s=="Option" || s=="Some" || s=="None" || s=="match" || s=="over" || s=="on";
+         s=="Option" || s=="Some" || s=="None" || s=="match" || s=="over" || s=="on" ||
+         s=="Result" || s=="Ok" || s=="Err" || s=="trap" || s=="trap!";
 }
 
 class Parser {
@@ -62,6 +65,17 @@ class Parser {
         node.callee=found->second;
         if (node.children.size()!=module_.functions.at(static_cast<std::size_t>(node.callee)).parameters.size())
           fail("function arity mismatch");
+      }
+    }
+    // Only direct call operands of trap may switch from scalar to Result.
+    // Other calls retain their syntactically expected type and are verified.
+    for(auto& fn:module_.functions) {
+      for(const auto& node:fn.nodes) {
+        if(node.kind!=Kind::ResultTrap)continue;
+        auto& operand=fn.nodes.at(static_cast<std::size_t>(node.children[0]));
+        if(operand.kind==Kind::Call &&
+           module_.functions.at(static_cast<std::size_t>(operand.callee)).returns_result_int)
+          operand.kind=Kind::ResultCall;
       }
     }
     verify(module_);
@@ -99,6 +113,13 @@ class Parser {
                                std::to_string(begin));
     if (letter(c)) {
       while (at_<text_.size() && (letter(text_[at_])||digit(text_[at_]))) ++at_;
+      if(text_.substr(begin,at_-begin)=="trap" && at_<text_.size() && text_[at_]=='!' &&
+         (at_+1==text_.size()||text_[at_+1]!='=')) {
+        ++at_;
+        token_={text_.substr(begin,at_-begin),begin};
+        if(at_==text_.size()||!space(text_[at_]))
+          fail("E_BANG_KEYWORD_WHITESPACE: whitespace required after trap!");
+      }
     } else if (digit(c)) {
       while (at_<text_.size() && digit(text_[at_])) ++at_;
     } else if (c=='!' && text_.substr(begin,3)=="!eq" &&
@@ -203,6 +224,15 @@ class Parser {
       expect("{");if(!take("^"))expect("return");
       current_->result=option_expr(0);
       expect(";");
+    } else if(take("Result")) {
+      expect("<");expect("int");expect(",");expect("Error");expect(">");
+      current_->returns_result_int=true;
+      expect("{");if(!take("^"))expect("return");
+      const int root=sum_expr(0);
+      auto& value=current_->nodes.at(static_cast<std::size_t>(root));
+      if(value.kind==Kind::OptionCall)value.kind=Kind::ResultCall;
+      current_->result=root;
+      expect(";");
     } else {
       expect("int");expect("{");
       current_->result=terminal_body(0);
@@ -269,18 +299,57 @@ class Parser {
     expect(")");
     return add(Kind::OptionCall,0,name,std::move(args));
   }
+  int sum_expr(std::size_t d) {
+    depth(d);
+    const bool trapped=take("trap")||take("trap!");
+    int subject;
+    if(trapped) {
+      int operand;
+      if(take("Ok")) {
+        expect("(");
+        const int payload=expr(d+1);
+        require_integer(payload);
+        expect(")");
+        operand=add(Kind::ResultOk,0,{}, {payload});
+      } else {
+        operand=expr(d+1);
+        require_integer(operand);
+      }
+      subject=add(Kind::ResultTrap,0,{}, {operand});
+    } else if(take("Ok")) {
+      expect("(");
+      const int payload=expr(d+1);
+      require_integer(payload);
+      expect(")");
+      subject=add(Kind::ResultOk,0,{}, {payload});
+    } else subject=option_expr(d+1);
+    return subject;
+  }
   int option_match(std::size_t d) {
     depth(d);
     expect("<");expect("int");expect(">");
-    const int subject=option_expr(d+1);
+    const int subject=sum_expr(d+1);
+    bool result_family=false;
     expect("over");
     int some=-1,none=-1;
     for(int arm=0;arm<2;++arm) {
       expect("on");
-      const bool is_some=take("Some");
-      if(!is_some) expect("None");
-      if((is_some?some:none)>=0) fail("duplicate Option match arm");
+      if(arm==0) {
+        result_family=token_.text=="Ok"||token_.text=="Err";
+        auto& value=current_->nodes.at(static_cast<std::size_t>(subject));
+        if(result_family&&value.kind==Kind::OptionCall)value.kind=Kind::ResultCall;
+        if(result_family?!result_kind(value.kind):!option_kind(value.kind))
+          fail("tagged match family mismatch");
+      }
+      const bool is_some=take(result_family?"Ok":"Some");
+      if(!is_some) expect(result_family?"Err":"None");
+      if((is_some?some:none)>=0) fail(result_family?"duplicate Result match arm":"duplicate Option match arm");
       bool bound=false;
+      if(result_family&&!is_some) {
+        expect("(");
+        if(token_.text!=")")fail("guest Error object binding is unsupported");
+        expect(")");
+      }
       if(is_some) {
         expect("(");
         if(token_.text!=")") {
@@ -301,7 +370,7 @@ class Parser {
     }
     expect("end");
     if(some<0||none<0)fail("nonexhaustive Option match");
-    return add(Kind::OptionMatch,0,{}, {subject,some,none});
+    return add(result_family?Kind::ResultMatch:Kind::OptionMatch,0,{}, {subject,some,none});
   }
   int expr(std::size_t d) {
     depth(d);
@@ -499,22 +568,26 @@ class Parser {
   }
 };
 
+struct ArithmeticFault : std::runtime_error {
+  ArithmeticStatus status;
+  ArithmeticFault(ArithmeticStatus s,const char* message):std::runtime_error(message),status(s){}
+};
 std::int64_t checked(Kind k,std::int64_t a,std::int64_t b) {
   std::int64_t out=0;
   switch(k) {
     case Kind::Add:
-      if(__builtin_add_overflow(a,b,&out))throw std::runtime_error("i64 add overflow");
+      if(__builtin_add_overflow(a,b,&out))throw ArithmeticFault(ArithmeticStatus::Overflow,"i64 add overflow");
       return out;
     case Kind::Sub:
-      if(__builtin_sub_overflow(a,b,&out))throw std::runtime_error("i64 sub overflow");
+      if(__builtin_sub_overflow(a,b,&out))throw ArithmeticFault(ArithmeticStatus::Overflow,"i64 sub overflow");
       return out;
     case Kind::Mul:
-      if(__builtin_mul_overflow(a,b,&out))throw std::runtime_error("i64 mul overflow");
+      if(__builtin_mul_overflow(a,b,&out))throw ArithmeticFault(ArithmeticStatus::Overflow,"i64 mul overflow");
       return out;
     case Kind::Div:
-      if(b==0) throw std::runtime_error("i64 division by zero");
+      if(b==0) throw ArithmeticFault(ArithmeticStatus::DivisionByZero,"i64 division by zero");
       if(a==std::numeric_limits<std::int64_t>::min() && b==-1)
-        throw std::runtime_error("i64 division overflow");
+        throw ArithmeticFault(ArithmeticStatus::Overflow,"i64 division overflow");
       return a/b;
     case Kind::IntegerXor: return a^b;
     case Kind::Less: return a<b;
@@ -549,8 +622,17 @@ struct Evaluator {
     if(remaining--==0)throw std::runtime_error("callable execution budget exceeded");
     const auto& n=fn.nodes.at(static_cast<std::size_t>(id));
     if(n.kind==Kind::OptionNone)return {false,0};
-    if(n.kind==Kind::OptionSome)return {true,visit(fn,n.children[0],args,depth,frame)};
-    if(n.kind==Kind::OptionCall) {
+    if(n.kind==Kind::OptionSome||n.kind==Kind::ResultOk)return {true,visit(fn,n.children[0],args,depth,frame)};
+    if(n.kind==Kind::ResultTrap) {
+      try {
+        if(result_kind(fn.nodes.at(static_cast<std::size_t>(n.children[0])).kind))
+          return option(fn,n.children[0],args,depth,frame);
+        return {true,visit(fn,n.children[0],args,depth,frame)};
+      } catch(const ArithmeticFault& fault) {
+        return {false,static_cast<std::int64_t>(fault.status)};
+      }
+    }
+    if(n.kind==Kind::OptionCall||n.kind==Kind::ResultCall) {
       std::vector<std::int64_t> vals;
       for(int arg:n.children)vals.push_back(visit(fn,arg,args,depth,frame));
       return evaluate_option(static_cast<std::size_t>(n.callee),vals,depth+1);
@@ -562,7 +644,7 @@ struct Evaluator {
     if (remaining--==0)throw std::runtime_error("callable execution budget exceeded");
     const auto& n=fn.nodes.at(static_cast<std::size_t>(id));
     if(n.kind==Kind::OptionPayload)return frame[static_cast<std::size_t>(n.value)];
-    if(n.kind==Kind::OptionMatch) {
+    if(match_kind(n.kind)) {
       const auto value=option(fn,n.children[0],args,depth,frame);
       if(value.some)frame[static_cast<std::size_t>(n.children[0])]=value.payload;
       return visit(fn,n.children[value.some?1u:2u],args,depth,frame);
@@ -602,6 +684,7 @@ struct Native {
   explicit Native(const Module& module) : program(module) {}
   std::ostringstream out;
   std::size_t label=0;
+  std::string overflow_target=".Lores_overflow", divzero_target=".Lores_divzero", error_target=".Lores_return_error";
   std::string value_slot(int id) const {
     return "-"+std::to_string(8u*(static_cast<std::size_t>(id)+6u))+"(%rbp)";
   }
@@ -614,14 +697,30 @@ struct Native {
       out<<"  movabsq $"<<n.value<<", %rax\n";
     } else if(n.kind==Kind::Parameter) {
       out<<"  movq "<<parameter_slot(static_cast<int>(n.value))<<", %rax\n";
-    } else if(n.kind==Kind::OptionSome) {
+    } else if(n.kind==Kind::ResultTrap) {
+      const auto suffix=std::to_string(label++);
+      const auto old_overflow=overflow_target,old_divzero=divzero_target,old_error=error_target;
+      overflow_target=".Lores_trap_overflow_"+suffix;
+      divzero_target=".Lores_trap_divzero_"+suffix;
+      error_target=".Lores_trap_caught_"+suffix;
+      emit_node(fn,n.children[0]);
+      if(!result_kind(fn.nodes.at(static_cast<std::size_t>(n.children[0])).kind))
+        out<<"  movq $1, %r9\n";
+      out<<"  jmp .Lores_trap_end_"<<suffix<<"\n"
+         <<overflow_target<<":\n  movl $"<<static_cast<std::uint64_t>(ArithmeticStatus::Overflow)<<", %edx\n"
+         <<"  jmp "<<error_target<<"\n"
+         <<divzero_target<<":\n  movl $"<<static_cast<std::uint64_t>(ArithmeticStatus::DivisionByZero)<<", %edx\n"
+         <<error_target<<":\n  movq %rdx, %rax\n  xorq %r9, %r9\n  xorl %edx, %edx\n"
+         <<".Lores_trap_end_"<<suffix<<":\n";
+      overflow_target=old_overflow;divzero_target=old_divzero;error_target=old_error;
+    } else if(n.kind==Kind::OptionSome||n.kind==Kind::ResultOk) {
       emit_node(fn,n.children[0]);
       out<<"  movq $1, %r9\n";
     } else if(n.kind==Kind::OptionNone) {
       out<<"  xorq %rax, %rax\n  xorq %r9, %r9\n";
     } else if(n.kind==Kind::OptionPayload) {
       out<<"  movq "<<value_slot(static_cast<int>(n.value))<<", %rax\n";
-    } else if(n.kind==Kind::OptionMatch) {
+    } else if(match_kind(n.kind)) {
       const auto tag=label++;
       emit_node(fn,n.children[0]);
       out<<"  cmpq $0, %r9\n  je .Lores_none_"<<tag<<"\n";
@@ -655,17 +754,17 @@ struct Native {
       out<<"  movq -40(%rbp), %r8\n"
          <<"  addq $1, %r8\n"
          <<"  call .Lores_fn_"<<n.callee<<"\n"
-         <<"  testq %rdx, %rdx\n  jne .Lores_return_error\n";
+         <<"  testq %rdx, %rdx\n  jne "<<error_target<<"\n";
     } else if(n.kind==Kind::Div) {
       emit_node(fn,n.children[0]);
       emit_node(fn,n.children[1]);
       const auto tag=label++;
       out<<"  movq "<<value_slot(n.children[1])<<", %r11\n"
-         <<"  testq %r11, %r11\n  je .Lores_divzero\n"
+         <<"  testq %r11, %r11\n  je "<<divzero_target<<"\n"
          <<"  movq "<<value_slot(n.children[0])<<", %rax\n"
          <<"  cmpq $-1, %r11\n  jne .Lores_div_safe_"<<tag<<"\n"
          <<"  movabsq $-9223372036854775808, %r10\n"
-         <<"  cmpq %r10, %rax\n  je .Lores_overflow\n"
+         <<"  cmpq %r10, %rax\n  je "<<overflow_target<<"\n"
          <<".Lores_div_safe_"<<tag<<":\n  cqto\n  idivq %r11\n";
     } else {
       emit_node(fn,n.children[0]);
@@ -680,7 +779,7 @@ struct Native {
       }
       out<<value_slot(n.children[1])<<", %rax\n";
       if(n.kind==Kind::Add||n.kind==Kind::Sub||n.kind==Kind::Mul) {
-        out<<"  jo .Lores_overflow\n";
+        out<<"  jo "<<overflow_target<<"\n";
       } else if(n.kind!=Kind::IntegerXor) {
         const char* cc="e";
         switch(n.kind) {
@@ -760,9 +859,10 @@ void verify(const Module& m) {
     const auto root_kind=fn.nodes[static_cast<std::size_t>(fn.result)].kind;
     if(fn.returns_option_int!=option_kind(root_kind))
       throw std::runtime_error("callable Option result type mismatch");
+    if(fn.returns_result_int!=result_kind(root_kind))throw std::runtime_error("callable Result type mismatch");
     if(boolean_kind(root_kind))
       throw std::runtime_error("callable int return cannot be Boolean");
-    if(static_cast<int>(fi)==m.entry && fn.returns_option_int)
+    if(static_cast<int>(fi)==m.entry && (fn.returns_option_int||fn.returns_result_int))
       throw std::runtime_error("native entry must return int");
     // This stage-0 AST must be an owned tree, not an arbitrary dataflow DAG.
     // Otherwise a node on an untaken if-branch could be reused without ever
@@ -779,7 +879,8 @@ void verify(const Module& m) {
         case Kind::Boolean: case Kind::Not: case Kind::Ternary:
          case Kind::And: case Kind::Or: case Kind::BooleanXor: case Kind::IntegerXor:
          case Kind::OptionSome: case Kind::OptionNone: case Kind::OptionCall:
-         case Kind::OptionMatch: case Kind::OptionPayload: case Kind::Div: break;
+         case Kind::OptionMatch: case Kind::OptionPayload: case Kind::Div:
+         case Kind::ResultTrap: case Kind::ResultMatch: case Kind::ResultOk: case Kind::ResultCall: break;
         default: throw std::runtime_error("unknown callable opcode");
       }
       if(!call_kind(n.kind) && !n.name.empty())
@@ -794,14 +895,18 @@ void verify(const Module& m) {
       std::size_t size=2;
       if(n.kind==Kind::Constant||n.kind==Kind::Boolean||n.kind==Kind::Parameter||
          n.kind==Kind::OptionNone||n.kind==Kind::OptionPayload)size=0;
-      else if(n.kind==Kind::Not||n.kind==Kind::OptionSome)size=1;
-      else if(n.kind==Kind::If||n.kind==Kind::Ternary||n.kind==Kind::OptionMatch)size=3;
+      else if(n.kind==Kind::Not||n.kind==Kind::OptionSome||n.kind==Kind::ResultOk||n.kind==Kind::ResultTrap)size=1;
+      else if(n.kind==Kind::If||n.kind==Kind::Ternary||match_kind(n.kind))size=3;
       else if(call_kind(n.kind))size=n.children.size();
       if(n.children.size()!=size)throw std::runtime_error("callable operand arity mismatch");
       for(std::size_t j=0;j<n.children.size();++j) {
-        const bool tagged=option_kind(fn.nodes[static_cast<std::size_t>(n.children[j])].kind);
-        if(tagged!=(n.kind==Kind::OptionMatch && j==0))
+        const auto kind=fn.nodes[static_cast<std::size_t>(n.children[j])].kind;
+        if(option_kind(kind)!=(n.kind==Kind::OptionMatch && j==0))
           throw std::runtime_error("Option value used outside typed match subject");
+        if(result_kind(kind) && !(j==0&&(n.kind==Kind::ResultMatch||n.kind==Kind::ResultTrap)))
+          throw std::runtime_error("Result value used outside typed match or trap");
+        if(n.kind==Kind::ResultMatch && j==0 && !result_kind(kind))
+          throw std::runtime_error("Result match subject must be Result");
       }
       if(n.kind==Kind::Boolean && n.value!=0 && n.value!=1)
         throw std::runtime_error("invalid Boolean literal");
@@ -810,9 +915,9 @@ void verify(const Module& m) {
       };
       if(n.kind==Kind::Not && !child_bool(0))
         throw std::runtime_error("condition_not_bool: negation requires bool");
-      if(n.kind==Kind::OptionSome) {
+      if(n.kind==Kind::OptionSome||n.kind==Kind::ResultOk||n.kind==Kind::ResultTrap) {
         if(child_bool(0))throw std::runtime_error("Option<int> payload must be int");
-      } else if(n.kind==Kind::OptionMatch) {
+      } else if(match_kind(n.kind)) {
         if(child_bool(1)||child_bool(2))throw std::runtime_error("Option match result must be int");
       } else if(n.kind==Kind::If||n.kind==Kind::Ternary) {
         if(!child_bool(0)) throw std::runtime_error("condition_not_bool: conditional requires bool");
@@ -849,6 +954,8 @@ void verify(const Module& m) {
           throw std::runtime_error("callable target/name mismatch");
         if((n.kind==Kind::OptionCall)!=m.functions[static_cast<std::size_t>(n.callee)].returns_option_int)
           throw std::runtime_error("callable Option result type mismatch");
+        if((n.kind==Kind::ResultCall)!=m.functions[static_cast<std::size_t>(n.callee)].returns_result_int)
+          throw std::runtime_error("callable Result type mismatch");
       } else if(n.callee!=-1)throw std::runtime_error("unexpected callable target");
     }
     for(std::size_t i=0;i<fn.nodes.size();++i) {
@@ -858,13 +965,13 @@ void verify(const Module& m) {
       const auto& n=fn.nodes[i];
       if(n.kind==Kind::OptionPayload) {
         if(n.value<0||static_cast<std::uint64_t>(n.value)>=i ||
-           !option_kind(fn.nodes[static_cast<std::size_t>(n.value)].kind))
+           !(option_kind(fn.nodes[static_cast<std::size_t>(n.value)].kind)||result_kind(fn.nodes[static_cast<std::size_t>(n.value)].kind)))
           throw std::runtime_error("invalid Option payload binding");
         bool authorized=false;
         int child=static_cast<int>(i);
         for(int p=parent[i];p>=0;child=p,p=parent[static_cast<std::size_t>(p)]) {
           const auto& owner=fn.nodes[static_cast<std::size_t>(p)];
-          if(owner.kind==Kind::OptionMatch && owner.children[0]==n.value &&
+          if(match_kind(owner.kind) && owner.children[0]==n.value &&
              owner.children[1]==child) { authorized=true;break; }
         }
         if(!authorized)throw std::runtime_error("Option payload outside Some arm");
