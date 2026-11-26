@@ -13,7 +13,7 @@
 #include <vector>
 
 namespace atto::forge::scalar {
-enum class Op { literal, add, sub, mul, div, rem, neg, band, bor, bxor, bnot, shl, lshr, ashr };
+enum class Op { literal, local, seq, add, sub, mul, div, rem, neg, band, bor, bxor, bnot, shl, lshr, ashr };
 struct Node {
   Op op;
   std::size_t left = 0, right = 0;
@@ -89,11 +89,13 @@ inline constexpr std::size_t max_trace_depth = 16;
       case Op::literal:
         if (node.left != 0 || node.right != 0) return false;
         break;
+      case Op::local:
       case Op::neg:
       case Op::bnot:
         if (node.left >= index || node.right != 0) return false;
         pending.push_back(node.left);
         break;
+      case Op::seq:
       case Op::add:
       case Op::sub:
       case Op::mul:
@@ -151,6 +153,7 @@ class Parser {
   std::vector<std::string_view> dimensions_;
   struct Unit { std::string_view name; std::size_t dim; Scale scale; };
   std::vector<Unit> units_;
+  std::vector<std::pair<std::string_view,std::size_t>> locals_;
   static constexpr int exponent_limit = 32;
   [[nodiscard]] bool dimensionless(std::size_t n) const { return dims_[n] == Dim{} && scales_[n] == Scale{}; }
   [[nodiscard]] bool known_name(std::string_view n) const {
@@ -259,7 +262,8 @@ class Parser {
     Scale s{};
     if (n.op != Op::literal) {
       const auto& lhs = dims_[n.left];
-      if (n.op == Op::neg) { d = lhs; s = scales_[n.left]; }
+      if (n.op == Op::neg || n.op == Op::local) { d = lhs; s = scales_[n.left]; }
+      else if (n.op == Op::seq) { d = dims_[n.right]; s = scales_[n.right]; }
       else if (n.op == Op::bnot) {
         if (!dimensionless(n.left)) { fail(ParseError::syntax); return std::nullopt; }
       } else {
@@ -456,6 +460,12 @@ class Parser {
       if (!take(Kind::rparen)) { fail(ParseError::syntax); return std::nullopt; }
       return postfix(inside);
     }
+    if (current().kind == Kind::name) {
+      for (const auto& local : locals_) if (local.first == text()) {
+        ++pos_;
+        return postfix(append(Node{Op::local, local.second, 0, 0}));
+      }
+    }
     if (current().kind == Kind::integer) {
       auto n = parse_decimal_i64(text());
       if (!n) { fail(ParseError::literal_out_of_range); return std::nullopt; }
@@ -467,7 +477,32 @@ class Parser {
   }
   [[nodiscard]] std::optional<std::size_t> body(std::vector<std::string_view>& aliases) {
     std::optional<std::size_t> root;
+    // Keep local bindings outside telemetry scopes until per-statement
+    // span ordering is represented in the IR. All initializers execute
+    // in source order even when their values are unused.
+    while (name("val")) {
+      if (!aliases.empty() || locals_.size() >= 32 || current().kind != Kind::name) {
+        fail(ParseError::syntax); return std::nullopt;
+      }
+      const auto local=text();
+      if (local.empty() || local[0]<'a' || local[0]>'z' || known_name(local) ||
+          local=="val" || local=="let" || local=="as" || local=="int" ||
+          local=="i64" || local=="main" || local=="return" || local=="using" ||
+          local=="define" || local=="unit" || local=="dimension" ||
+          local=="true" || local=="false" || local=="self") {
+        fail(ParseError::syntax); return std::nullopt;
+      }
+      for (const auto& prior:locals_) if(prior.first==local) {
+        fail(ParseError::syntax); return std::nullopt;
+      }
+      ++pos_;
+      if(!take(Kind::equals)) {fail(ParseError::syntax);return std::nullopt;}
+      auto init=expr(0);
+      if(!init || !take(Kind::semicolon)) {fail(ParseError::syntax);return std::nullopt;}
+      locals_.emplace_back(local,*init);
+    }
     while (name("using")) {
+      if (!locals_.empty()) {fail(ParseError::syntax);return std::nullopt;}
       if (root || aliases.size() == max_trace_depth ||
           !name("telemetry") || !take(Kind::dot) || !name("span") ||
           !take(Kind::lparen) || current().kind != Kind::quoted) {
@@ -514,6 +549,12 @@ class Parser {
         dims_.resize(previous_size); scales_.resize(previous_size);
       } else {
         root = value;
+        // Explicit sequence edges keep otherwise-unused checked initializers
+        // reachable, without copying or re-evaluating their expression nodes.
+        for (auto it=locals_.rbegin();it!=locals_.rend();++it) {
+          root=append(Node{Op::seq,it->second,*root,0});
+          if(!root)return std::nullopt;
+        }
       }
     }
     if (!take(Kind::rbrace)) fail(ParseError::syntax);

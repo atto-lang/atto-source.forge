@@ -57,7 +57,13 @@ struct SpanScope {
           : std::to_string(n.value);
       code += "  std::optional<atto::forge::i64> " + var(i) + "{" + value + "};\n";
     } else {
-      if (n.left >= i || (n.op != Op::neg && n.op != Op::bnot && n.right >= i)) return std::nullopt;
+      if (n.left >= i || (n.op != Op::neg && n.op != Op::bnot && n.op != Op::local && n.right >= i)) return std::nullopt;
+      if (n.op == Op::local || n.op == Op::seq) {
+        if (n.op == Op::seq) code += "  (void)" + var(n.left) + ";\n";
+        code += "  auto " + var(i) + " = " + var(n.op==Op::local?n.left:n.right) + ";\n";
+        if (code.size() > max_emitted_bytes) return std::nullopt;
+        continue;
+      }
       std::string call;
       if (n.op == Op::shl || n.op == Op::lshr || n.op == Op::ashr) {
         code += "  if (*" + var(n.right) + " < 0 || *" + var(n.right) +

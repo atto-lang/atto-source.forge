@@ -25,11 +25,13 @@ struct Evaluated {
       values.push_back(node.value);
       continue;
     }
-    if (node.left >= i || (node.op != Op::neg && node.op != Op::bnot && node.right >= i))
+    if (node.left >= i || (node.op != Op::neg && node.op != Op::bnot && node.op != Op::local && node.right >= i))
       return {{}, EvalError::invalid_ast};
     const i64 lhs = values[node.left];
     std::optional<i64> result;
     switch (node.op) {
+      case Op::local: result=lhs; break;
+      case Op::seq: result=values[node.right]; break;
       case Op::bnot:
         result = bit_not(lhs);
         break;
