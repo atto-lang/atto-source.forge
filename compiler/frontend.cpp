@@ -196,6 +196,12 @@ class Parser {
       // These require typed method dispatch and ownership-checked closure IR.
       if (tok_.text=="abstract")
         error("private abstract hooks require typed native vtables and superclass-only dispatch");
+      // The lexer reaches the actor token while consuming the declaration
+      // modifier. Preserve the capability-specific diagnostics of definition().
+      if (tok_.text=="actor" && previousToken=="serial")
+        error("SERIAL_ACTOR_BACKEND_UNSUPPORTED: Forge lacks source serial actor lowering");
+      if (tok_.text=="actor" && previousToken=="http")
+        error("HTTP_ACTOR_BACKEND_UNSUPPORTED: Forge lacks source HTTP actor admission and physical-turn shutdown lowering");
       if (tok_.text=="actor" && previousToken=="virtual")
         error("VIRTUAL_ACTOR_BACKEND_UNSUPPORTED: logical key and activation fencing required");
       if (tok_.text=="class" || tok_.text=="actor")
