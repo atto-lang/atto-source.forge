@@ -9,6 +9,31 @@ static void require(bool value, const char* why) {
     if (!value) { std::cerr << why << '\n'; std::abort(); }
 }
 int main() {
+    using Fence = NativeSelectContinuationFence<2>;
+    Fence::Ticket pending;
+    Fence::Execution running;
+    {
+        Fence owner;
+        auto selected = owner.register_continuation(1);
+        pending = owner.register_continuation(1);
+        running = owner.try_claim(selected);
+        require(running.valid() && pending.active(), "initial pending and physical credit");
+    }
+    require(!pending.active() && !pending.close(), "owner destruction revokes pending");
+    require(running.valid() && running.close() && !running.close(), "physical loan survives owner and retires once");
+    NativeSelectContinuationFence<4> churn;
+    NativeSelectContinuationFence<4>::Ticket stale;
+    for (int round = 0; round < 1000000; ++round) {
+        const auto generation = churn.generation();
+        auto live = churn.register_continuation(generation);
+        auto execution = churn.try_claim(live);
+        require(execution.valid() && !churn.advance(generation), "physical credit fences rollover");
+        require(!stale.active() && !stale.close(), "stale ticket cannot retire successor");
+        require(execution.close() && churn.advance(generation), "retire and rollover");
+        require(churn.pending_tickets() == 0 && churn.executing() == 0, "credit conservation");
+        stale = live;
+    }
+    require(churn.close() && churn.retirement_ready(), "churn retirement");
     NativeSelectContinuationFence<2> fence;
     auto a = fence.register_continuation(1);
     auto b = fence.register_continuation(1);
