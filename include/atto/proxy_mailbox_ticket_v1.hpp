@@ -49,7 +49,7 @@ public:
 };
 class host_proxy_mailbox_tickets final {
     const std::shared_ptr<void> owner_ = std::make_shared<int>(0);
-    const std::uint64_t actor_, incarnation_;
+    const std::uint64_t tenant_, actor_, incarnation_;
     const std::size_t capacity_;
     mutable std::mutex mutex_;
     std::deque<std::pair<std::int64_t, host_ticket_ptr>> queue_;
@@ -63,16 +63,16 @@ class host_proxy_mailbox_tickets final {
                r.message_id && r.attempt;
     }
 public:
-    host_proxy_mailbox_tickets(std::uint64_t actor, std::uint64_t incarnation,
+    host_proxy_mailbox_tickets(std::uint64_t tenant, std::uint64_t actor, std::uint64_t incarnation,
                                std::size_t capacity)
-        : actor_(actor), incarnation_(incarnation), capacity_(capacity) {
-        if (!actor || !incarnation || capacity < 1 || capacity > 4096)
+        : tenant_(tenant), actor_(actor), incarnation_(incarnation), capacity_(capacity) {
+        if (!tenant || !actor || !incarnation || capacity < 1 || capacity > 4096)
             throw std::invalid_argument("invalid host actor mailbox");
     }
     // Issue exactly one private ticket under the same mailbox admission mutex.
     host_ticket_admission_result admit(const receipt_identity& route, std::int64_t value) {
         if (!valid(route)) return {host_ticket_admission::invalid, {}};
-        if (route.target_actor != actor_ || route.target_incarnation != incarnation_)
+        if (route.tenant != tenant_ || route.target_actor != actor_ || route.target_incarnation != incarnation_)
             return {host_ticket_admission::stale, {}};
         std::lock_guard lock(mutex_);
         if (closed_ || fenced_) return {host_ticket_admission::closed, {}};
