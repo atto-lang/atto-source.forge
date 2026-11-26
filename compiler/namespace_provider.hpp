@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <set>
 
 namespace oresforge {
 // Trusted-host closed scalar provider profile. The caller must first
@@ -11,7 +12,7 @@ namespace oresforge {
 // This function does not resolve imports or establish package authority.
 inline std::string compile_namespace_provider(std::string_view input,
                                               std::string_view selected_namespace,
-                                              std::string_view symbol, Arch arch) {
+                                              std::string_view symbol, Arch arch, std::size_t expected_arity=0) {
   if(input.empty() || input.size()>4096 || input.find('\0')!=std::string_view::npos)
     throw std::runtime_error("E_NAMESPACE_PROFILE: source budget");
   if(selected_namespace.size()>128 || symbol.size()>128)
@@ -23,16 +24,35 @@ inline std::string compile_namespace_provider(std::string_view input,
   if(!std::regex_match(source,m,pattern) || m[1].str()!=selected_namespace || selected_namespace.find('.')!=std::string_view::npos ||
      m[3].str()!=symbol || symbol=="main")
     throw std::runtime_error("E_NAMESPACE_PROFILE: explicit public provider required");
-  if(!m[4].str().empty())
-    throw std::runtime_error("E_NAMESPACE_ARITY: zero-argument provider required");
-  static const std::regex literal(R"(^-?(0|[1-9][0-9]{0,18})$)");
-  if(!std::regex_match(m[5].str(),literal))
-    throw std::runtime_error("E_NAMESPACE_PROFILE: integer literal required");
+  // Split only the bounded, exact typed parameter list. The frontend still
+  // validates the original function and body, including names and types.
+  std::string params=m[4].str(), args;
+  std::set<std::string> names;
+  static const std::regex param(R"(^int ([A-Za-z_][A-Za-z0-9_]{0,127})$)");
+  std::size_t pos=0;
+  while(pos<params.size()){
+    auto end=params.find(", ",pos);
+    std::string part=params.substr(pos,end==std::string::npos?end:end-pos);
+    std::smatch p;
+    if(!std::regex_match(part,p,param)||!names.insert(p[1].str()).second)
+      throw std::runtime_error("E_NAMESPACE_PROFILE: exact integer parameters required");
+    if(!args.empty())args+=", ";
+    args+=p[1].str();
+    if(names.size()>4)throw std::runtime_error("E_NAMESPACE_ARITY: runtime parameter budget");
+    if(end==std::string::npos)break;
+    pos=end+2;
+    if(pos==params.size())throw std::runtime_error("E_NAMESPACE_PROFILE: trailing parameter");
+  }
+  if(expected_arity!=names.size())
+    throw std::runtime_error("E_NAMESPACE_ARITY: incompatible selected call");
+  static const std::regex expression(R"(^[A-Za-z_0-9+*() -]{1,1024}$)");
+  if(!std::regex_match(m[5].str(),expression))
+    throw std::runtime_error("E_NAMESPACE_PROFILE: closed integer expression required");
   // The stage-0 parser currently requires 'use namespace' and a single
   // identifier. Translate only that verified header spelling; preserve the
   // original declaration/body and invoke it through the checked compiler.
   // No host evaluation. Dotted namespaces remain outside this profile.
-  return emit_runtime_asm(parse_runtime_source("use "+source+"fnc main(): int { return "+
-                           std::string(symbol)+"(); }\n"),arch);
+  return emit_runtime_asm(parse_runtime_source("use "+source+"fnc main("+params+"): int { return "+
+                           std::string(symbol)+"("+args+"); }\n"),arch);
 }
 }
