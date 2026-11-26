@@ -27,6 +27,9 @@ if(BUILD_TESTING AND ORESFORGE_EXPERIMENTAL_STAGE0_NATIVE_TESTS)
     TIMEOUT 180 LABELS "experimental;compiled-guest;legacy-syntax")
 endif()
 if(BUILD_TESTING)
+  add_executable(oresforge_scalar_export_entrypoint tests/scalar_export_entrypoint.cpp)
+  target_link_libraries(oresforge_scalar_export_entrypoint PRIVATE oresforge_core)
+  add_test(NAME oresforge_scalar_export_entrypoint COMMAND oresforge_scalar_export_entrypoint)
   # This executes the REAL Forge compiler frontend on the backend-owned Atto
   # module and refuses a false-positive class/time compiler admission.
   add_executable(oresforge_std_time_frontend_admission_test
