@@ -87,7 +87,7 @@ int main() {
       }
     }
     for (const char* keyword : {"trap!", "throw!", "raise!", "panic!", "copy!",
-        "copy!!", "take!", "borrow!", "share!", "pin!", "drop!", "pipe!", "rpipe!", "stop!", "expand!"}) {
+        "copy!!", "take!", "move!", "borrow!", "share!", "pin!", "drop!", "pipe!", "rpipe!", "stop!", "expand!"}) {
       for (const char* tail : {"value", "(42)", "/*comment*/ value", ""}) {
         auto source = std::string("fnc main():int{return ") + keyword + tail + ";}";
         bool rejected=false;
@@ -97,6 +97,14 @@ int main() {
         }
         if (!rejected) throw std::runtime_error("compact keyword not rejected: "+source);
       }
+    }
+    {
+      bool rejected=false;
+      try { (void)oresforge::parse_source("fnc main():int{return move! value;}"); }
+      catch (const std::runtime_error& e) {
+        rejected=std::string_view(e.what()).find("OWNERSHIP_BANG_BACKEND_UNSUPPORTED")!=std::string_view::npos;
+      }
+      if (!rejected) throw std::runtime_error("move! entered unchecked Forge lowering");
     }
     oresforge::source::validate_utf8("fnc main():int{\r\n\treturn 42;\r\n}");
     std::cout << "source terminal-control admission passed\n";
