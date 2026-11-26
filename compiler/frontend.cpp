@@ -508,11 +508,14 @@ class Parser {
       do {
         if (tok_.text=="tuple" || tok_.text=="structural" || tok_.text=="(")
           error("tuple-v2 parameter requires typed ownership/ABI lowering");
+        // Both canonical type-first and legacy name-colon-type scalar
+        // parameters use the same checked ABI and duplicate-name rules.
+        const bool type_first=take("int");
         const std::string parameter=identifier();
         if (parameter=="int" || parameter=="fnc" || parameter=="return" ||
             std::find(fn.parameters.begin(),fn.parameters.end(),parameter)!=fn.parameters.end())
           error("invalid or duplicate parameter");
-        expect(":"); expect("int");
+        if (!type_first) { expect(":"); expect("int"); }
         fn.parameters.push_back(parameter);
         if (fn.parameters.size()>64) error("too many parameters");
         if (!take(",")) break;
@@ -735,5 +738,13 @@ Program parse_runtime_source(std::string_view source) {
   oresforge::source::validate_utf8(source);
   return Parser(source,true).parse();
 }
-}
 
+IncrementalBuild IncrementalSession::build(std::string_view source, Arch arch, bool cold) {
+  if (!cold && prior_ && prior_->arch==arch && prior_->source==source)
+    return {prior_->assembly,true};
+  auto assembly=emit_runtime_asm(parse_runtime_source(source),arch);
+  Entry next{std::string(source),arch,assembly};
+  prior_=std::move(next);
+  return {std::move(assembly),false};
+}
+}

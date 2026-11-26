@@ -27,6 +27,7 @@ std::string emit_asm(const Program& p,Arch arch) {
       out<<"  movk x0, #"<<((bits>>shift)&0xffffULL)<<", lsl #"<<shift<<"\n";
   }
   out<<"  ret\n";
+  out<<(arch==Arch::X86_64?".section .note.GNU-stack,\"\",@progbits\n":".section .note.GNU-stack,\"\",%progbits\n");
   return out.str();
 }
 // Linux System V x86-64 and AAPCS64 integer-argument ABI only.
@@ -134,6 +135,7 @@ std::string emit_runtime_asm(const Program& p,Arch arch) {
     out<<".Loresforge_overflow:\n  brk #0\n";
   }
   out<<".size oresforge_entry, .-oresforge_entry\n";
+  out<<(arch==Arch::X86_64?".section .note.GNU-stack,\"\",@progbits\n":".section .note.GNU-stack,\"\",%progbits\n");
   return out.str();
 }
 
