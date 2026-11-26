@@ -102,8 +102,24 @@ class Parser {
                                std::to_string(begin));
     if (letter(c)) {
       while (at_<text_.size() && (letter(text_[at_])||digit(text_[at_]))) ++at_;
-      if (text_.substr(begin,at_-begin)=="trap" && at_<text_.size() &&
-          text_[at_]=='!') ++at_;
+      const auto word=text_.substr(begin,at_-begin);
+      const bool bang_keyword=word=="trap" || word=="throw" || word=="raise" ||
+          word=="panic" || word=="copy" || word=="take" || word=="borrow" ||
+          word=="share" || word=="pin" || word=="drop" || word=="pipe" ||
+          word=="rpipe" || word=="stop" || word=="expand";
+      const bool word_neq=text_.substr(at_,3)=="!eq" &&
+          (at_+3==text_.size() || (!letter(text_[at_+3]) && !digit(text_[at_+3])));
+      if (bang_keyword && at_<text_.size() && text_[at_]=='!' &&
+          text_.substr(at_,2)!="!=" && !word_neq) {
+        const auto suffix=word=="copy" && text_.substr(at_,2)=="!!" ? 2u : 1u;
+        const auto after=at_+suffix;
+        if (after>=text_.size() || !space(text_[after]))
+          throw std::runtime_error("E_BANG_KEYWORD_WHITESPACE: whitespace required after bang keyword at byte "+
+                                   std::to_string(begin));
+        // Only trap is admitted by this restricted native-call frontend.
+        // Other keywords keep their existing fail-closed lowering gates.
+        if (word=="trap") ++at_;
+      }
     } else if (digit(c)) {
       while (at_<text_.size() && digit(text_[at_])) ++at_;
     } else if (c=='!' && text_.substr(begin,3)=="!eq" &&
@@ -605,6 +621,7 @@ struct Native {
   const Module& program;
   std::ostringstream out;
   std::size_t label=0;
+  std::string effect_target=".Lores_return_effect";
   std::string value_slot(int id) const {
     return "-"+std::to_string(8u*(static_cast<std::size_t>(id)+6u))+"(%rbp)";
   }
@@ -619,7 +636,7 @@ struct Native {
       out<<"  movq "<<parameter_slot(static_cast<int>(n.value))<<", %rax\n";
     } else if(n.kind==Kind::Some||n.kind==Kind::Ok) {
       emit_node(fn,n.children[0]);
-      if(n.kind==Kind::Some) out<<"  movl $1, %edx\n";
+      out<<(n.kind==Kind::Some?"  movl $1, %edx\n":"  xorl %edx, %edx\n");
     } else if(n.kind==Kind::None) {
       out<<"  xorl %eax, %eax\n  xorl %edx, %edx\n";
     } else if(n.kind==Kind::Local) {
@@ -628,10 +645,17 @@ struct Native {
       emit_node(fn,n.children[0]);
       emit_node(fn,n.children[1]);
     } else if(n.kind==Kind::Trap) {
-      // The entry's status-return epilogue is the outermost trap boundary.
-      // Child failures use the existing explicit propagation path; no JIT,
-      // heap object or signal handler is needed for these scalar errors.
+      // Ordinary throws are captured here, not at every function return.
+      // A ResultCall's Err follows the variant-return path independently.
+      const auto old_target=effect_target;
+      const auto tag=label++;
+      const auto handler=".Lores_trap_effect_"+std::to_string(tag);
+      effect_target=handler;
       emit_node(fn,n.children[0]);
+      effect_target=old_target;
+      out<<"  xorl %edx, %edx\n  jmp .Lores_trap_end_"<<tag<<"\n"
+         <<handler<<":\n  movq %r9, %rdx\n  jmp .Lores_return_variant\n"
+         <<".Lores_trap_end_"<<tag<<":\n";
     } else if(n.kind==Kind::Not) {
       emit_node(fn,n.children[0]);
       out<<"  xorq $1, %rax\n";
@@ -658,18 +682,21 @@ struct Native {
       out<<"  movq -40(%rbp), %r8\n"
          <<"  addq $1, %r8\n"
          <<"  call .Lores_fn_"<<n.callee<<"\n";
-      if(n.kind!=Kind::OptionCall)
-        out<<"  testq %rdx, %rdx\n  jne .Lores_return_error\n";
+      out<<"  testq %r9, %r9\n  jne "<<effect_target<<"\n";
+      if(n.kind==Kind::ResultCall)
+        out<<"  testq %rdx, %rdx\n  jne .Lores_return_variant\n";
     } else if(n.kind==Kind::Div) {
       emit_node(fn,n.children[0]);
       emit_node(fn,n.children[1]);
       const auto tag=label++;
       out<<"  movq "<<value_slot(n.children[1])<<", %r11\n"
-         <<"  testq %r11, %r11\n  je .Lores_divzero\n"
+         <<"  movl $"<<static_cast<std::uint64_t>(ArithmeticStatus::DivisionByZero)<<", %r9d\n"
+         <<"  testq %r11, %r11\n  je "<<effect_target<<"\n"
          <<"  movq "<<value_slot(n.children[0])<<", %rax\n"
          <<"  cmpq $-1, %r11\n  jne .Lores_div_safe_"<<tag<<"\n"
          <<"  movabsq $-9223372036854775808, %r10\n"
-         <<"  cmpq %r10, %rax\n  je .Lores_overflow\n"
+         <<"  movl $"<<static_cast<std::uint64_t>(ArithmeticStatus::Overflow)<<", %r9d\n"
+         <<"  cmpq %r10, %rax\n  je "<<effect_target<<"\n"
          <<".Lores_div_safe_"<<tag<<":\n  cqto\n  idivq %r11\n";
     } else {
       emit_node(fn,n.children[0]);
@@ -683,7 +710,8 @@ struct Native {
       }
       out<<value_slot(n.children[1])<<", %rax\n";
       if(n.kind==Kind::Add||n.kind==Kind::Sub||n.kind==Kind::Mul) {
-        out<<"  jo .Lores_overflow\n";
+        out<<"  movl $"<<static_cast<std::uint64_t>(ArithmeticStatus::Overflow)<<", %r9d\n"
+           <<"  jo "<<effect_target<<"\n";
       } else {
         const char* cc="e";
         switch(n.kind) {
@@ -714,8 +742,21 @@ struct Native {
        <<"  addq $8, %rsp\n  testq %rdx, %rdx\n  jne .Lores_legacy_fault\n  ret\n"
        <<".size oresforge_entry, .-oresforge_entry\n";
     out<<".globl "<<entry_symbol<<"\n.type "<<entry_symbol<<", @function\n"
-       <<entry_symbol<<":\n  xorl %r8d, %r8d\n"
-       <<"  jmp .Lores_fn_"<<program.entry<<"\n";
+       <<entry_symbol<<":\n  subq $8, %rsp\n  xorl %r8d, %r8d\n"
+       <<"  call .Lores_fn_"<<program.entry<<"\n  addq $8, %rsp\n"
+       <<"  testq %r9, %r9\n";
+    if(result_entry||option_entry) out<<"  jne .Lores_legacy_fault\n";
+    else out<<"  je .Lores_scalar_entry_ok\n  movq %r9, %rdx\n.Lores_scalar_entry_ok:\n";
+    out<<"  ret\n.size "<<entry_symbol<<", .-"<<entry_symbol<<"\n";
+    // SysV C inspection entry: void entry_effect(out*, arg0..arg3).
+    // Shift incoming arguments left, preserve out pointer across the call.
+    out<<".globl oresforge_entry_effect\n.type oresforge_entry_effect, @function\n"
+       <<"oresforge_entry_effect:\n  pushq %rdi\n"
+       <<"  movq %rsi, %rdi\n  movq %rdx, %rsi\n"
+       <<"  movq %rcx, %rdx\n  movq %r8, %rcx\n  xorl %r8d, %r8d\n"
+       <<"  call .Lores_fn_"<<program.entry<<"\n  popq %r10\n"
+       <<"  movq %rax, 0(%r10)\n  movq %rdx, 8(%r10)\n  movq %r9, 16(%r10)\n  ret\n"
+       <<".size oresforge_entry_effect, .-oresforge_entry_effect\n";
     for (std::size_t i=0;i<program.functions.size();++i) {
       const auto& fn=program.functions[i];
       const std::size_t slots=5u+fn.nodes.size();
@@ -730,15 +771,12 @@ struct Native {
       out<<"  movq %r8, -40(%rbp)\n";
       emit_node(fn,fn.result);
       if(!fn.returns_scalar_option) out<<"  xorl %edx, %edx\n";
-      out<<"  leave\n  ret\n";
+      out<<"  xorl %r9d, %r9d\n  leave\n  ret\n";
     }
     out<<".Lores_depth:\n  ud2\n"
        <<".Lores_legacy_fault:\n  ud2\n"
-       <<".Lores_overflow:\n  movl $"<<static_cast<std::uint64_t>(ArithmeticStatus::Overflow)<<", %edx\n"
-       <<"  jmp .Lores_return_error\n"
-       <<".Lores_divzero:\n  movl $"<<static_cast<std::uint64_t>(ArithmeticStatus::DivisionByZero)<<", %edx\n"
-       <<".Lores_return_error:\n  xorl %eax, %eax\n  leave\n  ret\n"
-       <<".size "<<entry_symbol<<", .-"<<entry_symbol<<"\n"
+       <<".Lores_return_effect:\n  xorl %eax, %eax\n  xorl %edx, %edx\n  leave\n  ret\n"
+       <<".Lores_return_variant:\n  xorl %eax, %eax\n  xorl %r9d, %r9d\n  leave\n  ret\n"
        <<".section .note.GNU-stack,\"\",@progbits\n";
     return out.str();
   }
@@ -815,17 +853,11 @@ void verify(const Module& m) {
       const auto child_bool=[&](std::size_t pos) {
         return boolean_kind(fn.nodes.at(static_cast<std::size_t>(n.children.at(pos))).kind);
       };
-      // This stage has no separate escaping-error channel for Option or
-      // explicit Ok constructors. Admit only infallible scalar payloads,
-      // comparisons/logical predicates, and typed Option forwarding.
-      if(fn.returns_scalar_option && !option_kind(n.kind) &&
-         n.kind!=Kind::Constant && n.kind!=Kind::Parameter &&
-         !boolean_kind(n.kind))
-        throw std::runtime_error("Option body requires infallible scalar expressions");
       if(n.kind==Kind::Some||n.kind==Kind::Ok) {
         const auto k=fn.nodes.at(static_cast<std::size_t>(n.children[0])).kind;
-        if(k!=Kind::Constant && k!=Kind::Parameter && k!=Kind::Local)
-          throw std::runtime_error("constructor requires infallible int payload");
+        if(boolean_kind(k)||option_kind(k)||k==Kind::Trap||k==Kind::ResultCall||
+           k==Kind::BindResult||k==Kind::Ok)
+          throw std::runtime_error("constructor requires int payload");
       }
       if(n.kind==Kind::OptionIf) {
         if(!child_bool(0)||!option_kind(fn.nodes.at(static_cast<std::size_t>(n.children[1])).kind)||
@@ -882,13 +914,6 @@ void verify(const Module& m) {
           throw std::runtime_error("scalar Option call type mismatch");
         if(n.kind==Kind::OptionCall && n.callee==m.entry)
           throw std::runtime_error("calls to scalar Option entry are unsupported");
-        if(n.kind==Kind::ResultCall||n.kind==Kind::OptionCall) {
-          for(int child:n.children) {
-            const auto k=fn.nodes[static_cast<std::size_t>(child)].kind;
-            if(k!=Kind::Constant && k!=Kind::Parameter && k!=Kind::Local)
-              throw std::runtime_error("Result call arguments require infallible scalar leaves");
-          }
-        }
         if(n.children.size()!=m.functions[static_cast<std::size_t>(n.callee)].parameters.size())
           throw std::runtime_error("function arity mismatch");
         if(n.name!=m.functions[static_cast<std::size_t>(n.callee)].name)
@@ -946,6 +971,25 @@ ScalarOption interpret_option(const Module& m,std::span<const std::int64_t> args
     throw std::runtime_error("run-option-calls requires Option<int> entry");
   Evaluator eval{m};
   return eval.evaluate_option(static_cast<std::size_t>(m.entry),args,0);
+}
+ScalarOutcome interpret_effect(const Module& m,std::span<const std::int64_t> args) {
+  verify(m);
+  Evaluator eval{m};
+  const auto entry=static_cast<std::size_t>(m.entry);
+  try {
+    const auto& fn=m.functions.at(entry);
+    if(fn.returns_scalar_result) {
+      const auto r=eval.evaluate_result(entry,args,0);
+      return {r.value,static_cast<std::uint64_t>(r.status),ArithmeticStatus::Ok};
+    }
+    if(fn.returns_scalar_option) {
+      const auto r=eval.evaluate_option(entry,args,0);
+      return {r.value,r.tag,ArithmeticStatus::Ok};
+    }
+    return {eval.evaluate(entry,args,0),0,ArithmeticStatus::Ok};
+  } catch(const ArithmeticFailure& failure) {
+    return {0,0,failure.status};
+  }
 }
 std::string emit_asm(const Module& m,Arch arch) {
   if(arch!=Arch::X86_64)

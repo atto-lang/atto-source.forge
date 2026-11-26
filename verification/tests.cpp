@@ -562,7 +562,15 @@ int main() {
     auto bad_ok=calls::parse("fnc main(x:int):Result<int,Error>{return Ok(x);}");
     bad_ok.functions[0].nodes[0].kind=calls::Kind::Boolean;
     bad_ok.functions[0].nodes[0].value=1;
-    reject_diagnostic([&] { calls::verify(bad_ok); },"constructor requires infallible int payload");
+    reject_diagnostic([&] { calls::verify(bad_ok); },"constructor requires int payload");
+    auto effect=calls::parse("fnc main(a:int):Result<int,Error>{return Ok(a+1);}");
+    const auto escaped=calls::interpret_effect(effect,std::array<std::int64_t,1>{9223372036854775807LL});
+    ensure(escaped.value==0 && escaped.tag==0 && escaped.effect==calls::ArithmeticStatus::Overflow,
+           "ordinary effect does not become Err");
+    auto captured=calls::parse("fnc main(a:int):Result<int,Error>{return trap! (a+1);}");
+    const auto err=calls::interpret_effect(captured,std::array<std::int64_t,1>{9223372036854775807LL});
+    ensure(err.value==0 && err.tag==65537 && err.effect==calls::ArithmeticStatus::Ok,
+           "trap converts ordinary effect into Err");
     auto corrupt=calls::parse("fnc main(x:int):int{return x+1;}");
     corrupt.functions[0].nodes.back().children[0]=999;
     reject_diagnostic([&] { calls::verify(corrupt); },

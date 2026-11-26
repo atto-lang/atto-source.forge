@@ -35,6 +35,17 @@ struct ScalarOption {
 static_assert(std::is_standard_layout_v<ScalarOption> &&
               std::is_trivially_copyable_v<ScalarOption>);
 static_assert(sizeof(ScalarOption)==16 && offsetof(ScalarOption,tag)==8);
+// Public inspection carrier; not the internal register convention.
+// tag is the declared return type's variant (zero for int); effect is
+// nonzero only for an escaping ordinary arithmetic error.
+struct ScalarOutcome {
+  std::int64_t value;
+  std::uint64_t tag;
+  ArithmeticStatus effect;
+};
+static_assert(std::is_standard_layout_v<ScalarOutcome> &&
+              std::is_trivially_copyable_v<ScalarOutcome>);
+static_assert(sizeof(ScalarOutcome)==24 && offsetof(ScalarOutcome,effect)==16);
 struct Node {
   Kind kind;
   std::int64_t value = 0;
@@ -61,5 +72,6 @@ std::int64_t interpret(const Module& program, std::span<const std::int64_t> args
 // A nonzero status is an Err payload, not an escaping ordinary throw.
 ArithmeticResult interpret_result(const Module& program, std::span<const std::int64_t> args);
 ScalarOption interpret_option(const Module& program, std::span<const std::int64_t> args);
+ScalarOutcome interpret_effect(const Module& program, std::span<const std::int64_t> args);
 std::string emit_asm(const Module& program, Arch arch);
 }
