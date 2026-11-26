@@ -11,6 +11,7 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <optional>
 #include <set>
 #include <string>
@@ -29,7 +30,7 @@ namespace {
 struct Reject { std::string code; };
 [[noreturn]] void fail(const char* code) { throw Reject{code}; }
 struct Expr {
-  enum class Kind { lit, ref, add, sub, mul, call } kind;
+  enum class Kind { lit, ref, add, sub, mul, call, tuple, tuple_pattern } kind;
   i64 number = 0;
   std::string name;
   std::vector<Expr> args;
@@ -81,7 +82,7 @@ std::vector<std::string> tokenize(std::string_view text) {
                text.substr(at, 2) == "<|" ||
                text.substr(at, 2) == "->") {
       at += 2;
-    } else if (std::string_view{"(){}:.,;+-*/="}.find(c) != std::string_view::npos) {
+    } else if (std::string_view{"(){}:.,;+-*/=|"}.find(c) != std::string_view::npos) {
       ++at;
     } else fail("E_LEX");
     tokens.emplace_back(text.substr(start, at - start));
@@ -135,8 +136,21 @@ struct Parser {
     if (depth > 24) fail("E_DEPTH");
     Expr lhs;
     if (eat("(")) {
-      lhs = expr(0, depth + 1);
-      need(")");
+      if (eat(")")) lhs = Expr{Expr::Kind::tuple, 0, "", {}};
+      else {
+        lhs = expr(0, depth + 1);
+        if (eat(",")) {
+          std::vector<Expr> items;
+          items.push_back(std::move(lhs));
+          while (peek() != ")") {
+            if (items.size() >= 8) fail("E_LIMIT");
+            items.push_back(expr(0, depth + 1));
+            if (!eat(",")) break;
+          }
+          lhs = Expr{Expr::Kind::tuple, 0, "", std::move(items)};
+        }
+        need(")");
+      }
     } else if (eat("-")) {
       // -2^63 is a valid signed i64 literal, although its unsigned
       // magnitude (2^63) does not fit in i64. Construct the MIN value
@@ -176,6 +190,36 @@ struct Parser {
         if (!current_direction.empty() && current_direction != op) fail("E_MIXED_PIPE");
         current_direction = op;
         if (op == "|>") {
+          if (eat("|")) {
+            need("(");
+            std::vector<Expr> slots;
+            std::set<std::string> names;
+            if (!eat(")")) {
+              for (;;) {
+                auto binder = name();
+                if (binder == "self" || binder == "arguments") fail("E_DUP_PARAM");
+                if (binder != "_" && !names.insert(binder).second) fail("E_DUP_PARAM");
+                if (eat(":")) {
+                  if (binder == "_") fail("E_PATTERN");
+                  need("int");
+                }
+                if (slots.size() >= 8) fail("E_LIMIT");
+                slots.push_back(Expr{Expr::Kind::ref, 0, std::move(binder), {}});
+                if (!eat(",")) {
+                  if (slots.size() == 1) fail("E_PATTERN");
+                  need(")");
+                  break;
+                }
+                if (eat(")")) break;
+              }
+            }
+            need("|");
+            need("->");
+            auto body = expr(precedence + 1, depth + 1);
+            lhs = Expr{Expr::Kind::tuple_pattern, 0, "",
+                {std::move(lhs), Expr{Expr::Kind::tuple, 0, "", std::move(slots)}, std::move(body)}};
+            continue;
+          }
           auto target = name();
           auto args = peek() == "(" ? arguments(depth + 1) : std::vector<Expr>{};
           if (args.size() >= 8) fail("E_ARITY");
@@ -271,6 +315,21 @@ void check_fn(std::size_t index, const std::vector<Function>& functions,
 void check_expr(const Expr& e, const std::vector<Function>& functions,
                 std::vector<int>& state, const std::set<std::string>& available) {
   switch (e.kind) {
+    case Expr::Kind::tuple: fail("E_UNSUPPORTED_TUPLE_VALUE");
+    case Expr::Kind::tuple_pattern: {
+      if (e.args.size() != 3 || e.args[0].kind != Expr::Kind::tuple ||
+          e.args[1].kind != Expr::Kind::tuple) fail("E_PATTERN_SHAPE");
+      const auto& values = e.args[0].args;
+      const auto& slots = e.args[1].args;
+      if (values.size() != slots.size()) fail("E_ARITY");
+      // All elements are checked in the outer environment, before bindings exist.
+      for (const auto& v : values) check_expr(v, functions, state, available);
+      auto scope = available;
+      for (const auto& slot : slots)
+        if (slot.name != "_") scope.insert(slot.name);
+      check_expr(e.args[2], functions, state, scope);
+      return;
+    }
     case Expr::Kind::lit: return;
     case Expr::Kind::ref:
       if (!available.contains(e.name)) fail("E_SYMBOL");
@@ -324,29 +383,47 @@ struct Emitter {
     out += "  " + s + "\n";
     if (out.size() > 65536) fail("E_EMIT_LIMIT");
   }
-  std::string expression(const Expr& e, const Function& fn) {
+  std::string expression(const Expr& e, const Function& fn,
+                         const std::map<std::string, std::string>& bindings = {}) {
     const std::string id = "t" + std::to_string(next++);
     switch (e.kind) {
       case Expr::Kind::lit:
         // C++ lexical integer literals cannot spell signed i64::MIN with
         // a positive decimal magnitude and a later unary minus; emit it
         // from two representable operands instead, with no overflow.
-        line("const atto::forge::i64 " + id + " = " +
+        line("[[maybe_unused]] const atto::forge::i64 " + id + " = " +
              (e.number == std::numeric_limits<i64>::min()
                ? std::string{"(-9223372036854775807LL - 1LL)"}
                : std::to_string(e.number) + "LL") + ";");
         return id;
+      case Expr::Kind::tuple: fail("E_UNSUPPORTED_TUPLE_VALUE");
+      case Expr::Kind::tuple_pattern: {
+        const auto& values = e.args.at(0).args;
+        const auto& slots = e.args.at(1).args;
+        std::vector<std::string> temps;
+        // Explicit sequenced temporaries; even discarded inputs can fail.
+        for (const auto& v : values) temps.push_back(expression(v, fn, bindings));
+        auto scope = bindings;
+        for (std::size_t i = 0; i < slots.size(); ++i)
+          if (slots[i].name != "_") scope[slots[i].name] = temps[i];
+        return expression(e.args.at(2), fn, scope);
+      }
       case Expr::Kind::ref: {
+        const auto local = bindings.find(e.name);
+        if (local != bindings.end()) {
+          line("[[maybe_unused]] const atto::forge::i64 " + id + " = " + local->second + ";");
+          return id;
+        }
         const bool param = std::find(fn.params.begin(), fn.params.end(), e.name) != fn.params.end();
-        line("const atto::forge::i64 " + id + " = " +
+        line("[[maybe_unused]] const atto::forge::i64 " + id + " = " +
              (param ? "p_" : "v_") + e.name + ";");
         return id;
       }
       case Expr::Kind::add:
       case Expr::Kind::sub:
       case Expr::Kind::mul: {
-        auto a = expression(e.args.at(0), fn);
-        auto b = expression(e.args.at(1), fn);
+        auto a = expression(e.args.at(0), fn, bindings);
+        auto b = expression(e.args.at(1), fn, bindings);
         auto checked = e.kind == Expr::Kind::add ? "checked_add" :
                        e.kind == Expr::Kind::sub ? "checked_sub" : "checked_mul";
         line("const auto c_" + id + " = atto::forge::" + checked + "(" + a + ", " + b + ");");
@@ -356,7 +433,7 @@ struct Emitter {
       }
       case Expr::Kind::call: {
         std::vector<std::string> params;
-        for (const auto& arg : e.args) params.push_back(expression(arg, fn));
+        for (const auto& arg : e.args) params.push_back(expression(arg, fn, bindings));
         std::string csv;
         for (const auto& p : params) { if (!csv.empty()) csv += ", "; csv += p; }
         line("const auto c_" + id + " = f_" + e.name + "(" + csv + ");");
