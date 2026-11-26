@@ -63,7 +63,7 @@ FUNCTION_REJECTIONS = (
      "fnc main():int{return 1\u00a0;}", "invalid character"),
 )
 REJECTIONS = (
-    ("division", "3/2", "division requires float result lowering"),
+    ("division", "3/2", "FORGE_CHECKED_DIVISION_BACKEND_UNSUPPORTED"),
     ("overflow_add", "9223372036854775807+1", "i64 add overflow"),
     ("overflow_sub", "-9223372036854775808-1", "i64 sub overflow"),
     ("overflow_mul", "3037000500*3037000500", "i64 mul overflow"),
