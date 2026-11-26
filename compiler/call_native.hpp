@@ -11,7 +11,7 @@ namespace oresforge::calls {
 // legacy scalar IR; no misleading claims about the general Oreslang ABI.
 enum class Kind {
   Constant, Parameter, Add, Sub, Mul, Less, LessEqual, Greater,
-  GreaterEqual, Equal, NotEqual, If, Call, Boolean, Not, Ternary, And, Or, BooleanXor
+  GreaterEqual, Equal, NotEqual, If, Call, Boolean, Not, Ternary, And, Or, BooleanXor, BoolCall
 };
 struct Node {
   Kind kind;
@@ -25,6 +25,7 @@ struct Function {
   std::vector<std::string> parameters;
   std::vector<Node> nodes;
   int result = -1;
+  bool returns_bool = false;
 };
 struct Module {
   std::vector<Function> functions;

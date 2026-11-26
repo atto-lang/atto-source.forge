@@ -362,6 +362,13 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
         "${CMAKE_CURRENT_SOURCE_DIR}/verification/native_call_executable.py"
         --compiler "$<TARGET_FILE:oresforge>")
     set_tests_properties(oresforge_real_native_recursive_calls PROPERTIES TIMEOUT 180)
+    # The pinned core library is executable through the typed callable lane.
+    # Keep it in the full GCC/Clang/sanitizer matrix, not just a path-filtered workflow.
+    add_test(NAME oresforge_core_types_native
+      COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/verification/core_types_native.py"
+        --compiler "$<TARGET_FILE:oresforge>")
+    set_tests_properties(oresforge_core_types_native PROPERTIES TIMEOUT 180)
   endif()
 endif()
 

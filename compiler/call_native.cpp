@@ -28,7 +28,7 @@ struct Token { std::string_view text; std::size_t offset=0; };
 // Predicate types are statically derived from verified opcode identity.
 // The native ABI remains i64-only at function boundaries.
 bool boolean_kind(Kind k) {
-  return k==Kind::Boolean || k==Kind::Not || k==Kind::And || k==Kind::Or || k==Kind::BooleanXor ||
+  return k==Kind::BoolCall || k==Kind::Boolean || k==Kind::Not || k==Kind::And || k==Kind::Or || k==Kind::BooleanXor ||
          k==Kind::Less || k==Kind::LessEqual || k==Kind::Greater ||
          k==Kind::GreaterEqual || k==Kind::Equal || k==Kind::NotEqual;
 }
@@ -41,7 +41,17 @@ class Parser {
  public:
   explicit Parser(std::string_view text) : text_(text) { next(); }
   Module parse() {
-    while (!token_.text.empty()) definition();
+    bool has_namespace=false;
+    if(take("use")) {
+      expect("namespace"); (void)identifier(); expect(";");
+      has_namespace=true;
+    }
+    while (!token_.text.empty()) {
+      if(token_.text=="use" || token_.text=="namespace")
+        fail(has_namespace?"FORGE_NAMESPACE_DUPLICATE: duplicate file header":
+             "FORGE_NAMESPACE_HEADER_ORDER: namespace must precede declarations");
+      definition();
+    }
     for (std::size_t i=0; i<module_.functions.size(); ++i) {
       if (module_.functions[i].name=="main") module_.entry=static_cast<int>(i);
     }
@@ -49,7 +59,7 @@ class Parser {
     // Resolve every function, including unused ones. No partially linked IR.
     for (auto& fn:module_.functions) {
       for (auto& node:fn.nodes) {
-        if (node.kind != Kind::Call) continue;
+        if (node.kind != Kind::Call && node.kind != Kind::BoolCall) continue;
         const auto found=names_.find(node.name);
         if (found==names_.end()) fail("unknown function");
         node.callee=found->second;
@@ -188,8 +198,10 @@ class Parser {
     }
     expect(")");
     if(!take(":"))expect("->");
-    expect("int");expect("{");
-    current_->result=terminal_body(0);
+    current_->returns_bool=take("bool");
+    if(!current_->returns_bool) expect("int");
+    expect("{");
+    current_->result=current_->returns_bool?terminal_return(0):terminal_body(0);
     expect("}");
   }
   // This scalar subset has no local state, effects, or general statements.
@@ -218,7 +230,8 @@ class Parser {
     depth(d);
     if (!take("^")) expect("return");
     const int value=expr(d+1);
-    require_integer(value);
+    if(current_->returns_bool) require_boolean(value);
+    else require_integer(value);
     if (token_.text=="^") fail("single caret is only a return statement; integer XOR uses ^^");
     expect(";");
     return value;
@@ -382,7 +395,10 @@ class Parser {
         return add(Kind::BooleanXor,0,{},std::move(args));
       }
       for(int arg:args) require_integer(arg);
-      return add(Kind::Call,0,name,std::move(args));
+      const auto found=names_.find(name);
+      const bool bool_target=found!=names_.end() &&
+          module_.functions.at(static_cast<std::size_t>(found->second)).returns_bool;
+      return add(bool_target?Kind::BoolCall:Kind::Call,0,name,std::move(args));
     }
     fail("expected callable expression");
   }
@@ -437,7 +453,7 @@ struct Evaluator {
       const auto pred=visit(fn,n.children[0],args,depth);
       return visit(fn,n.children[pred ? 1u:2u],args,depth);
     }
-    if(n.kind==Kind::Call) {
+    if(n.kind==Kind::Call||n.kind==Kind::BoolCall) {
       std::vector<std::int64_t> vals;
       for (int arg:n.children) vals.push_back(visit(fn,arg,args,depth));
       return evaluate(static_cast<std::size_t>(n.callee),vals,depth+1);
@@ -487,7 +503,7 @@ struct Native {
          <<".Lores_else_"<<tag<<":\n";
       emit_node(fn,n.children[2]);
       out<<".Lores_end_"<<tag<<":\n";
-    } else if(n.kind==Kind::Call) {
+    } else if(n.kind==Kind::Call||n.kind==Kind::BoolCall) {
       for (int child:n.children)emit_node(fn,child);
       for (std::size_t i=0;i<n.children.size();++i)
         out<<"  movq "<<value_slot(n.children[i])<<", "<<argument_reg(i)<<"\n";
@@ -572,8 +588,10 @@ void verify(const Module& m) {
     if(total>kMaxNodes)throw std::runtime_error("callable AST node budget exceeded");
     if(fn.result<0||static_cast<std::size_t>(fn.result)!=fn.nodes.size()-1)
       throw std::runtime_error("invalid callable return/root");
-    if (boolean_kind(fn.nodes[static_cast<std::size_t>(fn.result)].kind))
-      throw std::runtime_error("callable int return cannot be Boolean");
+    if (boolean_kind(fn.nodes[static_cast<std::size_t>(fn.result)].kind)!=fn.returns_bool)
+      throw std::runtime_error("callable return type mismatch");
+    if(fn.returns_bool && fi==static_cast<std::size_t>(m.entry))
+      throw std::runtime_error("Boolean entry requires explicit int adapter in this profile");
     // This stage-0 AST must be an owned tree, not an arbitrary dataflow DAG.
     // Otherwise a node on an untaken if-branch could be reused without ever
     // initializing its stack slot. Enforce one reachable parent per child.
@@ -586,10 +604,10 @@ void verify(const Module& m) {
         case Kind::Greater: case Kind::GreaterEqual: case Kind::Equal:
         case Kind::NotEqual: case Kind::If: case Kind::Call:
         case Kind::Boolean: case Kind::Not: case Kind::Ternary:
-         case Kind::And: case Kind::Or: case Kind::BooleanXor: break;
+         case Kind::And: case Kind::Or: case Kind::BooleanXor: case Kind::BoolCall: break;
         default: throw std::runtime_error("unknown callable opcode");
       }
-      if(n.kind!=Kind::Call && !n.name.empty())
+      if(n.kind!=Kind::Call && n.kind!=Kind::BoolCall && !n.name.empty())
         throw std::runtime_error("unexpected callable symbol payload");
       for(int arg:n.children) {
         if(arg<0 || static_cast<std::size_t>(arg)>=i)
@@ -601,7 +619,7 @@ void verify(const Module& m) {
       if(n.kind==Kind::Constant||n.kind==Kind::Boolean||n.kind==Kind::Parameter)size=0;
       else if(n.kind==Kind::Not)size=1;
       else if(n.kind==Kind::If||n.kind==Kind::Ternary)size=3;
-      else if(n.kind==Kind::Call)size=n.children.size();
+      else if(n.kind==Kind::Call||n.kind==Kind::BoolCall)size=n.children.size();
       if(n.children.size()!=size)throw std::runtime_error("callable operand arity mismatch");
       if(n.kind==Kind::Boolean && n.value!=0 && n.value!=1)
         throw std::runtime_error("invalid Boolean literal");
@@ -629,16 +647,18 @@ void verify(const Module& m) {
                 n.kind==Kind::Less||n.kind==Kind::LessEqual||n.kind==Kind::Greater||
                 n.kind==Kind::GreaterEqual) {
         if(child_bool(0)||child_bool(1)) throw std::runtime_error("Boolean is not an int");
-      } else if(n.kind==Kind::Call) {
+      } else if(n.kind==Kind::Call||n.kind==Kind::BoolCall) {
         for(std::size_t j=0;j<n.children.size();++j)
           if(child_bool(j)) throw std::runtime_error("Boolean is not an int argument");
       }
       if(n.kind==Kind::Parameter && (n.value<0 ||
          static_cast<std::uint64_t>(n.value)>=fn.parameters.size()))
         throw std::runtime_error("invalid callable parameter");
-      if(n.kind==Kind::Call) {
+      if(n.kind==Kind::Call||n.kind==Kind::BoolCall) {
         if(n.callee<0 || static_cast<std::size_t>(n.callee)>=m.functions.size())
           throw std::runtime_error("invalid callable target");
+        if(m.functions[static_cast<std::size_t>(n.callee)].returns_bool!=(n.kind==Kind::BoolCall))
+          throw std::runtime_error("callable Boolean target type mismatch; declare bool helpers before use");
         if(n.children.size()!=m.functions[static_cast<std::size_t>(n.callee)].parameters.size())
           throw std::runtime_error("function arity mismatch");
         if(n.name!=m.functions[static_cast<std::size_t>(n.callee)].name)
