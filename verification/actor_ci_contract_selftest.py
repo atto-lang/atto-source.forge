@@ -28,6 +28,8 @@ def main() -> None:
             'true'),
         'missing_junit_output': (
             '--output-junit "$RUNNER_TEMP/actor-ctest.xml"', '--verbose'),
+        'missing_receipt_selftest': (
+            'python3 verification/actor_ctest_receipt_selftest.py', 'true'),
         'missing_lifetime_receipt': (
             "grep -Fx 'PASS OWNER_RESTART_CYCLES=100000 SIBLING_STATE=42 BUDGET_LEAK=0'",
             "grep -Fx 'UNRELATED_PASS'"),
@@ -66,7 +68,7 @@ def main() -> None:
                 print('FORGE_ACTOR_CI_NEGATIVE_REJECTED=' + case)
             else:
                 raise AssertionError('CI workflow mutation was admitted: ' + case)
-    print('FORGE_ACTOR_CI_NEGATIVE_MATRIX_PASS=11/11')
+    print('FORGE_ACTOR_CI_NEGATIVE_MATRIX_PASS=12/12')
 
 
 if __name__ == '__main__':

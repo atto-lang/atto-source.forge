@@ -89,6 +89,8 @@ def check(root: pathlib.Path, workflow: pathlib.Path) -> None:
             test.count('--output-junit "$RUNNER_TEMP/actor-ctest.xml"') == 1 and
             test.count('python3 verification/actor_ctest_receipt.py "$RUNNER_TEMP/actor-ctest.xml"') == 1,
             'missing exact seven-test CTest completion receipt')
+    require(test.count('python3 verification/actor_ctest_receipt_selftest.py') == 1,
+            'missing structured receipt negative selftest')
     require('-fsanitize=address,undefined' in test and '-fno-omit-frame-pointer' in test,
             'sanitized test mode missing')
     markers = (
