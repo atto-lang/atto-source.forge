@@ -48,6 +48,8 @@ jobs:
           test "$(git rev-parse HEAD)" = "$EXPECTED"
           git rev-parse 'HEAD^{tree}'
           test -z "$(git status --porcelain --untracked-files=all)"
+          test "$(git hash-object verification/supervisor_data_fence_parity_v1_test.cpp)" = 5627b7bcb9852151392485e854d598e763184637
+          test "$(git hash-object runtime/ActorIncarnationOwnerV1.hpp)" = 806913d5a5ef1890b7d2bd2030f98fa2a49c74ea
       - name: Compile and execute actor lifecycle host CTest
         shell: bash
         env:
