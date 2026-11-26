@@ -354,3 +354,16 @@ foreach(body IN ITEMS "val using=1\; return using\;" "val dimension=1\; return d
   message(STATUS "LOCAL_NATIVE_REJECT ${body}")
 endforeach()
 
+
+verify_cast_expr(unit-grouped-exact "84_000<Millis>.to_unit<Second>()/2<Second>" 0 "42\n" "")
+verify_cast_expr(unit-grouped-min "-9_223_372_036_854_775_808<Second>/1<Second>" 0 "-9223372036854775808\n" "")
+foreach(expr IN ITEMS "1_500<Millis>.to_unit<Second>()/1<Second>" "42_<Second>/1<Second>" "4__2<Second>/1<Second>" "9_223_372_036_854_775_808<Second>/1<Second>")
+  file(WRITE "${OUT_DIR}/grouped-invalid.atto" "${quantity_declarations}\npub fnc main() -> int {return ${expr};}")
+  execute_process(COMMAND "${FORGE}" "${OUT_DIR}/grouped-invalid.atto" -o "${OUT_DIR}/grouped-invalid.cpp" RESULT_VARIABLE rc ERROR_VARIABLE err TIMEOUT 15)
+  if(NOT "${rc}" STREQUAL "2" OR EXISTS "${OUT_DIR}/grouped-invalid.cpp")
+    message(FATAL_ERROR "invalid grouped integer accepted: ${expr}")
+  endif()
+  if(expr MATCHES "^1_500" AND NOT err MATCHES "E_UNIT_INEXACT")
+    message(FATAL_ERROR "wrong inexact grouped conversion category: ${err}")
+  endif()
+endforeach()

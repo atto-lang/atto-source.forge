@@ -35,7 +35,7 @@ void reject_diagnostic(const std::function<void()>& fn,std::string_view diagnost
   } catch (const std::exception& error) {
     if (std::string_view(error.what()).find(diagnostic)==std::string_view::npos)
       throw std::runtime_error("source rejected for wrong reason: "+
-                               std::string(error.what()));
+                               std::string(error.what())+" (expected: "+std::string(diagnostic)+")");
     return;
   }
   throw std::runtime_error("malformed source admitted unexpectedly");
@@ -390,7 +390,7 @@ int main() {
     reject_diagnostic([] { parse_source("fnc main():int{return rt deref value;}"); },
                       "pointer-style runtime operation is not valid Oreslang source");
     reject_diagnostic([] { parse_source("fnc main():int{return rt borrow mut value;}"); },
-                      "legacy 'rt borrow mut' is not valid Oreslang");
+                      "runtime ownership operation requires typed lowering in Forge");
     reject_diagnostic([] { parse_source("fnc main():int{return rt mut borrow value;}"); },
                       "runtime ownership operation requires typed lowering in Forge");
     // Shared mutation cannot silently degrade to a scalar alias. The scalar
@@ -500,6 +500,50 @@ int main() {
     reject_diagnostic([] { calls::parse(
       "fnc other(x:int):int{return x;}"
       " fnc main():int{return other();}"); },"function arity mismatch");
+    // Typed predicates must remain verifiable even for externally supplied IR.
+    auto typed=calls::parse("fnc main(x:int):int{^ x eq 0 ? 42 : 7;}");
+    ensure(calls::interpret(typed,std::array<std::int64_t,1>{0})==42,"typed ternary true");
+    ensure(calls::interpret(typed,std::array<std::int64_t,1>{1})==7,"typed ternary false");
+    auto negated=calls::parse("fnc main(x:int):int{return unless x !eq 0 then 42 else 7 fi;}");
+    ensure(calls::interpret(negated,std::array<std::int64_t,1>{0})==42,"negation true");
+    ensure(calls::interpret(negated,std::array<std::int64_t,1>{1})==7,"negation false");
+    auto forged_pred=calls::parse("fnc main():int{return true ? 42 : 7;}");
+    forged_pred.functions[0].nodes[0].kind=calls::Kind::Constant;
+    reject_diagnostic([&] { calls::verify(forged_pred); },"condition_not_bool");
+    auto forged_bool=calls::parse("fnc main():int{return true ? 42 : 7;}");
+    forged_bool.functions[0].nodes[0].value=2;
+    reject_diagnostic([&] { calls::verify(forged_bool); },"invalid Boolean literal");
+    auto forged_arm=calls::parse("fnc main():int{return true ? 1 : 0;}");
+    forged_arm.functions[0].nodes[1].kind=calls::Kind::Boolean;
+    reject_diagnostic([&] { calls::verify(forged_arm); },"conditional branch is not int");
+    auto forged_mixed=calls::parse("fnc main():int{return true eq false ? 42 : 7;}");
+    forged_mixed.functions[0].nodes[1].kind=calls::Kind::Constant;
+    reject_diagnostic([&] { calls::verify(forged_mixed); },"comparison operand type mismatch");
+    auto forged_negation=calls::parse("fnc main():int{return unless true then 42 else 7 fi;}");
+    forged_negation.functions[0].nodes[0].kind=calls::Kind::Constant;
+    reject_diagnostic([&] { calls::verify(forged_negation); },"condition_not_bool");
+    auto forged_logical=calls::parse("fnc main():int{return true && false ? 42 : 7;}");
+    forged_logical.functions[0].nodes[1].kind=calls::Kind::Constant;
+    reject_diagnostic([&] { calls::verify(forged_logical); },"condition_not_bool");
+    auto guard=calls::parse("fnc main(int x):int{guard x>0 {^ 1;} guard x neq 5 else return 2; end return 42;}");
+    ensure(calls::interpret(guard,std::array<std::int64_t,1>{0})==1,"guard first failure exits callable");
+    ensure(calls::interpret(guard,std::array<std::int64_t,1>{5})==2,"guard second failure exits callable");
+    ensure(calls::interpret(guard,std::array<std::int64_t,1>{3})==42,"guard success continues");
+    auto guard_wrong_type=calls::parse("fnc main():int{guard true {return 1;} return 42;}");
+    guard_wrong_type.functions[0].nodes[0].kind=calls::Kind::Constant;
+    reject_diagnostic([&] { calls::verify(guard_wrong_type); },"condition_not_bool");
+    auto bool_xor=calls::parse("fnc main(x:int):int{return Xor(x eq 0,false) ? 42 : 7;}");
+    ensure(calls::interpret(bool_xor,std::array<std::int64_t,1>{0})==42,"Boolean Xor true");
+    ensure(calls::interpret(bool_xor,std::array<std::int64_t,1>{1})==7,"Boolean Xor false");
+    auto integer_xor=calls::parse("fnc main(a:int,b:int):int{return a ^^ b;}");
+    ensure(calls::interpret(integer_xor,std::array<std::int64_t,2>{11,4})==15,"integer XOR");
+    auto bad_integer_xor=calls::parse("fnc main():int{return 11 ^^ 4;}");
+    bad_integer_xor.functions[0].nodes[1].kind=calls::Kind::Boolean;
+    bad_integer_xor.functions[0].nodes[1].value=1;
+    reject_diagnostic([&] { calls::verify(bad_integer_xor); },"Boolean is not an int");
+    auto bad_xor=calls::parse("fnc main():int{return Xor(true,false) ? 42 : 7;}");
+    bad_xor.functions[0].nodes[1].kind=calls::Kind::Constant;
+    reject_diagnostic([&] { calls::verify(bad_xor); },"Boolean Xor requires two bool operands");
     auto corrupt=calls::parse("fnc main(x:int):int{return x+1;}");
     corrupt.functions[0].nodes.back().children[0]=999;
     reject_diagnostic([&] { calls::verify(corrupt); },
@@ -655,7 +699,7 @@ int main() {
     ensure(interpret(parse_source(arithmetic76))==76,
            "shared arithmetic-76 source execution");
     for (const auto& expression : {"3/2", "4/2", "5/0", "-9223372036854775808/-1"})
-      reject_diagnostic([&] { source(expression); }, "float result lowering");
+      reject_diagnostic([&] { source(expression); }, "FORGE_CHECKED_DIVISION_BACKEND_UNSUPPORTED");
     for (const auto& expression : {"0.125", "1e10", "1E-10", "123.456d", "123d"})
       reject_diagnostic([&] { source(expression); }, "typed numeric lowering");
     // Internal checked-i64 IR division is distinct from the source / operator.
@@ -751,7 +795,11 @@ int main() {
       "fnc main():int{do match 1 over on structural {x:int} v when true -> {return 1;} on _ -> {return 0;} end}",
       "fnc main():int{do match 1 over on _ -> {return 1;} end}"
     }) {
-      reject_diagnostic([&] { (void)parse_source(candidate); }, "expected");
+      reject_diagnostic([&] { (void)parse_source(candidate); },
+          std::string_view(candidate).find("do match")!=std::string_view::npos
+              ? "unexpected token" // rejected at do, before lexing match
+              : std::string_view(candidate).find("match 1 over")!=std::string_view::npos
+                  ? "MATCH_DEFAULT_BACKEND_UNSUPPORTED" : "expected");
     }
     reject_diagnostic([] {
       (void)parse_source("@structural\nfnc main():int{return 1;}");
@@ -776,7 +824,7 @@ int main() {
     }, "tuple-v2 parameter requires typed ownership/ABI lowering");
     reject_diagnostic([] {
       parse_source("fnc main():int{match 1 over on _ -> {return 1;} end}");
-    }, "expected");
+    }, "MATCH_DEFAULT_BACKEND_UNSUPPORTED");
     // Task 70: structural and row syntax must fail closed across declaration,
     // parameter, projection and pattern surfaces. The scalar bootstrap has
     // neither row layout witnesses nor borrow/mutable-field capability checks.

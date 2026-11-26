@@ -64,8 +64,17 @@ int main() {
       throw std::runtime_error("unexpected callable source acceptance");
     };
     reject_callable("pub fnc main(): int { return 7 ^ 3; }","single caret is only a return statement");
-    reject_callable("pub fnc main(): int { return 7 ^^ 3; }","FORGE_XOR_BACKEND_UNSUPPORTED");
-    reject_callable("fnc hidden(): int { return 7 ^^ 3; } pub fnc main(): int { ^ 42; }","FORGE_XOR_BACKEND_UNSUPPORTED");
+    // The native-call lane now has checked integer XOR; the older scalar
+    // lane below must still reject it. Exercise a live and an unused function,
+    // and keep rejecting Boolean mixing even in unreachable declarations.
+    if (oresforge::calls::interpret(oresforge::calls::parse(
+          "pub fnc main(): int { return 7 ^^ 3; }"),{})!=4)
+      throw std::runtime_error("callable integer XOR result mismatch");
+    if (oresforge::calls::interpret(oresforge::calls::parse(
+          "fnc hidden(): int { return 7 ^^ 3; } pub fnc main(): int { ^ 42; }"),{})!=42)
+      throw std::runtime_error("unused valid callable XOR was not admitted");
+    reject_callable("fnc hidden(): int { return 7 ^^ false; } pub fnc main(): int { ^ 42; }",
+                    "Boolean is not an int");
     reject("pub fnc main(): int { return 5 / 2; }","FORGE_CHECKED_DIVISION_BACKEND_UNSUPPORTED");
     accept("pub fnc main(): int { ^ 42; }");
     accept("fnc helper(): int { ^ 41; } pub fnc main(): int { ^ helper() + 1; }");

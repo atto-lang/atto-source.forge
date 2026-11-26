@@ -107,8 +107,7 @@ int main(int argc, char** argv) {
     ec.clear(); fs::remove(output, ec);
     return deny("E_SOURCE: changing or truncated input");
   }
-  const auto parsed = strict ? atto::forge::scalar::parse_verified_strict_i64(source)
-                             : atto::forge::scalar::parse_source(source);
+  const auto parsed = strict ? atto::forge::scalar::parse_verified_strict_i64(source) : atto::forge::scalar::parse_source(source);
   if (!parsed.ok()) {
     ec.clear(); fs::remove(output, ec);
     std::cerr << atto::forge::scalar::parse_error_name(parsed.error)

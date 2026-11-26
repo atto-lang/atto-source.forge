@@ -22,7 +22,7 @@ struct Node {
   i64 upper = 0;
 };
 enum class ParseError {
-  none, lexical, syntax, literal_out_of_range, depth_limit, node_limit, telemetry, verify_unproven, verify_unsupported, unit_name, unit_duplicate, unit_dimension, unit_scale, unit_limit, unit_erasure, unit_attachment, unit_inexact, unit_range
+  none, lexical, syntax, literal_out_of_range, depth_limit, node_limit, telemetry, verify_unproven, verify_unsupported, unit_name, unit_duplicate, unit_dimension, unit_scale, unit_limit, unit_erasure, unit_attachment, unit_inexact, unit_range, refinement_empty, refinement_binding, refinement_precondition, refinement_return, new_required, lock_unsupported
 };
 // Stable sanitized diagnostics; never echo user source bytes.
 [[nodiscard]] constexpr std::string_view parse_error_name(ParseError error) noexcept {
@@ -34,6 +34,8 @@ enum class ParseError {
     case ParseError::depth_limit: return "E_PARSE_DEPTH";
     case ParseError::node_limit: return "E_PARSE_NODES";
     case ParseError::telemetry: return "E_TELEMETRY_SCOPE";
+    case ParseError::new_required: return "E_NEW_REQUIRED";
+    case ParseError::lock_unsupported: return "E_LOCK_UNSUPPORTED";
     case ParseError::verify_unproven: return "E_VERIFY_UNPROVEN";
     case ParseError::verify_unsupported: return "E_VERIFY_UNSUPPORTED";
     case ParseError::unit_name: return "E_UNIT_NAME";
@@ -45,6 +47,10 @@ enum class ParseError {
     case ParseError::unit_attachment: return "E_UNIT_ATTACHMENT";
     case ParseError::unit_inexact: return "E_UNIT_INEXACT";
     case ParseError::unit_range: return "E_UNIT_RANGE";
+    case ParseError::refinement_empty: return "E_REFINEMENT_EMPTY";
+    case ParseError::refinement_binding: return "E_REFINEMENT_BINDING";
+    case ParseError::refinement_precondition: return "E_REFINEMENT_PRECONDITION";
+    case ParseError::refinement_return: return "E_REFINEMENT_RETURN";
   }
   return "E_PARSE_UNKNOWN";
 }
@@ -139,6 +145,19 @@ inline constexpr std::size_t max_trace_depth = 16;
   return true;
 }
 
+// Numeric separators belong to source syntax, not the host decimal API.
+// Require a digit on both sides; retain the bounded canonical conversion.
+[[nodiscard]] inline std::optional<i64> parse_source_decimal(std::string_view text) {
+  if(text.empty()||text.size()>64)return std::nullopt;
+  std::string digits;digits.reserve(text.size());
+  auto digit=[](char c){return c>='0'&&c<='9';};
+  for(std::size_t i=0;i<text.size();++i){
+    if(text[i]=='_'){
+      if(i==0||i+1==text.size()||!digit(text[i-1])||!digit(text[i+1]))return std::nullopt;
+    }else digits.push_back(text[i]);
+  }
+  return parse_decimal_i64(digits);
+}
 class Parser {
   std::string_view source_;
   std::vector<Token> tokens_;
@@ -216,7 +235,7 @@ class Parser {
   }
   [[nodiscard]] std::optional<i64> factor() {
     if (current().kind!=Kind::integer) {fail(ParseError::unit_scale);return std::nullopt;}
-    auto value=parse_decimal_i64(text());
+    auto value=parse_source_decimal(text());
     if (!value || *value<=0) {fail(ParseError::unit_scale);return std::nullopt;}
     ++pos_; return value;
   }
@@ -272,7 +291,7 @@ class Parser {
     const bool neg=take(Kind::minus);
     if (current().kind!=Kind::integer) return std::nullopt;
     const std::string digits=(neg?"-":"")+std::string(text());
-    const auto result=parse_decimal_i64(digits);
+    const auto result=parse_source_decimal(digits);
     if (result) ++pos_;
     return result;
   }
@@ -285,7 +304,7 @@ class Parser {
       std::size_t count=0;
       bool has_units=false;
       for (;;) {
-        if (name("units")) {has_units=true;break;}
+        if(name("units")){has_units=true;break;}
         if (++count>16 || !name("self")) return false;
         const bool lower=take(Kind::gt);
         if (!lower && !take(Kind::lt)) return false;
@@ -294,15 +313,15 @@ class Parser {
         const auto bound=signed_bound();
         if (!bound) return false;
         if (lower) {
-          if (!inclusive && *bound==std::numeric_limits<i64>::max()) return false;
+          if (!inclusive && *bound==std::numeric_limits<i64>::max()) {fail(ParseError::refinement_empty);return false;}
           const i64 b=inclusive?*bound:*bound+1;
           if (b>lo) lo=b;
         } else {
-          if (!inclusive && *bound==std::numeric_limits<i64>::min()) return false;
+          if (!inclusive && *bound==std::numeric_limits<i64>::min()) {fail(ParseError::refinement_empty);return false;}
           const i64 b=inclusive?*bound:*bound-1;
           if (b<hi) hi=b;
         }
-        if (lo>hi) return false;
+        if (lo>hi) {fail(ParseError::refinement_empty);return false;}
         if (!name("and")) break;
         if (name("units")) {has_units=true;break;}
       }
@@ -586,13 +605,13 @@ class Parser {
     if (take(Kind::minus)) {
       // Literal INT64_MIN is allowed; negating any evaluated INT64_MIN
       // is a checked overflow in the subsequent evaluator/codegen.
-      if (current().kind == Kind::integer && text().size() < 32) {
+      if (current().kind == Kind::integer && text().size() < 64) {
         // The negative range includes |INT64_MIN|. Reuse the canonical
         // decimal validator instead of comparing only the unpadded token.
         // This accepts -0009223372036854775808 consistently with other
         // decimal leading-zero literals but rejects larger magnitudes.
         const std::string signed_digits = "-" + std::string(text());
-        const auto minimum = parse_decimal_i64(signed_digits);
+        const auto minimum = parse_source_decimal(signed_digits);
         if (minimum && *minimum == std::numeric_limits<i64>::min()) {
           ++pos_;
           return postfix(append(Node{Op::literal, 0, 0, *minimum}), true, true);
@@ -609,15 +628,13 @@ class Parser {
       return postfix(inside);
     }
     if (current().kind == Kind::integer) {
-      auto n = parse_decimal_i64(text());
+      auto n = parse_source_decimal(text());
       if (!n) { fail(ParseError::literal_out_of_range); return std::nullopt; }
       ++pos_;
       return postfix(append(Node{Op::literal, 0, 0, *n}), true, true);
     }
     if(current().kind==Kind::name){
-      for(const auto& h:helpers_)if(h.name==text()){
-        ++pos_;return call(h,depth+1);
-      }
+      for(const auto& h:helpers_)if(h.name==text()){++pos_;return call(h,depth+1);}
       for(const auto& b:bindings_)if(b.first==text()){
         ++pos_;
         // A new read node owns independent type metadata; attaching a unit
@@ -640,8 +657,11 @@ class Parser {
     for(const auto& r:refinements_)if(r.name==n)return r;
     return std::nullopt;
   }
-  [[nodiscard]] bool compatible(std::size_t n,const Refinement& want)const{
-    return dims_[n]==want.dim&&scales_[n]==want.scale&&ranges_[n].within(want.lo,want.hi);
+  [[nodiscard]] bool compatible(std::size_t n,const Refinement& want,ParseError category){
+    if(dims_[n]!=want.dim){fail(ParseError::unit_dimension);return false;}
+    if(scales_[n]!=want.scale){fail(ParseError::unit_scale);return false;}
+    if(!ranges_[n].within(want.lo,want.hi)){fail(category);return false;}
+    return true;
   }
   [[nodiscard]] std::optional<std::size_t> call(const Helper& h,int depth){
     if(depth>max_parse_depth||!take(Kind::lparen)){fail(ParseError::syntax);return std::nullopt;}
@@ -649,7 +669,7 @@ class Parser {
     for(std::size_t i=0;i<h.params.size();++i){
       if(i&&!take(Kind::comma)){fail(ParseError::syntax);return std::nullopt;}
       auto arg=expr(depth+1);
-      if(!arg||!compatible(*arg,h.params[i])){fail(ParseError::syntax);return std::nullopt;}
+      if(!arg||!compatible(*arg,h.params[i],ParseError::refinement_precondition)){fail(ParseError::syntax);return std::nullopt;}
       map.push_back(*arg);
     }
     if(!take(Kind::rparen)){fail(ParseError::syntax);return std::nullopt;}
@@ -692,14 +712,14 @@ class Parser {
       if(!binding_name(n)||!take(Kind::equals)){fail(ParseError::syntax);return std::nullopt;}
       auto value=expr(0);
       if(!value||!take(Kind::semicolon)){fail(ParseError::syntax);return std::nullopt;}
-      if(want&&(dims_[*value]!=want->dim||scales_[*value]!=want->scale||!ranges_[*value].within(want->lo,want->hi))){
+      if(want&&!compatible(*value,*want,ParseError::refinement_binding)){
         fail(ParseError::syntax);return std::nullopt;
       }
       bindings_.emplace_back(n,*value);
     }
     if(!name("return")&&!take(Kind::caret)){fail(ParseError::syntax);return std::nullopt;}
     auto root=expr(0);
-    if(!root||(result?!compatible(*root,*result):!scalar_cast(*root))||!take(Kind::semicolon)||!take(Kind::rbrace)){fail(ParseError::syntax);return std::nullopt;}
+    if(!root||(result?!compatible(*root,*result,ParseError::refinement_return):!scalar_cast(*root))||!take(Kind::semicolon)||!take(Kind::rbrace)){fail(ParseError::syntax);return std::nullopt;}
     // Every initializer is part of the validated graph even if unused.
     // Existing postorder evaluation preserves lexical failure ordering.
     for(auto i=bindings_.rbegin();i!=bindings_.rend();++i){
@@ -848,7 +868,36 @@ public:
 };
 
 [[nodiscard]] inline Parsed parse_source(std::string_view src) {
-  return Parser(src, tokenize(src)).parse();
+  auto lexed = tokenize(src);
+  if (!lexed.ok()) return Parser(src, std::move(lexed)).parse();
+  // Preserve the existing constructor diagnostic from #51 without
+  // replacing current-main lexer/shift, cast, telemetry or AST semantics.
+  const auto is = [&](std::size_t i, Kind kind, std::string_view value = {}) {
+    return i < lexed.tokens.size() && lexed.tokens[i].kind == kind &&
+      (value.empty() || src.substr(lexed.tokens[i].offset,
+                                  lexed.tokens[i].length) == value);
+  };
+  for (std::size_t i = 0; i < lexed.tokens.size(); ++i) {
+    if (!is(i, Kind::name, "Mutex") || !is(i + 1, Kind::lt)) continue;
+    if (i > 0 && (is(i - 1, Kind::dot) || is(i - 1, Kind::double_colon)))
+      continue; // no qualified-name authority for this intrinsic
+    std::size_t depth = 0, close = lexed.tokens.size();
+    for (std::size_t j = i + 1; j < lexed.tokens.size(); ++j) {
+      if (is(j, Kind::lt)) ++depth;
+      else if (is(j, Kind::gt)) {
+        if (depth == 0) break;
+        if (--depth == 0) { close = j; break; }
+      } else if (!is(j, Kind::name)) break; // not a supported type-only spelling
+    }
+    if (close == lexed.tokens.size() || !is(close + 1, Kind::lparen) ||
+        close == i + 2) continue;
+    Parsed denied;
+    denied.error = i > 0 && is(i - 1, Kind::name, "new")
+      ? ParseError::lock_unsupported : ParseError::new_required;
+    denied.error_offset = lexed.tokens[i].offset;
+    return denied;
+  }
+  return Parser(src, std::move(lexed)).parse();
 }
 [[nodiscard]] inline Parsed parse_verified_strict_i64(std::string_view src) {
   return Parser(src, tokenize(src), true).parse();
