@@ -2,6 +2,7 @@
 #include <sys/eventfd.h>
 #include <poll.h>
 #include <unistd.h>
+#include <array>
 #include <cerrno>
 #include <cstdlib>
 #include <iostream>
