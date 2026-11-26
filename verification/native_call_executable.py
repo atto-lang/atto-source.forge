@@ -86,6 +86,8 @@ RESULT_CASES = (
      ((5,2,2,0),(-5,2,-2,0),(42,0,0,65538),(-9223372036854775808,-1,0,65537))),
     ("trap-bare", "fnc main(a:int,b:int):Result<int,Error>{^ trap (a/b);}",
      ((5,2,2,0),(0,1,0,0),(42,0,0,65538),(-9223372036854775808,-1,0,65537))),
+    ("trap-bang-tab", "fnc main(a:int,b:int):Result<int,Error>{return trap!\t(a/b);}",
+     ((7,2,3,0),(-7,3,-2,0),(42,0,0,65538))),
     ("trap-flat", "fnc main(a:int,b:int):Result<int,Error>{return trap! trap (a/b);}",
      ((5,2,2,0),(42,0,0,65538),(-9223372036854775808,-1,0,65537))),
     ("trap-call", "fnc q(a:int,b:int):int{return a/b;} fnc wrap(a:int,b:int):int{return q(a,b)+1;} fnc main(a:int,b:int):Result<int,Error>{return trap! wrap(a,b);}",
@@ -96,6 +98,11 @@ RESULT_CASES = (
      ((0,0,65538),(1,0,65537))),
 )
 RESULT_INVALID = (
+    ("bang-adjacent-paren", "fnc main():Result<int,Error>{return trap!(7/2);}", "E_BANG_KEYWORD_WHITESPACE"),
+    ("bang-adjacent-number", "fnc main():Result<int,Error>{return trap!42;}", "E_BANG_KEYWORD_WHITESPACE"),
+    ("bang-adjacent-keyword", "fnc main():Result<int,Error>{return trap!trap 42;}", "E_BANG_KEYWORD_WHITESPACE"),
+    ("bang-adjacent-comment", "fnc main():Result<int,Error>{return trap!//comment\n42;}", "E_BANG_KEYWORD_WHITESPACE"),
+    ("copy-double-bang-adjacent", "fnc main():int{return copy!!42;}", "E_BANG_KEYWORD_WHITESPACE"),
     ("ok-bool", "fnc main():Result<int,Error>{return Ok(false);}", "Boolean is not an int"),
     ("err-numeric", "fnc main():Result<int,Error>{return Err(65538);}", "Err requires typed Error payload lowering"),
 
