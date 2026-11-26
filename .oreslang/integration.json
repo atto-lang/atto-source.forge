@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "protocol": "oreslang-ecosystem-integration",
-  "repository": "ores-truffle-oreslang/oreslang-source.forge",
+  "repository": "atto-lang/atto-source.forge",
   "role": "compiler",
   "upstreams": [
     "oreslang-common-source",
