@@ -24,8 +24,14 @@ inline constexpr std::size_t max_emitted_bytes = 64 * 1024;
     code+="  std::optional<atto::forge::i64> c"+v+";\n  auto "+v+" = [&]() -> atto::forge::i64 {\n    if (c"+v+") return *c"+v+";\n";
     std::string body;
     if(n.op==Op::literal) body="    c"+v+" = "+literal(n.value)+";\n";
+    else if(n.op==Op::loop_value){
+      const auto state=var(n.left),update=var(static_cast<std::size_t>(n.value));
+      body="    auto state = "+left+";\n    for (;;) {\n      c"+state+" = state;\n";
+      for(std::size_t j=n.left+1;j<i;++j)body+="      c"+var(j)+".reset();\n";
+      body+="      if ("+right+" == 0) break;\n      state = "+update+"();\n    }\n    c"+v+" = state;\n";
+    }
     else if(n.op==Op::choose)body="    c"+v+" = "+left+" != 0 ? "+right+" : "+var(static_cast<std::size_t>(n.value))+"();\n";
-    else if(n.op==Op::copy)body="    c"+v+" = "+left+";\n";
+    else if(n.op==Op::copy||n.op==Op::loop_state)body="    c"+v+" = "+left+";\n";
     else if(n.op==Op::sequence)body="    (void)"+left+";\n    c"+v+" = "+right+";\n";
     else if(n.op==Op::narrow)body="    auto a = "+left+";\n    if (a < -2147483648LL || a > 2147483647LL) { std::fputs(\"E_I32_OVERFLOW\\n\", stderr); std::exit(74); }\n    c"+v+" = a;\n";
     else if(n.op==Op::refine)body="    auto a = "+left+";\n    if (a < "+literal(n.value)+" || a > "+literal(n.upper)+") { std::fputs(\"E_REFINEMENT_VIOLATION\\n\", stderr); std::exit(73); }\n    c"+v+" = a;\n";
@@ -64,7 +70,7 @@ inline constexpr std::size_t max_emitted_bytes = 64 * 1024;
 }
 [[nodiscard]] inline std::optional<std::string> emit_cpp(const Parsed& p) {
   if (!validate_ast(p)) return std::nullopt;
-  for(const auto& n:p.nodes)if(n.op==Op::choose)return emit_lazy_cpp(p);
+  for(const auto& n:p.nodes)if(n.op==Op::choose||n.op==Op::loop_value)return emit_lazy_cpp(p);
   std::string code = R"(#include <atto/checked_i64.hpp>
 #include <cstdio>
 #include <cstdint>
