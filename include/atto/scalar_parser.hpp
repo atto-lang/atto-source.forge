@@ -711,7 +711,10 @@ class Parser {
   [[nodiscard]] bool helper_declarations(){
     while(current().kind==Kind::name&&text()=="fnc"&&pos_+1<tokens_.size()){
       const auto& next=tokens_[pos_+1];
-      if(source_.substr(next.offset,next.length)=="main")break;
+      const auto spelling=source_.substr(next.offset,next.length);
+      if(spelling=="main")break;
+      // Keep existing type-first entrypoint spellings on the legacy path.
+      if((spelling=="int"||spelling=="infer")&&pos_+2<tokens_.size()&&tokens_[pos_+2].kind==Kind::left_arrow)break;
       if(refinements_.empty()||helpers_.size()>=16)return false;
       ++pos_;
       if(current().kind!=Kind::name||!binding_name(text()))return false;
