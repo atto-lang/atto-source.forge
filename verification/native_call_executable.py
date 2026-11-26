@@ -119,6 +119,10 @@ RESULT_INVALID = (
     ("trap-unary-precedence", "fnc main():Result<int,Error>{return trap! 5/2;}", "unexpected token"),
 )
 POSITIVE = (
+    ("shared-rs-quotient", (Path(__file__).resolve().parent.parent /
+      "contracts/numeric-parity-v1/214-checked-literal-quotient.atto").read_text(encoding="utf8").removesuffix("\n"), ((42,),)),
+    ("shared-rs-quotient-endpoints", (Path(__file__).resolve().parent.parent /
+      "contracts/numeric-parity-v1/215-checked-literal-quotient-endpoints.atto").read_text(encoding="utf8").removesuffix("\n"), ((42,),)),
     ("signed-division", "fnc main(a:int,b:int):int{return a/b;}",
      ((5,2,2),(-5,2,-2),(5,-2,-2),(-5,-2,2),(9007199254740993,1,9007199254740993),
       (-9223372036854775808,1,-9223372036854775808),(9223372036854775807,3,3074457345618258602))),
@@ -199,6 +203,10 @@ POSITIVE = (
     ("no-args", "fnc main():int{return 42;}", ((42,),)),
 )
 # Exact shared Git blobs, including the final newline added by build().
+SHARED_FIXTURE_BLOBS = {
+    "shared-rs-quotient": "957a6b87cbef0fc942d3dccdfc8ae0e23f7e2400",
+    "shared-rs-quotient-endpoints": "09baea8bbd05b4a3ff9e35433214a035d4b74f65",
+}
 GUARD_FIXTURE_BLOBS = {
     "guard-brace-continue": "fa9dd0394a3ef08f0ecb4ff010e94cc72a859126",
     "guard-brace-failure": "f4cdcada6b147c77a1f0f6ae6469a31ee44f2603",
@@ -469,10 +477,10 @@ def main():
         for label,source,cases in POSITIVE:
             number=len(cases[0])-1
             file,exe,asm=build(compiler,cc,root,label,source,number)
-            if label in GUARD_FIXTURE_BLOBS:
+            if label in GUARD_FIXTURE_BLOBS or label in SHARED_FIXTURE_BLOBS:
                 data=file.read_bytes()
                 blob=hashlib.sha1(b"blob "+str(len(data)).encode("ascii")+b"\0"+data).hexdigest()
-                require(blob==GUARD_FIXTURE_BLOBS[label],"shared guard fixture drift "+label)
+                require(blob==({**GUARD_FIXTURE_BLOBS, **SHARED_FIXTURE_BLOBS})[label],"shared fixture drift "+label)
             if label in ("factorial","fibonacci","mutual","nested"):
                 require(asm.count("  call .Lores_fn_")>=1,"missing real native call "+label)
             if label in ("factorial","lazy"):
