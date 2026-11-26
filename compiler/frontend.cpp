@@ -65,6 +65,7 @@ class Parser {
       if (tok_.text=="use" || tok_.text=="namespace")
         error(has_namespace ? "FORGE_NAMESPACE_DUPLICATE: duplicate file header" :
               "FORGE_NAMESPACE_HEADER_ORDER: namespace must precede declarations");
+      if (tok_.text=="export") { file_export(); continue; }
       definition();
     }
     if (!functions_.contains("main")) error("missing main function");
@@ -117,6 +118,7 @@ class Parser {
   std::unordered_map<std::string,Aggregate> aggregate_types_;
   std::unordered_map<std::string,Aggregate> aggregate_locals_;
   std::size_t node_count_=0;
+  std::size_t export_count_=0;
   static constexpr std::size_t kMaxExpressionDepth=128;
   static constexpr std::size_t kMaxCallDepth=64;
   static constexpr std::size_t kMaxInstructions=100000;
@@ -460,6 +462,25 @@ class Parser {
     if (!field) error("E_NO_FIELD: unknown aggregate field or slot");
     if (field->is_bool) error("aggregate bool cannot be used as int");
     return node(Expr::Tag::Constant,{},field->value);
+  }
+  // Only the standalone public scalar process entrypoint is supported.
+  // Every directive is parsed independently; identical directives do not
+  // create additional source bindings or change native assembly linkage.
+  void file_export() {
+    if (++export_count_>128)
+      error("EXPORT_SOURCE_LIMIT: too many directives");
+    expect("export");
+    expect("pub");
+    if (take("[")) {
+      expect("pkg");
+      expect("]");
+      error("EXPORT_PACKAGE_LINKER_UNSUPPORTED: package-only entrypoint");
+    }
+    (void)take("fnc");
+    if (tok_.text!="main")
+      error("EXPORT_BACKEND_UNSUPPORTED: only scalar fnc main is admitted");
+    next();
+    expect(";");
   }
   void definition() {
     bool defined=false, public_=false;
