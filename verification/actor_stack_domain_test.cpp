@@ -47,14 +47,24 @@ void verify_guard_page_fault() {
 int main() {
   ActorStackDomain a(1, 128*1024, 4096), b(2, 128*1024, 4096);
   int host_local = 0;
+  assert(!a.contains_stack_address(__builtin_frame_address(0)));
+  assert(!b.contains_stack_address(__builtin_frame_address(0)));
   ActorHeapHandle a_handle, b_handle;
   std::uintptr_t a_addr=0, b_addr=0;
   must_fail([&]{ a.allocate(8); });
   a.run_turn([&](ActorStackDomain& actor){
     int local=41;
-    a_addr=reinterpret_cast<std::uintptr_t>(&local);
+    // ASan's use-after-return instrumentation can relocate automatic locals
+    // to a fake stack. A hardware frame address still witnesses the actual
+    // guarded stack mapping, without disabling sanitizer instrumentation.
+    const void* frame=__builtin_frame_address(0);
+    a_addr=reinterpret_cast<std::uintptr_t>(frame);
+    assert(actor.contains_stack_address(frame));
+    assert(!b.contains_stack_address(frame));
+#if !ORESFORGE_ACTOR_ASAN
     assert(actor.contains_stack_address(&local));
     assert(!b.contains_stack_address(&local));
+#endif
     a_handle=actor.allocate(sizeof(local));
     actor.write(a_handle, 0, &local, sizeof(local));
     must_fail([&]{ b.allocate(1); });
@@ -63,9 +73,14 @@ int main() {
   });
   b.run_turn([&](ActorStackDomain& actor){
     int local=13;
-    b_addr=reinterpret_cast<std::uintptr_t>(&local);
+    const void* frame=__builtin_frame_address(0);
+    b_addr=reinterpret_cast<std::uintptr_t>(frame);
+    assert(actor.contains_stack_address(frame));
+    assert(!a.contains_stack_address(frame));
+#if !ORESFORGE_ACTOR_ASAN
     assert(actor.contains_stack_address(&local));
     assert(!a.contains_stack_address(&local));
+#endif
     b_handle=actor.allocate(sizeof(local));
     actor.write(b_handle, 0, &local, sizeof(local));
     must_fail([&]{ actor.read(a_handle,0,&local,sizeof(local)); });
@@ -82,7 +97,9 @@ int main() {
   });
   must_fail([&]{ a.run_turn([](auto&){throw std::runtime_error("actor failure");}); });
   // An exception unwinds on the actor's own stack; later turns still work.
-  a.run_turn([&](ActorStackDomain& actor){int n=1;assert(actor.contains_stack_address(&n));});
+  a.run_turn([&](ActorStackDomain& actor){
+    assert(actor.contains_stack_address(__builtin_frame_address(0)));
+  });
   std::thread outsider([&]{must_fail([&]{a.run_turn([](auto&){});});});
   outsider.join();
   b.stop();b.stop();
