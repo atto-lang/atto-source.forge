@@ -1,0 +1,1 @@
+fnc main(): int { return seq 1 / 0, 42; }

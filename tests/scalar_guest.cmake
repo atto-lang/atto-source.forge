@@ -143,11 +143,14 @@ verify_guest(infer_bare_prefix "0" "42\n" "")
 verify_guest(seq_scalar "0" "42\n" "")
 verify_guest(seq_divzero "71" "" "E_DIVZERO\n")
 verify_guest(seq_overflow "70" "" "E_OVERFLOW\n")
+verify_guest(seq_bare_scalar "0" "42\n" "")
+verify_guest(seq_bare_divzero "71" "" "E_DIVZERO\n")
+verify_guest(seq_bare_overflow "70" "" "E_OVERFLOW\n")
 
 
 # The combined scoped-seq frontend must fail closed for channel I/O and
 # malformed sequence delimiters, even with a pre-existing output artifact.
-foreach(seq_expr IN ITEMS "seq(1 << 2, 42)" "seq(1 >> 2, 42)" "seq(1,)")
+foreach(seq_expr IN ITEMS "seq(1 << 2, 42)" "seq(1 >> 2, 42)" "seq(1,)" "seq 1," "seq " "seq ,42")
   set(seq_input "${OUT_DIR}/seq-rejected.atto")
   set(seq_output "${OUT_DIR}/seq-rejected.cpp")
   file(WRITE "${seq_input}" "fnc main(): int {return ${seq_expr};}\n")

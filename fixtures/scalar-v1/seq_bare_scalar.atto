@@ -1,0 +1,1 @@
+fnc main(): int { return seq 1, (> 2, 3), 42; }

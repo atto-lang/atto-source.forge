@@ -220,7 +220,7 @@ class Parser {
   }
   // Restricted scalar sequences: each prefix remains an AST dependency on
   // the tail, preserving checked traps and source order; max 16 elements.
-  [[nodiscard]] std::optional<std::size_t> sequence_body(int depth) {
+  [[nodiscard]] std::optional<std::size_t> sequence_body(int depth, bool bare_return = false) {
     if (depth > max_parse_depth) { fail(ParseError::depth_limit); return std::nullopt; }
     auto last = expr(depth + 1);
     if (!last) return std::nullopt;
@@ -232,7 +232,9 @@ class Parser {
       last = append(Node{Op::seq, *last, *next, 0});
       if (!last) return std::nullopt;
     }
-    if (!take(Kind::rparen)) { fail(ParseError::syntax); return std::nullopt; }
+    if (bare_return ? current().kind != Kind::semicolon : !take(Kind::rparen)) {
+      fail(ParseError::syntax); return std::nullopt;
+    }
     return last;
   }
   [[nodiscard]] std::optional<std::size_t> unary(int depth) {
@@ -326,7 +328,12 @@ public:
       fail(ParseError::syntax);
       return std::move(out_);
     }
-    auto root = expr(0);
+    // In return position, bare seq owns the comma list up to the semicolon.
+    // Parenthesized seq remains an ordinary expression with existing precedence.
+    const bool bare_seq = current().kind == Kind::name && text() == "seq" &&
+        pos_ + 1 < tokens_.size() && tokens_[pos_ + 1].kind != Kind::lparen;
+    if (bare_seq) ++pos_;
+    auto root = bare_seq ? sequence_body(0, true) : expr(0);
     if (!root) return std::move(out_);
     if (!take(Kind::semicolon) || !take(Kind::rbrace) ||
         current().kind != Kind::end) {

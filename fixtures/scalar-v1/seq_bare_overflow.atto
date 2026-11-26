@@ -1,0 +1,1 @@
+fnc main(): int { return seq 9223372036854775807 + 1, 42; }

@@ -118,6 +118,9 @@ int main() {
   for (const auto* src : {
     "fnc main(): int {return seq(1);}",
     "fnc main(): int {return seq(1,2,42);}",
+    "fnc main(): int {return seq 1,2,42;}",
+    "fnc main(): int {return seq 42;}",
+    "fnc main(): int {return seq 1,(> 2,3),42;}",
     "fnc main(): int {return (> 1,2,42);}",
     "fnc main(): int {return seq(1,(> 2,3),42);}",
     "fnc main(): int {return seq(1,2)+40;}",
@@ -132,7 +135,10 @@ int main() {
     "fnc main(): int {return (1,2);}",
     "fnc main(): int {return (>);}",
     "fnc main(): int {return (> 1,);}",
-    "fnc main(): int {return seq 1,2;}"
+    "fnc main(): int {return seq ;}",
+    "fnc main(): int {return seq 1,;}",
+    "fnc main(): int {return seq ,1;}",
+    "fnc main(): int {return seq 1 2;}"
   }) assert(!parse_source(src).ok());
   auto forged_seq = parse_source("fnc main(): int {return seq(1,42);}");
   assert(forged_seq.ok());
