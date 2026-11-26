@@ -100,7 +100,6 @@ int main(int argc, char** argv) {
   ec.clear();
   const auto size = fs::file_size(input, ec);
   if (ec || size > max_source_bytes) {
-    ec.clear(); fs::remove(output, ec);
     return deny("E_SOURCE_LIMIT");
   }
   std::ifstream file(input, std::ios::binary);
@@ -108,7 +107,6 @@ int main(int argc, char** argv) {
   std::string source(static_cast<std::size_t>(size), '\0');
   if (!source.empty()) file.read(source.data(), static_cast<std::streamsize>(size));
   if (!file || file.peek() != std::char_traits<char>::eof()) {
-    ec.clear(); fs::remove(output, ec);
     return deny("E_SOURCE: changing or truncated input");
   }
   std::optional<std::string> generated;
@@ -126,14 +124,12 @@ int main(int argc, char** argv) {
   } else {
     const auto parsed = strict ? atto::forge::scalar::parse_verified_strict_i64(source) : atto::forge::scalar::parse_source(source);
     if (!parsed.ok()) {
-      ec.clear(); fs::remove(output, ec);
       std::cerr << atto::forge::scalar::parse_error_name(parsed.error)
                 << " byte=" << parsed.error_offset << '\n';
       return 2;
     }
     generated = atto::forge::scalar::emit_cpp(parsed);
     if (!generated) {
-      ec.clear(); fs::remove(output, ec);
       return deny("E_AST: scalar AST rejected before code emission");
     }
   }

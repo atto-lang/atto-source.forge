@@ -25,13 +25,15 @@ struct Node {
   std::vector<std::size_t> states{},effects{},updates{};
 };
 enum class ParseError {
-  none, lexical, syntax, literal_out_of_range, depth_limit, node_limit, telemetry, verify_unproven, verify_unsupported, unit_name, unit_duplicate, unit_dimension, unit_scale, unit_limit, unit_erasure, unit_attachment, unit_inexact, unit_range, refinement_empty, refinement_binding, refinement_precondition, refinement_return, refinement_duplicate, refinement_postcondition, refinement_contract, refinement_export, refinement_body, refinement_call, refinement_cast, i32_range, new_required, lock_unsupported, pair_key_type, pair_scope, pair_escape, pair_projection, pair_key_unsupported
+  none, lexical, ownership_bang_unsupported, pointer_profile, syntax, literal_out_of_range, depth_limit, node_limit, telemetry, verify_unproven, verify_unsupported, unit_name, unit_duplicate, unit_dimension, unit_scale, unit_limit, unit_erasure, unit_attachment, unit_inexact, unit_range, refinement_empty, refinement_binding, refinement_precondition, refinement_return, refinement_duplicate, refinement_postcondition, refinement_contract, refinement_export, refinement_body, refinement_call, refinement_cast, i32_range, new_required, lock_unsupported, pair_key_type, pair_scope, pair_escape, pair_projection, pair_key_unsupported
 };
 // Stable sanitized diagnostics; never echo user source bytes.
 [[nodiscard]] constexpr std::string_view parse_error_name(ParseError error) noexcept {
   switch (error) {
     case ParseError::none: return "NONE";
     case ParseError::lexical: return "E_PARSE_LEXICAL";
+    case ParseError::ownership_bang_unsupported: return "E_OWNERSHIP_BANG_UNSUPPORTED";
+    case ParseError::pointer_profile: return "E_POINTER_PROFILE";
     case ParseError::syntax: return "E_PARSE_SYNTAX";
     case ParseError::literal_out_of_range: return "E_PARSE_RANGE";
     case ParseError::depth_limit: return "E_PARSE_DEPTH";
@@ -71,7 +73,18 @@ enum class ParseError {
   return "E_PARSE_UNKNOWN";
 }
 
+// BorrowedLocal is NOT an owning Pointer.alloc<T> region or a raw Atto
+// pointer. The canonical parser verifies the exact lexical sequence and
+// erases all source names before emission. Only a single initialized i64
+// place with a compiler-authenticated readonly handle is admitted.
+struct BorrowedLocal {
+  std::string referent;
+  std::string handle;
+  std::string copied_scalar;
+  i64 initial = 0;
+};
 struct Parsed {
+  std::optional<BorrowedLocal> local;
   std::vector<Node> nodes;
   std::size_t root = 0;
   ParseError error = ParseError::none;
@@ -101,6 +114,40 @@ inline constexpr std::size_t max_trace_depth = 16;
 [[nodiscard]] inline bool validate_ast(const Parsed& p) {
   if (!p.ok() || p.nodes.size() > max_nodes ||
       p.root != p.nodes.size() - 1) return false;
+  if (p.local) {
+    // A forged or mutated typed plan must not be allowed to change its
+    // value, launder a raw address, or become an owning pointer. There is
+    // exactly one canonical postorder i64 read-copy result.
+    const auto& l = *p.local;
+    const auto safe_name = [](const std::string& n) {
+      if (n.empty() || n.size() > 96) return false;
+      auto start = [](char ch) {
+        return (ch >= 'a' && ch <= 'z') ||
+               (ch >= 'A' && ch <= 'Z') || ch == '_';
+      };
+      if (!start(n[0])) return false;
+      for (char ch : n)
+        if (!start(ch) && !(ch >= '0' && ch <= '9')) return false;
+      return true;
+    };
+    const auto reserved = [](const std::string& n) {
+      return n == "main" || n == "int" || n == "Pointer" ||
+             n == "let" || n == "val" || n == "rt" ||
+             n == "ref" || n == "deref" || n == "unref" ||
+             n == "return" || n == "fnc" || n == "pub";
+    };
+    if (!p.trace_steps.empty() || !safe_name(l.referent) || !safe_name(l.handle) ||
+        !safe_name(l.copied_scalar) ||
+        reserved(l.referent) || reserved(l.handle) ||
+        reserved(l.copied_scalar) ||
+        l.referent == l.handle || l.referent == l.copied_scalar ||
+        l.handle == l.copied_scalar ||
+        p.nodes.size() != 1 || p.root != 0 ||
+        p.nodes[0].op != Op::literal || p.nodes[0].value != l.initial ||
+        p.nodes[0].left != 0 || p.nodes[0].right != 0 || p.nodes[0].upper != 0 ||
+        !p.nodes[0].states.empty() || !p.nodes[0].effects.empty() || !p.nodes[0].updates.empty())
+      return false;
+  }
   if (p.trace_steps.size() > max_tokens) return false;
   std::size_t trace_depth = 0;
   for (const auto& operation : p.trace_steps) {
@@ -1397,11 +1444,108 @@ class Parser {
     if (!take(Kind::rbrace)) fail(ParseError::syntax);
     return root;
   }
+  [[nodiscard]] bool expected(Kind kind) {
+    if (take(kind)) return true;
+    fail(ParseError::pointer_profile);
+    return false;
+  }
+  [[nodiscard]] bool expected(std::string_view word) {
+    if (name(word)) return true;
+    fail(ParseError::pointer_profile);
+    return false;
+  }
+  [[nodiscard]] std::optional<std::string> local_id() {
+    if (current().kind != Kind::name) {
+      fail(ParseError::pointer_profile);
+      return std::nullopt;
+    }
+    std::string name_value(text());
+    ++pos_;
+    if (name_value.size() > 96 ||
+        name_value == "main" || name_value == "int" ||
+        name_value == "Pointer" || name_value == "let" ||
+        name_value == "val" || name_value == "rt" ||
+        name_value == "ref" || name_value == "deref" ||
+        name_value == "unref" || name_value == "return" ||
+        name_value == "fnc" || name_value == "pub") {
+      fail(ParseError::pointer_profile);
+      return std::nullopt;
+    }
+    return name_value;
+  }
+  [[nodiscard]] bool local_op(std::string_view op) {
+    if (name("rt")) return expected(op);
+    const auto begin = current().offset;
+    if (!expected(op)) return false;
+    // Even whitespace or comments between operation and ! are rejected;
+    // source offsets are retained by the *canonical* lexer.
+    if (current().kind != Kind::bang ||
+        current().offset != begin + op.size()) {
+      fail(ParseError::pointer_profile);
+      return false;
+    }
+    ++pos_;
+    return true;
+  }
+  [[nodiscard]] bool local_pointer() {
+    auto owner = local_id();
+    if (!owner || !expected(Kind::colon) ||
+        !expected("int") || !expected(Kind::equals))
+      return false;
+    if (current().kind != Kind::integer) {
+      fail(ParseError::pointer_profile);
+      return false;
+    }
+    auto initial = parse_decimal_i64(text());
+    if (!initial) {
+      fail(ParseError::literal_out_of_range);
+      return false;
+    }
+    ++pos_;
+    if (!expected(Kind::semicolon) || !expected("val") ||
+        !expected("Pointer") || !expected(Kind::lt) ||
+        !expected("int") || !expected(Kind::gt))
+      return false;
+    auto handle = local_id();
+    if (!handle) return false;
+    if (*handle == *owner) {
+      fail(ParseError::pointer_profile);
+      return false;
+    }
+    if (!expected(Kind::equals) || !local_op("ref") ||
+        !expected(*owner) || !expected(Kind::semicolon) ||
+        !expected("val"))
+      return false;
+    auto copy = local_id();
+    if (!copy) return false;
+    if (*copy == *owner || *copy == *handle) {
+      fail(ParseError::pointer_profile);
+      return false;
+    }
+    if (!expected(Kind::equals) || !local_op("deref") ||
+        !expected(*handle) || !expected(Kind::semicolon) ||
+        !local_op("unref") || !expected(*handle) ||
+        !expected(Kind::semicolon) || !expected("return") ||
+        !expected(*copy) || !expected(Kind::semicolon) ||
+        !expected(Kind::rbrace) || current().kind != Kind::end) {
+      fail(ParseError::pointer_profile);
+      return false;
+    }
+    // The proof is closed-world: exactly one readonly copy and one unref
+    // precede the only return. No branch, call, actor, await, handle copy,
+    // second function or operation is accepted before guest emission.
+    out_.local = BorrowedLocal{*owner, *handle, *copy, *initial};
+    auto root = append(Node{Op::literal, 0, 0, *initial});
+    if (!root) return false;
+    out_.root = *root;
+    return true;
+  }
 public:
   Parser(std::string_view source, Lexed lexed, bool strict = false)
       : source_(source), tokens_(std::move(lexed.tokens)), strict_(strict) {
     if (!lexed.ok()) {
-      out_.error = ParseError::lexical;
+      out_.error = lexed.error == LexError::ownership_bang_unsupported
+          ? ParseError::ownership_bang_unsupported : ParseError::lexical;
       out_.error_offset = lexed.error_offset;
     }
   }
@@ -1431,6 +1575,19 @@ public:
     if (!signature_ok || !take(Kind::lbrace)) {
       fail(ParseError::syntax);
       return std::move(out_);
+    }
+    // Only the isolated no-declaration local pointer program is eligible.
+    // Never divert normal bindings, refinements, helpers or strict verification.
+    if (!strict_ && helpers_.empty() && refinements_.empty() &&
+        (pos_ == 7 || pos_ == 8) && current().kind == Kind::name && text() == "let") {
+      bool pointer_token = false;
+      for (std::size_t i = pos_; i < tokens_.size(); ++i)
+        if (tokens_[i].kind == Kind::name && source_.substr(tokens_[i].offset, tokens_[i].length) == "Pointer") pointer_token = true;
+      if (pointer_token) {
+        ++pos_;
+        (void)local_pointer();
+        return std::move(out_);
+      }
     }
     std::vector<std::string_view> aliases;
     auto root = strict_||!helpers_.empty()||(current().kind==Kind::name&&(text()=="val"||(!refinements_.empty()&&text()=="let"))) ? binding_body() : body(aliases);

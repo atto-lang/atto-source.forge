@@ -106,6 +106,20 @@ struct SpanScope {
 )";
   }
   code += "int main() {\n";
+  // Emit genuine native stack storage and a const pointer read. Names from
+  // user source never enter generated C++; the borrow is compiler-authenticated
+  // and nonowning, and unref only invalidates this lexical handle.
+  if (p.local) {
+    const auto initial = std::to_string(p.local->initial);
+    code += "  const atto::forge::i64 __atto_place{" + initial + "};\n";
+    code += "  const atto::forge::i64* __atto_borrow = &__atto_place;\n";
+    code += "  const atto::forge::i64 __atto_copy = *__atto_borrow;\n";
+    code += "  __atto_borrow = nullptr; // non-owning unref, not delete/free\n";
+    code += "  std::printf(\"%lld\\n\", static_cast<long long>(__atto_copy));\n";
+    code += "  return 0;\n}\n";
+    if (code.size() > max_emitted_bytes) return std::nullopt;
+    return code;
+  }
   std::size_t open_spans = 0;
   if (!p.trace_steps.empty()) {
     code += "  atto::forge::i64 answer = 0;\n";
