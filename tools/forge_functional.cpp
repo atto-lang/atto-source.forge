@@ -200,7 +200,7 @@ struct Parser {
     }
     return lhs;
   }
-  Expr brace(std::vector<Binding>& locals, std::vector<Expr>& prints, const std::string& name) {
+  Expr brace(std::vector<Binding>& locals, std::vector<Expr>& prints, const std::string& function_name) {
     while (eat("val")) {
       auto n = name();
       need("=");
@@ -210,7 +210,7 @@ struct Parser {
       locals.push_back(Binding{std::move(n), std::move(v)});
     }
     while (eat("stdio")) {
-      if (!allow_stdio || name != "main") fail("E_PERMISSION");
+      if (!allow_stdio || function_name != "main") fail("E_PERMISSION");
       need(".");
       if (!eat("println")) fail("E_STDIO");
       need("(");
