@@ -342,7 +342,19 @@ class Parser {
       "AsyncIterator","Fnc","Function","const","val","let","return","fnc","routine",
       "pub","define","type","module","class","actor","new","if","else","end",
       "i8","i16","i32","i64","u8","u16","u32","u64","f32","f64","uint",
-      "decimal","bigint","guard","main"}) {
+      "decimal","bigint","guard","main",
+      "unsafe","sync","task","pipe","rpipe","def","namespace","contract","conforms",
+      "interface","trait","types","typeof","abstract","extends","implements","impl",
+      "import","from","as","using","pure","async","suspends","generator","yield","nlex",
+      "begin","super","static","private","mut","then","elif","elseif","fi","do","done",
+      "while","for","of","loop","block","break","continue","switch","match","maybe",
+      "matches","over","default","try","catch","finally","throw","raise","panic",
+      "recover","trap","defer","persistent","durable","isoactor","shared","untrusted",
+      "spawn","stop","rt","await","nb","cb","select","readch","writech","eq","neq","is",
+      "obj","arr","cpu","gpu","quantum","Pointer","ActorMail","ReadLoan","WriteLoan",
+      "Atomic","AtomicRef","AtomicBool","AtomicInt","AtomicLong","AtomicI8","AtomicI16",
+      "AtomicI32","AtomicI64","AtomicU8","AtomicU16","AtomicU32","AtomicU64",
+      "Arc","Weak","Box","Rc","RwLock","RwLockReadGuard","RwLockWriteGuard","UnsafeCell"}) {
       if (name==word) return true;
     }
     return false;
