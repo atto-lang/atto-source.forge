@@ -471,6 +471,12 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
         "${CMAKE_CURRENT_SOURCE_DIR}/verification/native_call_executable.py"
         --compiler "$<TARGET_FILE:oresforge>")
     set_tests_properties(oresforge_real_native_recursive_calls PROPERTIES TIMEOUT 180)
+    # Unsupported counted select must fail through every real CLI mode.
+    add_test(NAME oresforge_mixed_counted_select_admission
+      COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/verification/mixed_counted_select_admission.py"
+        "$<TARGET_FILE:oresforge>")
+    set_tests_properties(oresforge_mixed_counted_select_admission PROPERTIES TIMEOUT 180)
     # The pinned core library is executable through the typed callable lane.
     # Keep it in the full GCC/Clang/sanitizer matrix, not just a path-filtered workflow.
     add_test(NAME oresforge_core_types_native
@@ -916,4 +922,31 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     endif()
   endif()
   add_test(NAME socket_broker_v1_test COMMAND socket_broker_v1_test)
+endif()
+
+# Opt-in shared polling/execution host substrate. Not source-actor qualification.
+if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  find_package(Threads REQUIRED)
+  add_executable(ores-shared-reactor-pool-test verification/shared_reactor_pool_test.cpp)
+  target_include_directories(ores-shared-reactor-pool-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/runtime")
+  target_compile_features(ores-shared-reactor-pool-test PRIVATE cxx_std_17)
+  target_compile_options(ores-shared-reactor-pool-test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic -Werror -UNDEBUG>)
+  target_link_libraries(ores-shared-reactor-pool-test PRIVATE Threads::Threads)
+  add_test(NAME shared_reactor_pool_host COMMAND ores-shared-reactor-pool-test)
+  set_tests_properties(shared_reactor_pool_host PROPERTIES TIMEOUT 30)
+  add_executable(ores-shared-worker-layout-benchmark verification/shared_worker_layout_benchmark.cpp)
+  target_compile_features(ores-shared-worker-layout-benchmark PRIVATE cxx_std_17)
+  target_link_libraries(ores-shared-worker-layout-benchmark PRIVATE Threads::Threads)
+endif()
+
+# Explicit shared counted-ready AOT frontend headers.
+target_include_directories(oresforge PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+
+# The shared counted-ready CLI is opt-in; its native guests are mandatory in Linux CTest.
+if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_test(NAME oresforge_shared_counted_ready_native
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/verification/test-counted-ready-shared-native.sh"
+      "$<TARGET_FILE:oresforge>" "${CMAKE_CURRENT_SOURCE_DIR}/contracts/counted-ready-v1")
+  set_tests_properties(oresforge_shared_counted_ready_native PROPERTIES TIMEOUT 240)
 endif()
