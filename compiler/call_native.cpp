@@ -464,6 +464,6 @@ std::string emit_asm(const Module& m,Arch arch) {
   if(arch!=Arch::X86_64)
     throw std::runtime_error("native callable backend currently supports x86_64 only");
   verify(m);
-  return Native{m}.build();
+  return Native{m, std::ostringstream{}, 0}.build();
 }
 }
