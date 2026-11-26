@@ -269,7 +269,7 @@ class Parser {
     if (source_.substr(at_,2)=="^^")
       throw std::runtime_error("FORGE_XOR_BACKEND_UNSUPPORTED: integer ^^ requires native bitwise lowering at byte "+
                                std::to_string(start));
-    if (std::string_view("()+-*/{};:,?^").find(static_cast<char>(c)) ==
+    if (std::string_view("()+-*/{};:,?^.").find(static_cast<char>(c)) ==
         std::string_view::npos) error("invalid character");
     ++at_;
     tok_={Kind::Punct,source_.substr(start,1),start};

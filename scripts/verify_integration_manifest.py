@@ -23,6 +23,7 @@ UPSTREAMS = {
     'oreslang-source.hdl': ('oreslang-common-source', 'oreslang-target-profiles'),
     'oreslang-source.forge': ('oreslang-common-source', 'oreslang-target-profiles'),
     'oreslang-source.net': ('oreslang-common-source', 'oreslang-target-profiles'),
+    'atto-source.forge': ('oreslang-common-source', 'oreslang-target-profiles'),
 }
 EXPECTED_KEYS = frozenset({'schemaVersion', 'protocol', 'repository', 'role', 'upstreams', 'evidence', 'note'})
 MAX_BYTES = 4096
@@ -67,7 +68,9 @@ def verify_bytes(raw: bytes, repository_name: str) -> dict[str, object]:
         raise InvalidManifest('unsupported schema version')
     if value['protocol'] != PROTOCOL or type(value['protocol']) is not str:
         raise InvalidManifest('unsupported protocol')
-    if type(value['repository']) is not str or value['repository'] != 'ores-truffle-oreslang/' + repository_name:
+    # Canonical migrated identity; retain the exact legacy upstream declaration.
+    owner = 'atto-lang' if repository_name == 'atto-source.forge' else 'ores-truffle-oreslang'
+    if type(value['repository']) is not str or value['repository'] != owner + '/' + repository_name:
         raise InvalidManifest('repository identity mismatch')
     if type(value['role']) is not str or value['role'] != 'compiler':
         raise InvalidManifest('unexpected integration role')
