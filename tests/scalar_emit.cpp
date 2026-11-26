@@ -63,6 +63,16 @@ int main() {
   }
   assert(parse_verified_strict_i64("pub fnc main(): int {return 42;}").error==ParseError::verify_unsupported);
   assert(parse_verified_strict_i64(pre+"pub fnc main(): int {val int x = 9223372036854775807+1;return 42;}").error==ParseError::verify_unproven);
+  const auto loop=parse_verified_strict_i64(
+    "type Count = int where self >= 0 and self <= 42; "
+    "pub fnc main() -> int { let Count x = 0; let Count y = 0; "
+    "while x < 42 { x=x+1; y=x; if x==42 { break; } } return y; }");
+  assert(loop.ok()&&emit_cpp(loop));
+  auto invalid=loop;
+  for(auto& node:invalid.nodes)if(node.op==Op::loop_group&&!node.exits.empty()){
+    node.exits.front().values[0]=node.right;break;
+  }
+  assert(!validate_ast(invalid)&&!emit_cpp(invalid));
   auto annotated=parse_verified_strict_i64(pre+"@requires(x >= 1) @requires(x <= 42) fnc f(int x) -> int {return 84/x;} pub fnc main(): int {return f(2);}");
   assert(annotated.ok() && validate_ast(annotated) && emit_cpp(annotated));
   auto invalid_annotation=parse_verified_strict_i64(pre+"@requires(x >= 3) fnc f(int x) -> int {return 84/x;} pub fnc main(): int {return f(2);}");

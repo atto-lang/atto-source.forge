@@ -5,6 +5,41 @@
 using namespace atto::forge;
 using namespace atto::forge::scalar;
 int main() {
+  // Pointer<int> ref!/deref!/unref! is admitted only by the distinct
+  // closed-world local-pointer parser, never as an untyped ownership call.
+  for (const std::string_view expression : {
+      "copy!42", "take!value", "borrow! mut owner",
+      "share!owner", "pin!owner", "drop!owner",
+      "freeze!owner", "weak!owner", "copy!eq\xC3\xA9" }) {
+    const auto source = std::string("fnc main(): int {return ") +
+                        std::string(expression) + ";}";
+    const auto rejected = parse_source(source);
+    assert(rejected.error == ParseError::ownership_bang_unsupported);
+    assert(parse_error_name(rejected.error) == "E_OWNERSHIP_BANG_UNSUPPORTED");
+  }
+  const auto ordinary_comparison =
+      parse_source("fnc main(): int { return copy!eq other; }");
+  assert(ordinary_comparison.error != ParseError::ownership_bang_unsupported);
+  const auto nested_comment = parse_source(
+      "fnc main(): int {return /* outer /* copy!secret */ remaining */ 42;}");
+  assert(nested_comment.ok());
+  assert(nested_comment.nodes[nested_comment.root].value == 42);
+  // Even at the maximum supported depth, ownership-looking text remains
+  // comment trivia and cannot reach typed pointer or scalar lowering.
+  std::string deep_comment = "fnc main(): int {return ";
+  for (int n = 0; n < 128; ++n) deep_comment += "/*";
+  deep_comment += " copy!untrusted_secret ";
+  for (int n = 0; n < 128; ++n) deep_comment += "*/";
+  deep_comment += " 42;}";
+  const auto deep_parsed = parse_source(deep_comment);
+  assert(deep_parsed.ok());
+  assert(deep_parsed.nodes[deep_parsed.root].value == 42);
+  std::string overdeep_comment = "fnc main(): int {return ";
+  for (int n = 0; n < 129; ++n) overdeep_comment += "/*";
+  overdeep_comment += " copy!untrusted_secret ";
+  for (int n = 0; n < 129; ++n) overdeep_comment += "*/";
+  overdeep_comment += " 42;}";
+  assert(parse_source(overdeep_comment).error == ParseError::lexical);
   auto commented = parse_source(
       "/* module header */ fnc main(): int { // body\n"
       " return 8 / /* denominator */ 2; /* tail */ }");

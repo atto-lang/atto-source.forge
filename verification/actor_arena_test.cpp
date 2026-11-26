@@ -105,4 +105,50 @@ int main() {
   }
   migrating.end_turn(m1);
   migrating.retire();
+  // Shared arena lifecycle v1: failed admission is accounting-neutral and
+  // reclaim/restart of one actor never changes another actor's private bytes.
+  {
+    ActorArena first(701, 1), sibling(702, 1);
+    auto t = first.begin_turn(701, 1);
+    auto s = sibling.begin_turn(702, 1);
+    std::array<std::byte, 1> marker{std::byte{17}}, out{};
+    std::array<std::byte, 1> other{std::byte{9}};
+    auto keep = first.allocate(t, 1);
+    first.write(t, keep, marker);
+    auto sibling_handle = sibling.allocate(s, 1);
+    sibling.write(s, sibling_handle, other);
+    for (std::size_t i = 1; i < ActorArena::Slots - 1; ++i)
+      (void)first.allocate(t, 1);
+    for (int i = 0; i < 8; ++i)
+      rejects([&] { (void)first.allocate(t, ActorArena::SlotBytes + 1); });
+    auto last = first.allocate(t, 1);
+    first.read(t, last, out);
+    ensure(out[0] == std::byte{0});
+    rejects([&] { (void)first.allocate(t, 1); });
+    first.read(t, keep, out);
+    ensure(out == marker);
+    auto scratch = first.scratch_alloc(t, ActorArena::ScratchBytes - 8);
+    (void)scratch;
+    for (int i = 0; i < 8; ++i)
+      rejects([&] { (void)first.scratch_alloc(t, 9); });
+    auto tail = first.scratch_alloc(t, 8);
+    std::array<std::byte, 8> scratch_out{};
+    first.scratch_read(t, tail, scratch_out);
+    ensure(scratch_out == (std::array<std::byte, 8>{}));
+    rejects([&] { (void)first.scratch_alloc(t, 1); });
+    first.end_turn(t);
+    first.retire();
+    sibling.read(s, sibling_handle, out);
+    ensure(out == other);
+    ActorArena restarted(701, 2);
+    auto r = restarted.begin_turn(701, 2);
+    rejects([&] { restarted.read(r, keep, out); });
+    auto fresh = restarted.allocate(r, 1);
+    restarted.read(r, fresh, out);
+    ensure(out[0] == std::byte{0});
+    restarted.end_turn(r);
+    restarted.retire();
+    sibling.end_turn(s);
+    sibling.retire();
+  }
 }

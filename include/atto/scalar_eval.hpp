@@ -38,7 +38,25 @@ struct Evaluated {
           auto cond=self(self,n.right);if(!cond.ok())return cond;
           if(*cond.value==0)break;
           if(++iterations>1000000)return {{},EvalError::invalid_ast};
-          for(auto k:n.effects){auto effect=self(self,k);if(!effect.ok())return effect;}
+          bool transferred=false,breaking=false;
+          std::size_t exit_index=0;
+          for(std::size_t k=0;k<=n.effects.size()&&!transferred;++k){
+            while(exit_index<n.exits.size()&&n.exits[exit_index].position==k){
+              const auto& x=n.exits[exit_index++];
+              auto condition=self(self,x.condition);if(!condition.ok())return condition;
+              if(*condition.value==0)continue;
+              for(std::size_t j=0;j<x.values.size();++j){
+                auto update=self(self,x.values[j]);if(!update.ok())return update;
+                current[j]=*update.value;
+              }
+              transferred=true;breaking=x.breaking;break;
+            }
+            if(!transferred&&k<n.effects.size()){auto effect=self(self,n.effects[k]);if(!effect.ok())return effect;}
+          }
+          if(transferred){
+            if(breaking){for(std::size_t j=0;j<n.states.size();++j)cache[n.states[j]]=current[j];break;}
+            continue;
+          }
           for(std::size_t j=0;j<n.updates.size();++j){
             auto update=self(self,n.updates[j]);if(!update.ok())return update;current[j]=*update.value;
           }
