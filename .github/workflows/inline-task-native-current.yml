@@ -1,0 +1,25 @@
+name: Forge restricted inline task native guests
+on:
+  pull_request:
+    paths:
+      - 'include/atto/scalar_parser.hpp'
+      - 'tests/inline-task-native-current.sh'
+      - '.github/workflows/inline-task-native-current.yml'
+permissions:
+  contents: read
+jobs:
+  native:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          git log -1 --format='%H %T'
+          cmake -S . -B build -DATTO_FORGE_SANITIZERS=OFF
+          cmake --build build --target forge_scalar scalar_parser_test scalar_eval_test scalar_emit_test -j2
+          ctest --test-dir build --output-on-failure -R '^scalar_(parser|eval|emit)_test$'
+          bash tests/inline-task-native-current.sh "$PWD/build/forge_scalar"

@@ -22,6 +22,14 @@ int main(int argc,char** argv) {
   try {
     // Report failed publication (e.g. read-only stdout) as compilation failure.
     std::cout.exceptions(std::ios::badbit | std::ios::failbit);
+    // Check the actual stage-0 scalar guest without publishing a result.
+    // This subset is pure and zero-argument, so checked interpretation also
+    // rejects constant arithmetic overflow, unlike an IR-only syntax check.
+    if (argc==3 && std::string(argv[1])=="check") {
+      auto program=oresforge::parse_source(read_file(argv[2]));
+      (void)oresforge::interpret(program);
+      return 0;
+    }
     if (argc==3 && (std::string(argv[1])=="run" || std::string(argv[1])=="ir")) {
       auto program=oresforge::parse_source(read_file(argv[2]));
       if (std::string(argv[1])=="run") std::cout<<oresforge::interpret(program)<<'\n';
@@ -39,7 +47,7 @@ int main(int argc,char** argv) {
     }
     // A separate stage-0 callable profile: true SysV native calls and lazy
     // runtime branches. Legacy scalar and runtime-entry modes remain intact.
-    if (argc>=3 && std::string(argv[1])=="run-calls") {
+    if (argc>=3 && (std::string(argv[1])=="run-calls" || std::string(argv[1])=="run-result-calls" || std::string(argv[1])=="run-option-calls" || std::string(argv[1])=="run-effect-calls")) {
       auto program=oresforge::calls::parse(read_file(argv[2]));
       std::vector<std::int64_t> args;
       for (int i=3;i<argc;++i) {
@@ -50,7 +58,16 @@ int main(int argc,char** argv) {
           throw std::runtime_error("invalid callable i64 argument");
         args.push_back(value);
       }
-      std::cout<<oresforge::calls::interpret(program,args)<<'\n';
+      if(std::string(argv[1])=="run-effect-calls") {
+        const auto result=oresforge::calls::interpret_effect(program,args);
+        std::cout<<result.value<<' '<<result.tag<<' '<<static_cast<std::uint64_t>(result.effect)<<'\n';
+      } else if(std::string(argv[1])=="run-result-calls") {
+        const auto result=oresforge::calls::interpret_result(program,args);
+        std::cout<<result.value<<' '<<static_cast<std::uint64_t>(result.status)<<'\n';
+      } else if(std::string(argv[1])=="run-option-calls") {
+        const auto result=oresforge::calls::interpret_option(program,args);
+        std::cout<<result.value<<' '<<result.tag<<'\n';
+      } else std::cout<<oresforge::calls::interpret(program,args)<<'\n';
       std::cout.flush();
       return 0;
     }
@@ -96,7 +113,7 @@ int main(int argc,char** argv) {
       std::cout.flush();
       return 0;
     }
-    std::cerr<<"usage: oresforge run|ir <file.ores> | emit-asm <arch> <file.ores> | run-runtime <file.ores> [i64-args...] | ir-runtime <file.ores> | emit-runtime-asm <arch> <file.ores> | run-calls <file.ores> [i64-args...] | emit-call-asm x86_64 <file.ores>\n";
+    std::cerr<<"usage: oresforge check <file.atto|file.ores> | run|ir <file.atto|file.ores> | emit-asm <arch> <file.atto|file.ores> | run-runtime <file.atto|file.ores> [i64-args...] | ir-runtime <file.atto|file.ores> | emit-runtime-asm <arch> <file.atto|file.ores> | run-calls|run-result-calls|run-option-calls|run-effect-calls <file.atto|file.ores> [i64-args...] | emit-call-asm x86_64 <file.atto|file.ores>\n";
     return 2;
   } catch (const std::exception& e) {
     std::cerr<<"oresforge: "<<e.what()<<'\n';

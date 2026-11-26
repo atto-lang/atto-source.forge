@@ -1,0 +1,56 @@
+name: Forge actor-incarnation native heap and frame host checks
+on:
+  pull_request:
+    paths:
+      - 'runtime/ActorIncarnationMemoryV1.hpp'
+      - 'runtime/actor.hpp'
+      - 'runtime/actor.cpp'
+      - 'verification/actor_incarnation_memory_v1_test.cpp'
+      - 'CMakeLists.txt'
+      - 'docs/FORGE_ACTOR_INCAR_MEMORY_V1.md'
+      - '.github/workflows/actor-incarnation-memory-v1.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-host:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [g++, clang++]
+        mode: [optimized, sanitized]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify exact immutable source head
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test -n "$(git rev-parse 'HEAD^{tree}')"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          git ls-files -s runtime/ActorIncarnationMemoryV1.hpp runtime/actor.cpp runtime/actor.hpp verification/actor_incarnation_memory_v1_test.cpp
+      - name: Build and execute strict native actor heap and frame CTest
+        shell: bash
+        env:
+          CXX: ${{ matrix.compiler }}
+          MODE: ${{ matrix.mode }}
+        run: |
+          set -euo pipefail
+          flags="-O2 -Wall -Wextra -Wpedantic -Werror"
+          if [[ "$MODE" == sanitized ]]; then
+            flags="-O1 -g -Wall -Wextra -Wpedantic -Werror -fsanitize=address,undefined -fno-omit-frame-pointer"
+          fi
+          build="$RUNNER_TEMP/actor-incarnation-$MODE"
+          cmake -S . -B "$build" -DCMAKE_CXX_COMPILER="$CXX" -DCMAKE_CXX_FLAGS="$flags"
+          cmake --build "$build" --target oresforge_actor_incarnation_memory_v1 --parallel 2
+          ASAN_OPTIONS=detect_leaks=1 ctest --test-dir "$build" --output-on-failure -R '^oresforge_actor_incarnation_memory_v1_host$'
+          "$build/oresforge_actor_incarnation_memory_v1" | tee "$RUNNER_TEMP/actor-incarnation-host.log"
+          grep -Fx 'FORGE_ACTOR_INCAR_MEMORY_HOST_PASS|private_heap=1|logical_stack=1|guest_atto=0|physical_stack=0' "$RUNNER_TEMP/actor-incarnation-host.log"
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"

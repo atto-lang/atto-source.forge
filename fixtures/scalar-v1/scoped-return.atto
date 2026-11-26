@@ -1,0 +1,9 @@
+pub fnc main(): int {
+  using telemetry.span("finished") as finished {}
+  using telemetry.span("checkout") as outer {
+    using telemetry.span("payment") as inner {
+      return 42;
+    }
+  }
+  return 1;
+}

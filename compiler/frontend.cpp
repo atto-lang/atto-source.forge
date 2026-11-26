@@ -52,7 +52,21 @@ class Parser {
  public:
   explicit Parser(std::string_view text,bool runtime_entry=false): source_(text),runtime_entry_(runtime_entry) { next(); }
   Program parse() {
-    while (tok_.kind != Kind::End) definition();
+    // A file-scoped namespace is declaration metadata only; this stage-0
+    // bootstrap does not gain imports, packages or actor state by admitting it.
+    bool has_namespace = false;
+    if (take("use")) {
+      expect("namespace");
+      (void)identifier();
+      expect(";");
+      has_namespace = true;
+    }
+    while (tok_.kind != Kind::End) {
+      if (tok_.text=="use" || tok_.text=="namespace")
+        error(has_namespace ? "FORGE_NAMESPACE_DUPLICATE: duplicate file header" :
+              "FORGE_NAMESPACE_HEADER_ORDER: namespace must precede declarations");
+      definition();
+    }
     if (!functions_.contains("main")) error("missing main function");
     if (!runtime_entry_ && !functions_.at("main").parameters.empty())
       error("main must have zero parameters");
@@ -101,6 +115,7 @@ class Parser {
     throw std::runtime_error(std::string(s)+" at byte "+std::to_string(tok_.offset));
   }
   void next() {
+    const auto previousToken = tok_.text;
     while (at_<source_.size()) {
       const auto c=static_cast<unsigned char>(source_[at_]);
       if (ascii_space(c)) { ++at_; continue; }
@@ -136,6 +151,9 @@ class Parser {
     const auto start=at_;
     if (at_==source_.size()) { tok_={Kind::End,{},start}; return; }
     auto c=static_cast<unsigned char>(source_[at_]);
+    if (c=='@')
+      throw std::runtime_error("annotations require typed target validation and AOT lowering; unsupported in Forge stage-0 at byte "+
+                               std::to_string(start));
     if (ascii_alpha(c) || c=='_') {
       ++at_;
       while (at_<source_.size()) {
@@ -144,6 +162,19 @@ class Parser {
         ++at_;
       }
       tok_={Kind::Word,source_.substr(start,at_-start),start};
+      // A contextual ownership operator requires the verb immediately next
+      // to '!'. The stage-0 scalar IR has no ownership kind or runtime loan
+      // authority; never reinterpret copy!/take!/borrow!/share! as a call.
+      // The same guard catches 'mut borrow!' at the borrow token.
+      if ((tok_.text=="copy" || tok_.text=="take" ||
+           tok_.text=="borrow" || tok_.text=="share") &&
+          at_<source_.size() && source_[at_]=='!' &&
+          !(at_+1<source_.size() && source_[at_+1]=='=') &&
+          !(source_.substr(at_,3)=="!eq" &&
+              (at_+3==source_.size() ||
+               (!ascii_alnum(static_cast<unsigned char>(source_[at_+3])) &&
+                source_[at_+3]!='_'))))
+        error("OWNERSHIP_BANG_BACKEND_UNSUPPORTED: typed ownership and Forge native lowering required");
       if (tok_.text=="any" || tok_.text=="unknown" ||
           tok_.text=="Any" || tok_.text=="Unknown")
         error("any/unknown requires tagged opaque-value ABI and runtime type descriptors");
@@ -154,16 +185,32 @@ class Parser {
       // Scalar bootstrap lacks nominal enum declarations and compiler-owned
       // prebound virtual method slots. Never attempt arity-only fallback.
       if (tok_.text=="enum") error("nominal enum overloads require compiler-bound dispatch");
+      // Match must never be interpreted as an ordinary scalar name or
+      // silently ignored by unreachable helper inlining.
+      if (tok_.text=="match")
+        error("MATCH_DEFAULT_BACKEND_UNSUPPORTED: typed match requires pattern CFG, exhaustiveness and checked fallback lowering");
+      if (tok_.text=="gen" || tok_.text=="generator")
+        error("generator declarations require iterator-frame and continuation lowering");
       // Fail closed on named language features before the scalar grammar
       // gives a misleading generic syntax error (or ever learns to skip them).
       // These require typed method dispatch and ownership-checked closure IR.
       if (tok_.text=="abstract")
         error("private abstract hooks require typed native vtables and superclass-only dispatch");
+      if (tok_.text=="actor" && previousToken=="virtual")
+        error("VIRTUAL_ACTOR_BACKEND_UNSUPPORTED: logical key and activation fencing required");
+      if (tok_.text=="actor" && previousToken=="serial")
+        error("SERIAL_ACTOR_BACKEND_UNSUPPORTED: Forge lacks source serial actor lowering");
+      if (tok_.text=="actor" && previousToken=="http")
+        error("HTTP_ACTOR_BACKEND_UNSUPPORTED: Forge lacks source HTTP actor admission and physical-turn shutdown lowering");
+      if ((tok_.text=="class" || tok_.text=="struct") && previousToken=="inverted")
+        error("inverted struct/class requires one-level typed SoA and ownership lowering");
       if (tok_.text=="class" || tok_.text=="actor")
         error("class/actor methods require typed native lowering");
+      if (tok_.text=="InvertedArray")
+        error("inverted collection requires typed owned SoA columns and generation-checked row lowering");
       if (tok_.text=="lex" || tok_.text=="nlex")
         error("lexical captures require checked closure lowering");
-      if (tok_.text=="cpu" || tok_.text=="gpu" || tok_.text=="nb")
+      if (tok_.text=="cpu" || tok_.text=="gpu" || tok_.text=="quantum" || tok_.text=="nb")
         error("execution region requires verified CPU/GPU Task lowering; unsupported execution domain: typed effect graph required; no implicit CPU fallback");
       if (tok_.text=="task") {
         auto look=at_;
@@ -216,7 +263,20 @@ class Parser {
     }
     if (source_.substr(at_,3)=="...")
       error("tuple-v2 explicit spread requires single-evaluation checked lowering");
-    if (std::string_view("()+-*/{};:,?").find(static_cast<char>(c)) ==
+    // Canonical AttoLang uses named Integer.rem/mod/pow APIs and a
+    // statement-position caret return alias. Integer ^^ requires a
+    // checked bitwise IR operation; reject it before artifact emission.
+    if (c=='~')
+      throw std::runtime_error("TILDE_AGGREGATE_BACKEND_UNSUPPORTED: Map/Record needs typed aggregate AST, ownership and atomic constructor lowering at byte "+
+                               std::to_string(start));
+    if (c=='%')
+      throw std::runtime_error("legacy % operator is removed; use Integer.rem/mod at byte "+
+                               std::to_string(start));
+    if (source_.substr(at_,2)=="^^")
+      throw std::runtime_error("FORGE_XOR_BACKEND_UNSUPPORTED: integer ^^ requires native bitwise lowering at byte "+
+                               std::to_string(start));
+    // Dot is recognized for precise unsupported namespace diagnostics only.
+    if (std::string_view("()+-*/{};:,?^.").find(static_cast<char>(c)) ==
         std::string_view::npos) error("invalid character");
     ++at_;
     tok_={Kind::Punct,source_.substr(start,1),start};
@@ -230,6 +290,8 @@ class Parser {
   }
   std::string identifier() {
     if (tok_.kind!=Kind::Word) error("expected identifier");
+    if (tok_.text=="guard")
+      error("GUARD_BACKEND_UNSUPPORTED: guard is reserved until checked CFG and ownership lowering");
     std::string name(tok_.text);
     next(); return name;
   }
@@ -259,6 +321,37 @@ class Parser {
       if (take("define")) { if (defined) error("duplicate define"); defined=true; }
       else if (take("pub")) { if (public_) error("duplicate pub"); public_=true; }
     }
+    if (tok_.text=="state") {
+      next();
+      if (tok_.text=="container")
+        error("STATE_CONTAINER_BACKEND_UNSUPPORTED: protected heap region and critical guard lowering required");
+      error("unexpected declaration after state");
+    }
+    if (tok_.text=="virtual") {
+      next();
+      if (tok_.text=="actor")
+        error("VIRTUAL_ACTOR_BACKEND_UNSUPPORTED: logical key and activation fencing required");
+      error("unexpected declaration after virtual");
+    }
+    // Native Forge has a scalar-only stage-0 source compiler. HTTP actor
+    // request/message lifetime policy and physical shutdown cannot be
+    // approximated by its host mailbox or generic actor lowering.
+    if (tok_.text=="http")
+      error("HTTP_ACTOR_BACKEND_UNSUPPORTED: Forge lacks source HTTP actor admission and physical-turn shutdown lowering");
+    if (take("serial")) {
+      if (tok_.text=="http")
+        error("HTTP_ACTOR_BACKEND_UNSUPPORTED: Forge lacks source HTTP actor admission and physical-turn shutdown lowering");
+      error("SERIAL_ACTOR_BACKEND_UNSUPPORTED: Forge lacks source serial actor lowering");
+    }
+    // An explicitly inverted declaration is a nominal row-layout request,
+    // never a scalar function. The Stage-0 frontend must reject it before
+    // parsing a subsequent unrelated function or emitting native code.
+    if (tok_.text=="inverted")
+      error("inverted struct/class requires one-level typed SoA and ownership lowering");
+    // The stage-0 scalar frontend cannot lower nominal ModelGraphs.
+    // `model` remains contextual; `fnc model()` is still valid.
+    if (tok_.text=="model")
+      error("MODEL_LOWERING_UNSUPPORTED: Forge requires typed nominal ModelGraph lowering");
     expect("fnc");
     const std::string name=identifier();
     if (name=="int" || name=="fnc" || name=="return")
@@ -283,8 +376,19 @@ class Parser {
     if (!take(":")) expect("->");
     if (tok_.text=="tuple" || tok_.text=="structural" || tok_.text=="(")
       error("tuple-v2 return requires typed ABI lowering");
-    expect("int"); expect("{"); expect("return");
+    expect("int");
+    // Forge stage-0 still emits a single expression return. A double-colon
+    // body cannot be interpreted as a braced function or a punctuation typo:
+    // it needs ordered lexical locals, explicit return types and region-safe
+    // closure lowering before any guest execution can be admitted.
+    if (tok_.text==":" && source_.substr(tok_.offset,2)=="::")
+      error("FORGE_COMMA_BODY_UNSUPPORTED: typed comma body requires checked lexical lowering");
+    expect("{");
+    if (tok_.text=="guard")
+      error("GUARD_BACKEND_UNSUPPORTED: early-exit CFG and ownership lowering required");
+    if (!take("^")) expect("return");
     fn.body=expression(0);
+    if (tok_.text=="^") error("single caret is only a return statement; integer XOR uses ^^");
     expect(";"); expect("}");
     if (functions_.contains(name)) error("duplicate function");
     functions_.emplace(name,std::move(fn));
@@ -309,7 +413,7 @@ class Parser {
     auto a=factor(depth+1);
     while (tok_.text=="*" || tok_.text=="/") {
       if (tok_.text=="/")
-        error("division requires float result lowering; unsupported in the i64 source subset");
+        error("FORGE_CHECKED_DIVISION_BACKEND_UNSUPPORTED: signed i64 quotient requires typed arithmetic error lowering");
       next();
       a=binary(Expr::Tag::Mul,std::move(a),factor(depth+1));
     }
@@ -325,11 +429,13 @@ class Parser {
       if (operation=="borrow") {
         next();
         if (tok_.text=="mut")
-          error("legacy 'rt borrow mut' is not valid Oreslang; use 'rt mut borrow value'");
+          error("runtime ownership operation requires typed lowering in Forge"); // compatible legacy order
         error("runtime ownership operation requires typed lowering in Forge");
       }
       if (operation=="mut") {
         next();
+        if (tok_.text=="share")
+          error("native rt mut share requires verified SharedMutex<T> capability, guarded lowering and allocation-domain proof; refusing unsynchronized alias");
         if (tok_.text!="borrow")
           error("'rt mut' only supports borrowing; use 'rt mut borrow value'");
         error("runtime ownership operation requires typed lowering in Forge");
@@ -362,6 +468,11 @@ class Parser {
       if (tok_.text=="match" || tok_.text=="switch")
         error("expected integer");
       const std::string name=identifier();
+      // The Forge scalar interpreter/JIT has no ETS table authority or pg
+      // ActorGroup/mailbox integration. Reject explicit namespace access
+      // instead of accepting it as an unbound scalar variable.
+      if ((name=="ets" || name=="pg") && tok_.text==".")
+        error("Forge ETS/pg guest APIs require authenticated isolate, table and mailbox lowering");
       if (!take("(")) return node(Expr::Tag::Parameter,{},0,name,offset);
       std::vector<ExprPtr> args;
       if (tok_.text!=")") {
