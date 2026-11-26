@@ -430,6 +430,22 @@ if(BUILD_TESTING)
   set_tests_properties(forge_wrapper_option_host_conformance PROPERTIES TIMEOUT 20)
 endif()
 
+# Actor-owned logical byte frames, host runtime foundation only.
+if(BUILD_TESTING)
+  find_package(Threads REQUIRED)
+  add_executable(oresforge_actor_frames_tests verification/actor_frames.cpp)
+  target_include_directories(oresforge_actor_frames_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_actor_frames_tests PRIVATE cxx_std_20)
+  target_link_libraries(oresforge_actor_frames_tests PRIVATE Threads::Threads)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_actor_frames_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror -UNDEBUG)
+  endif()
+  add_test(NAME oresforge_actor_private_frames_host COMMAND oresforge_actor_frames_tests)
+  set_tests_properties(oresforge_actor_private_frames_host PROPERTIES
+    TIMEOUT 30 LABELS "host-only;actor-logical-frames")
+endif()
+
 # Linux x86-64 native actor stack/heap substrate. HOST CALLBACKS ONLY:
 # this is not `define actor` guest compilation or a tenant sandbox.
 if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
