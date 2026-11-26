@@ -344,6 +344,7 @@ class Parser {
     std::vector<Range> ranges;
   };
   std::vector<Helper> helpers_;
+  std::vector<std::pair<std::string_view,std::vector<std::size_t>>> strict_arrays_;
   static constexpr int exponent_limit = 32;
   [[nodiscard]] bool dimensionless(std::size_t n) const { return dims_[n] == Dim{} && scales_[n] == Scale{}; }
   [[nodiscard]] bool known_name(std::string_view n) const {
@@ -801,7 +802,26 @@ class Parser {
     if(current().kind==Kind::name){
       for(const auto& h:helpers_)if(h.name==text()){++pos_;return call(h,depth+1);}
       for(const auto& b:bindings_)if(b.first==text()){
+        const auto key=b.first;
         ++pos_;
+        auto a=std::find_if(strict_arrays_.begin(),strict_arrays_.end(),[&](const auto& x){return x.first==key;});
+        if(a!=strict_arrays_.end()){
+          if(!take(Kind::lbracket)){fail(ParseError::verify_unsupported);return std::nullopt;}
+          auto index=expr(depth+1);if(!index||!take(Kind::rbracket))return std::nullopt;
+          if(!dimensionless(*index)){fail(ParseError::unit_dimension);return std::nullopt;}
+          const auto lo=ranges_[*index].lo,hi=ranges_[*index].hi;
+          if(lo<0||hi>=static_cast<i64>(a->second.size())){fail(ParseError::verify_unproven);return std::nullopt;}
+          auto value=append(Node{Op::copy,a->second[static_cast<std::size_t>(hi)],0,0});if(!value)return std::nullopt;
+          for(auto k=hi-1;k>=lo;--k){
+            auto constant=append(Node{Op::literal,0,0,k});if(!constant)return std::nullopt;
+            auto test=append(Node{Op::eq,*index,*constant,0});if(!test)return std::nullopt;
+            auto selected=append(Node{Op::copy,a->second[static_cast<std::size_t>(k)],0,0});if(!selected)return std::nullopt;
+            value=append(Node{Op::choose,*test,*selected,static_cast<i64>(*value)});if(!value)return std::nullopt;
+          }
+          // A singleton index still executes once, and remains reachable.
+          if(lo==hi)value=append(Node{Op::sequence,*index,*value,0});
+          return postfix(value);
+        }
         // A new read node owns independent type metadata; attaching a unit
         // to this read must never mutate the original binding.
         return postfix(append(Node{Op::copy,b.second,0,0}));
@@ -815,6 +835,7 @@ class Parser {
     if(n.empty()||n[0]<'a'||n[0]>'z'||known_name(n))return false;
     for(auto s:{"val","let","int","i64","i32","bool","float","string","void","return","self","main","fnc","pub","define","type","where","as","and","units","in","true","false","if","else","end","begin","while","loop","task","await","suspends","infer","new","match","const","mut","using","unit","dimension","_"})if(n==s)return false;
     for(const auto& b:bindings_)if(b.first==n)return false;
+    for(const auto& a:strict_arrays_)if(a.first==n)return false;
     for(const auto& h:helpers_)if(h.name==n)return false;
     return true;
   }
@@ -1065,6 +1086,21 @@ class Parser {
       }
       if(mut&&!want){fail(ParseError::verify_unsupported);return std::nullopt;}
       if(!binding_name(n)||!take(Kind::equals)){fail(ParseError::syntax);return std::nullopt;}
+      if(strict_&&name("Array")){
+        if(mut||want){fail(ParseError::verify_unsupported);return std::nullopt;}
+        if(!take(Kind::dot)||!name("of")||!take(Kind::lparen))return std::nullopt;
+        std::vector<std::size_t> cells;
+        do{
+          if(cells.size()>=16){fail(ParseError::unit_limit);return std::nullopt;}
+          auto cell=expr(0);if(!cell)return std::nullopt;
+          if(!dimensionless(*cell)){fail(ParseError::unit_dimension);return std::nullopt;}
+          auto snapshot=append(Node{Op::copy,*cell,0,0});if(!snapshot)return std::nullopt;
+          cells.push_back(*snapshot);effects.push_back(*snapshot);
+        }while(take(Kind::comma));
+        if(!take(Kind::rparen)||!take(Kind::semicolon))return std::nullopt;
+        bindings_.emplace_back(n,cells.front());
+        strict_arrays_.emplace_back(n,std::move(cells));continue;
+      }
       auto value=expr(0);
       if(!value||!take(Kind::semicolon)){fail(ParseError::syntax);return std::nullopt;}
       if(want&&!compatible(*value,*want,ParseError::refinement_binding)){
@@ -1281,7 +1317,7 @@ class Parser {
       out_.root=*root;
       if(!validate_ast(out_))return false;
       helpers_.push_back(Helper{fname,std::move(params),*result,std::move(out_.nodes),std::move(dims_),std::move(scales_),std::move(ranges_)});
-      out_.nodes.clear();out_.root=0;dims_.clear();scales_.clear();ranges_.clear();bindings_.clear();
+      out_.nodes.clear();out_.root=0;dims_.clear();scales_.clear();ranges_.clear();bindings_.clear();strict_arrays_.clear();
     }
     return true;
   }
