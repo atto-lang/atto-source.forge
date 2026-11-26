@@ -73,6 +73,10 @@ int main() {
     node.exits.front().values[0]=node.right;break;
   }
   assert(!validate_ast(invalid)&&!emit_cpp(invalid));
+  auto annotated=parse_verified_strict_i64(pre+"@requires(x >= 1) @requires(x <= 42) fnc f(int x) -> int {return 84/x;} pub fnc main(): int {return f(2);}");
+  assert(annotated.ok() && validate_ast(annotated) && emit_cpp(annotated));
+  auto invalid_annotation=parse_verified_strict_i64(pre+"@requires(x >= 3) fnc f(int x) -> int {return 84/x;} pub fnc main(): int {return f(2);}");
+  assert(!invalid_annotation.ok() && !emit_cpp(invalid_annotation));
   auto bad_range=checked;bad_range.nodes.back().value=43;bad_range.nodes.back().upper=42;
   assert(!emit_cpp(bad_range));
 }

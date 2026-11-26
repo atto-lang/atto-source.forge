@@ -422,7 +422,7 @@ class Parser {
   std::vector<std::string_view> dimensions_;
   struct Unit { std::string_view name; std::size_t dim; Scale scale; };
   std::vector<Unit> units_;
-  struct Refinement { std::string_view name; Dim dim; Scale scale; i64 lo, hi; Width width=Width::i64; };
+  struct Refinement { std::string_view name; Dim dim; Scale scale; i64 lo, hi; Width width=Width::i64; unsigned holes=0; };
   std::vector<Refinement> refinements_;
   struct Helper {
     std::string_view name;
@@ -1131,7 +1131,7 @@ class Parser {
   [[nodiscard]] bool compatible(std::size_t n,const Refinement& want,ParseError category){
     if(dims_[n]!=want.dim){fail(ParseError::unit_dimension);return false;}
     if(scales_[n]!=want.scale){fail(ParseError::unit_scale);return false;}
-    if(!ranges_[n].within(want.lo,want.hi)){fail(category);return false;}
+    if(!ranges_[n].within(want.lo,want.hi)||(want.holes&1u&&ranges_[n].has(0))||(want.holes&2u&&ranges_[n].has(-1))){fail(category);return false;}
     return true;
   }
   [[nodiscard]] std::optional<std::size_t> call(const Helper& h,int depth){
@@ -1538,12 +1538,34 @@ class Parser {
     if(scale!=want.scale){fail(ParseError::unit_scale);return std::nullopt;}
     return n;
   }
-  std::optional<std::vector<Contract>> contracts(std::vector<Refinement>& params,const Refinement& result){
+  struct AnnotationSpan {std::size_t start,end;bool requires_clause;};
+  std::optional<std::vector<AnnotationSpan>> contract_annotations(){
+    std::vector<AnnotationSpan> spans;
+    while(take(Kind::at)){
+      if(spans.size()>=16){fail(ParseError::refinement_contract);return std::nullopt;}
+      const bool req=name("requires");if(!req&&!name("ensures")){fail(ParseError::refinement_contract);return std::nullopt;}
+      if(!take(Kind::lparen)){fail(ParseError::refinement_contract);return std::nullopt;}
+      auto start=pos_;
+      while(current().kind!=Kind::rparen){
+        const auto k=current().kind;
+        if(pos_-start>=32||k==Kind::end||k==Kind::lparen||k==Kind::lbrace||k==Kind::rbrace||k==Kind::semicolon||k==Kind::at){fail(ParseError::refinement_contract);return std::nullopt;}
+        ++pos_;
+      }
+      spans.push_back({start,pos_,req});++pos_;
+    }
+    return spans;
+  }
+  std::optional<std::vector<Contract>> contracts(std::vector<Refinement>& params,const Refinement& result,const std::vector<AnnotationSpan>& spans){
     std::vector<Contract> out;unsigned count=0;
+    std::size_t index=0;
     for(;;){
-      const bool require=name("requires");if(!require&&!name("ensures"))break;
+      const auto resume=pos_;
+      const auto* span=index<spans.size()?&spans[index++]:nullptr;
+      bool require;
+      if(span){pos_=span->start;require=span->requires_clause;}
+      else{require=name("requires");if(!require&&!name("ensures"))break;}
       if(++count>16||current().kind!=Kind::name){fail(ParseError::refinement_contract);return std::nullopt;}
-      auto n=text();++pos_;auto op=contract_op();if(!op)return std::nullopt;
+      auto n=text();++pos_;auto op=require&&take(Kind::not_equal)?std::optional<Op>{Op::ne}:contract_op();if(!op)return std::nullopt;
       auto param_index=[&](std::string_view key)->std::optional<std::size_t>{
         for(std::size_t i=0;i<params.size();++i)if(bindings_[i].first==key)return i;
         return std::nullopt;
@@ -1551,13 +1573,16 @@ class Parser {
       if(require){
         auto i=param_index(n);if(!i){fail(ParseError::refinement_contract);return std::nullopt;}
         auto& p=params[*i];auto v=contract_bound(p);if(!v)return std::nullopt;
-        if(*op==Op::eq){p.lo=std::max(p.lo,*v);p.hi=std::min(p.hi,*v);}
+        if(*op==Op::ne){if(!Range::bit(*v)){fail(ParseError::refinement_contract);return std::nullopt;}p.holes|=Range::bit(*v);}
+        else if(*op==Op::eq){p.lo=std::max(p.lo,*v);p.hi=std::min(p.hi,*v);}
         else if(*op==Op::lt){auto b=checked_sub(*v,1);if(!b){fail(ParseError::refinement_empty);return std::nullopt;}p.hi=std::min(p.hi,*b);}
         else if(*op==Op::le)p.hi=std::min(p.hi,*v);
         else if(*op==Op::gt){auto b=checked_add(*v,1);if(!b){fail(ParseError::refinement_empty);return std::nullopt;}p.lo=std::max(p.lo,*b);}
         else if(*op==Op::ge)p.lo=std::max(p.lo,*v);
+        while(p.lo<=p.hi&&(p.holes&Range::bit(p.lo)))++p.lo;
+        while(p.lo<=p.hi&&(p.holes&Range::bit(p.hi)))--p.hi;
         if(p.lo>p.hi){fail(ParseError::refinement_empty);return std::nullopt;}
-        ranges_[bindings_[*i].second]=Range{p.lo,p.hi,p.width};
+        ranges_[bindings_[*i].second]=Range{p.lo,p.hi,p.width,p.holes};
       }else{
         if(n!="result"){fail(ParseError::refinement_contract);return std::nullopt;}
         if(current().kind==Kind::name){
@@ -1570,6 +1595,7 @@ class Parser {
           out.push_back(Contract{*op,std::nullopt,v});
         }
       }
+      if(span){if(pos_!=span->end){fail(ParseError::refinement_contract);return std::nullopt;}pos_=resume;}
     }return out;
   }
   // Parameters occupy the initial placeholder nodes. Never treat a
@@ -1605,12 +1631,14 @@ class Parser {
     }return true;
   }
   [[nodiscard]] bool helper_declarations(){
-    while(current().kind==Kind::name&&text()=="fnc"&&pos_+1<tokens_.size()){
+    while(current().kind==Kind::at||(current().kind==Kind::name&&text()=="fnc"&&pos_+1<tokens_.size())){
+      auto annotations=contract_annotations();if(!annotations)return false;
+      if(current().kind!=Kind::name||text()!="fnc"||pos_+1>=tokens_.size()){fail(ParseError::refinement_contract);return false;}
       const auto& next=tokens_[pos_+1];
       const auto spelling=source_.substr(next.offset,next.length);
-      if(spelling=="main")break;
+      if(spelling=="main"){if(!annotations->empty()){fail(ParseError::refinement_contract);return false;}break;}
       // Keep existing type-first entrypoint spellings on the legacy path.
-      if((spelling=="int"||spelling=="infer")&&pos_+2<tokens_.size()&&tokens_[pos_+2].kind==Kind::left_arrow)break;
+      if((spelling=="int"||spelling=="infer")&&pos_+2<tokens_.size()&&tokens_[pos_+2].kind==Kind::left_arrow){if(!annotations->empty()){fail(ParseError::refinement_contract);return false;}break;}
       if(refinements_.empty()||helpers_.size()>=16)return false;
       ++pos_;
       if(current().kind!=Kind::name||!binding_name(text()))return false;
@@ -1636,9 +1664,9 @@ class Parser {
       auto result=annotation(text());++pos_;
       if(!result)return false;
       const auto contract_start=pos_;
-      auto checks=contracts(params,*result);
+      auto checks=contracts(params,*result,*annotations);
       if(!checks)return false;
-      const bool contracted=pos_!=contract_start;
+      const bool contracted=!annotations->empty()||pos_!=contract_start;
       bool end_delimited=false;
       if(!take(Kind::lbrace)){
         if(take(Kind::double_colon))end_delimited=true;
