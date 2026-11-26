@@ -59,9 +59,11 @@ class Parser {
       // Explicit instance markers share the same method slot as bare names.
       // mtd() and method() are contextual identifiers, not introducers.
       if (name == "fnc" ||
-          ((name == "mtd" || name == "method") && token_.text != "("))
+          (name == "mtd" && token_.text != "("))
         name = identifier();
       if (name == "fnc") fail("reserved nominal method name");
+      if (name == "method" && token_.text != "(")
+        fail("obsolete method introducer; use mtd");
       expect("(");
       if (take("mut")) {
         expect("self");
