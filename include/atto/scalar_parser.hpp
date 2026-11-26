@@ -1266,10 +1266,18 @@ class Parser {
       if(i>=tokens_.size()||tokens_[i].kind!=Kind::name)return {};
       return source_.substr(tokens_[i].offset,tokens_[i].length);
     };
-    if(word(at)=="let"||word(at)=="val"||word(at)=="const")++at;
-    const auto ty=word(at);
-    if(ty!="int"&&ty!="bool"&&ty!="string"&&ty!="String")return false;
-    if(word(at+1).empty()||at+2>=tokens_.size()||tokens_[at+2].kind!=Kind::semicolon)return false;
+    const auto primitive=[](std::string_view ty){
+      return ty=="int"||ty=="bool"||ty=="string"||ty=="String";
+    };
+    const auto kind=[&](std::size_t i,Kind k){
+      return i<tokens_.size()&&tokens_[i].kind==k;
+    };
+    const bool qualified=word(at)=="let"||word(at)=="val"||word(at)=="const";
+    if(qualified)++at;
+    const bool prefix=primitive(word(at))&&!word(at+1).empty()&&kind(at+2,Kind::semicolon);
+    const bool suffix=qualified&&!word(at).empty()&&kind(at+1,Kind::colon)&&
+        primitive(word(at+2))&&kind(at+3,Kind::semicolon);
+    if(!prefix&&!suffix)return false;
     fail(ParseError::missing_initializer);return true;
   }
   [[nodiscard]] std::optional<std::size_t> binding_body(std::optional<Refinement> result=std::nullopt){
