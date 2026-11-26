@@ -651,6 +651,7 @@ const char* argument_reg(std::size_t i) {
 }
 struct Native {
   const Module& program;
+  explicit Native(const Module& module) : program(module) {}
   std::ostringstream out;
   std::size_t label=0;
   std::string overflow_target=".Lores_overflow", divzero_target=".Lores_divzero", error_target=".Lores_return_error";
