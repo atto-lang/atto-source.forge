@@ -19,12 +19,11 @@ int main() {
     {"-9223372036854775808 + 1",std::numeric_limits<i64>::min() + 1},
     {"8/2*3+1",13},
     {"1 <<< 63",std::numeric_limits<i64>::min()},
-    {"1 <<< 64",1}, {"1 <<< -1",std::numeric_limits<i64>::min()},
     {"-1 >>> 1",std::numeric_limits<i64>::max()},
     {"-8 ashr 2",-2}, {"(1 <<< 63) >>> 63",1},
-    {"-8 ashr 2 + 1",-1}, {"~0",-1}, {"-1 & 42",42}, {"1 | 4",5}, {"6 ^ 3",5},
-    {"~0 & 255",255}, {"1 | 2 & 4",1}, {"1 ^ 3 & 2",3},
-    {"1 | 2 ^ 3 & 2",1}, {"~(-9223372036854775808)",9223372036854775807LL}
+    {"-8 ashr 2 + 1",-1}, {"~0",-1}, {"-1 & 42",42}, {"1 | 4",5}, {"6 ^^ 3",5},
+    {"~0 & 255",255}, {"1 | 2 & 4",1}, {"1 ^^ 3 & 2",3},
+    {"1 | 2 ^^ 3 & 2",1}, {"~(-9223372036854775808)",9223372036854775807LL}
   }) {
     const auto value = evaluate_source(program(c.expr));
     assert(value.ok() && *value.value == c.expected);
@@ -40,6 +39,11 @@ int main() {
   }) assert(evaluate_source(program(expr)).error == EvalError::overflow);
   for (const char* expr : {"1 / 0", "2 % 0", "1 / (7 - 7)"})
     assert(evaluate_source(program(expr)).error == EvalError::divide_by_zero);
+  for (const char* expr : {"1 <<< 64", "1 <<< -1", "1 >>> 64",
+      "1 ashr -1", "1 <<< (32 + 32)"})
+    assert(evaluate_source(program(expr)).error == EvalError::shift_distance);
+  assert(evaluate_source("fnc main(): int { ^ 12 ^^ 10; }").value == 6);
+  assert(evaluate_source(program("12 ^ 10")).error == EvalError::parse_error);
   assert(evaluate_source(program("abc")).error == EvalError::parse_error);
   auto ast = parse_source(program("5+3"));
   assert(ast.ok());
@@ -64,4 +68,34 @@ int main() {
   bad_unary.nodes.back().right = 1;
   assert(!validate_ast(bad_unary));
   assert(evaluate(bad_unary).error == EvalError::invalid_ast);
+  const auto range = parse_source("type R = int where self >= 1 and self <= 42; fnc main(): int { return 42::<R>; }");
+  assert(range.ok() && evaluate(range).value == 42);
+  assert(evaluate_source("type R = int where self > 0; fnc main(): int { return 0::<R>; }").error == EvalError::refinement_violation);
+  // Host-model controls only: native C++ guest execution is a separate gate.
+  const std::string guard = "type R = int where self >= 1 and self <= 42; "
+      "fnc f(int x) -> int { if x != 0 && 42 / x > 0 { return 1; } return 42; } "
+      "pub fnc main() -> int { return f(0); }";
+  auto lazy = parse_verified_strict_i64(guard);
+  assert(lazy.ok() && evaluate(lazy).value == 42);
+  // A branch-local call must not execute its argument on the skipped path.
+  const std::string helper_prefix = "type R = int where self >= 1 and self <= 42; "
+      "fnc good(int x) -> int { val y=x; return y; } ";
+  for (const auto* body : {
+      "fnc f(int x) -> int { if x != 0 && good(42/x)>0 { return 1; } return 42; } pub fnc main() -> int { return f(0); }",
+      "fnc f(int x) -> int { if x == 0 || good(42/x)>0 { return 42; } return 0; } pub fnc main() -> int { return f(0); }",
+      "fnc f(int x) -> int { if x != 0 { return good(42/x); } return 0; } pub fnc main() -> int { return f(1); }",
+      "fnc outer(int x) -> int { return good(x); } fnc f(int x) -> int { if x != 0 { return outer(42/x); } return 0; } pub fnc main() -> int { return f(1); }"}) {
+    const auto parsed = parse_verified_strict_i64(helper_prefix + body);
+    assert(parsed.ok() && validate_ast(parsed) && evaluate(parsed).value == 42);
+  }
+  for (const auto* body : {
+      "fnc f(int x) -> int { if x == 0 { return good(42/x); } return 42; } pub fnc main() -> int { return f(1); }",
+      "fnc f(int x, int y) -> int { if x != 0 { return good(42/y); } return 42; } pub fnc main() -> int { return f(1,1); }"})
+    assert(!parse_verified_strict_i64(helper_prefix + body).ok());
+  auto forged_choice = lazy;
+  for(auto& n:forged_choice.nodes)if(n.op==Op::choose){n.value=-1;break;}
+  assert(!validate_ast(forged_choice) && evaluate(forged_choice).error==EvalError::invalid_ast);
+  auto bad_range=range;
+  bad_range.nodes.back().value=43;bad_range.nodes.back().upper=42;
+  assert(evaluate(bad_range).error==EvalError::invalid_ast);
 }

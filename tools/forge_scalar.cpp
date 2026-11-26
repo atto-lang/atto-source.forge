@@ -1,4 +1,6 @@
 #include "atto/scalar_emit.hpp"
+#include "atto/durable_counter_emit.hpp"
+#include "atto/durable_scalar_emit.hpp"
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -38,9 +40,13 @@ int main(int argc, char** argv) {
       return deny("E_AST: scalar AST rejected");
     return 0;
   }
-  if (argc != 4 || std::string(argv[2]) != "-o")
-    return deny("E_USAGE: forge_scalar input.atto -o output.cpp");
-  const fs::path input(argv[1]), output(argv[3]);
+  const bool strict = argc == 5 && std::string(argv[1]) == "--verify=strict";
+  const bool scalar_codec = argc == 5 && std::string(argv[1]) == "--durable-scalar-codec-v1";
+  const bool durable = scalar_codec || (argc == 5 && std::string(argv[1]) == "--durable-counter-actor-v1");
+  const int offset = (strict || durable) ? 1 : 0;
+  if (argc != 4 + offset || std::string(argv[2+offset]) != "-o")
+    return deny("E_USAGE: forge_scalar [--verify=strict|--durable-counter-actor-v1|--durable-scalar-codec-v1] input.atto -o output.cpp");
+  const fs::path input(argv[1+offset]), output(argv[3+offset]);
   if (input.extension() != ".atto" || output.extension() != ".cpp")
     return deny("E_PATH: expected .atto and .cpp");
   std::error_code ec;
@@ -94,7 +100,6 @@ int main(int argc, char** argv) {
   ec.clear();
   const auto size = fs::file_size(input, ec);
   if (ec || size > max_source_bytes) {
-    ec.clear(); fs::remove(output, ec);
     return deny("E_SOURCE_LIMIT");
   }
   std::ifstream file(input, std::ios::binary);
@@ -102,20 +107,31 @@ int main(int argc, char** argv) {
   std::string source(static_cast<std::size_t>(size), '\0');
   if (!source.empty()) file.read(source.data(), static_cast<std::streamsize>(size));
   if (!file || file.peek() != std::char_traits<char>::eof()) {
-    ec.clear(); fs::remove(output, ec);
     return deny("E_SOURCE: changing or truncated input");
   }
-  const auto parsed = atto::forge::scalar::parse_source(source);
-  if (!parsed.ok()) {
-    ec.clear(); fs::remove(output, ec);
-    std::cerr << atto::forge::scalar::parse_error_name(parsed.error)
-              << " byte=" << parsed.error_offset << '\n';
-    return 2;
-  }
-  const auto generated = atto::forge::scalar::emit_cpp(parsed);
-  if (!generated) {
-    ec.clear(); fs::remove(output, ec);
-    return deny("E_AST: scalar AST rejected before code emission");
+  std::optional<std::string> generated;
+  if (durable) {
+    try {
+      generated=scalar_codec?std::optional<std::string>(atto::forge::scalar::emit_durable_scalar_v1_cpp(source)):atto::forge::scalar::emit_durable_counter_v1(source);
+    } catch(const std::invalid_argument&) {
+      ec.clear(); fs::remove(output, ec);
+      return deny("E_DURABLE_SCALAR_SCHEMA_V1");
+    }
+    if (!generated) {
+      ec.clear(); fs::remove(output, ec);
+      return deny("E_DURABLE_COUNTER_ACTOR_ABI");
+    }
+  } else {
+    const auto parsed = strict ? atto::forge::scalar::parse_verified_strict_i64(source) : atto::forge::scalar::parse_source(source);
+    if (!parsed.ok()) {
+      std::cerr << atto::forge::scalar::parse_error_name(parsed.error)
+                << " byte=" << parsed.error_offset << '\n';
+      return 2;
+    }
+    generated = atto::forge::scalar::emit_cpp(parsed);
+    if (!generated) {
+      return deny("E_AST: scalar AST rejected before code emission");
+    }
   }
   std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
   if (!out) return deny("E_OUTPUT: open failed");

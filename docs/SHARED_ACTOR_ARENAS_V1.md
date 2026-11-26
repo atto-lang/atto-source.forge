@@ -1,0 +1,5 @@
+# Forge actor arena prototype (host-only)
+
+`runtime/actor_arena.hpp` is a fixed-capacity actor-owned byte arena for SHARED/PRIVATE actor incarnations. It uses stack/inline fixed persistent slots and turn-local scratch, domain and generation checked handles, a bounded copy-only API, one physical carrier per admitted turn, and explicit zeroizing retirement. A later turn may migrate to a different carrier. Its hot path performs no heap allocations, but this **does not** certify the full compiler/runtime as allocation-free.
+
+**Not yet wired:** `runtime/actor.cpp` currently only provides a bounded mailbox, not source actor allocation lowering. This header is host-only and has no shared-domain region, callback lease or deterministic nontrivial value destructors. Do not expose the native handles as guest actor refs or cross-thread data access. End-of-turn must be wired into every exceptional/suspension/cancellation exit before source semantics can use scratch. See `oreslang-common-source/docs/SHARED_ACTOR_ARENAS_V1.md` and matching conformance vectors.
