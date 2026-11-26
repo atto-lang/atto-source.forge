@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdint>
 #include <limits>
+#include <numeric>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -122,19 +123,47 @@ class Parser {
   Parsed out_;
   // File-local, scale-one dimensions; erased only after scalar admission.
   using Dim = std::array<int, 8>;
+  struct Scale {
+    i64 n = 1, d = 1;
+    bool operator==(const Scale&) const = default;
+    [[nodiscard]] Scale inv() const { return {d,n}; }
+    [[nodiscard]] std::optional<Scale> mul(Scale rhs) const {
+      const i64 a=std::gcd(n,rhs.d), b=std::gcd(rhs.n,d);
+      const i64 x=n/a,y=rhs.n/b,z=d/b,w=rhs.d/a;
+      constexpr auto max=std::numeric_limits<i64>::max();
+      if (x>max/y || z>max/w) return std::nullopt;
+      return Scale{x*y,z*w};
+    }
+    [[nodiscard]] std::optional<i64> convert(i64 value,Scale target) const {
+      const auto ratio=mul(target.inv());
+      if (!ratio || value%ratio->d != 0) return std::nullopt;
+      const i64 q=value/ratio->d;
+      if (q>std::numeric_limits<i64>::max()/ratio->n ||
+          q<std::numeric_limits<i64>::min()/ratio->n) return std::nullopt;
+      return q*ratio->n;
+    }
+  };
   std::vector<Dim> dims_;
+  std::vector<Scale> scales_;
   std::vector<std::string_view> dimensions_;
-  std::vector<std::pair<std::string_view, std::size_t>> units_;
+  struct Unit { std::string_view name; std::size_t dim; Scale scale; };
+  std::vector<Unit> units_;
   static constexpr int exponent_limit = 32;
-  [[nodiscard]] bool dimensionless(std::size_t n) const { return dims_[n] == Dim{}; }
+  [[nodiscard]] bool dimensionless(std::size_t n) const { return dims_[n] == Dim{} && scales_[n] == Scale{}; }
   [[nodiscard]] bool known_name(std::string_view n) const {
     for (auto d : dimensions_) if (d == n) return true;
-    for (auto u : units_) if (u.first == n) return true;
+    for (auto u : units_) if (u.name == n) return true;
     return false;
   }
   [[nodiscard]] bool declaration_name(std::string_view n) const {
     // This bounded profile uses conventional upper-case nominal names.
     return !n.empty() && n[0] >= 'A' && n[0] <= 'Z' && !known_name(n);
+  }
+  [[nodiscard]] std::optional<i64> factor() {
+    if (current().kind!=Kind::integer) return std::nullopt;
+    auto value=parse_decimal_i64(text());
+    if (!value || *value<=0) return std::nullopt;
+    ++pos_; return value;
   }
   [[nodiscard]] bool declarations() {
     while (name("define")) {
@@ -150,16 +179,32 @@ class Parser {
         while (d < dimensions_.size() && dimensions_[d] != text()) ++d;
         if (d == dimensions_.size()) return false;
         ++pos_;
+        Scale scale{};
         if (take(Kind::equals)) {
+          Scale f{};
+          const bool prefix=current().kind==Kind::integer;
+          if (prefix) {
+            const auto k=factor(); if (!k || !take(Kind::star)) return false;
+            f.n=*k;
+          }
           if (current().kind != Kind::name) return false;
-          bool found = false;
-          for (auto u : units_) if (u.first == text() && u.second == d) found = true;
-          if (!found) return false;
+          const Unit* base=nullptr;
+          for (const auto& u : units_) if (u.name==text() && u.dim==d) base=&u;
+          if (!base) return false;
           ++pos_;
+          if (!prefix && (current().kind==Kind::star || current().kind==Kind::slash)) {
+            const bool divide=take(Kind::slash);
+            if (!divide) (void)take(Kind::star);
+            const auto k=factor(); if (!k) return false;
+            if (divide) f.d=*k; else f.n=*k;
+          }
+          const auto normalized=base->scale.mul(f);
+          if (!normalized) return false;
+          scale=*normalized;
         } else {
-          for (auto u : units_) if (u.second == d) return false;
+          for (auto u : units_) if (u.dim == d) return false;
         }
-        units_.emplace_back(n, d);
+        units_.push_back(Unit{n,d,scale});
       }
       if (!take(Kind::semicolon)) return false;
     }
@@ -167,8 +212,8 @@ class Parser {
   }
   [[nodiscard]] bool attach(std::size_t n) {
     if (!dimensionless(n) || current().kind != Kind::name) { fail(ParseError::syntax); return false; }
-    for (const auto& u : units_) if (u.first == text()) {
-      dims_[n][u.second] = 1; ++pos_; return true;
+    for (const auto& u : units_) if (u.name == text()) {
+      dims_[n][u.dim] = 1; scales_[n]=u.scale; ++pos_; return true;
     }
     fail(ParseError::syntax); return false;
   }
@@ -208,27 +253,31 @@ class Parser {
       return std::nullopt;
     }
     Dim d{};
+    Scale s{};
     if (n.op != Op::literal) {
       const auto& lhs = dims_[n.left];
-      if (n.op == Op::neg) d = lhs;
+      if (n.op == Op::neg) { d = lhs; s = scales_[n.left]; }
       else if (n.op == Op::bnot) {
-        if (lhs != Dim{}) { fail(ParseError::syntax); return std::nullopt; }
+        if (!dimensionless(n.left)) { fail(ParseError::syntax); return std::nullopt; }
       } else {
         const auto& rhs = dims_[n.right];
         if (n.op == Op::add || n.op == Op::sub) {
-          if (lhs != rhs) { fail(ParseError::syntax); return std::nullopt; }
-          d = lhs;
+          if (lhs != rhs || scales_[n.left]!=scales_[n.right]) { fail(ParseError::syntax); return std::nullopt; }
+          d = lhs; s=scales_[n.left];
         } else if (n.op == Op::mul || n.op == Op::div) {
+          const auto scale=scales_[n.left].mul(n.op==Op::div?scales_[n.right].inv():scales_[n.right]);
+          if (!scale) { fail(ParseError::syntax); return std::nullopt; }
+          s=*scale;
           for (std::size_t i = 0; i < d.size(); ++i) {
             d[i] = lhs[i] + (n.op == Op::mul ? rhs[i] : -rhs[i]);
             if (d[i] > exponent_limit || d[i] < -exponent_limit) { fail(ParseError::syntax); return std::nullopt; }
           }
-        } else if (lhs != Dim{} || rhs != Dim{}) {
+        } else if (!dimensionless(n.left) || !dimensionless(n.right)) {
           fail(ParseError::syntax); return std::nullopt;
         }
       }
     }
-    dims_.push_back(d);
+    dims_.push_back(d); scales_.push_back(s);
     out_.nodes.push_back(n);
     return out_.nodes.size() - 1;
   }
@@ -253,13 +302,28 @@ class Parser {
     fail(ParseError::syntax);
     return false;
   }
-  [[nodiscard]] std::optional<std::size_t> postfix(std::optional<std::size_t> result, bool compact = false) {
+  [[nodiscard]] std::optional<std::size_t> postfix(std::optional<std::size_t> result, bool compact = false, bool conversion = false) {
     if (!result) return std::nullopt;
     while (current().kind == Kind::double_colon || current().kind == Kind::dot ||
            (compact && current().kind == Kind::lt && pos_ > 0 &&
             tokens_[pos_-1].offset + tokens_[pos_-1].length == current().offset)) {
       const bool cast = take(Kind::double_colon);
-      if (!cast) (void)take(Kind::dot);
+      if (!cast && take(Kind::dot) && name("to_unit")) {
+        if (!conversion || out_.nodes[*result].op!=Op::literal || !take(Kind::lt) || current().kind!=Kind::name) {
+          fail(ParseError::syntax); return std::nullopt;
+        }
+        const Unit* target=nullptr;
+        for (const auto& u:units_) if (u.name==text()) target=&u;
+        if (!target) { fail(ParseError::syntax); return std::nullopt; }
+        Dim d{}; d[target->dim]=1;
+        if (dims_[*result]!=d) { fail(ParseError::syntax); return std::nullopt; }
+        ++pos_;
+        if (!take(Kind::gt)||!take(Kind::lparen)||!take(Kind::rparen)) { fail(ParseError::syntax); return std::nullopt; }
+        const auto converted=scales_[*result].convert(out_.nodes[*result].value,target->scale);
+        if (!converted) { fail(ParseError::syntax); return std::nullopt; }
+        out_.nodes[*result].value=*converted; scales_[*result]=target->scale;
+        conversion=false;compact=false;continue;
+      }
       if (!take(Kind::lt)) { fail(ParseError::syntax); return std::nullopt; }
       if (cast && current().kind == Kind::name && (text() == "int" || text() == "i64")) {
         if (!cast_target() || !scalar_cast(*result)) return std::nullopt;
@@ -393,7 +457,7 @@ class Parser {
       auto n = parse_decimal_i64(text());
       if (!n) { fail(ParseError::literal_out_of_range); return std::nullopt; }
       ++pos_;
-      return postfix(append(Node{Op::literal, 0, 0, *n}), true);
+      return postfix(append(Node{Op::literal, 0, 0, *n}), true, true);
     }
     fail(ParseError::syntax);
     return std::nullopt;
@@ -444,7 +508,7 @@ class Parser {
         // Parse the unreachable fallback after a terminal scope, then
         // discard those unreachable scalar nodes.
         out_.nodes.resize(previous_size);
-        dims_.resize(previous_size);
+        dims_.resize(previous_size); scales_.resize(previous_size);
       } else {
         root = value;
       }
