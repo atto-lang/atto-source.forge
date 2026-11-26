@@ -5,6 +5,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <optional>
+#include <limits>
 #include <thread>
 #include <vector>
 using namespace oresforge::runtime;
@@ -171,6 +172,32 @@ int main() {
   assert(faults.queued_turns()==0);
   assert(faults.run_ready(1)==0);
   faults.stop_all();
+
+
+  // A scalar high-water mark bounds retired identity history. IDs are
+  // monotonic, not reusable numeric authority; rejected construction is
+  // transactional and must not advance the high-water mark.
+  ActorCooperativeScheduler bounded(1);
+  const auto first=bounded.spawn(100,128*1024,2048,[](auto&,auto,auto&){});
+  bounded.stop_actor(100);
+  rejected([&]{bounded.spawn(99,128*1024,2048,[](auto&,auto,auto&){});});
+  rejected([&]{bounded.spawn(100,128*1024,2048,[](auto&,auto,auto&){});});
+  rejected([&]{bounded.spawn(102,128*1024,2048,{},1,1);});
+  for (std::uint64_t id=101;id<101+10000;++id) {
+    const auto fresh=bounded.spawn(id,128*1024,2048,[](auto&,auto,auto&){});
+    rejected([&]{bounded.send(first,one);});
+    rejected([&]{bounded.stop_actor(100);});
+    bounded.send(fresh,one);
+    bounded.stop_actor(id);
+    assert(bounded.live_actors()==0);
+    assert(bounded.queued_turns()==0);
+  }
+  const auto max_id=std::numeric_limits<std::uint64_t>::max();
+  const auto last=bounded.spawn(max_id,128*1024,2048,[](auto&,auto,auto&){});
+  bounded.stop_actor(last.id);
+  rejected([&]{bounded.spawn(1,128*1024,2048,[](auto&,auto,auto&){});});
+  rejected([&]{bounded.spawn(max_id,128*1024,2048,[](auto&,auto,auto&){});});
+  assert(bounded.live_actors()==0 && bounded.queued_turns()==0);
 
   rejected([&]{ActorCooperativeScheduler invalid(0);});
   rejected([&]{ActorCooperativeScheduler invalid(65537);});
