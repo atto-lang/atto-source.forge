@@ -283,6 +283,10 @@ TRAPS = (
      (1,), "call depth exceeded"),
 )
 INVALID = (
+    ("early-return-int-condition", "fnc main():int{if 1 then return 42; fi return 0;}", "condition_not_bool"),
+    ("early-return-missing-continuation", "fnc main():int{if true then return 42; fi}", "unexpected token"),
+    ("early-return-bool-arm", "fnc main():int{if true then return false; fi return 0;}", "Boolean is not an int"),
+    ("early-return-missing-fi", "fnc main():int{if true then return 42; return 0;}", "unexpected token"),
     ("result-match-duplicate", "fnc main():int{return match<int> Ok(42) over on Ok(n):int -> n, on Ok(m):int -> m, end;}", "duplicate Result match arm"),
     ("result-match-wildcard-scope", "fnc main():int{return match<int> Ok(42) over on Ok(_):int -> _, on Err(_):int -> 0, end;}", "unknown parameter"),
     ("result-match-error-binding", "fnc main():int{return match<int> Ok(42) over on Ok(n):int -> n, on Err(e):int -> 0, end;}", "Err binding requires nominal Error payload lowering"),
