@@ -134,7 +134,7 @@ class Parser {
       ++at_;
     } else if (c=='^' && at_<text_.size() && text_[at_]=='^') {
       ++at_;
-    } else if (std::string_view("()+-*/{};:,<>=^?").find(c)==std::string_view::npos) {
+    } else if (std::string_view("()+-*/{};:,<>=^?.").find(c)==std::string_view::npos) {
       at_=begin;
       fail("invalid character");
     }
@@ -562,6 +562,13 @@ class Parser {
         return add(Kind::BooleanXor,0,{},std::move(args));
       }
       for(int arg:args) require_integer(arg);
+      if(take(".")) {
+        // Closed Option<int> callable receiver; target family is checked
+        // again by the independent verifier, including forward references.
+        expect("unwrap");expect("(");expect(")");
+        const int receiver=add(Kind::OptionCall,0,name,std::move(args));
+        return add(Kind::OptionUnwrap,0,{}, {receiver});
+      }
       return add(Kind::Call,0,name,std::move(args));
     }
     fail("expected callable expression");
@@ -644,6 +651,11 @@ struct Evaluator {
     if (remaining--==0)throw std::runtime_error("callable execution budget exceeded");
     const auto& n=fn.nodes.at(static_cast<std::size_t>(id));
     if(n.kind==Kind::OptionPayload)return frame[static_cast<std::size_t>(n.value)];
+    if(n.kind==Kind::OptionUnwrap) {
+      const auto value=option(fn,n.children[0],args,depth,frame);
+      if(!value.some)throw ArithmeticFault(ArithmeticStatus::OptionUnwrap,"called Option::unwrap() on None");
+      return value.payload;
+    }
     if(match_kind(n.kind)) {
       const auto value=option(fn,n.children[0],args,depth,frame);
       if(value.some)frame[static_cast<std::size_t>(n.children[0])]=value.payload;
@@ -718,6 +730,15 @@ struct Native {
       out<<"  movq $1, %r9\n";
     } else if(n.kind==Kind::OptionNone) {
       out<<"  xorq %rax, %rax\n  xorq %r9, %r9\n";
+    } else if(n.kind==Kind::OptionUnwrap) {
+      const auto tag=label++;
+      emit_node(fn,n.children[0]);
+      // A valid None is ordinary. An impossible tag remains terminal.
+      out<<"  cmpq $1, %r9\n  je .Lores_unwrap_some_"<<tag<<"\n"
+         <<"  testq %r9, %r9\n  jne .Lores_legacy_fault\n"
+         <<"  movl $"<<static_cast<std::uint64_t>(ArithmeticStatus::OptionUnwrap)<<", %edx\n"
+         <<"  jmp "<<error_target<<"\n"
+         <<".Lores_unwrap_some_"<<tag<<":\n";
     } else if(n.kind==Kind::OptionPayload) {
       out<<"  movq "<<value_slot(static_cast<int>(n.value))<<", %rax\n";
     } else if(match_kind(n.kind)) {
@@ -880,7 +901,8 @@ void verify(const Module& m) {
          case Kind::And: case Kind::Or: case Kind::BooleanXor: case Kind::IntegerXor:
          case Kind::OptionSome: case Kind::OptionNone: case Kind::OptionCall:
          case Kind::OptionMatch: case Kind::OptionPayload: case Kind::Div:
-         case Kind::ResultTrap: case Kind::ResultMatch: case Kind::ResultOk: case Kind::ResultCall: break;
+         case Kind::ResultTrap: case Kind::ResultMatch: case Kind::ResultOk: case Kind::ResultCall:
+         case Kind::OptionUnwrap: break;
         default: throw std::runtime_error("unknown callable opcode");
       }
       if(!call_kind(n.kind) && !n.name.empty())
@@ -895,19 +917,22 @@ void verify(const Module& m) {
       std::size_t size=2;
       if(n.kind==Kind::Constant||n.kind==Kind::Boolean||n.kind==Kind::Parameter||
          n.kind==Kind::OptionNone||n.kind==Kind::OptionPayload)size=0;
-      else if(n.kind==Kind::Not||n.kind==Kind::OptionSome||n.kind==Kind::ResultOk||n.kind==Kind::ResultTrap)size=1;
+      else if(n.kind==Kind::Not||n.kind==Kind::OptionSome||n.kind==Kind::ResultOk||n.kind==Kind::ResultTrap||n.kind==Kind::OptionUnwrap)size=1;
       else if(n.kind==Kind::If||n.kind==Kind::Ternary||match_kind(n.kind))size=3;
       else if(call_kind(n.kind))size=n.children.size();
       if(n.children.size()!=size)throw std::runtime_error("callable operand arity mismatch");
       for(std::size_t j=0;j<n.children.size();++j) {
         const auto kind=fn.nodes[static_cast<std::size_t>(n.children[j])].kind;
-        if(option_kind(kind)!=(n.kind==Kind::OptionMatch && j==0))
+        if(option_kind(kind)!=((n.kind==Kind::OptionMatch||n.kind==Kind::OptionUnwrap) && j==0))
           throw std::runtime_error("Option value used outside typed match subject");
         if(result_kind(kind) && !(j==0&&(n.kind==Kind::ResultMatch||n.kind==Kind::ResultTrap)))
           throw std::runtime_error("Result value used outside typed match or trap");
         if(n.kind==Kind::ResultMatch && j==0 && !result_kind(kind))
           throw std::runtime_error("Result match subject must be Result");
       }
+      if(n.kind==Kind::OptionUnwrap && (n.value!=0 ||
+          fn.nodes[static_cast<std::size_t>(n.children[0])].kind!=Kind::OptionCall))
+        throw std::runtime_error("checked unwrap requires a direct Option<int> callable");
       if(n.kind==Kind::Boolean && n.value!=0 && n.value!=1)
         throw std::runtime_error("invalid Boolean literal");
       const auto child_bool=[&](std::size_t pos) {
