@@ -5,6 +5,9 @@
 using namespace atto::forge;
 using namespace atto::forge::scalar;
 int main() {
+  assert(parse_source("fnc main(): int {val Φ = 20; val φ = 22; return Φ + φ;}").ok());
+  assert(parse_source("fnc main(): int {val 数量 = 20; val 𠮷 = 22; return 数量 + 𠮷;}").ok());
+  assert(!parse_source("fnc main(): int {return 未定義;}").ok());
   // Pointer<int> ref!/deref!/unref! is admitted only by the distinct
   // closed-world local-pointer parser, never as an untyped ownership call.
   for (const std::string_view expression : {
