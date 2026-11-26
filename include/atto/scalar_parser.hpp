@@ -362,6 +362,8 @@ class Parser {
   };
   std::vector<Range> ranges_;
   std::vector<std::pair<std::string_view,std::size_t>> bindings_;
+  // Separate source-level Boolean identity from the scalar storage encoding.
+  std::vector<std::pair<std::string_view,bool>> ordinary_bools_;
   std::vector<std::string_view> dimensions_;
   struct Unit { std::string_view name; std::size_t dim; Scale scale; };
   std::vector<Unit> units_;
@@ -836,6 +838,9 @@ class Parser {
       for(const auto& h:helpers_)if(h.name==text()){++pos_;return call(h,depth+1);}
       for(const auto& b:bindings_)if(b.first==text()){
         const auto key=b.first;
+        if(std::any_of(ordinary_bools_.begin(),ordinary_bools_.end(),[&](const auto& x){return x.first==key;})){
+          fail(ParseError::refinement_binding);return std::nullopt;
+        }
         ++pos_;
         auto a=std::find_if(strict_arrays_.begin(),strict_arrays_.end(),[&](const auto& x){return x.first==key;});
         if(a!=strict_arrays_.end()){
@@ -984,8 +989,27 @@ class Parser {
       p=Predicate{*c,join_facts(p->yes,q->yes),std::move(q->no)};
     }return p;
   }
+  std::optional<std::size_t> ordinary_bool_value(){
+    if(name("true"))return append(Node{Op::literal,0,0,1});
+    if(name("false"))return append(Node{Op::literal,0,0,0});
+    if(current().kind==Kind::name){
+      const auto key=text();
+      if(std::any_of(ordinary_bools_.begin(),ordinary_bools_.end(),[&](const auto& x){return x.first==key;})){
+        for(const auto& b:bindings_)if(b.first==key){++pos_;return append(Node{Op::copy,b.second,0,0});}
+      }
+    }
+    fail(ParseError::refinement_binding);return std::nullopt;
+  }
   std::optional<std::size_t> returning(int depth){
     if(depth>16){fail(ParseError::depth_limit);return std::nullopt;}
+    if(!strict_&&!ordinary_bools_.empty()&&name("if")){
+      auto p=ordinary_bool_value();
+      if(!p||!take(Kind::lbrace))return std::nullopt;
+      auto y=returning(depth+1);if(!y||!take(Kind::rbrace)||!name("else")||!take(Kind::lbrace))return std::nullopt;
+      auto n=returning(depth+1);if(!n||!take(Kind::rbrace))return std::nullopt;
+      if(!dimensionless(*y)||!dimensionless(*n)){fail(ParseError::unit_dimension);return std::nullopt;}
+      return append(Node{Op::choose,*p,*y,static_cast<i64>(*n)});
+    }
     if(strict_&&name("if")){
       auto incoming=facts();bool old=guarded_;guarded_=true;
       auto p=guard_or(incoming,0);if(!p||!take(Kind::lbrace))return std::nullopt;
@@ -1139,6 +1163,13 @@ class Parser {
         const auto n=text();pos_+=2;
         auto binding=std::find_if(bindings_.begin(),bindings_.end(),[&](const auto& x){return x.first==n;});
         auto decl=std::find_if(mutable_types.begin(),mutable_types.end(),[&](const auto& x){return x.first==n;});
+        auto boolean=std::find_if(ordinary_bools_.begin(),ordinary_bools_.end(),[&](const auto& x){return x.first==n;});
+        if(!strict_&&boolean!=ordinary_bools_.end()){
+          if(binding==bindings_.end()||!boolean->second){fail(ParseError::verify_unsupported);return std::nullopt;}
+          auto value=ordinary_bool_value();if(!value||!take(Kind::semicolon))return std::nullopt;
+          auto version=append(Node{Op::copy,*value,0,0});if(!version)return std::nullopt;
+          binding->second=*version;effects.push_back(*version);continue;
+        }
         if(binding==bindings_.end()||decl==mutable_types.end()){fail(ParseError::verify_unsupported);return std::nullopt;}
         auto value=expr(0);
         if(!value||!take(Kind::semicolon)||!compatible(*value,decl->second,ParseError::refinement_binding))return std::nullopt;
@@ -1149,6 +1180,19 @@ class Parser {
       }
       if(bindings_.size()>=32||current().kind!=Kind::name){fail(ParseError::syntax);return std::nullopt;}
       auto n=text();++pos_;
+      // Only explicitly typed bool literals/copies in the ordinary scalar lane.
+      bool boolean=false;
+      if(!strict_&&n=="bool"&&current().kind==Kind::name){boolean=true;n=text();++pos_;}
+      else if(!strict_&&current().kind==Kind::colon&&pos_+1<tokens_.size()&&
+          tokens_[pos_+1].kind==Kind::name&&source_.substr(tokens_[pos_+1].offset,tokens_[pos_+1].length)=="bool"){
+        boolean=true;pos_+=2;
+      }
+      if(boolean){
+        if(!binding_name(n)||!take(Kind::equals)){fail(ParseError::syntax);return std::nullopt;}
+        auto value=ordinary_bool_value();if(!value||!take(Kind::semicolon))return std::nullopt;
+        auto version=append(Node{Op::copy,*value,0,0});if(!version)return std::nullopt;
+        bindings_.emplace_back(n,*version);ordinary_bools_.emplace_back(n,mut);effects.push_back(*version);continue;
+      }
       std::optional<Refinement> want;
       if(take(Kind::colon)){
         if(current().kind!=Kind::name){fail(ParseError::syntax);return std::nullopt;}
@@ -1425,7 +1469,7 @@ class Parser {
       out_.root=*root;
       if(!validate_ast(out_))return false;
       helpers_.push_back(Helper{fname,std::move(params),*result,std::move(out_.nodes),std::move(dims_),std::move(scales_),std::move(ranges_)});
-      out_.nodes.clear();out_.root=0;dims_.clear();scales_.clear();ranges_.clear();bindings_.clear();strict_arrays_.clear();
+      out_.nodes.clear();out_.root=0;dims_.clear();scales_.clear();ranges_.clear();bindings_.clear();strict_arrays_.clear();ordinary_bools_.clear();
     }
     return true;
   }
