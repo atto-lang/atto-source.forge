@@ -63,6 +63,16 @@ int main() {
   }
   assert(parse_verified_strict_i64("pub fnc main(): int {return 42;}").error==ParseError::verify_unsupported);
   assert(parse_verified_strict_i64(pre+"pub fnc main(): int {val int x = 9223372036854775807+1;return 42;}").error==ParseError::verify_unproven);
+  const auto loop=parse_verified_strict_i64(
+    "type Count = int where self >= 0 and self <= 42; "
+    "pub fnc main() -> int { let Count x = 0; let Count y = 0; "
+    "while x < 42 { x=x+1; y=x; if x==42 { break; } } return y; }");
+  assert(loop.ok()&&emit_cpp(loop));
+  auto invalid=loop;
+  for(auto& node:invalid.nodes)if(node.op==Op::loop_group&&!node.exits.empty()){
+    node.exits.front().values[0]=node.right;break;
+  }
+  assert(!validate_ast(invalid)&&!emit_cpp(invalid));
   auto bad_range=checked;bad_range.nodes.back().value=43;bad_range.nodes.back().upper=42;
   assert(!emit_cpp(bad_range));
 }

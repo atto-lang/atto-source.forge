@@ -128,16 +128,34 @@ inline constexpr std::size_t max_trace_depth = 16;
         auto k=n.states[j];
         if(k!=n.left+j||k>=i||p.nodes[k].op!=Op::loop_state||p.nodes[k].left>=n.left||++owners[k]!=1)return false;
       }
-      for(auto k:n.effects)if(k<n.left+n.states.size()||k>=i)return false;
-      for(auto k:n.updates)if(k<n.left||k>=i)return false;
+      // Effects must be explicit, unique, ordered lexical evaluations.
+      // A transfer snapshot may only reference its own initial slot or a
+      // version evaluated in the already-executed effect prefix.
+      std::size_t prior_effect=n.right;
+      for(auto k:n.effects){
+        if(k<=prior_effect||k>=i)return false;
+        const auto op=p.nodes[k].op;
+        if(op!=Op::copy&&op!=Op::loop_group&&op!=Op::loop_read)return false;
+        prior_effect=k;
+      }
+      const auto snapshot_ok=[&](std::size_t slot,std::size_t value,std::size_t prefix){
+        if(value==n.states[slot])return true;
+        if(value>=i||prefix>n.effects.size())return false;
+        const auto op=p.nodes[value].op;
+        if(op!=Op::copy&&op!=Op::loop_read)return false;
+        return std::binary_search(n.effects.begin(),n.effects.begin()+static_cast<std::ptrdiff_t>(prefix),value);
+      };
+      for(std::size_t j=0;j<n.updates.size();++j)
+        if(!snapshot_ok(j,n.updates[j],n.effects.size()))return false;
       if(n.exits.size()>128)return false;
-      std::size_t prior_position=0,prior_condition=0;
+      std::size_t prior_position=0,prior_condition=n.right;
       for(const auto& x:n.exits){
         if(x.position<prior_position||x.position>n.effects.size()||x.condition<=prior_condition||
            x.condition<n.left+n.states.size()||x.condition>=i||x.values.size()!=n.states.size())return false;
         if(x.position&&n.effects[x.position-1]>=x.condition)return false;
         if(x.position<n.effects.size()&&n.effects[x.position]<=x.condition)return false;
-        for(auto k:x.values)if(k<n.left||k>=x.condition)return false;
+        for(std::size_t j=0;j<x.values.size();++j)
+          if(x.values[j]>=x.condition||!snapshot_ok(j,x.values[j],x.position))return false;
         prior_position=x.position;prior_condition=x.condition;
       }
       regions.emplace_back(n.left,i);
