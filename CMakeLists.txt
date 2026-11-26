@@ -264,6 +264,20 @@ if(BUILD_TESTING)
     COMMAND oresforge_supervisor_data_fence_parity_v1)
   set_tests_properties(oresforge_supervisor_data_fence_parity_v1_host
     PROPERTIES TIMEOUT 45)
+  # Long-lived native mailbox generation/reuse regression (host only).
+  add_executable(oresforge_mailbox_incarnation_reuse_v1
+    verification/mailbox_incarnation_reuse_v1_test.cpp)
+  target_link_libraries(oresforge_mailbox_incarnation_reuse_v1
+    PRIVATE oresforge_core Threads::Threads)
+  target_compile_features(oresforge_mailbox_incarnation_reuse_v1 PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_mailbox_incarnation_reuse_v1 PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME oresforge_mailbox_incarnation_reuse_v1_host
+    COMMAND oresforge_mailbox_incarnation_reuse_v1)
+  set_tests_properties(oresforge_mailbox_incarnation_reuse_v1_host
+    PROPERTIES TIMEOUT 60)
   add_executable(oresforge_mailbox_model verification/actor_mailbox_model.cpp)
   target_link_libraries(oresforge_mailbox_model PRIVATE oresforge_core)
   add_test(NAME oresforge_actor_mailbox_model COMMAND oresforge_mailbox_model)
