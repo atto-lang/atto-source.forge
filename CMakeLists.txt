@@ -10,6 +10,22 @@ endif()
 add_executable(oresforge compiler/main.cpp)
 target_link_libraries(oresforge PRIVATE oresforge_core)
 include(CTest)
+option(ORESFORGE_EXPERIMENTAL_STAGE0_NATIVE_TESTS "Enable legacy scalar actor source-to-native witness (not production actor support)" OFF)
+if(BUILD_TESTING AND ORESFORGE_EXPERIMENTAL_STAGE0_NATIVE_TESTS)
+  if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    message(FATAL_ERROR "Stage-0 native actor witness currently requires Linux")
+  endif()
+  enable_language(C)
+  if(NOT CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" OR NOT CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    message(FATAL_ERROR "Stage-0 native actor witness requires GCC or Clang")
+  endif()
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  add_test(NAME forge_stage0_compiled_native_actor
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/scalar_actor_stage0_native.py"
+      --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}")
+  set_tests_properties(forge_stage0_compiled_native_actor PROPERTIES
+    TIMEOUT 180 LABELS "experimental;compiled-guest;legacy-syntax")
+endif()
 if(BUILD_TESTING)
   # This executes the REAL Forge compiler frontend on the backend-owned Atto
   # module and refuses a false-positive class/time compiler admission.
