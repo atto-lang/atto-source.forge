@@ -107,6 +107,17 @@ if(BUILD_TESTING)
   add_test(NAME oresforge_execution_callback_context
     COMMAND oresforge_execution_callback_context)
   set_tests_properties(oresforge_execution_callback_context PROPERTIES TIMEOUT 20)
+  add_executable(oresforge_callback_provenance_adversarial
+    verification/callback_provenance_adversarial_test.cpp)
+  target_include_directories(oresforge_callback_provenance_adversarial PRIVATE .)
+  target_compile_features(oresforge_callback_provenance_adversarial PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_callback_provenance_adversarial PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME oresforge_callback_provenance_adversarial
+    COMMAND oresforge_callback_provenance_adversarial)
+  set_tests_properties(oresforge_callback_provenance_adversarial PROPERTIES TIMEOUT 20)
   set_tests_properties(oresforge_actor_mailbox_concurrency PROPERTIES TIMEOUT 60)
   add_executable(oresforge_mailbox_mpmc verification/actor_mailbox_mpmc.cpp)
   target_link_libraries(oresforge_mailbox_mpmc PRIVATE oresforge_core Threads::Threads)
