@@ -175,6 +175,18 @@ if(BUILD_TESTING)
       "-DUNSUPPORTED=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/scalar-check/unsupported.atto"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/verification/scalar_check_cli.cmake")
   set_tests_properties(oresforge_cli_scalar_check PROPERTIES TIMEOUT 45)
+  # Exact shared scalar source; execute emitted native code, not a host model.
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$")
+    add_test(NAME oresforge_shared_atto_native_scalar_aot
+      COMMAND "${CMAKE_COMMAND}"
+        "-DFORGE_COMPILER=$<TARGET_FILE:oresforge>"
+        "-DFORGE_CXX=${CMAKE_CXX_COMPILER}"
+        "-DPOSITIVE=${CMAKE_CURRENT_SOURCE_DIR}/contracts/atto-parity-v1/add.atto"
+        "-DNEGATIVE=${CMAKE_CURRENT_SOURCE_DIR}/contracts/atto-parity-v1/reject-unknown.atto"
+        "-DOUTPUT_ROOT=${CMAKE_CURRENT_BINARY_DIR}/atto-shared-scalar-native"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/verification/atto_scalar_native.cmake")
+    set_tests_properties(oresforge_shared_atto_native_scalar_aot PROPERTIES TIMEOUT 90)
+  endif()
   add_test(NAME oresforge_cli_legacy_ores_guest
     COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.ores")
   set_tests_properties(oresforge_cli_legacy_ores_guest PROPERTIES
