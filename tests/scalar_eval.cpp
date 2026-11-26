@@ -68,4 +68,10 @@ int main() {
   bad_unary.nodes.back().right = 1;
   assert(!validate_ast(bad_unary));
   assert(evaluate(bad_unary).error == EvalError::invalid_ast);
+  const auto range = parse_source("type R = int where self >= 1 and self <= 42; fnc main(): int { return 42::<R>; }");
+  assert(range.ok() && evaluate(range).value == 42);
+  assert(evaluate_source("type R = int where self > 0; fnc main(): int { return 0::<R>; }").error == EvalError::refinement_violation);
+  auto bad_range=range;
+  bad_range.nodes.back().value=43;bad_range.nodes.back().upper=42;
+  assert(evaluate(bad_range).error==EvalError::invalid_ast);
 }
