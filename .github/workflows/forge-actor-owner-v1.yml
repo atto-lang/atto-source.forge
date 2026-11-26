@@ -62,6 +62,5 @@ jobs:
           "$build/oresforge_actor_incarnation_memory_v1" | tee "$RUNNER_TEMP/actor-memory-host.txt"
           grep -Fx 'FORGE_ACTOR_INCAR_MEMORY_HOST_PASS|private_heap=1|logical_stack=1|guest_atto=0|physical_stack=0' "$RUNNER_TEMP/actor-memory-host.txt"
           "$build/oresforge_supervisor_data_fence_parity_v1" | tee "$RUNNER_TEMP/actor-fence-host.txt"
-          grep -E '^FORGE_SUPERVISOR_DATA_FENCE_HOST_PASS\|attempts=6144\|admitted=[0-9]+\|sibling=1\|native_guest=0\|supervision_tree=0
- "$RUNNER_TEMP/actor-fence-host.txt"
+          grep -E '^FORGE_SUPERVISOR_DATA_FENCE_HOST_PASS\|attempts=6144\|admitted=[0-9]+\|sibling=1\|native_guest=0\|supervision_tree=0$' "$RUNNER_TEMP/actor-fence-host.txt"
           test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"
