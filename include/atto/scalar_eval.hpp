@@ -28,7 +28,28 @@ struct Evaluated {
     else{
       auto a=self(self,n.left);if(!a.ok())return a;
       const auto x=*a.value;
-      if(n.op==Op::loop_value){
+      if(n.op==Op::loop_group){
+        std::vector<i64> current;current.reserve(n.states.size());
+        for(auto k:n.states){auto initial=self(self,k);if(!initial.ok())return initial;current.push_back(*initial.value);}
+        std::size_t iterations=0;
+        for(;;){
+          for(std::size_t j=n.left;j<i;++j)cache[j].reset();
+          for(std::size_t j=0;j<n.states.size();++j)cache[n.states[j]]=current[j];
+          auto cond=self(self,n.right);if(!cond.ok())return cond;
+          if(*cond.value==0)break;
+          if(++iterations>1000000)return {{},EvalError::invalid_ast};
+          for(auto k:n.effects){auto effect=self(self,k);if(!effect.ok())return effect;}
+          for(std::size_t j=0;j<n.updates.size();++j){
+            auto update=self(self,n.updates[j]);if(!update.ok())return update;current[j]=*update.value;
+          }
+        }
+        value=current.front();
+      }
+      else if(n.op==Op::loop_read){
+        const auto& group=p.nodes[n.left];value=cache[group.states[static_cast<std::size_t>(n.value)]];
+        if(!value)return {{},EvalError::invalid_ast};
+      }
+      else if(n.op==Op::loop_value){
         i64 current=x;std::size_t iterations=0;
         for(;;){
           cache[n.left]=current;
@@ -78,7 +99,7 @@ struct Evaluated {
 }
 [[nodiscard]] inline Evaluated evaluate(const Parsed& p) {
   if (!validate_ast(p)) return {{}, EvalError::invalid_ast};
-  for(const auto& n:p.nodes)if(n.op==Op::choose||n.op==Op::loop_value)return evaluate_lazy(p);
+  for(const auto& n:p.nodes)if(n.op==Op::choose||n.op==Op::loop_value||n.op==Op::loop_group)return evaluate_lazy(p);
   std::vector<i64> values;
   values.reserve(p.nodes.size());
   for (std::size_t i = 0; i < p.nodes.size(); ++i) {
