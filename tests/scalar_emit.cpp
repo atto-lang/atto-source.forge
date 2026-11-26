@@ -52,6 +52,17 @@ int main() {
   assert(!emit_cpp(forged));
   const auto checked=parse_source("type R = int where self >= 1 and self <= 42; fnc main(): int {return 42::<R>;}");
   assert(checked.ok() && emit_cpp(checked));
+  const std::string pre="type Bounded = int where self >= 1 and self <= 42; ";
+  for(auto expression:{"40+2","84/2","42 as Bounded","-9223372036854775808"}){
+    auto strict=parse_verified_strict_i64(pre+"pub fnc main(): int { return "+expression+"; }");
+    assert(strict.ok() && validate_ast(strict) && emit_cpp(strict));
+  }
+  for(auto expression:{"42/0","-9223372036854775808 / -1","9223372036854775807+1","(9223372036854775807+1)*0","43 as Bounded"}){
+    auto strict=parse_verified_strict_i64(pre+"pub fnc main(): int { return "+expression+"; }");
+    assert(strict.error==ParseError::verify_unproven && !emit_cpp(strict));
+  }
+  assert(parse_verified_strict_i64("pub fnc main(): int {return 42;}").error==ParseError::verify_unsupported);
+  assert(parse_verified_strict_i64(pre+"pub fnc main(): int {val int x = 9223372036854775807+1;return 42;}").error==ParseError::verify_unproven);
   auto bad_range=checked;bad_range.nodes.back().value=43;bad_range.nodes.back().upper=42;
   assert(!emit_cpp(bad_range));
 }
