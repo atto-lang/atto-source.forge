@@ -45,6 +45,32 @@ void verify_guard_page_fault() {
 }
 #endif
 int main() {
+  // Exercise the production reservation helper at exhaustion without
+  // modifying the process-global allocator.
+  const auto max=std::numeric_limits<std::uint64_t>::max();
+  std::atomic<std::uint64_t> next{max-32};
+  std::atomic<unsigned> count{0};
+  std::atomic<std::uint64_t> bits{0};
+  std::vector<std::thread> claimers;
+  for(unsigned i=0;i<8;++i) claimers.emplace_back([&]{
+    for(;;) {
+      try {
+        const auto id=oresforge::runtime::detail::reserve_stack_incarnation(next);
+        assert(id>=max-32 && id<max);
+        const auto bit=std::uint64_t{1}<<(id-(max-32));
+        assert((bits.fetch_or(bit)&bit)==0);
+        ++count;
+      } catch(const std::overflow_error&) {break;}
+    }
+  });
+  for(auto& t:claimers)t.join();
+  assert(count==32 && bits==0xffffffffULL && next==max);
+  for(unsigned i=0;i<128;++i)
+    must_fail([&]{(void)oresforge::runtime::detail::reserve_stack_incarnation(next);});
+  assert(next==max);
+  std::atomic<std::uint64_t> invalid{0};
+  must_fail([&]{(void)oresforge::runtime::detail::reserve_stack_incarnation(invalid);});
+  assert(invalid==0);
   ActorStackDomain a(1, 128*1024, 4096), b(2, 128*1024, 4096);
   int host_local = 0;
   ActorHeapHandle a_handle, b_handle;
