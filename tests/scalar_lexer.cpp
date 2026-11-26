@@ -5,6 +5,13 @@
 using namespace atto::forge::scalar;
 
 int main() {
+  for (const std::string_view src : {"unsafe {}", "unsafe fnc f()", "fnc unsafe(){}", "// inert\runsafe {}"}) {
+    const auto denied = tokenize(src);
+    assert(denied.error == LexError::unsafe_unsupported);
+    assert(denied.error_offset == src.find("unsafe"));
+  }
+  assert(tokenize("unsafe_tools _unsafe unsafe2 /* unsafe */").ok());
+  assert(tokenize("\"unsafe\"").ok());
   const std::string source = "pub fnc main(): int { return -9223372036854775808 + 3 * (8/2)%7; }";
   auto l = tokenize(source);
   assert(l.ok());
