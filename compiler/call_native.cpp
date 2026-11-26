@@ -92,8 +92,13 @@ class Parser {
                                std::to_string(begin));
     if (letter(c)) {
       while (at_<text_.size() && (letter(text_[at_])||digit(text_[at_]))) ++at_;
-      if (text_.substr(begin,at_-begin)=="trap" && at_<text_.size() &&
-          text_[at_]=='!') ++at_;
+      if(text_.substr(begin,at_-begin)=="trap" && at_<text_.size() && text_[at_]=='!' &&
+         (at_+1==text_.size()||text_[at_+1]!='=')) {
+        ++at_;
+        token_={text_.substr(begin,at_-begin),begin};
+        if(at_==text_.size()||!space(text_[at_]))
+          fail("E_BANG_KEYWORD_WHITESPACE: whitespace required after trap!");
+      }
     } else if (digit(c)) {
       while (at_<text_.size() && digit(text_[at_])) ++at_;
     } else if (c=='!' && text_.substr(begin,3)=="!eq" &&
