@@ -2,6 +2,7 @@ name: Incremental compiler session candidate
 on:
   pull_request:
     paths:
+      - 'codegen/native.cpp'
       - 'compiler/frontend.hpp'
       - 'compiler/frontend.cpp'
       - 'tests/incremental_session.cpp'
@@ -59,3 +60,7 @@ jobs:
             echo "FORGE_API_NATIVE|$lane|$rc"
           done
           cmp "$work/api-cold.s" "$work/api-warm.s"
+          for exe in /tmp/atto-forge-cold /tmp/atto-forge-edit "$work/cold" "$work/warm" "$work/edit" "$work/api-cold" "$work/api-warm" "$work/api-edit"; do
+            readelf -W -l "$exe" | awk '$1 == "GNU_STACK" { seen++; if ($7 != "RW") bad=1 } END { exit !(seen==1 && !bad) }'
+          done
+          echo 'FORGE_NATIVE_NONEXEC_STACK=8_VERIFIED'
