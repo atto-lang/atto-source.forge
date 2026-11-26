@@ -1127,6 +1127,7 @@ class Parser {
       std::vector<std::size_t> effects,int depth,ContinueBranch on_exit={}){
     if(depth>16){fail(ParseError::depth_limit);return std::nullopt;}
     for(;;){
+      if(!strict_&&missing_primitive_initializer())return std::nullopt;
       if(strict_&&name("while")){
         if(!strict_loop(mutable_types,effects,depth+1))return std::nullopt;
         continue;
@@ -1256,6 +1257,20 @@ class Parser {
       if(!root)return std::nullopt;
     }
     return root;
+  }
+  // Recognize primitive declarations only at a statement boundary. Quoted
+  // text and comments cannot match because the lexer has already separated them.
+  bool missing_primitive_initializer(){
+    auto at=pos_;
+    const auto word=[&](std::size_t i)->std::string_view{
+      if(i>=tokens_.size()||tokens_[i].kind!=Kind::name)return {};
+      return source_.substr(tokens_[i].offset,tokens_[i].length);
+    };
+    if(word(at)=="let"||word(at)=="val"||word(at)=="const")++at;
+    const auto ty=word(at);
+    if(ty!="int"&&ty!="bool"&&ty!="string"&&ty!="String")return false;
+    if(word(at+1).empty()||at+2>=tokens_.size()||tokens_[at+2].kind!=Kind::semicolon)return false;
+    fail(ParseError::missing_initializer);return true;
   }
   [[nodiscard]] std::optional<std::size_t> binding_body(std::optional<Refinement> result=std::nullopt){
     std::vector<std::size_t> effects;
@@ -1485,6 +1500,7 @@ public:
       fail(ParseError::syntax);
       return std::move(out_);
     }
+    if(!strict_&&missing_primitive_initializer())return std::move(out_);
     std::vector<std::string_view> aliases;
     auto root = strict_||!helpers_.empty()||(current().kind==Kind::name&&(text()=="val"||(!refinements_.empty()&&text()=="let"))) ? binding_body() : body(aliases);
     if (!root || current().kind != Kind::end) {
