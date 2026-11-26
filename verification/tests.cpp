@@ -538,6 +538,24 @@ int main() {
     auto bad_xor=calls::parse("fnc main():int{return Xor(true,false) ? 42 : 7;}");
     bad_xor.functions[0].nodes[1].kind=calls::Kind::Constant;
     reject_diagnostic([&] { calls::verify(bad_xor); },"Boolean Xor requires two bool operands");
+    auto bool_helper=calls::parse(
+      "use namespace types; pub fnc fits(int x):bool{return x>=-128 && x<=127;}"
+      " fnc main(int x):int{return fits(x) ? 1 : 0;}");
+    ensure(calls::interpret(bool_helper,std::array<std::int64_t,1>{-128})==1,
+           "typed helper preserves inclusive bound");
+    ensure(calls::interpret(bool_helper,std::array<std::int64_t,1>{128})==0,
+           "typed helper rejects out of range");
+    auto wrong_bool_return=bool_helper;
+    wrong_bool_return.functions[0].returns_bool=false;
+    reject_diagnostic([&] { calls::verify(wrong_bool_return); },"callable return type mismatch");
+    auto wrong_bool_call=bool_helper;
+    for(auto& node:wrong_bool_call.functions[1].nodes)
+      if(node.kind==calls::Kind::BoolCall) node.kind=calls::Kind::Call;
+    reject_diagnostic([&] { calls::verify(wrong_bool_call); },"Boolean target type mismatch");
+    auto wrong_bool_target=bool_helper;
+    for(auto& node:wrong_bool_target.functions[1].nodes)
+      if(node.kind==calls::Kind::BoolCall) {node.callee=1;node.name="main";}
+    reject_diagnostic([&] { calls::verify(wrong_bool_target); },"Boolean target type mismatch");
     auto corrupt=calls::parse("fnc main(x:int):int{return x+1;}");
     corrupt.functions[0].nodes.back().children[0]=999;
     reject_diagnostic([&] { calls::verify(corrupt); },
