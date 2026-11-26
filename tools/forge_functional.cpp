@@ -39,6 +39,7 @@ struct Function {
   std::string name;
   std::vector<std::string> params;
   std::vector<Binding> locals;
+  std::vector<Expr> prints;
   Expr result;
 };
 bool ascii_head(char c) noexcept {
@@ -80,7 +81,7 @@ std::vector<std::string> tokenize(std::string_view text) {
                text.substr(at, 2) == "<|" ||
                text.substr(at, 2) == "->") {
       at += 2;
-    } else if (std::string_view{"(){}:,;+-*/="}.find(c) != std::string_view::npos) {
+    } else if (std::string_view{"(){}:.,;+-*/="}.find(c) != std::string_view::npos) {
       ++at;
     } else fail("E_LEX");
     tokens.emplace_back(text.substr(start, at - start));
@@ -91,7 +92,8 @@ std::vector<std::string> tokenize(std::string_view text) {
 struct Parser {
   std::vector<std::string> tokens;
   std::size_t at = 0;
-  explicit Parser(std::string_view s) : tokens(tokenize(s)) {}
+  bool allow_stdio;
+  explicit Parser(std::string_view s, bool grant) : tokens(tokenize(s)), allow_stdio(grant) {}
   const std::string& peek() const { return tokens.at(at); }
   bool eat(std::string_view tok) {
     if (peek() != tok) return false;
@@ -198,7 +200,7 @@ struct Parser {
     }
     return lhs;
   }
-  Expr brace(std::vector<Binding>& locals) {
+  Expr brace(std::vector<Binding>& locals, std::vector<Expr>& prints, const std::string& name) {
     while (eat("val")) {
       auto n = name();
       need("=");
@@ -206,6 +208,17 @@ struct Parser {
       need(";");
       if (locals.size() >= 4) fail("E_LIMIT");
       locals.push_back(Binding{std::move(n), std::move(v)});
+    }
+    while (eat("stdio")) {
+      if (!allow_stdio || name != "main") fail("E_PERMISSION");
+      need(".");
+      if (!eat("println")) fail("E_STDIO");
+      need("(");
+      auto value = expr(0, 0);
+      need(")");
+      need(";");
+      if (prints.size() >= 4) fail("E_LIMIT");
+      prints.push_back(std::move(value));
     }
     need("return");
     Expr answer = expr(0, 0);
@@ -234,14 +247,15 @@ struct Parser {
       if (!colon) need("->");
       need("int");
       std::vector<Binding> locals;
+      std::vector<Expr> prints;
       Expr answer;
-      if (eat("{")) answer = brace(locals);
+      if (eat("{")) answer = brace(locals, prints, n);
       else if (colon && eat("->")) {
-        if (eat("{")) answer = brace(locals);
+        if (eat("{")) answer = brace(locals, prints, n);
         else { answer = expr(0, 0); need(";"); }
       } else fail("E_PARSE");
       functions.push_back(Function{std::move(n), std::move(params),
-                                   std::move(locals), std::move(answer)});
+                                   std::move(locals), std::move(prints), std::move(answer)});
       if (functions.size() > 16) fail("E_LIMIT");
     }
     return functions;
@@ -264,6 +278,7 @@ void check_expr(const Expr& e, const std::vector<Function>& functions,
     case Expr::Kind::call: {
       auto target = find_function(functions, e.name);
       if (target < 0) fail("E_SYMBOL");
+      if (!functions[static_cast<std::size_t>(target)].prints.empty()) fail("E_EFFECT_CALL");
       if (functions[static_cast<std::size_t>(target)].params.size() != e.args.size()) fail("E_ARITY");
       for (const auto& arg : e.args) check_expr(arg, functions, state, available);
       check_fn(static_cast<std::size_t>(target), functions, state);
@@ -289,6 +304,7 @@ void check_fn(std::size_t index, const std::vector<Function>& functions,
     check_expr(b.value, functions, state, available);
     if (!available.insert(b.name).second) fail("E_DUP_LOCAL");
   }
+  for (const auto& value : fn.prints) check_expr(value, functions, state, available);
   check_expr(fn.result, functions, state, available);
   state[index] = 2;
 }
@@ -376,16 +392,28 @@ std::string emit(const std::vector<Function>& functions) {
       auto value = e.expression(local.value, fn);
       e.line("const atto::forge::i64 v_" + local.name + " = " + value + ";");
     }
+    for (const auto& print : fn.prints) {
+      auto value = e.expression(print, fn);
+      e.line("if (std::printf(\"%lld\\n\", static_cast<long long>(" + value + ")) < 0) return std::nullopt;");
+    }
     auto result = e.expression(fn.result, fn);
     e.line("return " + result + ";");
     e.out += "}\n";
     if (e.out.size() > 65536) fail("E_EMIT_LIMIT");
   }
+  const bool effectful = !functions.at(static_cast<std::size_t>(find_function(functions, "main"))).prints.empty();
   e.out += "int main() {\n"
-           "  const auto value = f_main();\n"
-           "  if (!value) { std::fputs(\"E_OVERFLOW\\n\", stderr); return 70; }\n"
-           "  std::printf(\"%lld\\n\", static_cast<long long>(*value));\n"
-           "  return 0;\n}\n";
+           "  const auto value = f_main();\n";
+  if (effectful) {
+    e.out += "  if (std::fflush(stdout) != 0 || std::ferror(stdout)) { std::fputs(\"E_IO\\n\", stderr); return 71; }\n"
+             "  if (!value) { std::fputs(\"E_OVERFLOW\\n\", stderr); return 70; }\n"
+             "  if (*value < 0 || *value > 255) { std::fputs(\"E_EXIT_RANGE\\n\", stderr); return 72; }\n"
+             "  return static_cast<int>(*value);\n}\n";
+  } else {
+    e.out += "  if (!value) { std::fputs(\"E_OVERFLOW\\n\", stderr); return 70; }\n"
+             "  std::printf(\"%lld\\n\", static_cast<long long>(*value));\n"
+             "  return 0;\n}\n";
+  }
   if (e.out.size() > 65536) fail("E_EMIT_LIMIT");
   return e.out;
 }
@@ -408,6 +436,8 @@ void safe_target(const fs::path& source, const fs::path& output) {
 }  // namespace
 int main(int argc, char** argv) {
   try {
+    const bool allow_stdio = argc > 1 && std::string_view(argv[1]) == "--allow-stdio";
+    if (allow_stdio) { --argc; ++argv; }
     if (argc != 3 && !(argc == 4 && std::string(argv[2]) == "-o"))
       fail("E_USAGE");
     const bool check_only = argc == 3 && std::string(argv[1]) == "--check";
@@ -457,7 +487,7 @@ int main(int argc, char** argv) {
 #else
     fail("E_SOURCE_UNSUPPORTED");
 #endif
-    auto functions = Parser(source).parse();
+    auto functions = Parser(source, allow_stdio).parse();
     validate(functions);
     if (check_only) return 0;
     fs::path output(argv[3]);

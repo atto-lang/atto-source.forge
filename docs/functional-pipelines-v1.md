@@ -110,3 +110,7 @@ opened inode* could still mutate its contents while they are read. Source
 files in a hostile workspace must be staged immutably and identity-checked
 by the host before guest compilation. This compiler is not a general
 filesystem access capability for untrusted TenantVM actors.
+
+## Explicit stdout comparator profile
+
+`forge_functional --allow-stdio input.atto -o guest.cpp` (or `--allow-stdio --check input.atto`) admits at most four main-only `stdio.println(int)` statements following immutable locals and preceding return. No ambient default stdout capability is granted to guest source. Calls to effectful main are denied. The emitted native executable's guest stdout is independent of its return value, encoded as exit status 0–255 only; outside this range fails with E_EXIT_RANGE. Pure fixtures retain their historical full-i64 return-via-stdout harness. This is a trusted standalone process profile, not general actor I/O or sandbox authority. Existing exclusive artifact publication remains unchanged.

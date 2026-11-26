@@ -457,3 +457,53 @@ stderr=${publication_err}")
 endif()
 
 message(STATUS "ATTO_FORGE_FUNCTIONAL_GUEST_MATRIX=7 native_guests_including_min_overflow_and_relative_path 27 negative_no_artifacts")
+
+# Explicit host grant for the unchanged comparator guest. The effectful
+# profile separates guest stdout and bounded process exit status.
+assert_pinned_blob(comparator-function-pipeline a29743b5ca5c415fd5896186cdeb88e2eb406dcf)
+set(source "${ROOT}/fixtures/functional-pipelines-v1/comparator-function-pipeline.atto")
+set(generated "${OUT_DIR}/comparator.cpp")
+set(native "${OUT_DIR}/comparator")
+file(REMOVE "${generated}" "${native}")
+execute_process(COMMAND "${FORGE}" "${source}" -o "${generated}"
+  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+if(NOT "${rc}" STREQUAL "2" OR NOT "${err}" STREQUAL "E_PERMISSION\n" OR EXISTS "${generated}")
+  message(FATAL_ERROR "comparator default authority must reject: ${rc} ${err}")
+endif()
+execute_process(COMMAND "${FORGE}" --allow-stdio --check "${source}"
+  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+if(NOT "${rc}" STREQUAL "0" OR NOT "${out}${err}" STREQUAL "")
+  message(FATAL_ERROR "comparator granted check failed: ${rc} ${err}")
+endif()
+execute_process(COMMAND "${FORGE}" --allow-stdio "${source}" -o "${generated}"
+  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+if(NOT "${rc}" STREQUAL "0" OR NOT EXISTS "${generated}" OR NOT "${out}${err}" STREQUAL "")
+  message(FATAL_ERROR "comparator codegen failed: ${rc} ${err}")
+endif()
+execute_process(COMMAND "${CXX}" -std=c++20 -Wall -Wextra -Werror -pedantic
+  ${guest_flags} "-I${ROOT}/include" "${generated}" -o "${native}"
+  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+if(NOT "${rc}" STREQUAL "0")
+  message(FATAL_ERROR "comparator native build failed: ${err}")
+endif()
+execute_process(COMMAND "${native}" RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+if(NOT "${rc}" STREQUAL "121" OR NOT "${out}" STREQUAL "121\n" OR NOT "${err}" STREQUAL "")
+  message(FATAL_ERROR "comparator oracle mismatch: ${rc} [${out}] [${err}]")
+endif()
+message(STATUS "ATTO_FORGE_COMPARATOR_PIPELINE_NATIVE_PASS")
+function(reject_stdout name content expected)
+  set(src "${OUT_DIR}/stdout-${name}.atto")
+  set(dst "${OUT_DIR}/stdout-${name}.cpp")
+  file(WRITE "${src}" "${content}")
+  file(REMOVE "${dst}")
+  execute_process(COMMAND "${FORGE}" --allow-stdio "${src}" -o "${dst}"
+    RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+  if(NOT "${rc}" STREQUAL "2" OR NOT "${err}" STREQUAL "${expected}\n" OR EXISTS "${dst}")
+    message(FATAL_ERROR "stdout negative ${name}: ${rc} ${err}")
+  endif()
+endfunction()
+reject_stdout(member "pub fnc main(): int { stdio.read(42); return 42; }" E_STDIO)
+reject_stdout(bool "pub fnc main(): int { stdio.println(true); return 42; }" E_TYPE)
+reject_stdout(symbol "pub fnc main(): int { stdio.println(missing); return 42; }" E_SYMBOL)
+reject_stdout(helper "fnc f(): int { stdio.println(1); return 1; } pub fnc main(): int { return f(); }" E_PERMISSION)
+reject_stdout(effect-call "fnc f(): int { return main(); } pub fnc main(): int { stdio.println(1); return 1; }" E_EFFECT_CALL)
