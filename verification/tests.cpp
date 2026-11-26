@@ -572,6 +572,10 @@ int main() {
     reject_diagnostic([&] { calls::verify(forged_match); },"Option payload outside Some arm");
     auto result_match=calls::parse("fnc main():int{return match<int> Ok(42) over on Ok(n):int -> n, on Err():int -> 0, end;}");
     ensure(calls::interpret(result_match,{})==42,"scalar Result match consumes successful payload");
+    auto flat_ok=calls::parse("fnc main():int{return match<int> trap! Ok(42) over on Ok(n):int -> n, on Err(_):int -> 0, end;}");
+    ensure(calls::interpret(flat_ok,{})==42,"trap Ok stays flat");
+    auto flat_fault=calls::parse("fnc main():int{return match<int> trap! Ok(1/0) over on Ok(n):int -> n, on Err(_):int -> 42, end;}");
+    ensure(calls::interpret(flat_fault,{})==42,"trap Ok captures ordinary payload effect");
     auto forged_result_match=result_match;
     auto& match_node=forged_result_match.functions[0].nodes.back();
     std::swap(match_node.children[1],match_node.children[2]);
