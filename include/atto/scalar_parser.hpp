@@ -15,7 +15,7 @@
 #include <vector>
 
 namespace atto::forge::scalar {
-enum class Op { literal, add, sub, mul, div, rem, neg, refine, copy, sequence, band, bor, bxor, bnot, shl, lshr, ashr, eq, ne, lt, le, gt, ge, choose };
+enum class Op { literal, add, sub, mul, div, rem, neg, refine, narrow, copy, sequence, band, bor, bxor, bnot, shl, lshr, ashr, eq, ne, lt, le, gt, ge, choose };
 struct Node {
   Op op;
   std::size_t left = 0, right = 0;
@@ -23,7 +23,7 @@ struct Node {
   i64 upper = 0;
 };
 enum class ParseError {
-  none, lexical, syntax, literal_out_of_range, depth_limit, node_limit, telemetry, verify_unproven, verify_unsupported, unit_name, unit_duplicate, unit_dimension, unit_scale, unit_limit, unit_erasure, unit_attachment, unit_inexact, unit_range, refinement_empty, refinement_binding, refinement_precondition, refinement_return, new_required, lock_unsupported
+  none, lexical, syntax, literal_out_of_range, depth_limit, node_limit, telemetry, verify_unproven, verify_unsupported, unit_name, unit_duplicate, unit_dimension, unit_scale, unit_limit, unit_erasure, unit_attachment, unit_inexact, unit_range, refinement_empty, refinement_binding, refinement_precondition, refinement_return, refinement_duplicate, refinement_postcondition, refinement_contract, refinement_export, refinement_body, refinement_call, refinement_cast, i32_range, new_required, lock_unsupported
 };
 // Stable sanitized diagnostics; never echo user source bytes.
 [[nodiscard]] constexpr std::string_view parse_error_name(ParseError error) noexcept {
@@ -52,6 +52,14 @@ enum class ParseError {
     case ParseError::refinement_binding: return "E_REFINEMENT_BINDING";
     case ParseError::refinement_precondition: return "E_REFINEMENT_PRECONDITION";
     case ParseError::refinement_return: return "E_REFINEMENT_RETURN";
+    case ParseError::refinement_duplicate: return "E_REFINEMENT_DUPLICATE";
+    case ParseError::refinement_postcondition: return "E_REFINEMENT_POSTCONDITION";
+    case ParseError::refinement_contract: return "E_REFINEMENT_CONTRACT";
+    case ParseError::refinement_export: return "E_REFINEMENT_EXPORT";
+    case ParseError::refinement_body: return "E_REFINEMENT_BODY";
+    case ParseError::refinement_call: return "E_REFINEMENT_CALL";
+    case ParseError::refinement_cast: return "E_REFINEMENT_CAST";
+    case ParseError::i32_range: return "E_I32_RANGE";
   }
   return "E_PARSE_UNKNOWN";
 }
@@ -114,6 +122,7 @@ inline constexpr std::size_t max_trace_depth = 16;
         if (node.value > node.upper || node.left >= index || node.right != 0) return false;
         pending.push_back(node.left);
         break;
+      case Op::narrow:
       case Op::copy:
       case Op::neg:
       case Op::bnot:
@@ -180,9 +189,16 @@ class Parser {
   using Scale = ExactScale;
   std::vector<Dim> dims_;
   std::vector<Scale> scales_;
+  enum class Width {literal,i32,i64};
+  static constexpr i64 i32_lo=std::numeric_limits<std::int32_t>::min(), i32_hi=std::numeric_limits<std::int32_t>::max();
   struct Range {
     i64 lo=std::numeric_limits<i64>::min(),hi=std::numeric_limits<i64>::max();
+    Width width=Width::i64;
     unsigned holes=0;
+    [[nodiscard]] Range intersect(i64 l,i64 h,Width w)const{
+      const i64 a=lo>l?lo:l,b=hi<h?hi:h;
+      return a>b?Range{l,h,w}:Range{a,b,w,holes};
+    }
     [[nodiscard]] bool within(i64 l,i64 h) const {return lo>=l&&hi<=h;}
     static unsigned bit(i64 n){return n==0?1u:n==-1?2u:0u;}
     bool has(i64 n) const{return lo<=n&&n<=hi&&!(holes&bit(n));}
@@ -204,10 +220,10 @@ class Parser {
       return r.lo<=r.hi?r:*this;
     }
     Range join(Range r) const{
-      return {std::min(lo,r.lo),std::max(hi,r.hi),
+      return {std::min(lo,r.lo),std::max(hi,r.hi),width==r.width?width:Width::i64,
         (!has(0)&&!r.has(0)?1u:0u)|(!has(-1)&&!r.has(-1)?2u:0u)};
     }
-    [[nodiscard]] static Range exact(i64 n){return {n,n};}
+    [[nodiscard]] static Range exact(i64 n){return {n,n,Width::literal};}
     [[nodiscard]] Range neg() const {
       const auto a=checked_neg(hi),b=checked_neg(lo);
       return a&&b?Range{*a,*b}:Range{};
@@ -223,7 +239,12 @@ class Parser {
       if(op==Op::add||op==Op::sub){
         const auto a=op==Op::add?checked_add(lo,r.lo):checked_sub(lo,r.hi);
         const auto b=op==Op::add?checked_add(hi,r.hi):checked_sub(hi,r.lo);
-        return a&&b?Range{*a,*b}:Range{};
+        // Normal successors exclude trapping arithmetic. Saturate the
+        // interval endpoints; strict admission separately proves no trap.
+        const auto min=std::numeric_limits<i64>::min(),max=std::numeric_limits<i64>::max();
+        const auto lower=a.value_or((op==Op::add?r.lo<0:r.hi>0)?min:max);
+        const auto upper=b.value_or((op==Op::add?r.hi<0:r.lo>0)?min:max);
+        return lower<=upper?Range{lower,upper}:Range{};
       }
       if(op==Op::mul||(op==Op::div&&(r.lo>0||r.hi<0))){
         Range result{std::numeric_limits<i64>::max(),std::numeric_limits<i64>::min()};
@@ -243,7 +264,7 @@ class Parser {
   std::vector<std::string_view> dimensions_;
   struct Unit { std::string_view name; std::size_t dim; Scale scale; };
   std::vector<Unit> units_;
-  struct Refinement { std::string_view name; Dim dim; Scale scale; i64 lo, hi; };
+  struct Refinement { std::string_view name; Dim dim; Scale scale; i64 lo, hi; Width width=Width::i64; };
   std::vector<Refinement> refinements_;
   struct Helper {
     std::string_view name;
@@ -331,15 +352,20 @@ class Parser {
   }
   [[nodiscard]] bool refinement_declarations() {
     while (name("type")) {
+      if(current().kind==Kind::name&&(text()=="int"||text()=="i64"||text()=="i32")){fail(ParseError::refinement_duplicate);return false;}
       if (refinements_.size()==32 || current().kind!=Kind::name || !declaration_name(text())) return false;
       const auto n=text();++pos_;
-      if (!take(Kind::equals) || (!name("int")&&!name("i64")) || !name("where")) return false;
-      i64 lo=std::numeric_limits<i64>::min(),hi=std::numeric_limits<i64>::max();
+      if(!take(Kind::equals))return false;
+      const auto width=name("i32")?Width::i32:Width::i64;
+      if(width==Width::i64&&!name("int")&&!name("i64"))return false;
+      if(!name("where"))return false;
+      i64 lo=width==Width::i32?i32_lo:std::numeric_limits<i64>::min(),hi=width==Width::i32?i32_hi:std::numeric_limits<i64>::max();
       std::size_t count=0;
       bool has_units=false;
       for (;;) {
         if(name("units")){has_units=true;break;}
         if (++count>16 || !name("self")) return false;
+        if(name("eq")){const auto n=signed_bound();if(!n)return false;lo=lo>*n?lo:*n;hi=hi<*n?hi:*n;if(lo>hi){fail(ParseError::refinement_empty);return false;}if(!name("and"))break;continue;}
         const bool lower=take(Kind::gt);
         if (!lower && !take(Kind::lt)) return false;
         const bool inclusive=current().kind==Kind::equals && tokens_[pos_-1].offset+tokens_[pos_-1].length==current().offset;
@@ -368,7 +394,7 @@ class Parser {
         dim[unit->dim]=1;scale=unit->scale;++pos_;
       }
       if (!take(Kind::semicolon)) return false;
-      refinements_.push_back(Refinement{n,dim,scale,lo,hi});
+      refinements_.push_back(Refinement{n,dim,scale,lo,hi,width});
     }
     return true;
   }
@@ -378,9 +404,12 @@ class Parser {
     return nullptr;
   }
   [[nodiscard]] std::optional<std::size_t> checked_refinement(std::size_t n,const Refinement& r) {
-    if (dims_[n]!=r.dim || scales_[n]!=r.scale) {fail(ParseError::syntax);return std::nullopt;}
+    if(dims_[n]!=r.dim){fail(ParseError::unit_dimension);return std::nullopt;}
+    if(scales_[n]!=r.scale){fail(ParseError::unit_scale);return std::nullopt;}
     if(strict_&&!ranges_[n].within(r.lo,r.hi)){fail(ParseError::verify_unproven);return std::nullopt;}
-    return append(Node{Op::refine,n,0,r.lo,r.hi});
+    auto result=append(Node{Op::refine,n,0,r.lo,r.hi});
+    if(result)ranges_[*result]=ranges_[n].intersect(r.lo,r.hi,r.width);
+    return result;
   }
   [[nodiscard]] bool attach(std::size_t n) {
     if (!dimensionless(n)) {fail(ParseError::unit_attachment);return false;}
@@ -427,7 +456,7 @@ class Parser {
     }
     if(strict_){
       switch(n.op){
-        case Op::literal: case Op::refine: case Op::copy: case Op::sequence:
+        case Op::literal: case Op::refine: case Op::narrow: case Op::copy: case Op::sequence:
         case Op::eq: case Op::ne: case Op::lt: case Op::le: case Op::gt: case Op::ge: case Op::choose: break;
         case Op::neg:
           if(ranges_[n.left].lo==std::numeric_limits<i64>::min()){
@@ -446,15 +475,19 @@ class Parser {
     if(n.op==Op::literal)r=Range::exact(n.value);
     if (n.op != Op::literal) {
       const auto& lhs = dims_[n.left];
-      if (n.op == Op::neg || n.op == Op::refine || n.op==Op::copy) {
+      if (n.op == Op::neg || n.op == Op::refine || n.op==Op::narrow || n.op==Op::copy) {
         d = lhs; s = scales_[n.left];
         r=n.op==Op::neg?ranges_[n.left].neg():n.op==Op::refine?Range{n.value,n.upper}:ranges_[n.left];
+        if(n.op==Op::neg)r.width=ranges_[n.left].width;
+        if(n.op==Op::narrow)r=r.intersect(i32_lo,i32_hi,Width::i32);
       } else if(n.op==Op::choose){
         auto z=static_cast<std::size_t>(n.value);
-        if(!dimensionless(n.left)||dims_[n.right]!=dims_[z]||scales_[n.right]!=scales_[z]){fail(ParseError::unit_dimension);return std::nullopt;}
+        if(!dimensionless(n.left)||dims_[n.right]!=dims_[z]){fail(ParseError::unit_dimension);return std::nullopt;}
+        if(scales_[n.right]!=scales_[z]){fail(ParseError::unit_scale);return std::nullopt;}
         d=dims_[n.right];s=scales_[n.right];r=ranges_[n.right].join(ranges_[z]);
       } else if(n.op==Op::eq||n.op==Op::ne||n.op==Op::lt||n.op==Op::le||n.op==Op::gt||n.op==Op::ge){
-        if(lhs!=dims_[n.right]||scales_[n.left]!=scales_[n.right]){fail(ParseError::unit_dimension);return std::nullopt;}
+        if(lhs!=dims_[n.right]){fail(ParseError::unit_dimension);return std::nullopt;}
+        if(scales_[n.left]!=scales_[n.right]){fail(ParseError::unit_scale);return std::nullopt;}
         r=Range{0,1};
       } else if(n.op==Op::sequence){
         d=dims_[n.right];s=scales_[n.right];r=ranges_[n.right];
@@ -480,9 +513,22 @@ class Parser {
         }
       }
     }
+    const bool arithmetic=n.op==Op::add||n.op==Op::sub||n.op==Op::mul||n.op==Op::div;
+    if(arithmetic){
+      const auto a=ranges_[n.left],b=ranges_[n.right];
+      r.width=(a.width==Width::i64||b.width==Width::i64)?Width::i64:
+              (a.width==Width::i32||b.width==Width::i32)?Width::i32:Width::i64;
+      if(r.width==Width::i32&&((a.width==Width::literal&&!a.within(i32_lo,i32_hi))||(b.width==Width::literal&&!b.within(i32_lo,i32_hi)))){
+        fail(ParseError::i32_range);return std::nullopt;
+      }
+    }
+    const bool check32=(arithmetic||n.op==Op::neg)&&r.width==Width::i32;
+    if(check32&&strict_&&!r.within(i32_lo,i32_hi)){fail(ParseError::verify_unproven);return std::nullopt;}
     dims_.push_back(d); scales_.push_back(s); ranges_.push_back(r);
     out_.nodes.push_back(n);
-    return out_.nodes.size() - 1;
+    const auto i=out_.nodes.size()-1;
+    if(check32)return append(Node{Op::narrow,i,0,0});
+    return i;
   }
   // bit_or < bit_xor < bit_and < addition < multiplication < unary.
   // Flat precedence tiers do not consume the nesting depth budget.
@@ -491,8 +537,10 @@ class Parser {
     auto result = parse_or(depth);
     if (!result) return std::nullopt;
     while (name("as")) {
+      if(take(Kind::question)){fail(ParseError::refinement_cast);return std::nullopt;}
       if (current().kind == Kind::name && (text() == "int" || text() == "i64")) {
         if (!cast_target() || !scalar_cast(*result)) return std::nullopt;
+        ranges_[*result].width=Width::i64;
       } else if (const auto* r=refinement_target()) {
         ++pos_;result=checked_refinement(*result,*r);
         if (!result) return std::nullopt;
@@ -533,6 +581,7 @@ class Parser {
       if (!take(Kind::lt)) { fail(ParseError::syntax); return std::nullopt; }
       if (cast && current().kind == Kind::name && (text() == "int" || text() == "i64")) {
         if (!cast_target() || !scalar_cast(*result)) return std::nullopt;
+        ranges_[*result].width=Width::i64;
       } else if (const auto* r=cast?refinement_target():nullptr) {
         ++pos_;result=checked_refinement(*result,*r);
         if (!result) return std::nullopt;
@@ -636,6 +685,7 @@ class Parser {
       }
       auto operand = unary(depth + 1);
       if (!operand || !scalar_cast(*operand)) return std::nullopt;
+      ranges_[*operand].width=Width::i64;
       return operand;
     }
     if (take(Kind::plus)) return unary(depth + 1);
@@ -684,6 +734,7 @@ class Parser {
         return postfix(append(Node{Op::copy,b.second,0,0}));
       }
     }
+    if(current().kind==Kind::name&&pos_+1<tokens_.size()&&tokens_[pos_+1].kind==Kind::lparen&&!refinements_.empty()){fail(ParseError::refinement_call);return std::nullopt;}
     fail(ParseError::syntax);
     return std::nullopt;
   }
@@ -695,7 +746,8 @@ class Parser {
     return true;
   }
   [[nodiscard]] std::optional<Refinement> annotation(std::string_view n) const {
-    if(n=="int"||n=="i64")return Refinement{n,Dim{},Scale{},std::numeric_limits<i64>::min(),std::numeric_limits<i64>::max()};
+    if(n=="int"||n=="i64")return Refinement{n,Dim{},Scale{},std::numeric_limits<i64>::min(),std::numeric_limits<i64>::max(),Width::i64};
+    if(n=="i32")return Refinement{n,Dim{},Scale{},i32_lo,i32_hi,Width::i32};
     for(const auto& r:refinements_)if(r.name==n)return r;
     return std::nullopt;
   }
@@ -706,18 +758,18 @@ class Parser {
     return true;
   }
   [[nodiscard]] std::optional<std::size_t> call(const Helper& h,int depth){
-    // Each call gets fresh graph nodes. The helper root sequences its parameters
-    // and local initializers; the lazy evaluator reaches that root only through
-    // the selected branch. Preserve the call boundary and never hoist its DAG.
+    // Each call gets fresh graph nodes. Parameter and initializer sequences
+    // remain branch-local; do not hoist the helper DAG.
     if(depth>max_parse_depth||!take(Kind::lparen)){fail(ParseError::syntax);return std::nullopt;}
     std::vector<std::size_t> map;
     for(std::size_t i=0;i<h.params.size();++i){
       if(i&&!take(Kind::comma)){fail(ParseError::syntax);return std::nullopt;}
+      if(current().kind==Kind::rparen){fail(ParseError::refinement_call);return std::nullopt;}
       auto arg=expr(depth+1);
       if(!arg||!compatible(*arg,h.params[i],ParseError::refinement_precondition)){fail(ParseError::syntax);return std::nullopt;}
       map.push_back(*arg);
     }
-    if(!take(Kind::rparen)){fail(ParseError::syntax);return std::nullopt;}
+    if(!take(Kind::rparen)){fail(ParseError::refinement_call);return std::nullopt;}
     // Template graph has already been type-checked over the declared
     // parameter intervals. Instantiate once, with only backward edges.
     for(std::size_t i=h.params.size();i<h.nodes.size();++i){
@@ -726,7 +778,7 @@ class Parser {
       if(n.op!=Op::literal){
         if(n.left>=map.size()){fail(ParseError::syntax);return std::nullopt;}
         n.left=map[n.left];
-        if(n.op!=Op::neg&&n.op!=Op::bnot&&n.op!=Op::refine&&n.op!=Op::copy){
+        if(n.op!=Op::neg&&n.op!=Op::bnot&&n.op!=Op::refine&&n.op!=Op::narrow&&n.op!=Op::copy){
           if(n.right>=map.size()){fail(ParseError::syntax);return std::nullopt;}
           n.right=map[n.right];
         }
@@ -739,7 +791,7 @@ class Parser {
     auto root=append(Node{Op::copy,map.back(),0,0});
     if(!root)return std::nullopt;
     dims_[*root]=h.result.dim;scales_[*root]=h.result.scale;
-    ranges_[*root]=Range{h.result.lo,h.result.hi};
+    ranges_[*root]=Range{h.result.lo,h.result.hi,h.result.width};
     return postfix(root);
   }
   using Facts=std::vector<std::pair<std::size_t,Range>>;
@@ -832,8 +884,11 @@ class Parser {
       if(want&&!compatible(*value,*want,ParseError::refinement_binding)){
         fail(ParseError::syntax);return std::nullopt;
       }
+      if(want)ranges_[*value].width=want->width;
+      else if(ranges_[*value].width==Width::literal)ranges_[*value].width=Width::i64;
       bindings_.emplace_back(n,*value);
     }
+    if(current().kind==Kind::name&&text()=="let"){fail(ParseError::refinement_body);return std::nullopt;}
     auto root=returning(0);
     if(!root||(result?!compatible(*root,*result,ParseError::refinement_return):!scalar_cast(*root))||!take(Kind::rbrace)){fail(ParseError::syntax);return std::nullopt;}
     // Every initializer is part of the validated graph even if unused.
@@ -843,6 +898,94 @@ class Parser {
       if(!root)return std::nullopt;
     }
     return root;
+  }
+  struct Contract {Op op; std::optional<std::size_t> parameter; std::optional<i64> bound;};
+  std::optional<Op> contract_op(){
+    if(name("eq")||take(Kind::equal_equal))return Op::eq;
+    if(current().kind!=Kind::lt&&current().kind!=Kind::gt){fail(ParseError::refinement_contract);return std::nullopt;}
+    const bool lower=take(Kind::lt);if(!lower)++pos_;
+    const bool inclusive=current().kind==Kind::equals&&tokens_[pos_-1].offset+tokens_[pos_-1].length==current().offset;
+    if(inclusive)++pos_;
+    return lower?(inclusive?Op::le:Op::lt):(inclusive?Op::ge:Op::gt);
+  }
+  std::optional<i64> contract_bound(const Refinement& want){
+    const auto n=signed_bound();if(!n){fail(ParseError::refinement_contract);return std::nullopt;}
+    Dim d{};Scale scale{};const bool dot=take(Kind::dot);
+    if(dot||current().kind==Kind::lt){
+      if(!take(Kind::lt)||current().kind!=Kind::name)return std::nullopt;
+      const Unit* u=nullptr;for(const auto& candidate:units_)if(candidate.name==text())u=&candidate;
+      if(!u){fail(ParseError::unit_name);return std::nullopt;}
+      d[u->dim]=1;scale=u->scale;++pos_;if(!take(Kind::gt))return std::nullopt;
+    }
+    if(d!=want.dim){fail(ParseError::unit_dimension);return std::nullopt;}
+    if(scale!=want.scale){fail(ParseError::unit_scale);return std::nullopt;}
+    return n;
+  }
+  std::optional<std::vector<Contract>> contracts(std::vector<Refinement>& params,const Refinement& result){
+    std::vector<Contract> out;unsigned count=0;
+    for(;;){
+      const bool require=name("requires");if(!require&&!name("ensures"))break;
+      if(++count>16||current().kind!=Kind::name){fail(ParseError::refinement_contract);return std::nullopt;}
+      auto n=text();++pos_;auto op=contract_op();if(!op)return std::nullopt;
+      auto param_index=[&](std::string_view key)->std::optional<std::size_t>{
+        for(std::size_t i=0;i<params.size();++i)if(bindings_[i].first==key)return i;
+        return std::nullopt;
+      };
+      if(require){
+        auto i=param_index(n);if(!i){fail(ParseError::refinement_contract);return std::nullopt;}
+        auto& p=params[*i];auto v=contract_bound(p);if(!v)return std::nullopt;
+        if(*op==Op::eq){p.lo=std::max(p.lo,*v);p.hi=std::min(p.hi,*v);}
+        else if(*op==Op::lt){auto b=checked_sub(*v,1);if(!b){fail(ParseError::refinement_empty);return std::nullopt;}p.hi=std::min(p.hi,*b);}
+        else if(*op==Op::le)p.hi=std::min(p.hi,*v);
+        else if(*op==Op::gt){auto b=checked_add(*v,1);if(!b){fail(ParseError::refinement_empty);return std::nullopt;}p.lo=std::max(p.lo,*b);}
+        else if(*op==Op::ge)p.lo=std::max(p.lo,*v);
+        if(p.lo>p.hi){fail(ParseError::refinement_empty);return std::nullopt;}
+        ranges_[bindings_[*i].second]=Range{p.lo,p.hi,p.width};
+      }else{
+        if(n!="result"){fail(ParseError::refinement_contract);return std::nullopt;}
+        if(current().kind==Kind::name){
+          auto i=param_index(text());if(!i){fail(ParseError::refinement_contract);return std::nullopt;}
+          if(params[*i].dim!=result.dim){fail(ParseError::unit_dimension);return std::nullopt;}
+          if(params[*i].scale!=result.scale){fail(ParseError::unit_scale);return std::nullopt;}
+          ++pos_;out.push_back(Contract{*op,i,std::nullopt});
+        }else{
+          auto v=contract_bound(result);if(!v)return std::nullopt;
+          out.push_back(Contract{*op,std::nullopt,v});
+        }
+      }
+    }return out;
+  }
+  // Parameters occupy the initial placeholder nodes. Never treat a
+  // placeholder's stored zero as a real constant during proof.
+  bool positive_constant(std::size_t i,std::size_t params,unsigned depth)const{
+    if(i<params||i>=out_.nodes.size()||depth>=64)return false;
+    const auto& n=out_.nodes[i];
+    if(n.op==Op::literal)return n.value>=1;
+    if(n.op==Op::copy)return positive_constant(n.left,params,depth+1);
+    return false;
+  }
+  bool relation(std::size_t i,std::size_t param,std::size_t params,bool nonnegative,unsigned depth)const{
+    if(i>=out_.nodes.size()||depth>=64)return false;
+    if(i<params)return i==param;
+    const auto& n=out_.nodes[i];
+    if(n.op==Op::copy||n.op==Op::refine||n.op==Op::narrow)return relation(n.left,param,params,nonnegative,depth+1);
+    if(n.op==Op::sequence)return relation(n.right,param,params,nonnegative,depth+1);
+    if(n.op==Op::div&&nonnegative)return relation(n.left,param,params,nonnegative,depth+1)&&positive_constant(n.right,params,depth+1);
+    return false;
+  }
+  bool prove_contracts(const std::vector<Contract>& checks,std::size_t root,const std::vector<Refinement>& params){
+    const auto r=ranges_[root];
+    for(const auto& c:checks){
+      bool proved=false;
+      if(c.bound){
+        const auto n=*c.bound;
+        switch(c.op){case Op::eq:proved=r.lo==n&&r.hi==n;break;case Op::lt:proved=r.hi<n;break;case Op::le:proved=r.hi<=n;break;case Op::gt:proved=r.lo>n;break;case Op::ge:proved=r.lo>=n;break;default:break;}
+      }else if(c.parameter){
+        const auto i=*c.parameter;const auto p=params[i];
+        switch(c.op){case Op::le:proved=r.hi<=p.lo||relation(root,i,params.size(),p.lo>=0,0);break;case Op::lt:proved=r.hi<p.lo;break;case Op::gt:proved=r.lo>p.hi;break;case Op::ge:proved=r.lo>=p.hi;break;case Op::eq:proved=r.lo==r.hi&&p.lo==p.hi&&r.lo==p.lo;break;default:break;}
+      }
+      if(!proved){fail(ParseError::refinement_postcondition);return false;}
+    }return true;
   }
   [[nodiscard]] bool helper_declarations(){
     while(current().kind==Kind::name&&text()=="fnc"&&pos_+1<tokens_.size()){
@@ -865,7 +1008,7 @@ class Parser {
           const auto param=text();++pos_;
           const auto n=append(Node{Op::literal,0,0,0});
           if(!n)return false;
-          dims_[*n]=ty->dim;scales_[*n]=ty->scale;ranges_[*n]=Range{ty->lo,ty->hi};
+          dims_[*n]=ty->dim;scales_[*n]=ty->scale;ranges_[*n]=Range{ty->lo,ty->hi,ty->width};
           bindings_.emplace_back(param,*n);params.push_back(*ty);
           if(take(Kind::rparen))break;
           if(!take(Kind::comma))return false;
@@ -874,9 +1017,11 @@ class Parser {
       if(!take(Kind::arrow)&&!take(Kind::colon))return false;
       if(current().kind!=Kind::name)return false;
       auto result=annotation(text());++pos_;
-      if(!result||!take(Kind::lbrace))return false;
+      if(!result)return false;
+      auto checks=contracts(params,*result);
+      if(!checks||!take(Kind::lbrace))return false;
       auto root=binding_body(*result);
-      if(!root)return false;
+      if(!root||!prove_contracts(*checks,*root,params))return false;
       out_.root=*root;
       if(!validate_ast(out_))return false;
       helpers_.push_back(Helper{fname,std::move(params),*result,std::move(out_.nodes),std::move(dims_),std::move(scales_),std::move(ranges_)});
@@ -951,8 +1096,9 @@ public:
     if (!declarations() || !refinement_declarations()) { fail(ParseError::syntax); return std::move(out_); }
     if(strict_&&refinements_.empty()){fail(ParseError::verify_unsupported);return std::move(out_);}
     if(!helper_declarations()){fail(ParseError::syntax);return std::move(out_);}
-    (void)name("pub");
+    const bool public_entry=name("pub");
     const bool fnc = name("fnc");
+    if(public_entry&&fnc&&!refinements_.empty()&&current().kind==Kind::name&&text()!="main"&&text()!="int"&&text()!="infer"){fail(ParseError::refinement_export);return std::move(out_);}
     bool signature_ok = false;
     if (scalar_return_type()) {
       // Prefix int/infer return type, with or without fnc.
@@ -973,7 +1119,7 @@ public:
       return std::move(out_);
     }
     std::vector<std::string_view> aliases;
-    auto root = strict_||!helpers_.empty()||(current().kind==Kind::name&&text()=="val") ? binding_body() : body(aliases);
+    auto root = strict_||!helpers_.empty()||(current().kind==Kind::name&&(text()=="val"||(!refinements_.empty()&&text()=="let"))) ? binding_body() : body(aliases);
     if (!root || current().kind != Kind::end) {
       fail(ParseError::syntax);
       return std::move(out_);

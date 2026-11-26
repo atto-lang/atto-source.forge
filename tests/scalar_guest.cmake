@@ -259,7 +259,7 @@ foreach(expr IN ITEMS "<Positive>42" "42<Millis>::<Positive>" "42<Meter> as Posi
     message(FATAL_ERROR "invalid refinement accepted or stale artifact: ${expr}")
   endif()
 endforeach()
-foreach(decl IN ITEMS "type Bad = int where self > 9223372036854775807" "type Bad = int where self < -9223372036854775808" "type Bad = int where self >= 3 and self <= 2" "type Bad = int where self > 0 and units in Missing" "type Bad = i32 where self > 0" "type Bad = int where self > 0 or self < -1" "type Positive = int where self > 1" "type Bad = int where self > = 0" "type Bad = int where self > 0 units in Second")
+foreach(decl IN ITEMS "type Bad = int where self > 9223372036854775807" "type Bad = int where self < -9223372036854775808" "type Bad = int where self >= 3 and self <= 2" "type Bad = int where self > 0 and units in Missing" "type Bad = i32 where self > 2147483647" "type Bad = int where self > 0 or self < -1" "type Positive = int where self > 1" "type Bad = int where self > = 0" "type Bad = int where self > 0 units in Second")
   file(WRITE "${OUT_DIR}/refine-decl-invalid.atto" "${quantity_declarations}\n${decl}; pub fnc main() -> int {return 42;}")
   execute_process(COMMAND "${FORGE}" "${OUT_DIR}/refine-decl-invalid.atto" -o "${OUT_DIR}/refine-decl-invalid.cpp" RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 15)
   if(NOT "${rc}" STREQUAL "2" OR EXISTS "${OUT_DIR}/refine-decl-invalid.cpp")
