@@ -1,4 +1,5 @@
 #include "compiler/frontend.hpp"
+#include "../shared/oreslang/backend/CountedReadyGuest.hpp"
 #include "compiler/call_native.hpp"
 #include "compiler/source_input.hpp"
 #include "compiler/ir.hpp"
@@ -22,6 +23,12 @@ int main(int argc,char** argv) {
   try {
     // Report failed publication (e.g. read-only stdout) as compilation failure.
     std::cout.exceptions(std::ios::badbit | std::ios::failbit);
+    if (argc==3 && std::string(argv[1])=="--counted-ready-v1") {
+      auto code=oreslang::counted_ready::compile(read_regular_source(argv[2],65536,"counted source exceeds limit"));
+      std::cout<<code;
+      std::cout.flush();
+      return 0;
+    }
     // Check the actual stage-0 scalar guest without publishing a result.
     // This subset is pure and zero-argument, so checked interpretation also
     // rejects constant arithmetic overflow, unlike an IR-only syntax check.

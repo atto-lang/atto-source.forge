@@ -917,3 +917,6 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   endif()
   add_test(NAME socket_broker_v1_test COMMAND socket_broker_v1_test)
 endif()
+
+# Explicit shared counted-ready AOT frontend headers.
+target_include_directories(oresforge PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
