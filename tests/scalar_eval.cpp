@@ -80,6 +80,21 @@ int main() {
   for(const char* body:{" begin return 84/x; end"," :: return 84/x; }"," :: return 84/x;"," :: begin return 84/x; end"})
     assert(!parse_verified_strict_i64(contract_header+body+contract_tail).ok());
   // Host-model controls only: native C++ guest execution is a separate gate.
+  // NOT lowers only in the verified predicate lane. The true/false
+  // fact swap must make the nonzero divisor proof available on the true edge.
+  const std::string unicode_prefix = "type R = int where self >= 1 and self <= 42; ";
+  for (const auto* body : {
+      "fnc f(int x) -> int { if ¬(x == 0) { return 42/x; } return 42; } pub fnc main() -> int { return f(1); }",
+      "fnc f(int x) -> int { if ¬¬(x == 0) { return 42; } return 0; } pub fnc main() -> int { return f(0); }",
+      "fnc f(int x) -> int { if ¬false && ¬(x != 0) { return 42; } return 0; } pub fnc main() -> int { return f(0); }"}) {
+    const auto parsed = parse_verified_strict_i64(unicode_prefix + body);
+    assert(parsed.ok() && validate_ast(parsed) && evaluate(parsed).value == 42);
+  }
+  for (const auto* body : {
+      "fnc f(int x) -> int { if ¬x { return 42; } return 0; } pub fnc main() -> int { return f(1); }",
+      "fnc f(int x) -> int { if ¬x == 0 { return 42; } return 0; } pub fnc main() -> int { return f(0); }",
+      "fnc f(int x) -> int { if ¬(x == 0) { return 42; } return 42/x; } pub fnc main() -> int { return f(1); }"})
+    assert(!parse_verified_strict_i64(unicode_prefix + body).ok());
   const std::string guard = "type R = int where self >= 1 and self <= 42; "
       "fnc f(int x) -> int { if x != 0 && 42 / x > 0 { return 1; } return 42; } "
       "pub fnc main() -> int { return f(0); }";
