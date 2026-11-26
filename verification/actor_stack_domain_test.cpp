@@ -100,7 +100,14 @@ int main() {
     actor.write(b_handle, 0, &local, sizeof(local));
     must_fail([&]{ actor.read(a_handle,0,&local,sizeof(local)); });
   });
+#if !ORESFORGE_ACTOR_ASAN
   assert(a_addr!=b_addr && a_addr!=reinterpret_cast<std::uintptr_t>(&host_local));
+#else
+  // ASan may reuse fake-stack addresses across non-overlapping turns.
+  // Physical-address isolation is asserted by the unsanitized gate;
+  // authority, bounds, cancellation and incarnation assertions remain live.
+  (void)a_addr; (void)b_addr; (void)host_local;
+#endif
   a.run_turn([&](ActorStackDomain& actor){
     int result=0;
     actor.read(a_handle,0,&result,sizeof(result));
