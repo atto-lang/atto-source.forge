@@ -65,30 +65,29 @@ Independent review, exact-head stepful host/sanitizer runs and compiled
 actor A stack exhaustion / actor B survival fixtures across Java/LLVM/.NET/
 Forge/Wasm remain required before promoting to merge-ready.
 
-## Compatibility and combined-tree evidence
+## Integrated hardening with actor-memory PR #226
 
-This source PR contains the **actor lifecycle owner**, its focused CTest,
-workflow and documentation. It does not itself contain the separate
-`ActorIncarnationMemoryV1` hardening diff from PR #226.
+This candidate combines the exact original actor-memory hardening files from
+#226 with the lifecycle adapter of #228. The integration matrix now builds and
+executes **both** the native memory CTest and the lifecycle-owner CTest under
+GCC/Clang, optimized and ASan+UBSan configurations on the same immutable
+Git tree. The workflow demands both precise host success markers.
 
-The combined candidate [Forge #230](https://github.com/ores-truffle-oreslang/oreslang-source.forge/pull/230)
-joins the byte-identical actor-memory implementation and regression suite
-from #226 with this owner. Its workflow builds and runs both native CTests
-against one source tree under GCC/Clang, optimized and ASan+UBSan modes.
-Even there, actual execution remains **NOT_EXECUTED** while the source-org
-GitHub Actions runner cannot admit jobs (`steps=null`).
+A failed native `end_turn` must **not** cause the owner to mark a potentially
+active arena quiescent and destroy it. The integrated adapter quarantines this
+terminal teardown failure: new send/memory access/restart is denied, native
+buffers are not reclaimed without proven quiescence, and destruction while
+quarantined terminates rather than introducing a use-after-free. It scrubs
+the dequeued message before any teardown that might itself throw. This
+abnormal path still requires an isolated supervisor/process recovery design;
+it is a fail-closed containment boundary, not successful reclamation.
 
-Owner-specific safety guarantees carried into this source branch:
-- Dequeued message failures at physical-turn admission close that
-  incarnation instead of silently dropping one message.
-- Native `ActorArena` quiescence is verified before native heap/frame
-  scrub and quota refund.
-- Failure to end a physical turn quarantines native storage and forbids
-  new dispatch/restart rather than causing a possible use-after-free.
-- Quota-denied supervisor restart remains closed and re-admits only with
-  a new generation after reservation capacity returns.
-- A throwing trusted handler closes only its own incarnation and, when
-  quiescent, refunds its native reservation.
+Additional integrated native negative checks cover quota-denied supervisor
+restart, ensuring a failed new generation remains closed and can later be
+reissued with a *newer* generation once capacity returns. A trusted handler
+exception must likewise stop only the offending actor and refund native
+reservation without affecting the other actor's isolation.
 
-Neither this source PR nor #230 establishes compiled `.atto` guest actors,
-native stack fault recovery or correct asynchronous continuation ownership.
+These source-authored checks are **NOT_EXECUTED** unless the exact-head job
+has nonzero executed steps and test output. They do not imply guest `.atto`
+execution, physical OS-stack overflow recovery or safe actor suspension.
