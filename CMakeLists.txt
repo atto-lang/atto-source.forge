@@ -378,6 +378,13 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
         "${CMAKE_CURRENT_SOURCE_DIR}/verification/native_call_executable.py"
         --compiler "$<TARGET_FILE:oresforge>")
     set_tests_properties(oresforge_real_native_recursive_calls PROPERTIES TIMEOUT 180)
+    # The pinned core library is executable through the typed callable lane.
+    # Keep it in the full GCC/Clang/sanitizer matrix, not just a path-filtered workflow.
+    add_test(NAME oresforge_core_types_native
+      COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/verification/core_types_native.py"
+        --compiler "$<TARGET_FILE:oresforge>")
+    set_tests_properties(oresforge_core_types_native PROPERTIES TIMEOUT 180)
   endif()
 endif()
 
@@ -589,6 +596,38 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   endif()
 endif()
 add_test(NAME result_int_parse_v1_test COMMAND result_int_parse_v1_test)
+
+# Host-only bounded Error identity foundation, not a guest exception ABI.
+add_executable(forge_error_arena_test verification/error_arena_test.cpp)
+target_include_directories(forge_error_arena_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_features(forge_error_arena_test PRIVATE cxx_std_20)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(forge_error_arena_test PRIVATE -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(forge_error_arena_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(forge_error_arena_test PRIVATE -fsanitize=address,undefined)
+  endif()
+elseif(MSVC)
+  target_compile_options(forge_error_arena_test PRIVATE /UNDEBUG)
+endif()
+add_test(NAME forge_error_arena_host COMMAND forge_error_arena_test)
+set_tests_properties(forge_error_arena_host PROPERTIES TIMEOUT 15 LABELS "host-only;error-representation")
+
+# Host-only arithmetic status to Error identity bridge, not a guest ABI.
+add_executable(forge_arithmetic_error_bridge_test verification/arithmetic_error_bridge_test.cpp)
+target_include_directories(forge_arithmetic_error_bridge_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_features(forge_arithmetic_error_bridge_test PRIVATE cxx_std_20)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(forge_arithmetic_error_bridge_test PRIVATE -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(forge_arithmetic_error_bridge_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(forge_arithmetic_error_bridge_test PRIVATE -fsanitize=address,undefined)
+  endif()
+elseif(MSVC)
+  target_compile_options(forge_arithmetic_error_bridge_test PRIVATE /UNDEBUG)
+endif()
+add_test(NAME forge_arithmetic_error_bridge_host COMMAND forge_arithmetic_error_bridge_test)
+set_tests_properties(forge_arithmetic_error_bridge_host PROPERTIES TIMEOUT 15 LABELS "host-only;error-representation")
 
 # Restricted native lexer has no Python or borrowed source buffers.
 add_executable(scalar_lexer_test tests/scalar_lexer.cpp)
