@@ -3,6 +3,8 @@
 #include "compiler/call_native.hpp"
 #include "compiler/source_input.hpp"
 #include "compiler/ir.hpp"
+#include "compiler/optimization_cli.hpp"
+#include "compiler/alloc_experiment.hpp"
 #include "codegen/native.hpp"
 #include <array>
 #include <charconv>
@@ -23,6 +25,27 @@ int main(int argc,char** argv) {
   try {
     // Report failed publication (e.g. read-only stdout) as compilation failure.
     std::cout.exceptions(std::ios::badbit | std::ios::failbit);
+    auto optimization = oresforge::cli::parse_optimization_options(argc, argv);
+    argc = static_cast<int>(optimization.positional.size());
+    argv = optimization.positional.data();
+    const bool alloc_asm = argc == 4 && std::string(argv[1]) == "emit-alloc-asm";
+    oresforge::cli::enforce_optimization_support(optimization, alloc_asm);
+    if (argc == 3 && std::string(argv[1]) == "ir-alloc") {
+      const auto model = oresforge::alloc_experiment::parse(read_file(argv[2]));
+      std::cout << oresforge::alloc_experiment::dump_ir(model);
+      std::cout.flush();
+      return 0;
+    }
+    if (alloc_asm) {
+      const auto arch = oresforge::parse_arch(argv[2]);
+      if (arch != oresforge::Arch::X86_64)
+        throw std::runtime_error("allocation native profile supports only x86_64");
+      const auto model = oresforge::alloc_experiment::parse(read_file(argv[3]));
+      std::cout << oresforge::alloc_experiment::emit_x86_64(
+          model, optimization.escape == "safe");
+      std::cout.flush();
+      return 0;
+    }
     if (argc==3 && std::string(argv[1])=="--counted-ready-v1") {
       auto code=oreslang::counted_ready::compile(read_regular_source(argv[2],65536,"counted source exceeds limit"));
       std::cout<<code;
@@ -120,7 +143,7 @@ int main(int argc,char** argv) {
       std::cout.flush();
       return 0;
     }
-    std::cerr<<"usage: oresforge check <file.atto|file.ores> | run|ir <file.atto|file.ores> | emit-asm <arch> <file.atto|file.ores> | run-runtime <file.atto|file.ores> [i64-args...] | ir-runtime <file.atto|file.ores> | emit-runtime-asm <arch> <file.atto|file.ores> | run-calls|run-result-calls|run-option-calls|run-effect-calls <file.atto|file.ores> [i64-args...] | emit-call-asm x86_64 <file.atto|file.ores>\n";
+    std::cerr<<"usage: oresforge check <file.atto|file.ores> | run|ir <file.atto|file.ores> | emit-asm <arch> <file.atto|file.ores> | run-runtime <file.atto|file.ores> [i64-args...] | ir-runtime <file.atto|file.ores> | emit-runtime-asm <arch> <file.atto|file.ores> | run-calls|run-result-calls|run-option-calls|run-effect-calls <file.atto|file.ores> [i64-args...] | emit-call-asm x86_64 <file.atto|file.ores> | ir-alloc <file.atto|file.ores> | emit-alloc-asm x86_64 <file.atto|file.ores>\n";
     return 2;
   } catch (const std::exception& e) {
     std::cerr<<"oresforge: "<<e.what()<<'\n';
