@@ -273,10 +273,10 @@ class ScalarHarnessTest(unittest.TestCase):
         diagnostics = {
             "forge": {
                 "reject.unknown": "oresforge: expected integer at byte 29",
-                "reject.division": "oresforge: division requires float result lowering; unsupported in the i64 source subset at byte 30",
+                "reject.division": "oresforge: FORGE_CHECKED_DIVISION_BACKEND_UNSUPPORTED: signed i64 quotient requires typed arithmetic error lowering at byte 30",
                 "reject.actor": "oresforge: class/actor methods require typed native lowering at byte 7",
                 "reject.async": "oresforge: unexpected token at byte 4",
-                "reject.structural": "oresforge: expected integer at byte 29",
+                "reject.structural": "oresforge: MATCH_DEFAULT_BACKEND_UNSUPPORTED: typed match requires pattern CFG, exhaustiveness and checked fallback lowering at byte 29",
             },
             "net": {
                 "reject.unknown": "oresnet: Expected integer at offset 29",
