@@ -62,6 +62,11 @@ int64_t ores_actor_i64_heap_field_read(OresActorI64Heap* heap,
 void ores_actor_i64_heap_field_init_mutable(OresActorI64Heap* heap,
                                             uint64_t domain, uint64_t epoch,
                                             uint64_t index, int64_t initial);
+/* Sealed fields may only be accessed through the dedicated field-loan ABI.
+ * Ordinary field and generic slot operations cannot bypass this protection. */
+void ores_actor_i64_heap_field_init_protected(OresActorI64Heap* heap,
+                                             uint64_t domain, uint64_t epoch,
+                                             uint64_t index, int64_t initial);
 void ores_actor_i64_heap_field_write(OresActorI64Heap* heap,
                                      uint64_t domain, uint64_t epoch,
                                      uint64_t index, int64_t value);
