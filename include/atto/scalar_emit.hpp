@@ -103,6 +103,39 @@ inline constexpr std::size_t max_emitted_bytes = 64 * 1024;
 [[nodiscard]] inline std::optional<std::string> emit_cpp(const Parsed& p) {
   if (!validate_ast(p)) return std::nullopt;
 
+  if(p.flat_placement){
+    const auto& plan=*p.flat_placement;const auto layout=flat_layout(plan);if(!layout)return std::nullopt;
+    using K=FlatPlacement::Kind;
+    std::string code="#include <cstddef>\n#include <cstdint>\n#include <cstdio>\n#include <memory>\n#include <limits>\nstruct AttoFlat {\n";
+    auto ty=[](std::uint64_t width){return "std::int"+std::to_string(width*8)+"_t";};
+    auto literal=[](std::int64_t v)->std::string{
+      if(v==std::numeric_limits<std::int64_t>::min())return "std::numeric_limits<std::int64_t>::min()";
+      return std::to_string(v)+"LL";
+    };
+    for(std::size_t i=0;i<plan.widths.size();++i)code+="  "+ty(plan.widths[i])+" f"+std::to_string(i)+";\n";
+    code+="};\nstatic_assert(sizeof(AttoFlat)=="+std::to_string(layout->storage.size)+" && alignof(AttoFlat)=="+std::to_string(layout->storage.align)+");\n";
+    for(std::size_t i=0;i<plan.widths.size();++i)code+="static_assert(offsetof(AttoFlat,f"+std::to_string(i)+")=="+std::to_string(layout->fields[i].offset)+");\n";
+    code+="int main(){\n  alignas(AttoFlat) std::byte storage[sizeof(AttoFlat)];\n  AttoFlat* live=nullptr;\n  [[maybe_unused]] const AttoFlat* slot=nullptr;\n";
+    std::size_t next=0;
+    for(const auto& s:plan.steps){
+      switch(s.kind){
+        case K::construct:
+          code+="  live=std::construct_at(reinterpret_cast<AttoFlat*>(storage)";
+          for(std::size_t i=0;i<s.values.size();++i)code+=",static_cast<"+ty(plan.widths[i])+">("+literal(s.values[i])+")";
+          code+=");\n";break;
+        case K::bind:code+="  slot=live;\n";break;
+        case K::copy_field:code+="  [[maybe_unused]] const std::int64_t v"+std::to_string(next++)+"=slot->f"+std::to_string(s.field)+";\n";break;
+        case K::detach:code+="  slot=nullptr;\n";break;
+        case K::destroy:code+="  std::destroy_at(live); live=nullptr;\n";break;
+        case K::free:code+="  // verified storage released at frame exit\n";break;
+      }
+    }
+    code+="  std::printf(\"%lld\\n\", static_cast<long long>(v"+std::to_string(plan.result[0]);
+    for(std::size_t i=1;i<plan.result.size();++i)code+="+v"+std::to_string(plan.result[i]);
+    code+="));\n  return 0;\n}\n";
+    if(code.size()>max_emitted_bytes)return std::nullopt;
+    return code;
+  }
   if(p.point_placement){
     using K=PointPlacement::Kind;
     std::string code=R"(#include <cstddef>
