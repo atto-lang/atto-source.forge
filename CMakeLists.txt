@@ -885,6 +885,18 @@ elseif(MSVC)
   target_compile_options(pointer_local_typed_test PRIVATE /UNDEBUG)
 endif()
 add_test(NAME pointer_local_typed_test COMMAND pointer_local_typed_test)
+add_executable(reusable_slot_verifier_test tests/reusable_slot_verifier.cpp)
+target_link_libraries(reusable_slot_verifier_test PRIVATE atto_forge_checked_i64)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(reusable_slot_verifier_test PRIVATE -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(reusable_slot_verifier_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(reusable_slot_verifier_test PRIVATE -fsanitize=address,undefined)
+  endif()
+elseif(MSVC)
+  target_compile_options(reusable_slot_verifier_test PRIVATE /UNDEBUG)
+endif()
+add_test(NAME reusable_slot_verifier_test COMMAND reusable_slot_verifier_test)
 add_test(NAME pointer_local_native_guests
   COMMAND "${CMAKE_COMMAND}"
     "-DROOT=${CMAKE_CURRENT_SOURCE_DIR}"

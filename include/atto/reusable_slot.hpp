@@ -46,10 +46,14 @@ struct ReusableSlot {
     if (t.value < 0) return std::nullopt;
     if (!t.literal && static_cast<std::uint64_t>(t.value) >= values.size()) return std::nullopt;
     const auto value = t.literal ? t.value : values[static_cast<std::size_t>(t.value)];
-    std::int64_t next = 0;
-    if (t.subtract ? __builtin_sub_overflow(answer, value, &next)
-                   : __builtin_add_overflow(answer, value, &next)) return std::nullopt;
-    answer = next;
+    // Every operand is nonnegative; both guard expressions are representable.
+    if (t.subtract) {
+      if (answer < std::numeric_limits<std::int64_t>::min() + value) return std::nullopt;
+      answer -= value;
+    } else {
+      if (answer > std::numeric_limits<std::int64_t>::max() - value) return std::nullopt;
+      answer += value;
+    }
   }
   return answer;
 }
