@@ -29,7 +29,7 @@ struct Token { std::string_view text; std::size_t offset=0; };
 // Predicate types are statically derived from verified opcode identity.
 // Scalar payloads, typed variants, and ordinary effects remain distinct.
 bool boolean_kind(Kind k) {
-  return k==Kind::BoolCall || k==Kind::Boolean || k==Kind::Not || k==Kind::And || k==Kind::Or || k==Kind::BooleanXor ||
+  return k==Kind::BoolIf || k==Kind::BoolCall || k==Kind::Boolean || k==Kind::Not || k==Kind::And || k==Kind::Or || k==Kind::BooleanXor ||
          k==Kind::Less || k==Kind::LessEqual || k==Kind::Greater ||
          k==Kind::GreaterEqual || k==Kind::Equal || k==Kind::NotEqual;
 }
@@ -275,7 +275,7 @@ class Parser {
       current_->returns_bool=take("bool");
       if(!current_->returns_bool) expect("int");
       expect("{");
-      current_->result=current_->returns_bool?terminal_return(0):terminal_body(0);
+      current_->result=terminal_body(0);
     }
     expect("}");
   }
@@ -379,6 +379,29 @@ class Parser {
   // Reuse the verified lazy If tree: true continues, false returns early.
   int terminal_body(std::size_t d) {
     depth(d);
+    // Restricted terminal scalar conditionals. Both explicit return
+    // arms lower to the same checked lazy tree as value conditionals.
+    const bool prefixed = take("do");
+    if (prefixed || token_.text=="if") {
+      expect("if");
+      const int condition=logical_or(d+1);
+      require_boolean(condition);
+      bool braced=false;
+      if (prefixed) expect("then");
+      else if (take("{")) braced=true;
+      else if (!take("do")) expect("then"); // historical library spelling
+      const int yes=terminal_return(d+1);
+      if (braced) expect("}");
+      if (take("else")) {
+        if (braced) expect("{");
+        const int no=terminal_return(d+1);
+        expect(braced?"}":"fi");
+        return add(current_->returns_bool?Kind::BoolIf:Kind::If,0,{}, {condition,yes,no});
+      }
+      if (!braced) expect("fi");
+      const int no=terminal_body(d+1);
+      return add(current_->returns_bool?Kind::BoolIf:Kind::If,0,{}, {condition,yes,no});
+    }
     if (!take("guard")) return terminal_return(d+1);
     int condition=logical_or(d+1);
     require_boolean(condition);
@@ -394,7 +417,7 @@ class Parser {
     const int failure=terminal_body(d+1);
     expect(braced?"}":"end");
     const int continuation=terminal_body(d+1);
-    return add(Kind::If,0,{}, {condition,continuation,failure});
+    return add(current_->returns_bool?Kind::BoolIf:Kind::If,0,{}, {condition,continuation,failure});
   }
   int terminal_return(std::size_t d) {
     depth(d);
@@ -419,9 +442,11 @@ class Parser {
       const int yes=expr(d+1);
       expect("else");
       const int no=expr(d+1);
-      // Legacy if expressions retain the unclosed stage-0 spelling.
-      // Negated value forms require their explicit canonical terminator.
+      // Admit the canonical explicit fi. Preserve historical unclosed
+      // ordinary value-if in this migration-compatible native-call lane.
+      // Negated forms still require the terminator.
       if (negated) expect("fi");
+      else take("fi");
       require_integer(yes);
       require_integer(no);
       return add(Kind::If,0,{}, {condition,yes,no});
@@ -535,6 +560,8 @@ class Parser {
   }
   int factor(std::size_t d) {
     depth(d);
+    if(token_.text=="spawn")
+      fail("E_SPAWN_OPTIONS_UNSUPPORTED: actor spawn requires typed initialization, resource admission and runtime lowering");
     if(take("+")) { const int value=factor(d+1); require_integer(value); return value; }
     if(take("-")) {
       if(token_.text=="9223372036854775808"){
@@ -735,7 +762,7 @@ struct Evaluator {
       return visit(fn,n.children[1],args,depth,local);
     }
     if(n.kind==Kind::Parameter)return args[static_cast<std::size_t>(n.value)];
-    if(n.kind==Kind::If||n.kind==Kind::Ternary) {
+    if(n.kind==Kind::If||n.kind==Kind::BoolIf||n.kind==Kind::Ternary) {
       const auto pred=visit(fn,n.children[0],args,depth,local);
       return visit(fn,n.children[pred ? 1u:2u],args,depth,local);
     }
@@ -832,7 +859,7 @@ struct Native {
          <<" .Lores_logical_end_"<<tag<<"\n";
       emit_node(fn,n.children[1]);
       out<<".Lores_logical_end_"<<tag<<":\n";
-    } else if(n.kind==Kind::If||n.kind==Kind::Ternary||n.kind==Kind::OptionIf) {
+    } else if(n.kind==Kind::If||n.kind==Kind::BoolIf||n.kind==Kind::Ternary||n.kind==Kind::OptionIf) {
       const auto tag=label++;
       emit_node(fn,n.children[0]);
       out<<"  cmpq $0, %rax\n  je .Lores_else_"<<tag<<"\n";
@@ -1004,7 +1031,7 @@ void verify(const Module& m) {
         case Kind::Constant: case Kind::Parameter: case Kind::Add:
         case Kind::Sub: case Kind::Mul: case Kind::Less: case Kind::LessEqual:
         case Kind::Greater: case Kind::GreaterEqual: case Kind::Equal:
-        case Kind::NotEqual: case Kind::If: case Kind::Call:
+        case Kind::NotEqual: case Kind::If: case Kind::BoolIf: case Kind::Call:
         case Kind::Boolean: case Kind::Not: case Kind::Ternary:
          case Kind::And: case Kind::Or: case Kind::BooleanXor: case Kind::Div: case Kind::Trap: case Kind::ResultCall: case Kind::BindResult: case Kind::Local: case Kind::Ok: case Kind::Some: case Kind::None: case Kind::OptionIf: case Kind::OptionCall: case Kind::BoolCall: case Kind::IntegerXor: case Kind::OptionMatch: case Kind::OptionPayload: case Kind::ResultMatch: case Kind::ResultPayload: break;
         default: throw std::runtime_error("unknown callable opcode");
@@ -1021,7 +1048,7 @@ void verify(const Module& m) {
       std::size_t size=2;
       if(n.kind==Kind::Constant||n.kind==Kind::Boolean||n.kind==Kind::Parameter||n.kind==Kind::Local||n.kind==Kind::None||n.kind==Kind::OptionPayload||n.kind==Kind::ResultPayload)size=0;
       else if(n.kind==Kind::Not||n.kind==Kind::Trap||n.kind==Kind::Some||n.kind==Kind::Ok)size=1;
-      else if(n.kind==Kind::If||n.kind==Kind::Ternary||n.kind==Kind::OptionIf||n.kind==Kind::OptionMatch||n.kind==Kind::ResultMatch)size=3;
+      else if(n.kind==Kind::If||n.kind==Kind::BoolIf||n.kind==Kind::Ternary||n.kind==Kind::OptionIf||n.kind==Kind::OptionMatch||n.kind==Kind::ResultMatch)size=3;
       else if(n.kind==Kind::Call||n.kind==Kind::ResultCall||n.kind==Kind::OptionCall||n.kind==Kind::BoolCall)size=n.children.size();
       if(n.children.size()!=size)throw std::runtime_error("callable operand arity mismatch");
       if(n.kind==Kind::Boolean && n.value!=0 && n.value!=1)
@@ -1072,9 +1099,11 @@ void verify(const Module& m) {
       }
       if(n.kind==Kind::Not && !child_bool(0))
         throw std::runtime_error("condition_not_bool: negation requires bool");
-      if(n.kind==Kind::If||n.kind==Kind::Ternary) {
+      if(n.kind==Kind::If||n.kind==Kind::BoolIf||n.kind==Kind::Ternary) {
         if(!child_bool(0)) throw std::runtime_error("condition_not_bool: conditional requires bool");
-        if(child_bool(1)||child_bool(2)) throw std::runtime_error("conditional branch is not int");
+        if(n.kind==Kind::BoolIf) {
+          if(!child_bool(1)||!child_bool(2)) throw std::runtime_error("Boolean conditional requires bool arms");
+        } else if(child_bool(1)||child_bool(2)) throw std::runtime_error("conditional branch is not int");
       } else if(n.kind==Kind::And||n.kind==Kind::Or) {
         if(!child_bool(0)||!child_bool(1))
           throw std::runtime_error("condition_not_bool: logical operands require bool");

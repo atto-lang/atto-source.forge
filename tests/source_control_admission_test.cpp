@@ -60,6 +60,26 @@ int main() {
         if (!denied) throw std::runtime_error("spaced transfer lost typed denial");
       }
     }
+    // Both scalar expression paths must deny actor spawn before producing IR.
+    for (const char* expr : {"spawn Worker()", "spawn Worker() with {}",
+           "spawn Worker() with { schedule { max_parallelism = 2; } }",
+           "spawn Worker() with { resources { heap_size = 1024; } }",
+           "spawn Worker() with { init { seed = 42; } }",
+           "spawn Worker() /* trivia */ with { init {} }"}) {
+      const auto source=std::string("fnc main():int{return ")+expr+";}";
+      for (int frontend=0; frontend<2; ++frontend) {
+        bool denied=false;
+        try {
+          if(frontend==0) (void)oresforge::parse_source(source);
+          else (void)oresforge::calls::parse(source);
+        } catch(const std::runtime_error& e) {
+          denied=std::string_view(e.what()).find("E_SPAWN_OPTIONS_UNSUPPORTED")!=std::string_view::npos;
+        }
+        if(!denied) throw std::runtime_error("spawn admission lost: "+source);
+      }
+    }
+    (void)oresforge::parse_source("fnc main():int{return 42;} // spawn Worker() with {}");
+    (void)oresforge::calls::parse("fnc main():int{return 42;} // spawn Worker() with {}");
     (void)oresforge::parse_source("fnc main():int{return 42;} // copy!compact");
     (void)oresforge::calls::parse("fnc main():int{return 42;} // copy!compact");
     oresforge::source::validate_utf8("fnc main():int{\r\n\treturn 42;\r\n}");
