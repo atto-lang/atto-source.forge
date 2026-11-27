@@ -1855,11 +1855,14 @@ class Parser {
         if(name("x"))s.field=0;else{if(!w("y"))return bad();s.field=1;}
         names.push_back(*n);
       }else if(current().kind==Kind::name&&text()=="unref"){
-        if(!op("unref")||!w("p"))return bad();s.kind=K::detach;
+        if(!op("unref")||!w("p"))return bad();
+        s.kind=K::detach;
       }else if(current().kind==Kind::name&&text()=="destroy"){
-        if(!op("destroy")||!w("s"))return bad();s.kind=K::destroy;
+        if(!op("destroy")||!w("s"))return bad();
+        s.kind=K::destroy;
       }else if(current().kind==Kind::name&&text()=="free"){
-        if(!op("free")||!w("s"))return bad();s.kind=K::free;
+        if(!op("free")||!w("s"))return bad();
+        s.kind=K::free;
       }else return bad();
       if(!k(Kind::semicolon))return bad();
       plan.steps.push_back(s);
