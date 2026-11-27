@@ -29,6 +29,11 @@ positive = [
     ("divzero", stage(1,"return v/0;"), 71, "", "E_DIVZERO\n"),
     ("precedence", stage(2,"return v+3*4;"), 0, "14\n", ""),
     ("unicode", stage(42,"^ 值",params="int 值",name="递归"), 0, "42\n", ""),
+    ("computed", stage("(2+3)*2",fib), 0, "55\n", ""),
+    ("chain", "pub fnc main(): int {return 2*3 |> fnc f(int v): int {return v+1;} |> fnc f(int v): int {return v*6;};}", 0, "42\n", ""),
+    ("upstream_first", stage("1/0","return 9223372036854775807+1;"), 71, "", "E_DIVZERO\n"),
+    ("stage_first", "pub fnc main(): int {return 1 |> fnc f(int v): int {return 9223372036854775807+v;} |> fnc g(int v): int {return v/0;};}", 70, "", "E_OVERFLOW\n"),
+    ("depth_reset", "pub fnc main(): int {return 1024 |> fnc fib(int v): int {"+count+"} |> fnc fib(int v): int {"+count+"};}", 0, "1024\n", ""),
 ]
 negative = [
     stage(10,"return v+x;"), stage(10,"return fib(v,v);"),
@@ -39,7 +44,10 @@ negative = [
     stage(10,"return other(v);"), stage(10,"return v;").replace("|>","| >"),
     stage(10,"return v;").replace(": int { return v", " { return v"),
     stage(10,"return v;")+" fnc other(): int {return 1;}",
-    stage("1+2","return v;"),
+    stage("unknown+2","return v;"),
+    "pub fnc main(): int {return 1 |> fnc f(int v): int {return v;} |> fnc g(int v): int {return f(v);};}",
+    "pub fnc main(): int {return 1 |> fnc f(int v): int {return v;} |> ordinary;}",
+    "pub fnc main(): int {return 1"+" |> fnc f(int v): int {return v;}"*17+";}",
     stage(10,"return v;").replace("}; }","}; return fib(2); }"),
     stage(10,"return "+"("*65+"v"+")"*65+";"),
 ]
