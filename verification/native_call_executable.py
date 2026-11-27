@@ -42,6 +42,18 @@ POSITIVE = (
      "fnc pair(a:int,b:int):int{return a*10+b;}"
      " fnc main(n:int):int{return pair(n,b:2);}",
      ((4,42),(7,72))),
+    ("named-equals-reordered",
+     "fnc pair(a:int,b:int):int{return a*10+b;}"
+     " fnc main(n:int):int{return pair(b=2,a=n);}",
+     ((4,42),(-1,-8))),
+    ("named-mixed-separators",
+     "fnc pair(a:int,b:int):int{return a*10+b;}"
+     " fnc main(n:int):int{return pair(b:2,a=n);}",
+     ((4,42),(2,22))),
+    ("named-equals-positional",
+     "fnc pair(a:int,b:int):int{return a*10+b;}"
+     " fnc main(n:int):int{return pair(n,b=2);}",
+     ((4,42),(0,2))),
     ("named-nested-call",
      "fnc inc(x:int):int{return x+1;}"
      " fnc pair(a:int,b:int):int{return a*10+b;}"
@@ -106,6 +118,11 @@ TRAPS = (
      (25,), "callable execution budget exceeded"),
     # Both operands can fail: the first SOURCE expression must win,
     # regardless of which formal it binds to.
+    ("named-equals-lexical-overflow-before-recursion",
+     "fnc loop(n:int):int{return loop(n);}"
+     "fnc ignore(a:int,b:int):int{return 42;}"
+     "fnc main(n:int):int{return ignore(b=n+1,a:loop(n));}",
+     (9223372036854775807,), "i64 add overflow"),
     ("named-lexical-overflow-before-recursion",
      "fnc loop(n:int):int{return loop(n);}"
      "fnc ignore(a:int,b:int):int{return 42;}"
@@ -159,6 +176,18 @@ INVALID = (
     ("guard-native-parameter",
      "fnc helper(guard:int):int{return 42;} fnc main():int{return helper(1);}",
      "GUARD_BACKEND_UNSUPPORTED"),
+    ("named-mixed-duplicate",
+     "fnc pair(a:int,b:int):int{return a*10+b;}"
+     " fnc main():int{return pair(a=4,a:2);}", "duplicate named argument"),
+    ("named-equals-unknown",
+     "fnc pair(a:int,b:int):int{return a*10+b;}"
+     " fnc main():int{return pair(z=4,b:2);}", "unknown named argument: z"),
+    ("named-equals-positional-after",
+     "fnc pair(a:int,b:int):int{return a*10+b;}"
+     " fnc main():int{return pair(a=4,2);}", "positional argument after named argument"),
+    ("named-pair-not-label",
+     "fnc pair(a:int,b:int):int{return a*10+b;}"
+     " fnc main():int{return pair(a:=4,b=2);}", "Pair or malformed label"),
     ("named-duplicate",
      "fnc pair(a:int,b:int):int{return a*10+b;}"
      " fnc main():int{return pair(a:4,a:2);}", "duplicate named argument"),
