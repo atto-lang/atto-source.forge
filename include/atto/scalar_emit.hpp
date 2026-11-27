@@ -109,6 +109,7 @@ inline constexpr std::size_t max_emitted_bytes = 64 * 1024;
 #include <cstdint>
 #include <cstdio>
 #include <memory>
+#include <limits>
 struct Point {
   std::int64_t x,y;
   Point(std::int64_t a,std::int64_t b) noexcept:x(a),y(b){}
@@ -119,11 +120,15 @@ int main(){
   Point* live=nullptr;
   [[maybe_unused]] const Point* slot=nullptr;
 )";
+    auto literal=[](std::int64_t value)->std::string{
+      if(value==std::numeric_limits<std::int64_t>::min())return "std::numeric_limits<std::int64_t>::min()";
+      return std::to_string(value)+"LL";
+    };
     std::size_t next=0;
     for(const auto& s:p.point_placement->steps){
       switch(s.kind){
       case K::construct:
-        code+="  live=std::construct_at(reinterpret_cast<Point*>(storage),"+std::to_string(s.x)+ "LL,"+std::to_string(s.y)+"LL);\n";break;
+        code+="  live=std::construct_at(reinterpret_cast<Point*>(storage),"+literal(s.x)+","+literal(s.y)+");\n";break;
       case K::bind:code+="  slot=live;\n";break;
       case K::copy_field:code+="  [[maybe_unused]] const std::int64_t v"+std::to_string(next++)+"=slot->"+(s.field?"y":"x")+";\n";break;
       case K::detach:code+="  slot=nullptr;\n";break;

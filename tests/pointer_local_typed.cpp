@@ -77,5 +77,15 @@ int main() {
   forged_placement=placement;
   forged_placement.nodes[0].value=43;
   assert(!validate_ast(forged_placement));
+  // Independent typed-plan validation must reject both signed overflow directions.
+  auto signed_plan=*placement.point_placement;
+  signed_plan.steps[0].x=std::numeric_limits<std::int64_t>::min();
+  signed_plan.steps[5].y=std::numeric_limits<std::int64_t>::max();
+  assert(verify_point_placement(signed_plan)==-1);
+  signed_plan.steps[5].y=-1;
+  assert(!verify_point_placement(signed_plan));
+  signed_plan.steps[0].x=std::numeric_limits<std::int64_t>::max();
+  signed_plan.steps[5].y=1;
+  assert(!verify_point_placement(signed_plan));
   return 0;
 }

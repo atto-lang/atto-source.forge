@@ -1900,8 +1900,12 @@ class Parser {
     auto k=[&](Kind v){return expected(v);};
     auto op=[&](std::string_view v){return current().kind==Kind::name&&text()==v&&local_op(v);};
     auto number=[&]()->std::optional<i64>{
+      const bool negative=take(Kind::minus);
       if(current().kind!=Kind::integer)return std::nullopt;
-      auto v=parse_decimal_i64(text());if(v)++pos_;return v;
+      const auto raw=text();
+      auto v=negative?parse_decimal_i64(std::string("-")+std::string(raw)):parse_decimal_i64(raw);
+      if(v)++pos_;
+      return v;
     };
     auto identifier=[&]()->std::optional<std::string>{
       auto n=local_id();if(!n)return std::nullopt;
