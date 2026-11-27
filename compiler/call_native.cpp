@@ -16,12 +16,16 @@ namespace {
 constexpr std::size_t kMaxSource = 1024u * 1024u;
 constexpr std::size_t kMaxFunctions = 64;
 constexpr std::size_t kMaxNodes = 4096;
-constexpr std::size_t kMaxNodesPerFunction = 256;
+// Fit the unchanged 32-guard policy fixture without unbounded AST growth.
+constexpr std::size_t kMaxNodesPerFunction = 512;
 constexpr std::size_t kMaxDepth = 128;
 constexpr std::size_t kMaxStackDepth = 128;
 constexpr std::size_t kMaxInternalArgs = 6;
 constexpr std::size_t kMaxEntryArgs = 4; // existing public CLI/driver ABI
 constexpr std::size_t kFrameHeaderSlots = kMaxInternalArgs + 1; // formals + depth
+// Bound generated frame reservations, including saved rbp and return address.
+constexpr std::size_t kMaxFrameBytes = ((8u*(kFrameHeaderSlots+kMaxNodesPerFunction)+15u)/16u)*16u+16u;
+static_assert(kMaxFrameBytes*kMaxStackDepth <= 544u*1024u);
 constexpr std::size_t kMaxEvalSteps = 200000;
 bool letter(char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_'; }
 bool digit(char c) { return c >= '0' && c <= '9'; }

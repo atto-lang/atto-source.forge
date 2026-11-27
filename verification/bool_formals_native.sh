@@ -57,4 +57,17 @@ negative 'fnc main():int{if 1 then return 42; fi return 7;}' 'condition_not_bool
 negative 'fnc f(bool b):bool{if b then return 1; fi return false;} fnc main():int{return 42;}' 'condition_not_bool'
 negative 'fnc main():int{if true then return 42; fi}' 'unexpected token'
 negative 'fnc main():int{if true then return 42; return 7;}' 'unexpected token'
-echo 'FORGE_TYPED_BOOLEAN_FORMALS_NATIVE_PASS positives=10 negatives=13'
+# Boundary: 256 literals + 255 adds = 511 nodes; 257 literals + 256 adds = 513.
+# Generate a balanced expression to avoid conflating node and depth limits.
+sum_tree() {
+  local n=$1
+  if (( n == 1 )); then printf '1'; return; fi
+  printf '('
+  sum_tree "$((n / 2))"
+  printf '+'
+  sum_tree "$((n - n / 2))"
+  printf ')'
+}
+positive "fnc f():int{return $(sum_tree 256);} fnc main():int{return f();}" 256
+negative "fnc f():int{return $(sum_tree 257);} fnc main():int{return f();}" 'callable AST node budget exceeded'
+echo 'FORGE_TYPED_BOOLEAN_FORMALS_NATIVE_PASS positives=11 negatives=14'
