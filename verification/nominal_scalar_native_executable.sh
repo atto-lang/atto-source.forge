@@ -56,3 +56,48 @@ test "$result" = 42
 "$clang" -x assembler "$work/multi.s" -x c "$work/main.c" -o "$work/multi_native"
 "$work/multi_native"
 echo "Forge bounded class native execution (single + multiple instances): PASS"
+
+# Compiler-backed contextual spelling matrix for the bounded Forge profile.
+# Each valid source is interpreted, emitted, compared to the same native
+# instruction stream, independently linked, and executed. Obsolete markers
+# must fail in both compiler modes without emitting any output.
+for name in read mtd method; do
+  for trivia in space tab newline block nested line; do
+    case "$trivia" in
+      space) separator=' ' ;;
+      tab) separator="$(printf '\t')" ;;
+      newline) separator='
+' ;;
+      block) separator=' /* declaration marker */ ' ;;
+      nested) separator=' /* outer /* inner */ outer */ ' ;;
+      line) separator=' // declaration marker
+' ;;
+    esac
+    for marker in mtd fnc method; do
+      printf 'define class Box as\n  let int value=40;\n  add(mut self,int n):void{self.value=self.value+n;}\n  pub %s%s%s(self):int{return self.value;}\nend\npub fnc main():int{let mut Box b=new Box();b.add(2);return b.%s();}\n' \
+        "$marker" "$separator" "$name" "$name" > "$work/contextual.atto"
+      if [ "$marker" = method ]; then
+        for mode in run emit; do
+          if [ "$mode" = run ]; then
+            set -- run-class "$work/contextual.atto"
+          else
+            set -- emit-class-asm x86_64 "$work/contextual.atto"
+          fi
+          if "$compiler" "$@" > "$work/rejected.out" 2> "$work/rejected.err"; then
+            echo "unexpected obsolete marker acceptance: $name/$trivia/$mode" >&2
+            exit 1
+          fi
+          test ! -s "$work/rejected.out"
+          grep -F 'obsolete method introducer' "$work/rejected.err" > /dev/null
+        done
+      else
+        test "$("$compiler" run-class "$work/contextual.atto")" = 42
+        "$compiler" emit-class-asm x86_64 "$work/contextual.atto" > "$work/contextual.s"
+        cmp "$work/box.s" "$work/contextual.s"
+        "$clang" -x assembler "$work/contextual.s" -x c "$work/main.c" -o "$work/contextual_native"
+        "$work/contextual_native"
+      fi
+    done
+  done
+done
+echo 'Forge contextual method matrix: 36 native guests and 36 diagnostic/no-output checks passed'
