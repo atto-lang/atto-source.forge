@@ -936,6 +936,19 @@ add_test(NAME scalar_check_only
 
 # Bounded local Pointer<int> compiler-native guest parity. This runs real
 # generated source under GCC/Clang and sanitizers, never a Python model.
+add_executable(physical_layout_test tests/physical_layout.cpp)
+target_link_libraries(physical_layout_test PRIVATE atto_forge_checked_i64)
+if(MSVC)
+  target_compile_options(physical_layout_test PRIVATE /UNDEBUG)
+else()
+  target_compile_options(physical_layout_test PRIVATE -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(physical_layout_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(physical_layout_test PRIVATE -fsanitize=address,undefined)
+  endif()
+endif()
+add_test(NAME physical_layout_test COMMAND physical_layout_test)
+
 add_executable(pointer_local_typed_test tests/pointer_local_typed.cpp)
 target_link_libraries(pointer_local_typed_test PRIVATE atto_forge_checked_i64)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
