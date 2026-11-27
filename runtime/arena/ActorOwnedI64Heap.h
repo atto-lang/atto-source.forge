@@ -40,6 +40,10 @@ OresActorLoan ores_actor_i64_heap_borrow(OresActorI64Heap* heap,
                                           OresActorTurn turn, OresActorSlot slot);
 OresActorLoan ores_actor_i64_heap_borrow_mut(OresActorI64Heap* heap,
                                            OresActorTurn turn, OresActorSlot slot);
+/* Trusted generated field scope admission; validates live fixed field and
+ * current physical turn, and mutable declaration for exclusive loans. */
+OresActorLoan ores_actor_i64_heap_field_borrow(OresActorI64Heap* heap, OresActorTurn turn, uint64_t index);
+OresActorLoan ores_actor_i64_heap_field_borrow_mut(OresActorI64Heap* heap, OresActorTurn turn, uint64_t index);
 int64_t ores_actor_i64_heap_loan_read(OresActorI64Heap* heap,
                                      OresActorTurn turn, OresActorLoan loan);
 void ores_actor_i64_heap_loan_write(OresActorI64Heap* heap, OresActorTurn turn,
@@ -58,6 +62,11 @@ int64_t ores_actor_i64_heap_field_read(OresActorI64Heap* heap,
 void ores_actor_i64_heap_field_init_mutable(OresActorI64Heap* heap,
                                             uint64_t domain, uint64_t epoch,
                                             uint64_t index, int64_t initial);
+/* Sealed fields may only be accessed through the dedicated field-loan ABI.
+ * Ordinary field and generic slot operations cannot bypass this protection. */
+void ores_actor_i64_heap_field_init_protected(OresActorI64Heap* heap,
+                                             uint64_t domain, uint64_t epoch,
+                                             uint64_t index, int64_t initial);
 void ores_actor_i64_heap_field_write(OresActorI64Heap* heap,
                                      uint64_t domain, uint64_t epoch,
                                      uint64_t index, int64_t value);
