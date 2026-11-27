@@ -2,6 +2,7 @@
 // Restricted native Atto scalar parser: one main() with a scalar return.
 #include "atto/scalar_lexer.hpp"
 #include "atto/reusable_slot.hpp"
+#include "atto/point_placement.hpp"
 #include "atto/decimal_i64.hpp"
 #include "atto/exact_quantity_scale.hpp"
 #include <algorithm>
@@ -109,6 +110,7 @@ struct Parsed {
   // Remaining scopes close with the terminal scalar result or checked error.
   std::vector<std::optional<std::string>> trace_steps;
   std::optional<ReusableSlot> reusable_slot;
+  std::optional<PointPlacement> point_placement;
   [[nodiscard]] bool ok() const noexcept {
     return error == ParseError::none && !nodes.empty() && root < nodes.size();
   }
@@ -133,6 +135,14 @@ inline constexpr std::size_t max_trace_depth = 16;
 [[nodiscard]] inline bool validate_ast(const Parsed& p) {
   if (!p.ok() || p.nodes.size() > max_nodes ||
       p.root != p.nodes.size() - 1) return false;
+  if (p.point_placement) {
+    const auto value=verify_point_placement(*p.point_placement);
+    if(!value||p.local||p.reusable_slot||!p.trace_steps.empty()||p.nodes.size()!=1||
+       p.root!=0||p.nodes[0].op!=Op::literal||p.nodes[0].value!=*value||
+       p.nodes[0].left||p.nodes[0].right||p.nodes[0].upper||
+       !p.nodes[0].states.empty()||!p.nodes[0].effects.empty()||
+       !p.nodes[0].updates.empty()||!p.nodes[0].exits.empty())return false;
+  }
   if (p.reusable_slot) {
     const auto value = verify_reusable_slot(*p.reusable_slot);
     if (!value || p.local || !p.trace_steps.empty() || p.nodes.size() != 1 ||
@@ -1880,6 +1890,83 @@ class Parser {
     return true;
   }
 
+
+  [[nodiscard]] bool placement_point() {
+    using K=PointPlacement::Kind;
+    PointPlacement plan;
+    std::vector<std::string> names;
+    auto bad=[&](){fail(ParseError::pointer_profile);return false;};
+    auto w=[&](std::string_view v){return expected(v);};
+    auto k=[&](Kind v){return expected(v);};
+    auto op=[&](std::string_view v){return current().kind==Kind::name&&text()==v&&local_op(v);};
+    auto number=[&]()->std::optional<i64>{
+      if(current().kind!=Kind::integer)return std::nullopt;
+      auto v=parse_decimal_i64(text());if(v)++pos_;return v;
+    };
+    auto identifier=[&]()->std::optional<std::string>{
+      auto n=local_id();if(!n)return std::nullopt;
+      const std::string_view reserved[]={"s","p","x","y","mut","new","at","alloc","destroy","free","define","struct","with","constructor","self","null","true","false","await","suspends","susp","if","else","end","while","for","class","actor","spawn","task","select","defer","recover","copy","borrow","take","share","drop","move","pin","import","export","use","namespace","module","const","unsafe","to","empty","void","panic","trap","throw","raise"};
+      if(n->empty()||(*n)[0]<'a'||(*n)[0]>'z'||n->size()>64)return std::nullopt;
+      for(char c:*n)if(!((c>='a'&&c<='z')||(c>='0'&&c<='9')||c=='_'))return std::nullopt;
+      for(auto v:reserved)if(*n==v)return std::nullopt;
+      return n;
+    };
+    if(!w("define")||!w("struct")||!w("Point")||!k(Kind::lbrace)||
+       !w("int")||!w("x")||!k(Kind::semicolon)||!w("int")||!w("y")||!k(Kind::semicolon)||
+       !k(Kind::rbrace)||!w("with")||!k(Kind::lbrace)||!w("constructor")||
+       !k(Kind::lparen)||!w("int")||!w("x")||!k(Kind::comma)||!w("int")||!w("y")||
+       !k(Kind::rparen)||!k(Kind::lbrace)||!w("self")||!k(Kind::dot)||!w("x")||!k(Kind::equals)||!w("x")||!k(Kind::semicolon)||
+       !w("self")||!k(Kind::dot)||!w("y")||!k(Kind::equals)||!w("y")||!k(Kind::semicolon)||!k(Kind::rbrace)||!k(Kind::rbrace)||
+       !w("pub")||!w("fnc")||!w("main")||!k(Kind::lparen)||!k(Kind::rparen)||!k(Kind::colon)||!w("int")||!k(Kind::lbrace)||
+       !w("let")||!w("Storage")||!k(Kind::lt)||!w("Point")||!k(Kind::gt)||!w("s")||!k(Kind::equals)||
+       !op("alloc")||!w("Point")||!k(Kind::semicolon)||
+       !w("let")||!w("mut")||!w("RawPointer")||!k(Kind::lt)||!w("Point")||!k(Kind::gt)||!w("p")||
+       !k(Kind::equals)||!w("RawPointer")||!k(Kind::dot)||!w("empty")||!k(Kind::lt)||!w("Point")||!k(Kind::gt)||
+       !k(Kind::lparen)||!k(Kind::rparen)||!k(Kind::semicolon))return bad();
+    while(!(current().kind==Kind::name&&text()=="return")){
+      if(plan.steps.size()>=32)return bad();
+      PointPlacement::Step s{K::free};
+      if(name("new")){
+        s.kind=K::construct;
+        if(!w("Point")||!k(Kind::lparen))return bad();
+        auto x=number();if(!x||!k(Kind::comma))return bad();
+        auto y=number();if(!y||!k(Kind::rparen)||!w("at")||!w("s"))return bad();
+        s.x=*x;s.y=*y;
+      }else if(current().kind==Kind::name&&text()=="ref"){
+        if(!op("ref")||!w("p")||!w("to")||!w("s"))return bad();
+        s.kind=K::bind;
+      }else if(name("val")){
+        auto n=identifier();
+        if(!n||std::find(names.begin(),names.end(),*n)!=names.end()||
+           !k(Kind::equals)||!k(Kind::lparen)||!op("deref")||!w("p")||!k(Kind::rparen)||!k(Kind::dot))return bad();
+        s.kind=K::copy_field;
+        if(name("x"))s.field=0;else{if(!w("y"))return bad();s.field=1;}
+        names.push_back(*n);
+      }else if(current().kind==Kind::name&&text()=="unref"){
+        if(!op("unref")||!w("p"))return bad();
+        s.kind=K::detach;
+      }else if(current().kind==Kind::name&&text()=="destroy"){
+        if(!op("destroy")||!w("s"))return bad();
+        s.kind=K::destroy;
+      }else if(current().kind==Kind::name&&text()=="free"){
+        if(!op("free")||!w("s"))return bad();
+        s.kind=K::free;
+      }else return bad();
+      if(!k(Kind::semicolon))return bad();
+      plan.steps.push_back(s);
+    }
+    if(!w("return"))return bad();
+    do{
+      auto n=identifier();if(!n||plan.result.size()>=2)return bad();
+      auto i=std::find(names.begin(),names.end(),*n);
+      if(i==names.end())return bad();
+      plan.result.push_back(static_cast<std::size_t>(i-names.begin()));
+    }while(take(Kind::plus));
+    if(!k(Kind::semicolon)||!k(Kind::rbrace)||current().kind!=Kind::end)return bad();
+    auto result=verify_point_placement(plan);if(!result)return bad();
+    auto root=append(Node{Op::literal,0,0,*result});if(!root)return bad();
+    out_.root=*root;out_.point_placement=std::move(plan);return true;
+  }
   [[nodiscard]] bool reusable_pointer() {
     ReusableSlot plan;
     std::vector<std::string> names;
@@ -2080,6 +2167,11 @@ public:
   }
   [[nodiscard]] Parsed parse() {
     if (out_.error != ParseError::none) return std::move(out_);
+    if(!strict_&&current().kind==Kind::name&&text()=="define"&&tokens_.size()>2&&
+       tokens_[1].kind==Kind::name&&source_.substr(tokens_[1].offset,tokens_[1].length)=="struct"&&
+       tokens_[2].kind==Kind::name&&source_.substr(tokens_[2].offset,tokens_[2].length)=="Point"){
+      (void)placement_point();return std::move(out_);
+    }
     if (!declarations() || !refinement_declarations()) { fail(ParseError::syntax); return std::move(out_); }
     if(strict_&&refinements_.empty()){fail(ParseError::verify_unsupported);return std::move(out_);}
     if(!helper_declarations()){fail(ParseError::syntax);return std::move(out_);}

@@ -66,5 +66,16 @@ int main() {
     const auto invalid = parse_source("pub fnc main(): int { let a: int = 42; let mut RawPointer<int> p = RawPointer.empty<int>(); " + body + " }");
     assert(!invalid.ok() && !emit_cpp(invalid));
   }
+  auto placement = parse_source("define struct Point { int x; int y; } with { constructor(int x, int y) { self.x = x; self.y = y; } } pub fnc main(): int { let Storage<Point> s = alloc! Point; let mut RawPointer<Point> p = RawPointer.empty<Point>(); new Point(40, 1) at s; ref! p to s; val first = (deref! p).x; unref! p; destroy! s; new Point(99, 2) at s; ref! p to s; val second = (deref! p).y; unref! p; destroy! s; free! s; return first + second; }");
+  assert(placement.ok() && placement.point_placement && validate_ast(placement) && emit_cpp(placement));
+  auto forged_placement=placement;
+  forged_placement.point_placement->steps[2].field=2;
+  assert(!validate_ast(forged_placement) && !emit_cpp(forged_placement));
+  forged_placement=placement;
+  forged_placement.point_placement->steps.pop_back();
+  assert(!validate_ast(forged_placement));
+  forged_placement=placement;
+  forged_placement.nodes[0].value=43;
+  assert(!validate_ast(forged_placement));
   return 0;
 }
