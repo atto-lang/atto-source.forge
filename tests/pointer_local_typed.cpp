@@ -46,6 +46,15 @@ int main() {
       std::string(exact).find("= 42;"), 5, "= 9223372036854775807;"));
   assert(max_i64.ok() && max_i64.local &&
          max_i64.local->initial == std::numeric_limits<std::int64_t>::max());
+  auto minimum = parse_source(std::string(exact).replace(
+      std::string(exact).find("= 42;"), 5, "= -9223372036854775808;"));
+  assert(minimum.ok() && minimum.local && validate_ast(minimum) &&
+         minimum.local->initial == std::numeric_limits<std::int64_t>::min());
+  auto min_code = emit_cpp(minimum);
+  assert(min_code && min_code->find("std::numeric_limits<atto::forge::i64>::min()") != std::string::npos);
+  auto underflow = parse_source(std::string(exact).replace(
+      std::string(exact).find("= 42;"), 5, "= -9223372036854775809;"));
+  assert(!underflow.ok() && underflow.error == ParseError::literal_out_of_range);
   auto overflow = parse_source(std::string(exact).replace(
       std::string(exact).find("= 42;"), 5, "= 9223372036854775808;"));
   assert(!overflow.ok() && overflow.error == ParseError::literal_out_of_range);

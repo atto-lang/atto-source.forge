@@ -165,7 +165,9 @@ struct SpanScope {
   // user source never enter generated C++; the borrow is compiler-authenticated
   // and nonowning, and unref only invalidates this lexical handle.
   if (p.local) {
-    const auto initial = std::to_string(p.local->initial);
+    const auto initial = p.local->initial == std::numeric_limits<i64>::min()
+        ? "std::numeric_limits<atto::forge::i64>::min()"
+        : std::to_string(p.local->initial);
     code += "  const atto::forge::i64 __atto_place{" + initial + "};\n";
     code += "  const atto::forge::i64* __atto_borrow = &__atto_place;\n";
     code += "  const atto::forge::i64 __atto_copy = *__atto_borrow;\n";
