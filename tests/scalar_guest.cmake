@@ -443,7 +443,7 @@ verify_pair_case(first [=[Pair.of("a",42).first]=] "" E_PAIR_PROJECTION_UNSUPPOR
 verify_pair_case(overflow [=[Pair.of("a",9223372036854775808).second]=] "" E_PARSE_RANGE)
 verify_pair_case(arithmetic [=[Pair.of("a",1+2).second]=] 3 "")
 verify_pair_case(grouped_second [=[Pair.of<int>("a",(10+11)*2).second]=] 42 "")
-verify_pair_case(unknown [=[Pair.of("a",missing).second]=] "" E_PARSE_SYNTAX)
+verify_pair_case(unknown [=[Pair.of("a",missing).second]=] "" E_UNBOUND_LOCAL)
 verify_pair_case(bool_second [=[Pair.of("a",true).second]=] "" E_PARSE_SYNTAX)
 verify_pair_case(nested_second [=[Pair.of("a",Pair.of("b",42).second).second]=] 42 "")
 
@@ -477,7 +477,7 @@ verify_pair_case(entry_key [=[Entry.of(40+2,3*5).key]=] 42 "")
 verify_pair_case(entry_escape [=[Entry.of(1,2)]=] "" E_ENTRY_ESCAPE_UNSUPPORTED)
 verify_pair_case(entry_member [=[Entry.of(1,2).second]=] "" E_ENTRY_PROJECTION_UNSUPPORTED)
 verify_pair_case(entry_witness [=[Entry.of<string,int>(1,2).value]=] "" E_ENTRY_PROJECTION_UNSUPPORTED)
-verify_pair_case(entry_unknown [=[Entry.of(42,missing).key]=] "" E_PARSE_SYNTAX)
+verify_pair_case(entry_unknown [=[Entry.of(42,missing).key]=] "" E_UNBOUND_LOCAL)
 verify_local_body(entry-key-trap "return Entry.of(42,1/0).key;" 71 "" "E_DIVZERO\n")
 verify_local_body(entry-value-trap "return Entry.of(1/0,42).value;" 71 "" "E_DIVZERO\n")
 

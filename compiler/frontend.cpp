@@ -1,4 +1,5 @@
 #include "compiler/source_utf8.hpp"
+#include "compiler/topic_publish_source_gate.hpp"
 #include "compiler/frontend.hpp"
 #include "include/atto/portable_unicode_identifier.hpp"
 #include <algorithm>
@@ -170,6 +171,9 @@ class Parser {
       at_ += scalar.width;
       while (identifier_part_at(source_,at_))
         at_ += atto::forge::scalar::unicode_at(source_,at_).width;
+      // Unsupported non-ASCII suffixes cannot be hidden by an earlier unknown-name diagnostic.
+      if (at_<source_.size() && static_cast<unsigned char>(source_[at_])>=0x80)
+        error("invalid character");
       tok_={Kind::Word,source_.substr(start,at_-start),start};
       // Require whitespace after the complete contextual bang keyword.
       if ((tok_.text=="trap" || tok_.text=="throw" || tok_.text=="raise" ||
@@ -740,12 +744,14 @@ class Parser {
 Program parse_source(std::string_view source) {
   if (source.size() > 1024 * 1024) throw std::runtime_error("source exceeds 1 MiB bootstrap limit");
   oresforge::source::validate_utf8(source);
+  oresforge::source::reject_unlowered_topic_publish(source);
   return Parser(source).parse();
 }
 Program parse_runtime_source(std::string_view source) {
   if (source.size() > 1024 * 1024)
     throw std::runtime_error("source exceeds 1 MiB bootstrap limit");
   oresforge::source::validate_utf8(source);
+  oresforge::source::reject_unlowered_topic_publish(source);
   return Parser(source,true).parse();
 }
 

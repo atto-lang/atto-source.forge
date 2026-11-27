@@ -883,7 +883,7 @@ int main() {
     ensure(interpret(parse_source(
                "fnc main():int{return 3;} /* caf\xc3\xa9 enum */"))==3,
            "valid UTF-8 in ignored block comment");
-    // UTF-8 source is accepted for comments, not grammar tokens.
+    // Portable Greek identifiers are admitted; Latin accents and NBSP remain rejected.
     // This must be stable under every process locale.
     reject_diagnostic([] {
       parse_source("fnc main():int {return caf\xc3\xa9;}");
@@ -893,7 +893,9 @@ int main() {
     }, "invalid character");
     reject_diagnostic([] {
       parse_source("fnc main():int {return \xce\xbb;}");
-    }, "invalid character");
+    }, "expected integer");
+    ensure(interpret(parse_source("fnc id(\xce\xbb:int):int{return \xce\xbb;} fnc main():int{return id(42);}"))==42,
+           "portable Greek parameter executes");
     ensure(interpret(parse_source("fnc main():int {return 42;} // \xf0\x9f\x8c\x9f"))==42,
            "supplementary Unicode comment is lexically inert");
 
