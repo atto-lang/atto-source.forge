@@ -87,4 +87,41 @@ for body in 'if 1 then return 1; fi return 42;' 'if true then return 1; return 4
   test -s "$work/negative.err"
   negative=$((negative+1))
 done
-echo "FORGE_EARLY_RETURN positive=14 negative=$negative failures=0"
+# Boolean-valued helpers preserve a distinct verified result kind.
+cat > "$work/bool.atto" <<'ATTO'
+fnc write_valid(int offset, int requested, int completed, int limit): bool {
+  if offset < 0 then return false; fi
+  if requested <= 0 then return false; fi
+  if completed <= 0 then return false; fi
+  if completed > requested then return false; fi
+  if offset > limit then return false; fi
+  return requested <= limit - offset;
+}
+fnc lazy(int n): bool {
+  if n == 1 do return true; else return 9223372036854775807 + n == 0; fi
+}
+pub fnc main(): int {
+  if write_valid(4, 3, 2, 7) == false then return 1; fi
+  if write_valid(4, 4, 2, 7) then return 2; fi
+  if write_valid(-1, 1, 1, 0) then return 3; fi
+  if write_valid(9223372036854775807, 1, 1, 9223372036854775807) then return 4; fi
+  if lazy(1) == false then return 5; fi
+  return 42;
+}
+ATTO
+"$compiler" emit-call-asm x86_64 "$work/bool.atto" > "$work/bool.s"
+test -s "$work/bool.s"
+"$cxx" -x assembler "$work/bool.s" -x c++ "$work/driver.cpp" -o "$work/bool"
+"$work/bool" > "$work/stdout" 2> "$work/stderr"
+cmp "$work/expected" "$work/stdout"
+test ! -s "$work/stderr"
+for body in 'if n then return true; fi return false;' 'if n == 1 then return 1; fi return false;' 'if n == 1 then return true; fi return 0;'; do
+  printf 'fnc bad(int n): bool { %s } pub fnc main(): int { return 42; }\n' "$body" > "$work/negative.atto"
+  status=0
+  "$compiler" emit-call-asm x86_64 "$work/negative.atto" > "$work/negative.s" 2> "$work/negative.err" || status=$?
+  test "$status" = 1
+  test ! -s "$work/negative.s"
+  test -s "$work/negative.err"
+  negative=$((negative+1))
+done
+echo "FORGE_EARLY_RETURN positive=15 negative=$negative failures=0"
