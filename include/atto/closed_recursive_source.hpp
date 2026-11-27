@@ -1,6 +1,6 @@
 #pragma once
 // Initial direct scalar named-stage source profile using the canonical lexer.
-// Only a complete standalone main with a literal upstream is admitted.
+// Only standalone main with a closed arithmetic upstream and named stages.
 #include "atto/closed_recursive_stage.hpp"
 #include "atto/decimal_i64.hpp"
 #include "atto/scalar_lexer.hpp"
@@ -13,8 +13,8 @@ namespace atto::forge::recursive {
 using scalar::Kind;
 using scalar::Token;
 struct SourceStage {
-  Stage body;
-  i64 input=0;
+  Stage upstream;
+  std::vector<Stage> stages;
 };
 struct Admission {
   bool selected=false;
@@ -88,15 +88,15 @@ class NamedStageParser {
   friend Admission admit(std::string_view);
   NamedStageParser(std::string_view s,const std::vector<Token>& ts):source_(s),tokens_(ts){}
   std::size_t offset() const{return current().offset;}
-  std::optional<SourceStage> parse(){
-    if(!name("pub")||!name("fnc")||!name("main")||!take(Kind::lparen)||!take(Kind::rparen)||
-       !(take(Kind::colon)||take(Kind::arrow))||!name("int")||!take(Kind::lbrace)||
-       !(name("return")||take(Kind::caret)))return {};
-    const auto input=integer();
-    if(!input||current().kind!=Kind::bit_or||tokens_[pos_+1].kind!=Kind::gt||
-       current().offset+current().length!=tokens_[pos_+1].offset)return {};
+  bool pipe_here() const {
+    return current().kind==Kind::bit_or&&tokens_[pos_+1].kind==Kind::gt&&
+       current().offset+current().length==tokens_[pos_+1].offset;
+  }
+  std::optional<Stage> parse_stage(){
+    if(!pipe_here())return {};
     pos_+=2;
     if(!name("fnc"))return {};
+    body_=Stage{};self_={};param_={};
     const auto self=identifier();if(!self||!take(Kind::lparen)||!name("int"))return {};
     const auto param=identifier();
     if(!param||*param==*self||!take(Kind::rparen)||!(take(Kind::colon)||take(Kind::arrow))||
@@ -120,10 +120,26 @@ class NamedStageParser {
       body_.subject=*subject;body_.arms.push_back({std::nullopt,*value});
     }
     (void)take(Kind::semicolon);
-    if(!take(Kind::rbrace))return {};
+    if(!take(Kind::rbrace)||!validate(body_))return {};
+    return std::move(body_);
+  }
+  std::optional<SourceStage> parse(){
+    if(!name("pub")||!name("fnc")||!name("main")||!take(Kind::lparen)||!take(Kind::rparen)||
+       !(take(Kind::colon)||take(Kind::arrow))||!name("int")||!take(Kind::lbrace)||
+       !(name("return")||take(Kind::caret)))return {};
+    auto input=expression(0,0);if(!input)return {};
+    auto subject=append({Op::literal,0,0,0});if(!subject)return {};
+    body_.subject=*subject;body_.arms.push_back({std::nullopt,*input});
+    if(!validate(body_))return {};
+    SourceStage program{std::move(body_),{}};
+    while(pipe_here()){
+      if(program.stages.size()>=max_stages)return {};
+      auto stage=parse_stage();if(!stage)return {};
+      program.stages.push_back(std::move(*stage));
+    }
     (void)take(Kind::semicolon);
-    if(!take(Kind::rbrace)||current().kind!=Kind::end||!validate(body_))return {};
-    return SourceStage{std::move(body_),*input};
+    if(program.stages.empty()||!take(Kind::rbrace)||current().kind!=Kind::end)return {};
+    return program;
   }
 };
 // Never fall back to the ordinary scalar parser after selecting this profile.
