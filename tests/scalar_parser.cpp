@@ -5,6 +5,9 @@
 using namespace atto::forge;
 using namespace atto::forge::scalar;
 int main() {
+  assert(parse_source("fnc main(): int {val Φ = 20; val φ = 22; return Φ + φ;}").ok());
+  assert(parse_source("fnc main(): int {val 数量 = 20; val 𠮷 = 22; return 数量 + 𠮷;}").ok());
+  assert(!parse_source("fnc main(): int {return 未定義;}").ok());
   // Grouped actor options cannot reach scalar IR or guest emission.
   for (const auto* expr : {
       "spawn Worker() with {}",
@@ -189,9 +192,10 @@ int main() {
   assert(parse_source(flat).ok());
   assert(nested.error == ParseError::depth_limit);
   std::string many = "fnc main(): int {return 1";
-  for (int i = 0; i < 70; ++i) many += "+1";
+  for (std::size_t i = 0; i < max_nodes/2+6; ++i) many += "+1";
   many += ";}";
   auto budget = parse_source(many);
   assert(budget.error == ParseError::node_limit);
+  assert(!tokenize(std::string(max_strict_tokens+1,'+'),max_strict_tokens).ok());
   assert(parse_source(std::string(16385, 'a')).error == ParseError::lexical);
 }

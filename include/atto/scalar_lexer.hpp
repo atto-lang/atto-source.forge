@@ -1,6 +1,7 @@
 #pragma once
 // Stage-0 restricted .atto scalar lexer. No Python, no guest execution claim.
 // Token locations are offsets, never borrowed views into a temporary source.
+#include "portable_unicode_identifier.hpp"
 #include <cstddef>
 #include <string_view>
 #include <vector>
@@ -8,10 +9,10 @@
 namespace atto::forge::scalar {
 enum class Kind {
   name, integer, quoted, lparen, rparen, lbracket, rbracket, lbrace, rbrace, colon, double_colon, lt, gt, semicolon, dot, equals, comma, question,
-  plus, minus, star, slash, percent, logical_and, logical_or, not_equal, equal_equal, bit_and, bit_or, caret, bit_xor, tilde, shl, lshr, arrow, left_arrow, bang, end
+  plus, minus, star, slash, percent, logical_and, logical_or, not_equal, equal_equal, bit_and, bit_or, caret, bit_xor, tilde, shl, lshr, arrow, left_arrow, bang, unicode_not, end
 };
 struct Token { Kind kind; std::size_t offset; std::size_t length; };
-enum class LexError { none, source_too_large, token_limit, unsupported_byte, unterminated_comment, comment_nesting_limit, ownership_bang_unsupported, suspension_unsupported };
+enum class LexError { none, source_too_large, token_limit, unsupported_byte, unterminated_comment, comment_nesting_limit, ownership_bang_unsupported, suspension_unsupported, source_bidi };
 struct Lexed {
   std::vector<Token> tokens;
   LexError error = LexError::none;
@@ -19,14 +20,30 @@ struct Lexed {
   [[nodiscard]] bool ok() const noexcept { return error == LexError::none; }
 };
 inline constexpr std::size_t max_source_bytes = 16 * 1024;
-inline constexpr std::size_t max_tokens = 256;
+// Ordinary bounded scalar lane admits larger lexical programs; strict proof budget stays unchanged.
+inline constexpr std::size_t max_tokens = 512;
+inline constexpr std::size_t max_strict_tokens = 256;
 
-[[nodiscard]] inline Lexed tokenize(std::string_view src) {
+[[nodiscard]] inline Lexed tokenize(std::string_view src, std::size_t token_budget = max_tokens) {
   Lexed out;
   if (src.size() > max_source_bytes) {
     out.error = LexError::source_too_large;
     out.error_offset = max_source_bytes;
     return out;
+  }
+  for (std::size_t at = 0; at < src.size();) {
+    const auto scalar = unicode_at(src, at);
+    if (scalar.width && (scalar.value == 0x61c || scalar.value == 0x200e || scalar.value == 0x200f ||
+        (scalar.value >= 0x202a && scalar.value <= 0x202e) ||
+        (scalar.value >= 0x2066 && scalar.value <= 0x2069))) {
+      out.error = LexError::source_bidi; out.error_offset = at; return out;
+    }
+    if (!scalar.width || unicode_source_control(scalar.value)) {
+      out.error = LexError::unsupported_byte;
+      out.error_offset = at;
+      return out;
+    }
+    at += scalar.width;
   }
   auto is_name_start = [](char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
@@ -76,7 +93,7 @@ inline constexpr std::size_t max_tokens = 256;
       }
       continue;
     }
-    if (out.tokens.size() >= max_tokens) {
+    if (out.tokens.size() >= max_tokens || out.tokens.size() >= token_budget) {
       out.error = LexError::token_limit;
       out.error_offset = i;
       return out;
@@ -89,9 +106,11 @@ inline constexpr std::size_t max_tokens = 256;
       out.error_offset = start;
       return out;
     }
-    if (is_name_start(c)) {
+    if (portable_name_start(unicode_at(src, i).value)) {
       kind = Kind::name;
-      do { ++i; } while (i < src.size() && is_name(src[i]));
+      do {
+        i += unicode_at(src, i).width;
+      } while (i < src.size() && portable_name_part(unicode_at(src, i).value));
       // Only these operations are unlowered in the scalar and bounded
       // pointer profile. Crucially, ref!/deref!/unref! are NOT rejected
       // here: the typed local_pointer parser admits their verified subset.
@@ -119,6 +138,8 @@ inline constexpr std::size_t max_tokens = 256;
         out.error_offset = start;
         return out;
       }
+    } else if (unicode_at(src, i).value == 0xacu) {
+      kind = Kind::unicode_not; i += 2;
     } else if (c == '-' && src.substr(i, 2) == "->") {
       kind = Kind::arrow;
       i += 2;
