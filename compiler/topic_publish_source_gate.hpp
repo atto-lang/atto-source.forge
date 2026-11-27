@@ -47,12 +47,12 @@ inline void reject_unlowered_topic_publish(std::string_view source) {
       while(i<source.size()&&depth!=0) {
         if(source.substr(i,2)=="/*") {
           if(++depth>kMaxCommentDepth)
-            throw std::runtime_error("TOPIC_PUBLISH_SOURCE_COMMENT_DEPTH at byte "+std::to_string(start));
+            throw std::runtime_error("TOPIC_PUBLISH_SOURCE_COMMENT_DEPTH: block comment nesting too deep at byte "+std::to_string(start));
           i+=2;
         }else if(source.substr(i,2)=="*/") {--depth;i+=2;}
         else ++i;
       }
-      if(depth!=0)throw std::runtime_error("TOPIC_PUBLISH_SOURCE_UNTERMINATED_COMMENT at byte "+std::to_string(start));
+      if(depth!=0)throw std::runtime_error("TOPIC_PUBLISH_SOURCE_UNTERMINATED_COMMENT: unterminated block comment at byte "+std::to_string(start));
       continue;
     }
     if(c=='\''||c=='"'||c==0x60) {
