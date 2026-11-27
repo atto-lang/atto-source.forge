@@ -72,7 +72,7 @@ static i64 evaluate(i64 input){
     frames.push_back({id,depth,arg});
   };
   auto finish=[&](i64 v){result=v;frames.pop_back();};
-  auto checked=[](std::optional<i64> v){if(!v)fail("E_OVERFLOW\n",70);return *v;};
+  [[maybe_unused]] auto checked=[](std::optional<i64> v){if(!v)fail("E_OVERFLOW\n",70);return *v;};
 )";
   const auto root=idx(p.nodes.size());
   out+="  push("+root+",input,0);\n  while(!frames.empty()){\n    auto f=frames.back();\n    switch(f.id){\n";
