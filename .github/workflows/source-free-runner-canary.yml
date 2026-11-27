@@ -69,3 +69,28 @@ jobs:
           printf 'SOURCE_FREE_PROBE_METADATA=OBSERVED event=%s sha=%s ref=%s\n' "$GITHUB_EVENT_NAME" "$GITHUB_SHA" "$GITHUB_REF"
           echo "This canary proves command execution only; external API evidence must verify runner_id > 0."
           echo "It does not certify compiler execution, compiled .ores guest execution, artifacts, or backend parity."
+
+  admission-latest:
+    name: ubuntu-latest source-free admission
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Prove generic label admission without any checkout or secrets
+        shell: bash
+        env:
+          EXPECTED_REPOSITORY: ${{ github.repository }}
+          EXPECTED_RUN_ID: ${{ github.run_id }}
+          EXPECTED_HEAD: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test -n "${RUNNER_NAME:-}"
+          test "${RUNNER_OS:-}" = Linux
+          test "${GITHUB_ACTIONS:-}" = true
+          test "${GITHUB_REPOSITORY:-}" = "$EXPECTED_REPOSITORY"
+          test "${GITHUB_RUN_ID:-}" = "$EXPECTED_RUN_ID"
+          test "${GITHUB_SHA:-}" = "$EXPECTED_HEAD"
+          [[ "$EXPECTED_HEAD" =~ ^[a-f0-9]{40}$ ]]
+          echo "SOURCE_FREE_RUNNER_GENERIC_LABEL=EXECUTED"
+          echo "SOURCE_FREE_RUNNER_SOURCE_CHECKOUT=NONE"
+          echo "SOURCE_FREE_RUNNER_CROSS_ORG_TRANSFER=NONE"
+          echo "SOURCE_FREE_RUNNER_ADMISSION_PROOF=GENERIC_LABEL_NOT_COMPILER_EXECUTION"
