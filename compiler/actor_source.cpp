@@ -182,7 +182,10 @@ std::string emit_cxx(std::string_view source) {
               "#include <limits>\n#include <stdexcept>\n"
               "extern \"C\" void oresforge_actor_init(OresActorI64Heap* h, std::uint64_t d, std::uint64_t e, oresforge::runtime::ActorFrameStack& frames) {\n"
               "  (void)frames;\n"
-              "  ores_actor_i64_heap_field_init_mutable(h, d, e, 0, ";
+              "  ";
+    output << (plan.scope == Parser::Scope::legacy
+        ? "ores_actor_i64_heap_field_init_mutable" : "ores_actor_i64_heap_field_init_protected")
+           << "(h, d, e, 0, ";
     if (plan.initial == std::numeric_limits<std::int64_t>::min())
         output << "std::numeric_limits<std::int64_t>::min()";
     else output << plan.initial;
