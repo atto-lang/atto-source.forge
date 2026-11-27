@@ -369,6 +369,10 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
         "${CMAKE_CURRENT_SOURCE_DIR}/verification/core_types_native.py"
         --compiler "$<TARGET_FILE:oresforge>")
     set_tests_properties(oresforge_core_types_native PROPERTIES TIMEOUT 180)
+    add_test(NAME oresforge_bool_formals_native
+      COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/verification/bool_formals_native.sh"
+        "$<TARGET_FILE:oresforge>" "${CMAKE_CXX_COMPILER}")
+    set_tests_properties(oresforge_bool_formals_native PROPERTIES TIMEOUT 180)
   endif()
 endif()
 

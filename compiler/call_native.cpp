@@ -28,9 +28,12 @@ struct Token { std::string_view text; std::size_t offset=0; };
 // Predicate types are statically derived from verified opcode identity.
 // The native ABI remains i64-only at function boundaries.
 bool boolean_kind(Kind k) {
-  return k==Kind::BoolCall || k==Kind::Boolean || k==Kind::Not || k==Kind::And || k==Kind::Or || k==Kind::BooleanXor ||
+  return k==Kind::BoolParameter || k==Kind::BoolCall || k==Kind::Boolean || k==Kind::Not || k==Kind::And || k==Kind::Or || k==Kind::BooleanXor ||
          k==Kind::Less || k==Kind::LessEqual || k==Kind::Greater ||
          k==Kind::GreaterEqual || k==Kind::Equal || k==Kind::NotEqual;
+}
+bool bool_formal(const Function& f, std::size_t i) {
+  return !f.boolean_parameters.empty() && f.boolean_parameters.at(i);
 }
 bool reserved_predicate_word(std::string_view s) {
   return s=="true" || s=="false" || s=="ifnot" || s=="unless" ||
@@ -184,14 +187,16 @@ class Parser {
     expect("(");
     if (token_.text!=")") {
       do {
-        const bool type_first=take("int");
+        bool typed_bool=take("bool");
+        const bool type_first=typed_bool || take("int");
         const std::string param=identifier();
-        if (param=="int"||param=="if"||param=="then"||param=="else"||
+        if (param=="int"||param=="bool"||param=="if"||param=="then"||param=="else"||
             param=="return"||param=="fnc"||
             std::find(current_->parameters.begin(),current_->parameters.end(),param)
             !=current_->parameters.end())fail("invalid or duplicate parameter");
-        if(!type_first) { expect(":");expect("int"); }
+        if(!type_first) { expect(":"); typed_bool=take("bool"); if(!typed_bool) expect("int"); }
         current_->parameters.push_back(param);
+        current_->boolean_parameters.push_back(typed_bool);
         if(current_->parameters.size()>4)fail("function parameter budget exceeded");
         if (!take(","))break;
       } while(true);
@@ -373,7 +378,9 @@ class Parser {
         auto& params=current_->parameters;
         auto found=std::find(params.begin(),params.end(),name);
         if(found==params.end())fail("unknown parameter");
-        return add(Kind::Parameter,static_cast<std::int64_t>(found-params.begin()));
+        const auto index=static_cast<std::size_t>(found-params.begin());
+        return add(bool_formal(*current_,index)?Kind::BoolParameter:Kind::Parameter,
+                   static_cast<std::int64_t>(index));
       }
       std::vector<int> args;
       if (token_.text!=")") {
@@ -394,7 +401,7 @@ class Parser {
           fail("Boolean Xor requires two bool operands");
         return add(Kind::BooleanXor,0,{},std::move(args));
       }
-      for(int arg:args) require_integer(arg);
+      // Resolve and check every argument type in verify(), including forward calls.
       const auto found=names_.find(name);
       const bool bool_target=found!=names_.end() &&
           module_.functions.at(static_cast<std::size_t>(found->second)).returns_bool;
@@ -432,6 +439,9 @@ struct Evaluator {
     if (depth>=kMaxStackDepth)throw std::runtime_error("call depth exceeded");
     const auto& f=m.functions.at(id);
     if(args.size()!=f.parameters.size())throw std::runtime_error("runtime argument count mismatch");
+    for(std::size_t i=0;i<args.size();++i)
+      if(bool_formal(f,i) && args[i]!=0 && args[i]!=1)
+        throw std::runtime_error("noncanonical Boolean argument");
     return visit(f,f.result,args,depth);
   }
   std::int64_t visit(const Function& fn,int id,std::span<const std::int64_t> args,
@@ -448,7 +458,7 @@ struct Evaluator {
       if(visit(fn,n.children[0],args,depth)) return 1;
       return visit(fn,n.children[1],args,depth);
     }
-    if(n.kind==Kind::Parameter)return args[static_cast<std::size_t>(n.value)];
+    if(n.kind==Kind::Parameter||n.kind==Kind::BoolParameter)return args[static_cast<std::size_t>(n.value)];
     if(n.kind==Kind::If||n.kind==Kind::Ternary) {
       const auto pred=visit(fn,n.children[0],args,depth);
       return visit(fn,n.children[pred ? 1u:2u],args,depth);
@@ -483,7 +493,7 @@ struct Native {
     const auto& n=fn.nodes.at(static_cast<std::size_t>(index));
     if(n.kind==Kind::Constant||n.kind==Kind::Boolean) {
       out<<"  movabsq $"<<n.value<<", %rax\n";
-    } else if(n.kind==Kind::Parameter) {
+    } else if(n.kind==Kind::Parameter||n.kind==Kind::BoolParameter) {
       out<<"  movq "<<parameter_slot(static_cast<int>(n.value))<<", %rax\n";
     } else if(n.kind==Kind::Not) {
       emit_node(fn,n.children[0]);
@@ -583,6 +593,11 @@ void verify(const Module& m) {
     if(fn.name.empty() || !names.emplace(fn.name,fi).second)
       throw std::runtime_error("duplicate or invalid function");
     if(fn.parameters.size()>4)throw std::runtime_error("function parameter budget exceeded");
+    if(!fn.boolean_parameters.empty() && fn.boolean_parameters.size()!=fn.parameters.size())
+      throw std::runtime_error("invalid callable formal type inventory");
+    if(fi==static_cast<std::size_t>(m.entry) &&
+        std::any_of(fn.boolean_parameters.begin(),fn.boolean_parameters.end(),[](bool b){return b;}))
+      throw std::runtime_error("Boolean entry parameter requires explicit int adapter");
     if(fn.nodes.empty() || fn.nodes.size()>kMaxNodesPerFunction)
       throw std::runtime_error("invalid callable function body");
     total+=fn.nodes.size();
@@ -600,7 +615,7 @@ void verify(const Module& m) {
     for(std::size_t i=0;i<fn.nodes.size();++i) {
       const auto& n=fn.nodes[i];
       switch(n.kind) {
-        case Kind::Constant: case Kind::Parameter: case Kind::Add:
+        case Kind::Constant: case Kind::Parameter: case Kind::BoolParameter: case Kind::Add:
         case Kind::Sub: case Kind::Mul: case Kind::Less: case Kind::LessEqual:
         case Kind::Greater: case Kind::GreaterEqual: case Kind::Equal:
         case Kind::NotEqual: case Kind::If: case Kind::Call:
@@ -617,7 +632,7 @@ void verify(const Module& m) {
           throw std::runtime_error("callable AST shared node");
       }
       std::size_t size=2;
-      if(n.kind==Kind::Constant||n.kind==Kind::Boolean||n.kind==Kind::Parameter)size=0;
+      if(n.kind==Kind::Constant||n.kind==Kind::Boolean||n.kind==Kind::Parameter||n.kind==Kind::BoolParameter)size=0;
       else if(n.kind==Kind::Not)size=1;
       else if(n.kind==Kind::If||n.kind==Kind::Ternary)size=3;
       else if(n.kind==Kind::Call||n.kind==Kind::BoolCall)size=n.children.size();
@@ -648,20 +663,27 @@ void verify(const Module& m) {
                 n.kind==Kind::Less||n.kind==Kind::LessEqual||n.kind==Kind::Greater||
                 n.kind==Kind::GreaterEqual) {
         if(child_bool(0)||child_bool(1)) throw std::runtime_error("Boolean is not an int");
-      } else if(n.kind==Kind::Call||n.kind==Kind::BoolCall) {
-        for(std::size_t j=0;j<n.children.size();++j)
-          if(child_bool(j)) throw std::runtime_error("Boolean is not an int argument");
       }
-      if(n.kind==Kind::Parameter && (n.value<0 ||
-         static_cast<std::uint64_t>(n.value)>=fn.parameters.size()))
-        throw std::runtime_error("invalid callable parameter");
+      if(n.kind==Kind::Parameter||n.kind==Kind::BoolParameter) {
+        if(n.value<0 || static_cast<std::uint64_t>(n.value)>=fn.parameters.size())
+          throw std::runtime_error("invalid callable parameter");
+        if(bool_formal(fn,static_cast<std::size_t>(n.value))!=(n.kind==Kind::BoolParameter))
+          throw std::runtime_error("callable parameter type mismatch");
+      }
       if(n.kind==Kind::Call||n.kind==Kind::BoolCall) {
         if(n.callee<0 || static_cast<std::size_t>(n.callee)>=m.functions.size())
           throw std::runtime_error("invalid callable target");
         if(m.functions[static_cast<std::size_t>(n.callee)].returns_bool!=(n.kind==Kind::BoolCall))
           throw std::runtime_error("callable Boolean target type mismatch; declare bool helpers before use");
-        if(n.children.size()!=m.functions[static_cast<std::size_t>(n.callee)].parameters.size())
+        const auto& callee=m.functions[static_cast<std::size_t>(n.callee)];
+        if(!callee.boolean_parameters.empty() && callee.boolean_parameters.size()!=callee.parameters.size())
+          throw std::runtime_error("invalid callable formal type inventory");
+        if(n.children.size()!=callee.parameters.size())
           throw std::runtime_error("function arity mismatch");
+        for(std::size_t j=0;j<n.children.size();++j) {
+          if(child_bool(j)!=bool_formal(callee,j))
+            throw std::runtime_error(child_bool(j)?"Boolean is not an int argument":"int is not a Boolean argument");
+        }
         if(n.name!=m.functions[static_cast<std::size_t>(n.callee)].name)
           throw std::runtime_error("callable target/name mismatch");
       } else if(n.callee!=-1)throw std::runtime_error("unexpected callable target");
