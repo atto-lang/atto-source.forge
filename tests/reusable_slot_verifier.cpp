@@ -1,5 +1,6 @@
 #include "atto/reusable_slot.hpp"
 #include <stdexcept>
+#include <string>
 #include <iostream>
 using namespace atto::forge::scalar;
 using K = ReusableSlot::Kind;
