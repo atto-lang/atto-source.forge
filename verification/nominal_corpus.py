@@ -3,6 +3,7 @@
 
 The compiler digest binds the binary, not its provenance. The caller must
 independently establish the binary-to-source/build relationship.
+Exit 0 = all cases pass; 1 = failure; 2 = unsupported coverage remains.
 """
 import argparse
 import collections
@@ -90,7 +91,9 @@ def main():
                     args.linker.resolve(strict=True))
     print(json.dumps(result, indent=2))
     counts = result['counts']
-    return int(counts.get('FAIL', 0) != 0 or len(result['cases']) != 120)
+    if counts.get('FAIL', 0) or len(result['cases']) != 120:
+        return 1
+    return 2 if counts.get('UNSUPPORTED_PROFILE', 0) else 0
 
 
 if __name__ == '__main__':
