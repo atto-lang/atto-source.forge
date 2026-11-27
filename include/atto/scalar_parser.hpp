@@ -448,6 +448,9 @@ class Parser {
   };
   std::vector<Range> ranges_;
   std::vector<std::pair<std::string_view,std::size_t>> bindings_;
+  using RecordFields = std::vector<std::pair<std::string_view,std::size_t>>;
+  // Only root-local const literal i64 records, never a runtime record handle.
+  std::vector<std::pair<std::string_view,RecordFields>> record_locals_;
   // Boolean slots are admitted only by the ordinary typed predicate path.
   // They never flow into the scalar numeric expression parser.
   std::vector<std::size_t> boolean_slots_;
@@ -1122,6 +1125,14 @@ class Parser {
       return postfix(append(Node{Op::literal, 0, 0, *n}), true, true);
     }
     if(current().kind==Kind::name){
+      for(const auto& record:record_locals_)if(record.first==text()){
+        ++pos_;
+        if(!take(Kind::dot)||current().kind!=Kind::name){fail(ParseError::syntax);return std::nullopt;}
+        const auto field=text();++pos_;
+        for(const auto& entry:record.second)if(entry.first==field)
+          return postfix(append(Node{Op::copy,entry.second,0,0}));
+        fail(ParseError::unbound_local);return std::nullopt;
+      }
       for(const auto& h:helpers_)if(h.name==text()){++pos_;return call(h,depth+1);}
       for(const auto& b:bindings_)if(b.first==text()){
         if(boolean_slot(b.second)){fail(ParseError::bool_operand);return std::nullopt;}
@@ -1154,6 +1165,52 @@ class Parser {
     if(current().kind==Kind::name&&binding_name(text())&&pos_+1<tokens_.size()&&tokens_[pos_+1].kind!=Kind::lparen){fail(ParseError::unbound_local);return std::nullopt;}
     fail(ParseError::syntax);
     return std::nullopt;
+  }
+  // Deliberately bounded closed literal subset. All field payloads are
+  // typed integer literals; no implicit runtime allocation or owned alias.
+  [[nodiscard]] bool record_label(std::string_view n) const {
+    if(n.empty()||n.size()>64||(!(n[0]>='a'&&n[0]<='z')&&!portable_nonascii_name_start(unicode_at(n,0).value))||known_name(n))return false;
+    for(auto s:{"val","let","int","i64","i32","bool","float","string","void","return","self","main","fnc","pub","define","type","where","as","and","units","in","true","false","if","else","end","begin","while","loop","sync","task","await","suspends","infer","new","match","const","mut","using","unit","dimension","with","spawn","actor","class","record","struct","_"})if(n==s)return false;
+    return true;
+  }
+  [[nodiscard]] std::optional<std::size_t> record_body() {
+    while(name("const")){
+      if(record_locals_.size()>=16){fail(ParseError::node_limit);return std::nullopt;}
+      (void)name("Record");
+      if(current().kind!=Kind::name||!record_label(text())){fail(ParseError::syntax);return std::nullopt;}
+      const auto local=text();++pos_;
+      for(const auto& old:record_locals_)if(old.first==local){fail(ParseError::duplicate_local);return std::nullopt;}
+      if(!take(Kind::equals)){fail(ParseError::syntax);return std::nullopt;}
+      const bool brace=take(Kind::lbrace);
+      if(!brace&&!take(Kind::lparen)){fail(ParseError::syntax);return std::nullopt;}
+      const auto close=brace?Kind::rbrace:Kind::rparen;
+      bool ordinary=false;
+      RecordFields fields;
+      do{
+        if(fields.size()>=16||current().kind!=Kind::name||!record_label(text())){fail(ParseError::syntax);return std::nullopt;}
+        const auto field=text();++pos_;
+        for(const auto& old:fields)if(old.first==field){fail(ParseError::duplicate_local);return std::nullopt;}
+        if(!take(Kind::colon_assign)){
+          if(!take(Kind::colon)&&!take(Kind::equals)){fail(ParseError::syntax);return std::nullopt;}
+          ordinary=true;
+        }
+        const bool negative=take(Kind::minus);
+        if(current().kind!=Kind::integer){fail(ParseError::syntax);return std::nullopt;}
+        const auto digits=text();++pos_;
+        auto value=negative?parse_source_decimal(std::string("-")+std::string(digits)):parse_source_decimal(digits);
+        if(!value){fail(ParseError::literal_out_of_range);return std::nullopt;}
+        auto node=append(Node{Op::literal,0,0,*value});
+        if(!node)return std::nullopt;
+        fields.emplace_back(field,*node);
+        if(!take(Kind::comma)||current().kind==close)break;
+      }while(true);
+      if((!brace&&!ordinary)||!take(close)||!take(Kind::semicolon)){fail(ParseError::syntax);return std::nullopt;}
+      record_locals_.emplace_back(local,std::move(fields));
+    }
+    if(!name("return")){fail(ParseError::syntax);return std::nullopt;}
+    auto root=expr(0);
+    if(!root||!take(Kind::semicolon)||!take(Kind::rbrace)){fail(ParseError::syntax);return std::nullopt;}
+    return root;
   }
   [[nodiscard]] bool binding_name(std::string_view n) const {
     if(n.empty()||(!(n[0]>='a'&&n[0]<='z')&&!portable_nonascii_name_start(unicode_at(n,0).value))||known_name(n))return false;
@@ -2224,6 +2281,11 @@ public:
         (void)local_pointer();
         return std::move(out_);
       }
+    }
+    if(!strict_&&helpers_.empty()&&refinements_.empty()&&units_.empty()&&dimensions_.empty()&&current().kind==Kind::name&&text()=="const"){
+      auto result=record_body();
+      if(!result||current().kind!=Kind::end){fail(ParseError::syntax);return std::move(out_);}
+      out_.root=*result;return std::move(out_);
     }
     std::vector<std::string_view> aliases;
     auto root = strict_||!helpers_.empty()||(current().kind==Kind::name&&(text()=="val"||text()=="if"||(!refinements_.empty()&&text()=="let"))) ? binding_body() : body(aliases);
