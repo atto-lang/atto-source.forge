@@ -589,6 +589,8 @@ class Parser {
   }
   ExprPtr factor(std::size_t depth) {
     check_depth(depth);
+    if (tok_.text=="spawn")
+      error("E_SPAWN_OPTIONS_UNSUPPORTED: actor spawn requires typed initialization, resource admission and runtime lowering");
     if (tok_.text=="rt") {
       next();
       const std::string operation(tok_.text);
