@@ -1,0 +1,351 @@
+# FAIL CLOSED: executing a PR head on an ephemeral self-hosted runner requires
+# an independent privileged GitHub APPROVED review bound to that exact SHA.
+# A successful source-free probe or an unreviewed manual dispatch is insufficient.
+# Source-local, opt-in native Forge tests. Requires a provisioned isolated,
+# ephemeral runner with the custom atto-ci-trusted label in THIS source org.
+# No PR/push trigger: unreviewed workflow or contributor source cannot execute
+# automatically on the trusted self-hosted runner.
+name: AttoLang Forge exact-head source-local compiler tests (full CTest)
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_pr_number:
+        description: "Open same-repository Forge PR number targeting main (approved exact head)"
+        required: true
+        type: string
+      expected_head_sha:
+        description: "Exact live head SHA of the selected Forge PR (40 lowercase hex)"
+        required: true
+        type: string
+      expected_tree_sha:
+        description: "Exact Git tree SHA corresponding to that PR head"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: atto-forge-reviewed-source-local
+  cancel-in-progress: false
+
+jobs:
+  native-reviewed-source-full-suite:
+    if: github.repository == 'atto-lang/atto-source.forge' && github.ref == 'refs/heads/main'
+    name: reviewed-exact-head-gcc-clang-asan-ubsan-full-ctest
+    # Dedicated org runner group must permit only this reviewed @main workflow.
+    # A label alone is not a security boundary.
+    runs-on:
+      group: atto-forge-source-local-trusted
+      labels: [self-hosted, linux, x64, atto-ci-trusted]
+    timeout-minutes: 45
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Bind requested PR SHA and tree to independently approved live source
+        shell: bash
+        env:
+          EXPECTED_PR: ${{ inputs.expected_pr_number }}
+          EXPECTED_HEAD: ${{ inputs.expected_head_sha }}
+          EXPECTED_TREE: ${{ inputs.expected_tree_sha }}
+          READ_ONLY_GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]] || exit 2
+          [[ "$EXPECTED_TREE" =~ ^[0-9a-f]{40}$ ]] || exit 2
+          test "$GITHUB_REPOSITORY" = 'atto-lang/atto-source.forge'
+          test "$GITHUB_REF" = 'refs/heads/main'
+          test -n "${RUNNER_NAME:-}"
+          python3 - <<'PY'
+          import json, os, re, urllib.request
+          REPO = "atto-lang/atto-source.forge"
+          REPO_ID = 1448701874
+          RAW_PR = os.environ["EXPECTED_PR"]
+          if not re.fullmatch(r"[1-9][0-9]{0,5}", RAW_PR):
+              raise SystemExit("DENIED: malformed pull request number")
+          PR = int(RAW_PR)
+          SHA = os.environ["EXPECTED_HEAD"]
+          TREE = os.environ["EXPECTED_TREE"]
+          TOKEN = os.environ["READ_ONLY_GITHUB_TOKEN"]
+          ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
+          if not (len(SHA) == len(TREE) == 40 and
+                  all(c in "0123456789abcdef" for c in SHA + TREE)):
+              raise SystemExit("DENIED: malformed immutable source identity")
+          def fetch(path):
+              request = urllib.request.Request(
+                  "https://api.github.com/repos/" + REPO + "/" + path,
+                  headers={"Authorization": "Bearer " + TOKEN,
+                           "Accept": "application/vnd.github+json",
+                           "X-GitHub-Api-Version": "2022-11-28",
+                           "User-Agent": "atto-ephemeral-runner-admission"})
+              with urllib.request.urlopen(request, timeout=20) as response:
+                  return json.load(response)
+          branch_state = fetch("branches/main")
+          if not isinstance(branch_state, dict) or branch_state.get("protected") is not True:
+              raise SystemExit("DENIED: source main is not protected")
+          pull = fetch("pulls/" + str(PR))
+          head = pull.get("head") or {}
+          source_repo = head.get("repo") or {}
+          base = pull.get("base") or {}
+          base_repo = base.get("repo") or {}
+          author = (pull.get("user") or {}).get("id")
+          if (pull.get("state") != "open" or head.get("sha") != SHA or
+                  source_repo.get("full_name") != REPO or
+                  source_repo.get("id") != REPO_ID or
+                  source_repo.get("private") is not True or
+                  base.get("ref") != "main" or base_repo.get("id") != REPO_ID or
+                  base_repo.get("private") is not True or
+                  not isinstance(author, int)):
+              raise SystemExit("DENIED: source PR identity, branch, or author changed")
+          commit = fetch("git/commits/" + SHA)
+          if (commit.get("tree") or {}).get("sha") != TREE:
+              raise SystemExit("DENIED: expected Git tree is not the live PR commit tree")
+          reviews = []
+          for page in range(1, 12):
+              batch = fetch("pulls/" + str(PR) + "/reviews?per_page=100&page=" + str(page))
+              if not isinstance(batch, list) or len(batch) > 100:
+                  raise SystemExit("DENIED: invalid GitHub review response")
+              reviews.extend(batch)
+              if len(batch) < 100:
+                  break
+          else:
+              raise SystemExit("DENIED: review pagination exceeds audit limit")
+          latest = {}
+          for review in reviews:
+              user = review.get("user") or {}
+              rid, reviewer = user.get("id"), user.get("login")
+              state, serial = review.get("state"), review.get("id")
+              if (review.get("commit_id") != SHA or user.get("type") != "User" or
+                      not isinstance(rid, int) or rid == author or
+                      not isinstance(reviewer, str) or not reviewer or
+                      not isinstance(serial, int) or
+                      review.get("author_association") not in ASSOCIATIONS or
+                      state not in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED")):
+                  continue
+              if rid not in latest or serial > latest[rid][0]:
+                  latest[rid] = (serial, state, reviewer)
+          if any(row[1] == "CHANGES_REQUESTED" for row in latest.values()):
+              raise SystemExit("DENIED: current-head reviewer requested changes")
+          approved = []
+          for rid, row in latest.items():
+              if row[1] != "APPROVED":
+                  continue
+              reviewer = row[2]
+              if not re.fullmatch(r"[A-Za-z0-9-]{1,39}", reviewer):
+                  continue
+              # Org membership alone does not imply repository write permission.
+              # GitHub's metadata-readable collaborator endpoint resolves grants
+              # through organizations, teams and custom roles; deny 403/404.
+              permission = fetch("collaborators/" + reviewer + "/permission")
+              if (permission.get("user") or {}).get("id") != rid or \
+                      permission.get("permission") not in ("write", "maintain", "admin"):
+                  continue
+              approved.append(reviewer)
+          if not approved:
+              raise SystemExit("DENIED: no independent privileged approval on exact head")
+          print("ATTO_SOURCE_LOCAL_REVIEWED_HEAD=" + SHA)
+          print("ATTO_SOURCE_LOCAL_TREE=" + TREE)
+          print("ATTO_SOURCE_LOCAL_INDEPENDENT_APPROVAL_COUNT=" + str(len(approved)))
+          print("ATTO_SOURCE_LOCAL_SOURCE_EXPORT=NONE")
+          PY
+          echo "SOURCE_LOCAL_SOURCE_EXPORT=NONE"
+
+      - name: Checkout protected default-branch admission regression tests
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          clean: true
+
+      - name: Execute source-free hostile-input regression tests before PR checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 -m unittest discover -s verification -p test_atto_source_local_trusted_runner_gate.py -v
+          echo "ATTO_PRECHECK_ADMISSION_MUTATION_TESTS=EXECUTED_SOURCE_FREE_NOT_GUEST"
+
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.expected_head_sha }}
+          persist-credentials: false
+          clean: true
+
+      - name: Verify exact checked-out commit/tree and clean source
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ inputs.expected_head_sha }}
+          EXPECTED_TREE: ${{ inputs.expected_tree_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$EXPECTED_TREE"
+          test -z "$(git status --porcelain)"
+          echo "ATTO_FORGE_VERIFIED_SOURCE_HEAD=$EXPECTED_HEAD"
+          echo "ATTO_FORGE_VERIFIED_SOURCE_TREE=$EXPECTED_TREE"
+          echo "ATTO_RUN_ATTEMPT=$GITHUB_RUN_ID/$GITHUB_RUN_ATTEMPT"
+
+      - name: GCC full-source compiler build, CTest inventory and full suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S . -B build-trusted-gcc -DCMAKE_BUILD_TYPE=Debug \
+            -DBUILD_TESTING=ON -DCMAKE_CXX_COMPILER=g++
+          cmake --build build-trusted-gcc --parallel 2
+          python3 -m unittest discover -s scripts -p test_verify_ctest_discovery.py -v
+          python3 scripts/verify_ctest_discovery.py --build-dir build-trusted-gcc
+          ctest --test-dir build-trusted-gcc --output-on-failure --no-tests=error --parallel 2
+          sha256sum build-trusted-gcc/oresforge
+          echo "ATTO_FORGE_GCC_FULL_CTEST=EXECUTED_EXACT_HEAD"
+
+      - name: Clang full-source compiler build, CTest inventory and full suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S . -B build-trusted-clang -DCMAKE_BUILD_TYPE=Debug \
+            -DBUILD_TESTING=ON -DCMAKE_CXX_COMPILER=clang++
+          cmake --build build-trusted-clang --parallel 2
+          python3 -m unittest discover -s scripts -p test_verify_ctest_discovery.py -v
+          python3 scripts/verify_ctest_discovery.py --build-dir build-trusted-clang
+          ctest --test-dir build-trusted-clang --output-on-failure --no-tests=error --parallel 2
+          sha256sum build-trusted-clang/oresforge
+          echo "ATTO_FORGE_CLANG_FULL_CTEST=EXECUTED_EXACT_HEAD"
+
+      - name: Clang ASan UBSan full-source compiler build and full suite
+        shell: bash
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1
+        run: |
+          set -euo pipefail
+          cmake -S . -B build-trusted-sanitized -DCMAKE_BUILD_TYPE=Debug \
+            -DBUILD_TESTING=ON -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_CXX_FLAGS="-O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+          cmake --build build-trusted-sanitized --parallel 2
+          python3 scripts/verify_ctest_discovery.py --build-dir build-trusted-sanitized
+          ctest --test-dir build-trusted-sanitized --output-on-failure --no-tests=error --parallel 2
+          sha256sum build-trusted-sanitized/oresforge
+          echo "ATTO_FORGE_CLANG_ASAN_UBSAN_FULL_CTEST=EXECUTED_EXACT_HEAD"
+
+      - name: Reconfirm exact live head tree and approval after tests
+        shell: bash
+        env:
+          EXPECTED_PR: ${{ inputs.expected_pr_number }}
+          EXPECTED_HEAD: ${{ inputs.expected_head_sha }}
+          EXPECTED_TREE: ${{ inputs.expected_tree_sha }}
+          READ_ONLY_GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Reject tracked modifications and all unexpected untracked/ignored
+          # files. Only the three out-of-tree CMake build directories may be
+          # created. -z handles adversarial paths containing tabs/newlines.
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$EXPECTED_TREE"
+          status_file="$(mktemp)"
+          trap 'rm -f "$status_file"' EXIT
+          git status --porcelain=v1 -z --untracked-files=all --ignored=matching > "$status_file"
+          while IFS= read -r -d '' entry; do
+            case "$entry" in
+              '?? build-trusted-gcc/'*|'!! build-trusted-gcc/'*|\
+              '?? build-trusted-clang/'*|'!! build-trusted-clang/'*|\
+              '?? build-trusted-sanitized/'*|'!! build-trusted-sanitized/'*) ;;
+              *) printf 'ATTO_POST_BUILD_UNEXPECTED_SOURCE_CHANGE=%q\n' "$entry" >&2; exit 1 ;;
+            esac
+          done < "$status_file"
+          echo "ATTO_FORGE_POST_TEST_SOURCE_TREE_CLEAN_EXCEPT_BUILD_DIRS=$EXPECTED_TREE"
+          python3 - <<'PY'
+          import json, os, re, urllib.request
+          REPO = "atto-lang/atto-source.forge"
+          REPO_ID = 1448701874
+          RAW_PR = os.environ["EXPECTED_PR"]
+          if not re.fullmatch(r"[1-9][0-9]{0,5}", RAW_PR):
+              raise SystemExit("DENIED: malformed pull request number")
+          PR = int(RAW_PR)
+          SHA = os.environ["EXPECTED_HEAD"]
+          TREE = os.environ["EXPECTED_TREE"]
+          TOKEN = os.environ["READ_ONLY_GITHUB_TOKEN"]
+          ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
+          if not (len(SHA) == len(TREE) == 40 and
+                  all(c in "0123456789abcdef" for c in SHA + TREE)):
+              raise SystemExit("DENIED: malformed immutable source identity")
+          def fetch(path):
+              request = urllib.request.Request(
+                  "https://api.github.com/repos/" + REPO + "/" + path,
+                  headers={"Authorization": "Bearer " + TOKEN,
+                           "Accept": "application/vnd.github+json",
+                           "X-GitHub-Api-Version": "2022-11-28",
+                           "User-Agent": "atto-ephemeral-runner-admission"})
+              with urllib.request.urlopen(request, timeout=20) as response:
+                  return json.load(response)
+          branch_state = fetch("branches/main")
+          if not isinstance(branch_state, dict) or branch_state.get("protected") is not True:
+              raise SystemExit("DENIED: source main is not protected")
+          pull = fetch("pulls/" + str(PR))
+          head = pull.get("head") or {}
+          source_repo = head.get("repo") or {}
+          base = pull.get("base") or {}
+          base_repo = base.get("repo") or {}
+          author = (pull.get("user") or {}).get("id")
+          if (pull.get("state") != "open" or head.get("sha") != SHA or
+                  source_repo.get("full_name") != REPO or
+                  source_repo.get("id") != REPO_ID or
+                  source_repo.get("private") is not True or
+                  base.get("ref") != "main" or base_repo.get("id") != REPO_ID or
+                  base_repo.get("private") is not True or
+                  not isinstance(author, int)):
+              raise SystemExit("DENIED: source PR identity, branch, or author changed")
+          commit = fetch("git/commits/" + SHA)
+          if (commit.get("tree") or {}).get("sha") != TREE:
+              raise SystemExit("DENIED: expected Git tree is not the live PR commit tree")
+          reviews = []
+          for page in range(1, 12):
+              batch = fetch("pulls/" + str(PR) + "/reviews?per_page=100&page=" + str(page))
+              if not isinstance(batch, list) or len(batch) > 100:
+                  raise SystemExit("DENIED: invalid GitHub review response")
+              reviews.extend(batch)
+              if len(batch) < 100:
+                  break
+          else:
+              raise SystemExit("DENIED: review pagination exceeds audit limit")
+          latest = {}
+          for review in reviews:
+              user = review.get("user") or {}
+              rid, reviewer = user.get("id"), user.get("login")
+              state, serial = review.get("state"), review.get("id")
+              if (review.get("commit_id") != SHA or user.get("type") != "User" or
+                      not isinstance(rid, int) or rid == author or
+                      not isinstance(reviewer, str) or not reviewer or
+                      not isinstance(serial, int) or
+                      review.get("author_association") not in ASSOCIATIONS or
+                      state not in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED")):
+                  continue
+              if rid not in latest or serial > latest[rid][0]:
+                  latest[rid] = (serial, state, reviewer)
+          if any(row[1] == "CHANGES_REQUESTED" for row in latest.values()):
+              raise SystemExit("DENIED: current-head reviewer requested changes")
+          approved = []
+          for rid, row in latest.items():
+              if row[1] != "APPROVED":
+                  continue
+              reviewer = row[2]
+              if not re.fullmatch(r"[A-Za-z0-9-]{1,39}", reviewer):
+                  continue
+              # Org membership alone does not imply repository write permission.
+              # GitHub's metadata-readable collaborator endpoint resolves grants
+              # through organizations, teams and custom roles; deny 403/404.
+              permission = fetch("collaborators/" + reviewer + "/permission")
+              if (permission.get("user") or {}).get("id") != rid or \
+                      permission.get("permission") not in ("write", "maintain", "admin"):
+                  continue
+              approved.append(reviewer)
+          if not approved:
+              raise SystemExit("DENIED: no independent privileged approval on exact head")
+          print("ATTO_SOURCE_LOCAL_REVIEWED_HEAD=" + SHA)
+          print("ATTO_SOURCE_LOCAL_TREE=" + TREE)
+          print("ATTO_SOURCE_LOCAL_INDEPENDENT_APPROVAL_COUNT=" + str(len(approved)))
+          print("ATTO_SOURCE_LOCAL_SOURCE_EXPORT=NONE")
+          PY
+          echo "ATTO_TRUSTED_RUNNER_ADMISSION=SOURCE_LOCAL_FULL_SUITE_STILL_REQUIRES_MERGE_REVIEW"
