@@ -3,6 +3,11 @@ on:
   pull_request:
     paths:
       - 'include/atto/closed_recursive_stage.hpp'
+      - 'include/atto/closed_recursive_source.hpp'
+      - 'include/atto/scalar_lexer.hpp'
+      - 'tools/forge_scalar.cpp'
+      - 'tests/closed_recursive_source_emit.cpp'
+      - 'tests/closed_recursive_source_guest.py'
       - 'include/atto/checked_i64.hpp'
       - 'tests/closed_recursive_stage_emit.cpp'
       - 'tests/closed_recursive_stage_guest.sh'
@@ -34,4 +39,7 @@ jobs:
           git rev-parse HEAD^{tree}
           "$CXX" --version
           bash tests/closed_recursive_stage_guest.sh
+          cmake -S . -B "$RUNNER_TEMP/forge-recursive-cli" -DCMAKE_CXX_COMPILER="$CXX" -DATTO_FORGE_SANITIZERS=ON
+          cmake --build "$RUNNER_TEMP/forge-recursive-cli" --target forge_scalar --parallel 2
+          FORGE_SCALAR="$RUNNER_TEMP/forge-recursive-cli/forge_scalar" python3 tests/closed_recursive_source_guest.py
           test -z "$(git status --porcelain --untracked-files=all)"
