@@ -11,6 +11,8 @@ on:
       - 'include/atto/checked_i64.hpp'
       - 'tests/closed_recursive_stage_emit.cpp'
       - 'tests/closed_recursive_stage_guest.sh'
+      - 'tests/closed_recursive_pipeline_emit.cpp'
+      - 'tests/closed_recursive_pipeline_guest.sh'
       - '.github/workflows/closed-recursive-native-ir.yml'
   workflow_dispatch:
 permissions:
@@ -39,6 +41,7 @@ jobs:
           git rev-parse HEAD^{tree}
           "$CXX" --version
           bash tests/closed_recursive_stage_guest.sh
+          bash tests/closed_recursive_pipeline_guest.sh
           cmake -S . -B "$RUNNER_TEMP/forge-recursive-cli" -DCMAKE_CXX_COMPILER="$CXX" -DATTO_FORGE_SANITIZERS=ON
           cmake --build "$RUNNER_TEMP/forge-recursive-cli" --target forge_scalar --parallel 2
           FORGE_SCALAR="$RUNNER_TEMP/forge-recursive-cli/forge_scalar" python3 tests/closed_recursive_source_guest.py
