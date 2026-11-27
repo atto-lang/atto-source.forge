@@ -31,7 +31,7 @@ struct Token { std::string_view text; std::size_t offset=0; };
 // Predicate types are statically derived from verified opcode identity.
 // The native ABI remains i64-only at function boundaries.
 bool boolean_kind(Kind k) {
-  return k==Kind::BoolParameter || k==Kind::BoolCall || k==Kind::Boolean || k==Kind::Not || k==Kind::And || k==Kind::Or || k==Kind::BooleanXor ||
+  return k==Kind::BoolIf || k==Kind::BoolParameter || k==Kind::BoolCall || k==Kind::Boolean || k==Kind::Not || k==Kind::And || k==Kind::Or || k==Kind::BooleanXor ||
          k==Kind::Less || k==Kind::LessEqual || k==Kind::Greater ||
          k==Kind::GreaterEqual || k==Kind::Equal || k==Kind::NotEqual;
 }
@@ -209,7 +209,7 @@ class Parser {
     current_->returns_bool=take("bool");
     if(!current_->returns_bool) expect("int");
     expect("{");
-    current_->result=current_->returns_bool?terminal_return(0):terminal_body(0);
+    current_->result=terminal_body(0);
     expect("}");
   }
   // This scalar subset has no local state, effects, or general statements.
@@ -217,6 +217,18 @@ class Parser {
   // Reuse the verified lazy If tree: true continues, false returns early.
   int terminal_body(std::size_t d) {
     depth(d);
+    // Bounded imperative early return, distinct from a value if expression.
+    // The untaken branch is the remaining terminal body; no local state or
+    // general statement lowering is implied. Every path returns the declared type.
+    if (take("if")) {
+      const int condition=logical_or(d+1);
+      require_boolean(condition);
+      expect("then");
+      const int yes=terminal_return(d+1);
+      expect("fi");
+      const int no=terminal_body(d+1);
+      return add(current_->returns_bool?Kind::BoolIf:Kind::If,0,{}, {condition,yes,no});
+    }
     if (!take("guard")) return terminal_return(d+1);
     int condition=logical_or(d+1);
     require_boolean(condition);
@@ -232,7 +244,7 @@ class Parser {
     const int failure=terminal_return(d+1);
     expect(braced?"}":"end");
     const int continuation=terminal_body(d+1);
-    return add(Kind::If,0,{}, {condition,continuation,failure});
+    return add(current_->returns_bool?Kind::BoolIf:Kind::If,0,{}, {condition,continuation,failure});
   }
   int terminal_return(std::size_t d) {
     depth(d);
@@ -462,7 +474,7 @@ struct Evaluator {
       return visit(fn,n.children[1],args,depth);
     }
     if(n.kind==Kind::Parameter||n.kind==Kind::BoolParameter)return args[static_cast<std::size_t>(n.value)];
-    if(n.kind==Kind::If||n.kind==Kind::Ternary) {
+    if(n.kind==Kind::If||n.kind==Kind::Ternary||n.kind==Kind::BoolIf) {
       const auto pred=visit(fn,n.children[0],args,depth);
       return visit(fn,n.children[pred ? 1u:2u],args,depth);
     }
@@ -508,7 +520,7 @@ struct Native {
          <<" .Lores_logical_end_"<<tag<<"\n";
       emit_node(fn,n.children[1]);
       out<<".Lores_logical_end_"<<tag<<":\n";
-    } else if(n.kind==Kind::If||n.kind==Kind::Ternary) {
+    } else if(n.kind==Kind::If||n.kind==Kind::Ternary||n.kind==Kind::BoolIf) {
       const auto tag=label++;
       emit_node(fn,n.children[0]);
       out<<"  cmpq $0, %rax\n  je .Lores_else_"<<tag<<"\n";
@@ -624,7 +636,7 @@ void verify(const Module& m) {
         case Kind::Constant: case Kind::Parameter: case Kind::BoolParameter: case Kind::Add:
         case Kind::Sub: case Kind::Mul: case Kind::Less: case Kind::LessEqual:
         case Kind::Greater: case Kind::GreaterEqual: case Kind::Equal:
-        case Kind::NotEqual: case Kind::If: case Kind::Call:
+        case Kind::NotEqual: case Kind::If: case Kind::BoolIf: case Kind::Call:
         case Kind::Boolean: case Kind::Not: case Kind::Ternary:
          case Kind::And: case Kind::Or: case Kind::BooleanXor: case Kind::BoolCall: break;
         default: throw std::runtime_error("unknown callable opcode");
@@ -640,7 +652,7 @@ void verify(const Module& m) {
       std::size_t size=2;
       if(n.kind==Kind::Constant||n.kind==Kind::Boolean||n.kind==Kind::Parameter||n.kind==Kind::BoolParameter)size=0;
       else if(n.kind==Kind::Not)size=1;
-      else if(n.kind==Kind::If||n.kind==Kind::Ternary)size=3;
+      else if(n.kind==Kind::If||n.kind==Kind::Ternary||n.kind==Kind::BoolIf)size=3;
       else if(n.kind==Kind::Call||n.kind==Kind::BoolCall)size=n.children.size();
       if(n.children.size()!=size)throw std::runtime_error("callable operand arity mismatch");
       if(n.kind==Kind::Boolean && n.value!=0 && n.value!=1)
@@ -650,9 +662,11 @@ void verify(const Module& m) {
       };
       if(n.kind==Kind::Not && !child_bool(0))
         throw std::runtime_error("condition_not_bool: negation requires bool");
-      if(n.kind==Kind::If||n.kind==Kind::Ternary) {
+      if(n.kind==Kind::If||n.kind==Kind::Ternary||n.kind==Kind::BoolIf) {
         if(!child_bool(0)) throw std::runtime_error("condition_not_bool: conditional requires bool");
-        if(child_bool(1)||child_bool(2)) throw std::runtime_error("conditional branch is not int");
+        const bool expected_bool=n.kind==Kind::BoolIf;
+        if(child_bool(1)!=expected_bool||child_bool(2)!=expected_bool)
+          throw std::runtime_error(expected_bool?"conditional branch is not bool":"conditional branch is not int");
       } else if(n.kind==Kind::And||n.kind==Kind::Or) {
         if(!child_bool(0)||!child_bool(1))
           throw std::runtime_error("condition_not_bool: logical operands require bool");

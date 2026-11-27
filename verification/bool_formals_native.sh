@@ -49,4 +49,12 @@ negative 'fnc f(int a,int b,int c,int d,int e,int f,int g):int{return a;} fnc ma
 negative 'fnc f(int a):int{return a;} fnc main():int{return f(1,2,3,4,5,6,7);}' 'call argument budget exceeded'
 negative 'fnc main(int a,int b,int c,int d,int e):int{return a;}' 'public entry parameter budget exceeded'
 negative 'fnc f(int a,int b,int c,int d,bool e,int f):int{return f;} fnc main():int{return f(1,2,3,4,5,6);}' 'int is not a Boolean argument'
-echo 'FORGE_TYPED_BOOLEAN_FORMALS_NATIVE_PASS positives=7 negatives=9'
+# Early returns must be lazy, typed and ordered. No unselected overflow.
+positive 'fnc f(bool b):bool{if b then return true; fi return false;} fnc main():int{return f(true) ? 42 : 7;}' 42
+positive 'fnc f(int x):int{if x eq 0 then return 42; fi if x eq 1 then return 7; fi return 9223372036854775807+x;} fnc main():int{return f(0);}' 42
+positive 'fnc f(bool b):bool{if b then return false; fi return true;} fnc main():int{return f(false) ? 42 : 7;}' 42
+negative 'fnc main():int{if 1 then return 42; fi return 7;}' 'condition_not_bool'
+negative 'fnc f(bool b):bool{if b then return 1; fi return false;} fnc main():int{return 42;}' 'condition_not_bool'
+negative 'fnc main():int{if true then return 42; fi}' 'unexpected token'
+negative 'fnc main():int{if true then return 42; return 7;}' 'unexpected token'
+echo 'FORGE_TYPED_BOOLEAN_FORMALS_NATIVE_PASS positives=10 negatives=13'
