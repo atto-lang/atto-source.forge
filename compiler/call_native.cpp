@@ -360,7 +360,8 @@ class Parser {
             const auto saved=token_;
             const std::string candidate(token_.text);
             next();
-            if(take(":")) {
+            if(take(":") || take("=")) {
+              if(token_.text=="=") fail("Pair or malformed label requires typed lowering");
               label=candidate;
               named_seen=true;
             } else {
