@@ -46,7 +46,7 @@ int main() {
   assert(names.ok() && names.tokens.size() == 8);
   assert(names.tokens[4].length == 4 && names.tokens[5].length == 6);
   for (std::size_t j = 0; j < 7; ++j) assert(names.tokens[j].kind == Kind::name);
-  assert(!tokenize("/* \xe2\x80\xae */").ok());
+  assert(tokenize("/* \xe2\x80\xae */").error == LexError::source_bidi);
   assert(!tokenize("// \xf0\x80\x80\x80").ok());
   assert(!tokenize("\xed\xa0\x80").ok());
   const auto negation = tokenize("¬¬Φ !φ != !eq");

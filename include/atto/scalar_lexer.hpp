@@ -12,7 +12,7 @@ enum class Kind {
   plus, minus, star, slash, percent, logical_and, logical_or, not_equal, equal_equal, bit_and, bit_or, caret, bit_xor, tilde, shl, lshr, arrow, left_arrow, bang, unicode_not, end
 };
 struct Token { Kind kind; std::size_t offset; std::size_t length; };
-enum class LexError { none, source_too_large, token_limit, unsupported_byte, unterminated_comment, comment_nesting_limit, ownership_bang_unsupported, suspension_unsupported };
+enum class LexError { none, source_too_large, token_limit, unsupported_byte, unterminated_comment, comment_nesting_limit, ownership_bang_unsupported, suspension_unsupported, source_bidi };
 struct Lexed {
   std::vector<Token> tokens;
   LexError error = LexError::none;
@@ -31,6 +31,11 @@ inline constexpr std::size_t max_tokens = 256;
   }
   for (std::size_t at = 0; at < src.size();) {
     const auto scalar = unicode_at(src, at);
+    if (scalar.width && (scalar.value == 0x61c || scalar.value == 0x200e || scalar.value == 0x200f ||
+        (scalar.value >= 0x202a && scalar.value <= 0x202e) ||
+        (scalar.value >= 0x2066 && scalar.value <= 0x2069))) {
+      out.error = LexError::source_bidi; out.error_offset = at; return out;
+    }
     if (!scalar.width || unicode_source_control(scalar.value)) {
       out.error = LexError::unsupported_byte;
       out.error_offset = at;

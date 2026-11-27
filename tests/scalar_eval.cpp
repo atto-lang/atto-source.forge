@@ -82,6 +82,18 @@ int main() {
   // Host-model controls only: native C++ guest execution is a separate gate.
   // NOT lowers only in the verified predicate lane. The true/false
   // fact swap must make the nonzero divisor proof available on the true edge.
+  // Ordinary scalar Boolean slots and short-circuit conditional returns.
+  for(const auto& source : {
+      "pub fnc main(): int { if ¬false && !false then return 42; else return 0; fi }",
+      "pub fnc main(): int { val bool b = ¬false; val bool c = b && !!true; if c then return 42; else return 0; fi }",
+      "pub fnc main(): int { return (false || true && ¬false) ? 42 : 0; }"}) {
+    const auto p=parse_source(source);assert(p.ok());assert(evaluate(p).value==42);
+  }
+  for(const auto& source : {
+      "pub fnc main(): int { val bool b = true; return b + 1; }",
+      "pub fnc main(): int { val bool b = true; return b; }",
+      "pub fnc main(): int { if false && ¬1 then return 42; else return 0; fi }",
+      "pub fnc main(): int { val bool b = true; if b¬ then return 42; else return 0; fi }"})assert(!parse_source(source).ok());
   const std::string unicode_prefix = "type R = int where self >= 1 and self <= 42; ";
   for (const auto* body : {
       "fnc f(int x) -> int { if ¬(x == 0) { return 42/x; } return 42; } pub fnc main() -> int { return f(1); }",
