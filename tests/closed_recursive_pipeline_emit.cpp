@@ -21,6 +21,14 @@ int main(int argc,char** argv){
     assert(!emit_pipeline(count,{times7}));
     auto dead=computed;dead.nodes.push_back({Op::self,0});assert(!emit_pipeline(dead,{count}));
     auto bad=count;bad.arms.back().body=999;assert(!emit_pipeline(computed,{count,bad}));
+    const Stage slot{{{Op::local,0}},0,{{std::nullopt,0}}};
+    const Stage forward{{{Op::local,1}},0,{{std::nullopt,0}}};
+    assert(!emit_pipeline(slot,{count}));
+    assert(!emit_pipeline(computed,{slot},{computed}));
+    assert(!emit_pipeline(computed,{count},{slot}));
+    assert(!emit_pipeline(forward,{count},{computed}));
+    assert(!emit_pipeline(computed,{count},std::vector<Stage>(17,computed)));
+    assert(emit_pipeline(slot,{count},{computed}));
     return 0;
   }
   std::optional<std::string> code;
