@@ -451,6 +451,10 @@ class Parser {
   using RecordFields = std::vector<std::pair<std::string_view,std::size_t>>;
   // Only root-local const literal i64 records, never a runtime record handle.
   std::vector<std::pair<std::string_view,RecordFields>> record_locals_;
+  struct LocalPair { std::string_view name, key; std::size_t payload; };
+  // Distinct nominal source metadata; only the explicit value projection
+  // enters the checked scalar DAG. No key allocation or product ABI.
+  std::vector<LocalPair> pair_locals_;
   // Boolean slots are admitted only by the ordinary typed predicate path.
   // They never flow into the scalar numeric expression parser.
   std::vector<std::size_t> boolean_slots_;
@@ -1125,6 +1129,12 @@ class Parser {
       return postfix(append(Node{Op::literal, 0, 0, *n}), true, true);
     }
     if(current().kind==Kind::name){
+      for(const auto& pair:pair_locals_)if(pair.name==text()){
+        ++pos_;
+        if(!take(Kind::dot)){fail(ParseError::pair_escape);return std::nullopt;}
+        if(!name("value")){fail(ParseError::pair_projection);return std::nullopt;}
+        return postfix(append(Node{Op::copy,pair.payload,0,0}));
+      }
       for(const auto& record:record_locals_)if(record.first==text()){
         ++pos_;
         if(!take(Kind::dot)||current().kind!=Kind::name){fail(ParseError::syntax);return std::nullopt;}
@@ -1173,13 +1183,83 @@ class Parser {
     for(auto s:{"val","let","int","i64","i32","bool","float","string","void","return","self","main","fnc","pub","define","type","where","as","and","units","in","true","false","if","else","end","begin","while","loop","sync","task","await","suspends","infer","new","match","const","mut","using","unit","dimension","with","spawn","actor","class","record","struct","_"})if(n==s)return false;
     return true;
   }
+  [[nodiscard]] std::optional<std::string_view> local_pair_key() {
+    auto k=text();
+    if(current().kind==Kind::name&&record_label(k)){++pos_;return k;}
+    if(current().kind!=Kind::quoted||k.size()<2||k.front()!='"'||k.back()!='"'){
+      fail(ParseError::pair_key_type);return std::nullopt;
+    }
+    k=k.substr(1,k.size()-2);
+    for(unsigned char ch:k)if(ch<32||ch>126||ch==92||ch==36||ch==34){
+      fail(ParseError::pair_key_unsupported);return std::nullopt;
+    }
+    ++pos_;return k;
+  }
+  [[nodiscard]] bool local_pair_ahead() {
+    if(current().kind!=Kind::name||text()!="const"||pos_+2>=tokens_.size())return false;
+    if(tokens_[pos_+1].kind!=Kind::name)return false;
+    auto word_at=[&](std::size_t n){const auto& t=tokens_[n];return source_.substr(t.offset,t.length);};
+    if(word_at(pos_+1)=="Pair"&&tokens_[pos_+2].kind==Kind::lt)return true;
+    if(tokens_[pos_+2].kind==Kind::colon_assign)return true;
+    return pos_+4<tokens_.size()&&tokens_[pos_+2].kind==Kind::equals&&
+      (tokens_[pos_+4].kind==Kind::colon_assign||
+       (tokens_[pos_+3].kind==Kind::name&&word_at(pos_+3)=="Pair"&&tokens_[pos_+4].kind==Kind::dot));
+  }
+  [[nodiscard]] bool local_pair_binding() {
+    if(pair_locals_.size()+record_locals_.size()>=16){fail(ParseError::node_limit);return false;}
+    if(!name("const"))return false;
+    const bool typed=name("Pair");
+    if(typed&&(!take(Kind::lt)||!name("int")||!take(Kind::gt))){fail(ParseError::syntax);return false;}
+    if(current().kind!=Kind::name||!record_label(text())){fail(ParseError::syntax);return false;}
+    const auto local=text();++pos_;
+    for(const auto& p:pair_locals_)if(p.name==local){fail(ParseError::duplicate_local);return false;}
+    for(const auto& r:record_locals_)if(r.first==local){fail(ParseError::duplicate_local);return false;}
+    std::string_view key=local;
+    std::optional<std::size_t> payload;
+    bool factory=false;
+    if(typed){
+      if(!take(Kind::equals)||current().kind!=Kind::name){fail(ParseError::syntax);return false;}
+      const auto origin=text();++pos_;
+      for(const auto& p:pair_locals_)if(p.name==origin){key=p.key;payload=p.payload;break;}
+      if(!payload){fail(ParseError::pair_projection);return false;}
+    }else{
+      if(!take(Kind::colon_assign)){
+        if(!take(Kind::equals)){fail(ParseError::syntax);return false;}
+        factory=name("Pair");
+        if(factory){
+          if(!take(Kind::dot)||!name("of")||!take(Kind::lparen)||current().kind!=Kind::quoted){
+            fail(ParseError::pair_key_type);return false;
+          }
+        }
+        auto literal=local_pair_key();if(!literal)return false;key=*literal;
+        if(!(factory?take(Kind::comma):take(Kind::colon_assign))){fail(ParseError::syntax);return false;}
+      }
+      const bool negative=take(Kind::minus);
+      if(current().kind!=Kind::integer){fail(ParseError::syntax);return false;}
+      const auto digits=text();++pos_;
+      auto value=negative?parse_source_decimal(std::string("-")+std::string(digits)):parse_source_decimal(digits);
+      if(!value){fail(ParseError::literal_out_of_range);return false;}
+      payload=append(Node{Op::literal,0,0,*value});
+      if(!payload)return false;
+      if(factory&&!take(Kind::rparen)){fail(ParseError::syntax);return false;}
+    }
+    if(!take(Kind::semicolon)){fail(ParseError::syntax);return false;}
+    pair_locals_.push_back({local,key,*payload});
+    return true;
+  }
   [[nodiscard]] std::optional<std::size_t> record_body() {
-    while(name("const")){
-      if(record_locals_.size()>=16){fail(ParseError::node_limit);return std::nullopt;}
+    while(current().kind==Kind::name&&text()=="const"){
+      if(local_pair_ahead()){
+        if(!local_pair_binding())return std::nullopt;
+        continue;
+      }
+      ++pos_;
+      if(record_locals_.size()+pair_locals_.size()>=16){fail(ParseError::node_limit);return std::nullopt;}
       (void)name("Record");
       if(current().kind!=Kind::name||!record_label(text())){fail(ParseError::syntax);return std::nullopt;}
       const auto local=text();++pos_;
       for(const auto& old:record_locals_)if(old.first==local){fail(ParseError::duplicate_local);return std::nullopt;}
+      for(const auto& old:pair_locals_)if(old.name==local){fail(ParseError::duplicate_local);return std::nullopt;}
       if(!take(Kind::equals)){fail(ParseError::syntax);return std::nullopt;}
       const bool brace=take(Kind::lbrace);
       if(!brace&&!take(Kind::lparen)){fail(ParseError::syntax);return std::nullopt;}
