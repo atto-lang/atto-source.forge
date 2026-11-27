@@ -80,6 +80,20 @@ POSITIVE = (
      ((1,42),(0,9223372036854775807))),
     ("guard-lazy-continuation", "fnc main(a:int):int{guard a eq 0 else return 42; end return 9223372036854775807+a;}",
      ((1,42),(0,9223372036854775807))),
+    ("bool-xor-truth-table", "fnc main(a:int,b:int):int{return Xor(a eq 0,b eq 0) ? 42 : 7;}",
+     ((0,0,7),(0,1,42),(1,0,42),(1,1,7))),
+    ("bool-xor-composition", "fnc main(a:int):int{return Xor(a eq 0,true) && a neq 2 ? 42 : 7;}",
+     ((0,7),(1,42),(2,7))),
+    ("user-xor-call", "fnc Xor(a:int,b:int):int{return a+b;} fnc main():int{return Xor(19,23);}",
+     ((42,),)),
+    ("integer-xor-runtime", "fnc main(a:int,b:int):int{return a ^^ b;}",
+     ((11,4,15),(-1,0,-1),(-1,-1,0),(-9223372036854775808,-1,9223372036854775807),(9223372036854775807,-9223372036854775808,-1))),
+    ("integer-xor-precedence", "fnc main(a:int,b:int):int{return a+1 ^^ b*2;}",
+     ((2,5,9),(0,1,3))),
+    ("integer-xor-chain", "fnc main(a:int,b:int):int{return a ^^ b ^^ 7;}",
+     ((11,4,8),(7,7,7))),
+    ("integer-xor-caret", "fnc main(a:int,b:int):int{^ (a ^^ b) eq 15 ? 42 : 7;}",
+     ((11,4,42),(1,2,7))),
     ("no-args", "fnc main():int{return 42;}", ((42,),)),
 )
 # Exact shared Git blobs, including the final newline added by build().
@@ -125,6 +139,15 @@ INVALID = (
     ("guard-missing-tail", "fnc main():int{guard true {return 1;}}", "unexpected token"),
     ("guard-wrong-closer", "fnc main():int{guard true else return 1; fi return 42;}", "unexpected token"),
     ("guard-reserved-formal", "fnc helper(guard:int):int{return 42;} fnc main():int{return 42;}", "reserved predicate word"),
+    ("bool-xor-mixed", "fnc main():int{return Xor(true,1) ? 42 : 7;}", "Boolean Xor requires two bool operands"),
+    ("bool-xor-arity", "fnc main():int{return Xor(true) ? 42 : 7;}", "Boolean Xor requires two bool operands"),
+    ("bool-xor-shadow-function", "fnc main():int{return Xor(true,false) ? 42 : 7;} fnc Xor(a:int,b:int):int{return a+b;}", "Boolean Xor intrinsic is shadowed"),
+    ("bool-xor-shadow-formal", "fnc main(Xor:int):int{return Xor(true,false) ? 42 : 7;}", "Boolean Xor intrinsic is shadowed"),
+    ("bool-xor-symbolic", "fnc main():int{return true ^^ false ? 42 : 7;}", "Boolean is not an int"),
+    ("integer-xor-mixed", "fnc main():int{return 1 ^^ false;}", "Boolean is not an int"),
+    ("integer-xor-equality-precedence", "fnc main():int{return 11 ^^ 4 eq 15 ? 42 : 7;}", "Boolean is not an int"),
+    ("integer-xor-spaced", "fnc main():int{return 11 ^ ^ 4;}", "single caret is only a return statement"),
+    ("integer-xor-infix-caret", "fnc main():int{return 11 ^ 4;}", "single caret is only a return statement"),
     ("integer-condition", "fnc main():int{return if 1 then 2 else 3;}", "condition_not_bool"),
     ("integer-ternary", "fnc main():int{return 1 ? 2 : 3;}", "condition_not_bool"),
     ("integer-unless", "fnc main():int{return unless 1 then 2 else 3 fi;}", "condition_not_bool"),
@@ -221,6 +244,8 @@ def main():
                 require(blob==GUARD_FIXTURE_BLOBS[label],"shared guard fixture drift "+label)
             if label in ("factorial","fibonacci","mutual","nested"):
                 require(asm.count("  call .Lores_fn_")>=1,"missing real native call "+label)
+            if label.startswith("integer-xor-"):
+                require("  xorq " in asm,"missing native integer xor instruction "+label)
             if label in ("factorial","lazy"):
                 require("  je .Lores_else_" in asm,"missing native lazy branch "+label)
             for row in cases:

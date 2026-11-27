@@ -28,7 +28,7 @@ struct Token { std::string_view text; std::size_t offset=0; };
 // Predicate types are statically derived from verified opcode identity.
 // The native ABI remains i64-only at function boundaries.
 bool boolean_kind(Kind k) {
-  return k==Kind::Boolean || k==Kind::Not || k==Kind::And || k==Kind::Or ||
+  return k==Kind::Boolean || k==Kind::Not || k==Kind::And || k==Kind::Or || k==Kind::BooleanXor ||
          k==Kind::Less || k==Kind::LessEqual || k==Kind::Greater ||
          k==Kind::GreaterEqual || k==Kind::Equal || k==Kind::NotEqual;
 }
@@ -104,8 +104,7 @@ class Parser {
     } else if (c=='-' && at_<text_.size() && text_[at_]=='>') {
       ++at_;
     } else if (c=='^' && at_<text_.size() && text_[at_]=='^') {
-      token_={text_.substr(begin,2),begin};
-      fail("FORGE_XOR_BACKEND_UNSUPPORTED: integer ^^ requires native bitwise lowering");
+      ++at_;
     } else if (std::string_view("()+-*{};:,<>=^?").find(c)==std::string_view::npos) {
       at_=begin;
       fail("invalid character");
@@ -269,12 +268,24 @@ class Parser {
   }
   int logical_and(std::size_t d) {
     depth(d);
-    int left=comparison(d+1);
+    int left=integer_xor(d+1);
     while (take("&&")) {
       require_boolean(left);
-      const int right=comparison(d+1);
+      const int right=integer_xor(d+1);
       require_boolean(right);
       left=add(Kind::And,0,{}, {left,right});
+    }
+    return left;
+  }
+  // Java's equality/comparison expressions bind more tightly than integer XOR.
+  // No implicit conversion of predicate results to signed i64.
+  int integer_xor(std::size_t d) {
+    depth(d);
+    int left=comparison(d+1);
+    while (take("^^")) {
+      const int right=comparison(d+1);
+      require_integer(left); require_integer(right);
+      left=add(Kind::IntegerXor,0,{}, {left,right});
     }
     return left;
   }
@@ -366,12 +377,23 @@ class Parser {
       std::vector<int> args;
       if (token_.text!=")") {
         do {
-          const int arg=expr(d+1); require_integer(arg); args.push_back(arg);
+          const int arg=expr(d+1); args.push_back(arg);
           if(args.size()>4)fail("call argument budget exceeded");
           if(!take(","))break;
         }while(true);
       }
       expect(")");
+      // Xor is the named Boolean operation, never an infix ^^ alias.
+      // Do not hijack ordinary i64 callables. The verifier independently
+      // rejects intrinsic binding if a source function/formal shadows Xor.
+      if(name=="Xor" && std::any_of(args.begin(),args.end(),
+                                    [&](int arg){return is_boolean(arg);})) {
+        if(args.size()!=2) fail("Boolean Xor requires two bool operands");
+        if(!is_boolean(args[0])||!is_boolean(args[1]))
+          fail("Boolean Xor requires two bool operands");
+        return add(Kind::BooleanXor,0,{},std::move(args));
+      }
+      for(int arg:args) require_integer(arg);
       return add(Kind::Call,0,name,std::move(args));
     }
     fail("expected callable expression");
@@ -390,12 +412,13 @@ std::int64_t checked(Kind k,std::int64_t a,std::int64_t b) {
     case Kind::Mul:
       if(__builtin_mul_overflow(a,b,&out))throw std::runtime_error("i64 mul overflow");
       return out;
+    case Kind::IntegerXor: return a^b;
     case Kind::Less: return a<b;
     case Kind::LessEqual: return a<=b;
     case Kind::Greater: return a>b;
     case Kind::GreaterEqual: return a>=b;
     case Kind::Equal: return a==b;
-    case Kind::NotEqual: return a!=b;
+    case Kind::NotEqual: case Kind::BooleanXor: return a!=b;
     default: throw std::runtime_error("invalid binary callable opcode");
   }
 }
@@ -444,6 +467,7 @@ const char* argument_reg(std::size_t i) {
 }
 struct Native {
   const Module& program;
+  explicit Native(const Module& module) : program(module) {}
   std::ostringstream out;
   std::size_t label=0;
   std::string value_slot(int id) const {
@@ -492,12 +516,13 @@ struct Native {
         case Kind::Add: out<<"  addq ";break;
         case Kind::Sub: out<<"  subq ";break;
         case Kind::Mul: out<<"  imulq ";break;
+        case Kind::IntegerXor: out<<"  xorq ";break;
         default: out<<"  cmpq ";break;
       }
       out<<value_slot(n.children[1])<<", %rax\n";
       if(n.kind==Kind::Add||n.kind==Kind::Sub||n.kind==Kind::Mul) {
         out<<"  jo .Lores_overflow\n";
-      } else {
+      } else if(n.kind!=Kind::IntegerXor) {
         const char* cc="e";
         switch(n.kind) {
           case Kind::Less: cc="l";break;
@@ -505,7 +530,7 @@ struct Native {
           case Kind::Greater: cc="g";break;
           case Kind::GreaterEqual: cc="ge";break;
           case Kind::Equal: cc="e";break;
-          case Kind::NotEqual: cc="ne";break;
+          case Kind::NotEqual: case Kind::BooleanXor: cc="ne";break;
           default: throw std::runtime_error("invalid native comparison");
         }
         out<<"  set"<<cc<<" %al\n  movzbq %al, %rax\n";
@@ -576,7 +601,7 @@ void verify(const Module& m) {
         case Kind::Greater: case Kind::GreaterEqual: case Kind::Equal:
         case Kind::NotEqual: case Kind::If: case Kind::Call:
         case Kind::Boolean: case Kind::Not: case Kind::Ternary:
-         case Kind::And: case Kind::Or: break;
+         case Kind::And: case Kind::Or: case Kind::BooleanXor: case Kind::IntegerXor: break;
         default: throw std::runtime_error("unknown callable opcode");
       }
       if(n.kind!=Kind::Call && !n.name.empty())
@@ -606,9 +631,16 @@ void verify(const Module& m) {
       } else if(n.kind==Kind::And||n.kind==Kind::Or) {
         if(!child_bool(0)||!child_bool(1))
           throw std::runtime_error("condition_not_bool: logical operands require bool");
+      } else if(n.kind==Kind::BooleanXor) {
+        if(!child_bool(0)||!child_bool(1))
+          throw std::runtime_error("Boolean Xor requires two bool operands");
+        if(std::any_of(m.functions.begin(),m.functions.end(),
+                       [](const Function& f){return f.name=="Xor";}) ||
+           std::find(fn.parameters.begin(),fn.parameters.end(),"Xor")!=fn.parameters.end())
+          throw std::runtime_error("Boolean Xor intrinsic is shadowed by a source declaration");
       } else if(n.kind==Kind::Equal||n.kind==Kind::NotEqual) {
         if(child_bool(0)!=child_bool(1)) throw std::runtime_error("comparison operand type mismatch");
-      } else if(n.kind==Kind::Add||n.kind==Kind::Sub||n.kind==Kind::Mul||
+      } else if(n.kind==Kind::IntegerXor||n.kind==Kind::Add||n.kind==Kind::Sub||n.kind==Kind::Mul||
                 n.kind==Kind::Less||n.kind==Kind::LessEqual||n.kind==Kind::Greater||
                 n.kind==Kind::GreaterEqual) {
         if(child_bool(0)||child_bool(1)) throw std::runtime_error("Boolean is not an int");
