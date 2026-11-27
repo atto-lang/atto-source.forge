@@ -5,6 +5,26 @@
 using namespace atto::forge;
 using namespace atto::forge::scalar;
 int main() {
+  for(const auto* source : {
+    "fnc main():int {const r={foo:=40,bar:2};return r.foo+r.bar;}",
+    "fnc main():int {const Record r=(foo:=40,bar=2);return r.foo+r.bar;}",
+    "fnc main():int {const r=(foo:40,bar:=2);return r.foo+r.bar;}",
+    "fnc main():int {const r={foo=40,bar:=2,};return r.foo+r.bar;}",
+    "fnc main():int {const r={foo:44};const s={bar:-2};return r.foo+s.bar;}"
+  }) assert(parse_source(source).ok());
+  for(const auto* source : {
+    "fnc main():int {const r={foo:=1,foo:2};return 0;}",
+    "fnc main():int {const r=(foo:=1,bar:=2);return 0;}",
+    "fnc main():int {const r={foo : = 1};return 0;}",
+    "fnc main():int {const r={foo:=1 bar:=2};return 0;}",
+    "fnc main():int {const r={foo:1};return r;}",
+    "fnc main():int {const r={foo:1};return r.bar;}",
+    "fnc main():int {const r={foo:1};const r={foo:2};return 0;}",
+    "fnc main():int {const r={foo:1};r.foo=2;return 0;}",
+    "fnc main():int {const r={foo:1+2};return 0;}",
+    "fnc main():int {const r={foo:true};return 0;}",
+    "fnc main():int {const r={foo:9223372036854775808};return 0;}"
+  }) assert(!parse_source(source).ok());
   for (const auto* call : {"stdio.out.write(\"A\")", "process.stdout.write(\"A\")",
                            "stdio /* inert */ .out.write(\"A\")", "process.stdout /* nested /* ok */ */ .write(\"A\")"}) {
     const auto source = std::string("pub fnc main(): int {") + call + "; return 42;}";
