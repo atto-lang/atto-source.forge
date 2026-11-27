@@ -5,6 +5,8 @@
 #include "atto/decimal_i64.hpp"
 #include "atto/scalar_lexer.hpp"
 #include <algorithm>
+#include <iterator>
+#include <utility>
 #include <string_view>
 
 namespace atto::forge::recursive {
