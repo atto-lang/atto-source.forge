@@ -1,4 +1,5 @@
 #include "atto/scalar_emit.hpp"
+#include "atto/closed_recursive_source.hpp"
 #include "atto/durable_counter_emit.hpp"
 #include "atto/durable_scalar_emit.hpp"
 #include <filesystem>
@@ -30,6 +31,12 @@ int main(int argc, char** argv) {
     if (!text.empty()) file.read(text.data(), static_cast<std::streamsize>(size));
     if (!file || file.peek() != std::char_traits<char>::eof())
       return deny("E_SOURCE: changing or truncated input");
+    const auto named=atto::forge::recursive::admit(text,atto::forge::scalar::tokenize(text));
+    if(named.selected){
+      if(!named.stage||!atto::forge::recursive::emit(named.stage->body,named.stage->input))
+        return deny("E_NAMED_STAGE_PROFILE");
+      return 0;
+    }
     const auto parsed = atto::forge::scalar::parse_source(text);
     if (!parsed.ok()) {
       std::cerr << atto::forge::scalar::parse_error_name(parsed.error)
@@ -122,6 +129,12 @@ int main(int argc, char** argv) {
       return deny("E_DURABLE_COUNTER_ACTOR_ABI");
     }
   } else {
+    const auto named=atto::forge::recursive::admit(source,atto::forge::scalar::tokenize(source));
+    if(named.selected){
+      if(strict||!named.stage)return deny("E_NAMED_STAGE_PROFILE");
+      generated=atto::forge::recursive::emit(named.stage->body,named.stage->input);
+      if(!generated)return deny("E_NAMED_STAGE_PROFILE");
+    }else{
     const auto parsed = strict ? atto::forge::scalar::parse_verified_strict_i64(source) : atto::forge::scalar::parse_source(source);
     if (!parsed.ok()) {
       std::cerr << atto::forge::scalar::parse_error_name(parsed.error)
@@ -131,6 +144,7 @@ int main(int argc, char** argv) {
     generated = atto::forge::scalar::emit_cpp(parsed);
     if (!generated) {
       return deny("E_AST: scalar AST rejected before code emission");
+    }
     }
   }
   std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
