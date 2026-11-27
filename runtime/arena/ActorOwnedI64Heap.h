@@ -40,6 +40,10 @@ OresActorLoan ores_actor_i64_heap_borrow(OresActorI64Heap* heap,
                                           OresActorTurn turn, OresActorSlot slot);
 OresActorLoan ores_actor_i64_heap_borrow_mut(OresActorI64Heap* heap,
                                            OresActorTurn turn, OresActorSlot slot);
+/* Trusted generated field scope admission; validates live fixed field and
+ * current physical turn, and mutable declaration for exclusive loans. */
+OresActorLoan ores_actor_i64_heap_field_borrow(OresActorI64Heap* heap, OresActorTurn turn, uint64_t index);
+OresActorLoan ores_actor_i64_heap_field_borrow_mut(OresActorI64Heap* heap, OresActorTurn turn, uint64_t index);
 int64_t ores_actor_i64_heap_loan_read(OresActorI64Heap* heap,
                                      OresActorTurn turn, OresActorLoan loan);
 void ores_actor_i64_heap_loan_write(OresActorI64Heap* heap, OresActorTurn turn,
