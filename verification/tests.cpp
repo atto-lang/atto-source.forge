@@ -712,6 +712,34 @@ int main() {
            "negative runtime params");
     ensure(dump_ir(runtime).find("param.i64 0")!=std::string::npos,
            "parameter instruction not constant-folded");
+    const auto identity=parse_runtime_source("fnc main(a:int):int{return a;}");
+    const auto x86_identity=emit_runtime_asm(identity,Arch::X86_64);
+    const auto arm_identity=emit_runtime_asm(identity,Arch::ARM64);
+    ensure(x86_identity.find("movq %rdi, %rax")!=std::string::npos &&
+           x86_identity.find("%rsp")==std::string::npos,
+           "x86 incoming identity has no reference-storage slot or frame");
+    ensure(arm_identity.find("  ret\\n")!=std::string::npos &&
+           arm_identity.find("mov x0, x0")==std::string::npos &&
+           arm_identity.find("[sp")==std::string::npos &&
+           arm_identity.find("sub sp")==std::string::npos,
+           "arm incoming identity needs no moves or frame");
+    const auto forwarded=parse_runtime_source(
+      "fnc forward(a:int,b:int,c:int,d:int):int{return d-c+b-a;}"
+      "fnc main(a:int,b:int,c:int,d:int):int{return forward(a,b,c,d);}");
+    ensure(interpret(forwarded,std::array<std::int64_t,4>{1,2,3,44})==42,
+           "four incoming values preserve formal and operand order");
+    const auto forwarded_x86=emit_runtime_asm(forwarded,Arch::X86_64);
+    const auto forwarded_arm=emit_runtime_asm(forwarded,Arch::ARM64);
+    ensure(forwarded_x86.find("movq %rdi, ")==std::string::npos &&
+           forwarded_x86.find("subq %rdi, %rax")!=std::string::npos &&
+           forwarded_x86.find("subq %rdx, %rax")!=std::string::npos,
+           "x86 forwards original incoming registers");
+    ensure(forwarded_arm.find("str x0,")==std::string::npos &&
+           forwarded_arm.find("str x1,")==std::string::npos &&
+           forwarded_arm.find("str x2,")==std::string::npos &&
+           forwarded_arm.find("str x3,")==std::string::npos &&
+           forwarded_arm.find("mov x10, x0")!=std::string::npos,
+           "arm forwards original incoming registers");
     reject_diagnostic([&] { interpret(runtime); },"runtime argument count mismatch");
     reject_diagnostic([&] { interpret(runtime,std::array<std::int64_t,1>{1}); },
                       "runtime argument count mismatch");
