@@ -1024,3 +1024,11 @@ if(BUILD_TESTING)
     set_tests_properties(oresforge_closed_native_default_allocation PROPERTIES TIMEOUT 180)
   endif()
 endif()
+
+# Host/compiler-analysis regression only; not compiled guest evidence.
+if(BUILD_TESTING)
+  add_executable(atto_runtime_parking_effects_test tests/runtime_parking_effects.cpp)
+  target_include_directories(atto_runtime_parking_effects_test PRIVATE .)
+  target_compile_features(atto_runtime_parking_effects_test PRIVATE cxx_std_20)
+  add_test(NAME atto_runtime_parking_effects COMMAND atto_runtime_parking_effects_test)
+endif()
