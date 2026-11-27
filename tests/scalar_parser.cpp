@@ -6,6 +6,28 @@ using namespace atto::forge;
 using namespace atto::forge::scalar;
 int main() {
   for(const auto* source : {
+    "fnc main():int {const x:=42;const Pair<int> p=x;return p.value;}",
+    "fnc main():int {const x=x:=42;const Pair<int> p=x;return p.value;}",
+    "fnc main():int {const x=Pair.of(\"x\",42);const Pair<int> p=x;return p.value;}",
+    "fnc main():int {const x=\"x\":=42;return x.value;}",
+    "fnc main():int {const x=y:=42;return x.value;}",
+    "fnc main():int {const x:=40;const r={y:2};return x.value+r.y;}"
+  }) assert(parse_source(source).ok());
+  for(const auto* source : {
+    "fnc main():int {const x:=1;const x:=2;return 0;}",
+    "fnc main():int {const x:=x;return 0;}",
+    "fnc main():int {const x=x:=x;return 0;}",
+    "fnc main():int {const x:=true;return 0;}",
+    "fnc main():int {const x:=42;return x;}",
+    "fnc main():int {const x:=42;return x.key;}",
+    "fnc main():int {const x:=42;x.value=7;return 0;}",
+    "fnc main():int {const r={value:42};const Pair<int> p=r;return 0;}",
+    "fnc main():int {const x:=42;const r={...x};return 0;}",
+    "fnc main():int {const x=Pair.of(7,42);return 0;}",
+    "fnc main():int {const x:=42;const x={a:1};return 0;}",
+    "fnc main():int {const x:=9223372036854775808;return 0;}"
+  }) assert(!parse_source(source).ok());
+  for(const auto* source : {
     "fnc main():int {const r={foo:=40,bar:2};return r.foo+r.bar;}",
     "fnc main():int {const Record r=(foo:=40,bar=2);return r.foo+r.bar;}",
     "fnc main():int {const r=(foo:40,bar:=2);return r.foo+r.bar;}",
