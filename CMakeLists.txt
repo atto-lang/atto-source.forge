@@ -67,6 +67,12 @@ if(BUILD_TESTING)
   target_include_directories(oresforge_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
   target_link_libraries(oresforge_tests PRIVATE oresforge_core)
   add_test(NAME oresforge_unit COMMAND oresforge_tests)
+  # Executed scalar named values (source frontend, verified IR, interpreter).
+  add_test(NAME oresforge_named_value_call_guest_42
+    COMMAND oresforge run
+      "${CMAKE_CURRENT_SOURCE_DIR}/contracts/atto-scalar-v1/positive/named-value-reordered.atto")
+  set_tests_properties(oresforge_named_value_call_guest_42 PROPERTIES
+    PASS_REGULAR_EXPRESSION "^42\\n?$" TIMEOUT 10)
   # This invokes the real Forge frontend on operator-positive and
   # operator-negative sources, including unreachable declarations.
   add_executable(oresforge_legacy_operator_grammar

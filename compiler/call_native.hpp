@@ -1,5 +1,6 @@
 #pragma once
 #include "codegen/native.hpp"
+#include <cstddef>
 #include <cstdint>
 #include <span>
 #include <string>
@@ -19,6 +20,11 @@ struct Node {
   std::string name;
   std::vector<int> children;
   int callee = -1;
+  // Formal slot for each lexical/source-order argument.
+  // Nonzero-arity calls must carry one label (empty means positional)
+  // and one formal slot per operand. Only zero-arity calls may omit them.
+  std::vector<std::string> argument_labels;
+  std::vector<std::size_t> argument_slots;
 };
 struct Function {
   std::string name;

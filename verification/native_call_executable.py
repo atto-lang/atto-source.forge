@@ -4,6 +4,7 @@
 The stage-0 compiler itself is C++ and this is not self-hosting.
 """
 import argparse
+import itertools
 import json
 import os
 from pathlib import Path
@@ -26,6 +27,55 @@ BOUNDARY_33 = ("fnc main(n:int):int{" +
                "return v32;}")
 
 POSITIVE = (
+    ("named-nested-comment-label",
+     "fnc pair(int a,int b):int{return a*10+b;}"
+     " fnc main(int n):int{return pair(b/* % ^ guard /* nested */ */:2,a:n);}",
+     ((4,42),(5,52))),
+    ("comment-hidden-declaration",
+     "/* macro bogus /* guard and % and ^ */ */"
+     "fnc main():int{return 42;}", ((42,),)),
+    ("named-reordered-runtime",
+     "fnc pair(int a,int b):int{return a*10+b;}"
+     " fnc main(n:int):int{return pair(b:2,a:n);}",
+     ((4,42),(7,72),(-1,-8))),
+    ("named-positional-prefix",
+     "fnc pair(a:int,b:int):int{return a*10+b;}"
+     " fnc main(n:int):int{return pair(n,b:2);}",
+     ((4,42),(7,72))),
+    ("named-equals-reordered",
+     "fnc pair(a:int,b:int):int{return a*10+b;}"
+     " fnc main(n:int):int{return pair(b=2,a=n);}",
+     ((4,42),(-1,-8))),
+    ("named-mixed-separators",
+     "fnc pair(a:int,b:int):int{return a*10+b;}"
+     " fnc main(n:int):int{return pair(b:2,a=n);}",
+     ((4,42),(2,22))),
+    ("named-equals-positional",
+     "fnc pair(a:int,b:int):int{return a*10+b;}"
+     " fnc main(n:int):int{return pair(n,b=2);}",
+     ((4,42),(0,2))),
+    ("named-nested-call",
+     "fnc inc(x:int):int{return x+1;}"
+     " fnc pair(a:int,b:int):int{return a*10+b;}"
+     " fnc main(n:int):int{return pair(b:inc(x:1),a:inc(x:n));}",
+     ((3,42),(0,12))),
+    ("named-case-exact",
+     "fnc pair(int A,int b):int{return A*10+b;}"
+     " fnc main(int n):int{return pair(b:2,A:n);}",
+     ((4,42),(6,62))),
+    ("named-recursion",
+     "fnc fact(n:int):int{return if n<=1 then 1 else n*fact(n:n-1);}"
+     " fnc main(n:int):int{return fact(n:n);}",
+     ((0,1),(5,120),(8,40320))),
+    ("named-four-registers",
+     "fnc four(a:int,b:int,c:int,d:int):int{return a*1000+b*100+c*10+d;}"
+     " fnc main(n:int):int{return four(d:4,c:3,b:2,a:n);}",
+     ((1,1234),(5,5234))),
+    ("named-immutable-local",
+     "fnc id(int x):int{return x;}"
+     " fnc pair(int a,int b):int{return a*10+b;}"
+     " fnc main(n:int):int{const value=id(x:n);return pair(b:2,a:value);}",
+     ((4,42),(-1,-8))),
     ("immutable-32-local-boundary", BOUNDARY_32,
      ((0,31),(-31,0),(9223372036854775776,9223372036854775807))),
     ("factorial", "fnc fact(n:int):int{return if n<=1 then 1 else n*fact(n-1);}"
@@ -59,6 +109,34 @@ POSITIVE = (
      ((-2,0),(0,6),(5,21))),
 )
 TRAPS = (
+    # Fibonacci has shallow (<128) frames but exponential total work.
+    # The previously unbounded native backend could run indefinitely even
+    # though the interpreter hit its 200,000-node work limit.
+    ("bounded-work-exponential-fibonacci",
+     "fnc fib(n:int):int{return if n<=1 then n else fib(n-1)+fib(n-2);}"
+     "fnc main(n:int):int{return fib(n);}",
+     (25,), "callable execution budget exceeded"),
+    # Both operands can fail: the first SOURCE expression must win,
+    # regardless of which formal it binds to.
+    ("named-equals-lexical-overflow-before-recursion",
+     "fnc loop(n:int):int{return loop(n);}"
+     "fnc ignore(a:int,b:int):int{return 42;}"
+     "fnc main(n:int):int{return ignore(b=n+1,a:loop(n));}",
+     (9223372036854775807,), "i64 add overflow"),
+    ("named-lexical-overflow-before-recursion",
+     "fnc loop(n:int):int{return loop(n);}"
+     "fnc ignore(a:int,b:int):int{return 42;}"
+     "fnc main(n:int):int{return ignore(b:n+1,a:loop(n));}",
+     (9223372036854775807,), "i64 add overflow"),
+    ("named-lexical-recursion-before-overflow",
+     "fnc loop(n:int):int{return loop(n);}"
+     "fnc ignore(a:int,b:int):int{return 42;}"
+     "fnc main(n:int):int{return ignore(b:loop(n),a:n+1);}",
+     (9223372036854775807,), "call depth exceeded"),
+    ("named-eager-unused-argument-overflow",
+     "fnc ignore(a:int,b:int):int{return 42;}"
+     " fnc main(n:int):int{return ignore(b:0,a:n+1);}",
+     (9223372036854775807,), "i64 add overflow"),
     ("overflow-add", "fnc plus(n:int):int{return n+1;}"
      " fnc main(n:int):int{return plus(n);}",
      (9223372036854775807,), "i64 add overflow"),
@@ -77,6 +155,64 @@ TRAPS = (
      (1,), "call depth exceeded"),
 )
 INVALID = (
+    ("unterminated-block-comment",
+     "fnc main():int{return 42;} /* never closed",
+     "unterminated block comment"),
+    ("legacy-percent-op",
+     "fnc main():int{return 10%3;}",
+     "legacy % operator is removed"),
+    ("legacy-single-caret-op",
+     "fnc main():int{return 2^3;}",
+     "legacy ^/^^ operators are removed"),
+    ("legacy-double-caret-op",
+     "fnc main():int{return 2^^3;}",
+     "legacy ^/^^ operators are removed"),
+    ("guard-native-local",
+     "fnc main():int{const guard=1;return guard;}",
+     "GUARD_BACKEND_UNSUPPORTED"),
+    ("guard-native-function",
+     "fnc guard():int{return 42;} fnc main():int{return guard();}",
+     "GUARD_BACKEND_UNSUPPORTED"),
+    ("guard-native-parameter",
+     "fnc helper(guard:int):int{return 42;} fnc main():int{return helper(1);}",
+     "GUARD_BACKEND_UNSUPPORTED"),
+    ("named-mixed-duplicate",
+     "fnc pair(a:int,b:int):int{return a*10+b;}"
+     " fnc main():int{return pair(a=4,a:2);}", "duplicate named argument"),
+    ("named-equals-unknown",
+     "fnc pair(a:int,b:int):int{return a*10+b;}"
+     " fnc main():int{return pair(z=4,b:2);}", "unknown named argument: z"),
+    ("named-equals-positional-after",
+     "fnc pair(a:int,b:int):int{return a*10+b;}"
+     " fnc main():int{return pair(a=4,2);}", "positional argument after named argument"),
+    ("named-pair-not-label",
+     "fnc pair(a:int,b:int):int{return a*10+b;}"
+     " fnc main():int{return pair(a:=4,b=2);}", "Pair or malformed label"),
+    ("named-duplicate",
+     "fnc pair(a:int,b:int):int{return a*10+b;}"
+     " fnc main():int{return pair(a:4,a:2);}", "duplicate named argument"),
+    ("named-unknown",
+     "fnc pair(a:int,b:int):int{return a*10+b;}"
+     " fnc main():int{return pair(z:4,b:2);}", "unknown named argument: z"),
+    ("named-positional-after",
+     "fnc pair(a:int,b:int):int{return a*10+b;}"
+     " fnc main():int{return pair(b:2,4);}", "positional argument after named argument"),
+    ("named-positional-collision",
+     "fnc pair(a:int,b:int):int{return a*10+b;}"
+     " fnc main():int{return pair(4,a:2);}", "duplicate named argument"),
+    ("named-case-sensitive",
+     "fnc pair(a:int,b:int):int{return a*10+b;}"
+     " fnc main():int{return pair(A:4,b:2);}", "unknown named argument: A"),
+    ("named-missing",
+     "fnc pair(a:int,b:int):int{return a*10+b;}"
+     " fnc main():int{return pair(b:2);}", "function arity mismatch"),
+    ("named-extra",
+     "fnc pair(a:int,b:int):int{return a*10+b;}"
+     " fnc main():int{return pair(a:4,b:2,z:0);}", "function arity mismatch"),
+    ("named-unreachable-invalid",
+     "fnc pair(a:int,b:int):int{return a*10+b;}"
+     " fnc unused():int{return pair(a:4,z:2);}"
+     " fnc main():int{return 42;}", "unknown named argument: z"),
     ("wrong-arity", "fnc f(n:int):int{return n;} fnc main():int{return f(1,2);}", "function arity mismatch"),
     ("unknown-target", "fnc main():int{return absent(1);}", "unknown function"),
     ("unreachable-invalid", "fnc bad():int{return absent();} fnc main():int{return 1;}", "unknown function"),
@@ -144,7 +280,10 @@ def build(compiler,cc,root,label,source,param_count):
     require("  call .Lores_fn_" in asm or "call ." not in asm,
             "native call syntax invalid in "+label)
     require(".Lores_depth:" in asm and ".Lores_overflow:" in asm and
-            len(asm)<5000000,"no bounded native call frame "+label)
+            ".Lores_budget:" in asm and
+            "  movq $200000, %r9" in asm and
+            "  js .Lores_budget" in asm and len(asm)<5000000,
+            "no bounded native call frame and execution work "+label)
     (root/"entry.s").write_text(asm,encoding="ascii")
     signature=", ".join("int64_t" for _ in range(param_count)) or "void"
     arguments=", ".join("v[%d]"%i for i in range(param_count))
@@ -168,10 +307,22 @@ def main():
     positives=negatives=0
     with tempfile.TemporaryDirectory(prefix="oresforge-native-calls-") as tmp:
         root=Path(tmp)
-        for label,source,cases in POSITIVE:
+        # Exhaust all 24 permutations of four signature labels. The native
+        # ABI must bind to formal register slots, not the spelling order.
+        permutation_cases=[]
+        for index,order in enumerate(itertools.permutations(("a","b","c","d"))):
+            values={"a":"n","b":"2","c":"3","d":"4"}
+            args=",".join(name+":"+values[name] for name in order)
+            source=("fnc four(a:int,b:int,c:int,d:int):int{"
+                    "return a*1000+b*100+c*10+d;}"
+                    "fnc main(n:int):int{return four("+args+");}")
+            permutation_cases.append(("named-four-permutation-%02d"%index,source,
+                                      ((1,1234),(5,5234))))
+        for label,source,cases in POSITIVE+tuple(permutation_cases):
             number=len(cases[0])-1
             file,exe,asm=build(compiler,cc,root,label,source,number)
-            if label in ("factorial","fibonacci","mutual","nested","immutable-helper-bindings"):
+            if label in ("factorial","fibonacci","mutual","nested","immutable-helper-bindings",
+                         "named-reordered-runtime","named-nested-call","named-four-registers"):
                 require(asm.count("  call .Lores_fn_")>=1,"missing real native call "+label)
             if label in ("factorial","lazy"):
                 require("  je .Lores_else_" in asm,"missing native lazy branch "+label)
@@ -194,7 +345,23 @@ def main():
             require(native.returncode==-signal.SIGILL and native.stdout==b"",
                     "native overflow/depth failed to trap "+label+": "+str(native.returncode))
             negatives+=1
-        for label,source,diagnostic in INVALID:
+        # A depth of 128 is admissible; 129 must reject without publishing
+        # any output, including when the comments trail valid declarations.
+        boundary_comment="/*"*128+"*/"*128
+        positive_boundary="fnc main():int{return 42;}"+boundary_comment
+        file,exe,_=build(compiler,cc,root,"comment-depth-128",positive_boundary,0)
+        for command in ((compiler,"run-calls",str(file)),):
+            ok=execute(command,root)
+            require((ok.returncode,ok.stdout,ok.stderr)==(0,b"42\n",b""),
+                    "comment nesting depth 128 must remain admissible")
+        passed=execute([str(exe)],root)
+        require((passed.returncode,passed.stdout,passed.stderr)==(0,b"42\n",b""),
+                "native comment nesting boundary mismatch")
+        positives+=1
+        too_deep="fnc main():int{return 42;}"+"/*"*129+"*/"*129
+        # Include this generated 129-depth negative alongside static cases.
+        for label,source,diagnostic in INVALID+(
+            ("over-nested-block-comment",too_deep,"block comment nesting too deep"),):
             file=root/"bad.atto"
             file.write_text(source+"\n",encoding="utf8")
             for command in ((compiler,"run-calls",str(file)),(compiler,"emit-call-asm","x86_64",str(file))):

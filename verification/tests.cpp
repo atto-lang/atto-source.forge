@@ -612,6 +612,159 @@ int main() {
         "fnc spare():int{return 3;}"),{})==42,
         "callable line comments cannot swallow another definition");
     }
+    // Native-call lexer must agree with the scalar lexer: nested block
+    // comments hide all operators/declarations, but must remain bounded.
+    {
+      const std::string good=
+        "fnc pair(a:int,b:int):int{return a*10+b;}"
+        "fnc main(n:int):int{return pair(b /* % ^ /* macro */ guard */ :2,a:n);}";
+      ensure(calls::interpret(calls::parse(good),
+        std::array<std::int64_t,1>{4})==42,
+        "nested comments must not affect named ABI slots");
+      const std::string depth_128=
+        "fnc main():int{return 42;}"+
+        ([](){ std::string v;for(int i=0;i<128;++i)v+="/*";
+               for(int i=0;i<128;++i)v+="*/";return v; }());
+      ensure(calls::interpret(calls::parse(depth_128),{})==42,
+             "comment nesting at maximum boundary");
+      std::string over="fnc main():int{return 42;}";
+      for(int i=0;i<129;++i)over+="/*";
+      for(int i=0;i<129;++i)over+="*/";
+      reject_diagnostic([&]{(void)calls::parse(over);},
+                        "block comment nesting too deep");
+      reject_diagnostic([]{(void)calls::parse(
+        "fnc main():int{return 42;} /*");},
+                        "unterminated block comment");
+      reject_diagnostic([]{(void)calls::parse(
+        "fnc main():int{return 10%3;}");},
+                        "legacy % operator is removed");
+      reject_diagnostic([]{(void)calls::parse(
+        "fnc main():int{return 2^^3;}");},
+                        "legacy ^/^^ operators are removed");
+    }
+    // Scalar inlining frontend must agree with the separate native-call parser.
+    for (const auto* call : {"pair(b=2,a=4)", "pair(b:2,a=4)", "pair(4,b=2)"}) {
+      const std::string code = "fnc pair(a:int,b:int):int{return a*10+b;}"
+        "fnc main():int{return " + std::string(call) + ";}";
+      ensure(interpret(parse_source(code))==42, "named separator scalar result");
+    }
+    reject_diagnostic([&] { (void)parse_source(
+      "fnc pair(a:int,b:int):int{return a*10+b;}"
+      "fnc main():int{return pair(a=4,a:2);}"); }, "duplicate named argument");
+    reject_diagnostic([&] { (void)parse_source(
+      "fnc pair(a:int,b:int):int{return a*10+b;}"
+      "fnc main():int{return pair(a:=4,b=2);}"); }, "Pair or malformed label");
+    // Named call metadata must be fully validated even when an embedding
+    // host passes a forged Module directly, bypassing source admission.
+    {
+      auto valid=calls::parse(
+        "fnc pair(int a,int b):int{return a*10+b;}"
+        "fnc main(n:int):int{return pair(b:2,a:n);}");
+      auto positional=calls::parse(
+        "fnc pair(a:int,b:int):int{return a*10+b;}"
+        "fnc main():int{return pair(4,2);}");
+      bool inspected_positional=false;
+      for(const auto& node:positional.functions.back().nodes) {
+        if(node.kind!=calls::Kind::Call)continue;
+        inspected_positional=true;
+        ensure(node.argument_labels.size()==2 &&
+                 node.argument_labels[0].empty() &&
+                 node.argument_labels[1].empty() &&
+                 node.argument_slots==std::vector<std::size_t>({0,1}),
+               "source positional call must carry complete explicit slots");
+      }
+      ensure(inspected_positional,"expected source positional call node");
+      ensure(calls::interpret(positional,{})==42,
+             "positional calls retain exact formal order");
+      auto erased_positional=positional;
+      for(auto& node:erased_positional.functions.back().nodes)
+        if(node.kind==calls::Kind::Call){
+          node.argument_labels.clear();
+          node.argument_slots.clear();
+        }
+      reject_diagnostic([&]{calls::verify(erased_positional);},
+                        "invalid named call label inventory");
+      reject_diagnostic([&]{(void)calls::emit_asm(erased_positional,Arch::X86_64);},
+                        "invalid named call label inventory");
+      auto erased_named=valid;
+      for(auto& node:erased_named.functions.back().nodes)
+        if(node.kind==calls::Kind::Call){
+          node.argument_labels.clear();
+          node.argument_slots.clear();
+        }
+      reject_diagnostic([&]{calls::verify(erased_named);},
+                        "invalid named call label inventory");
+      reject_diagnostic([&]{(void)calls::interpret(
+        erased_named,std::array<std::int64_t,1>{4});},
+                        "invalid named call label inventory");
+      auto missing_slots=valid;
+      for(auto& node:missing_slots.functions.back().nodes)
+        if(node.kind==calls::Kind::Call)node.argument_slots.clear();
+      reject_diagnostic([&]{calls::verify(missing_slots);},
+                        "callable named-binding slots mismatch");
+      const auto zero_args=calls::parse(
+        "fnc answer():int{return 42;} fnc main():int{return answer();}");
+      ensure(calls::interpret(zero_args,{})==42,
+             "genuine zero-argument call metadata remains valid");
+      ensure(calls::interpret(valid,std::array<std::int64_t,1>{4})==42,
+             "checked native named ABI order");
+      const auto native_asm=calls::emit_asm(valid,Arch::X86_64);
+      ensure(native_asm.find("  call .Lores_fn_")!=std::string::npos,
+             "named native call emitted");
+      ensure(native_asm.find("  movq $200000, %r9")!=std::string::npos &&
+             native_asm.find("  js .Lores_budget")!=std::string::npos &&
+             native_asm.find(".Lores_budget:\n  ud2")!=std::string::npos,
+             "per-entry native execution budget is mandatory");
+      auto wrong_slots=valid;
+      for(auto& node:wrong_slots.functions.back().nodes)
+        if(node.kind==calls::Kind::Call)node.argument_slots={0,1};
+      reject_diagnostic([&]{calls::verify(wrong_slots);},
+                        "callable named-binding slots mismatch");
+      reject_diagnostic([&]{(void)calls::emit_asm(wrong_slots,Arch::X86_64);},
+                        "callable named-binding slots mismatch");
+      auto missing_label=valid;
+      for(auto& node:missing_label.functions.back().nodes)
+        if(node.kind==calls::Kind::Call)node.argument_labels.pop_back();
+      reject_diagnostic([&]{calls::verify(missing_label);},
+                        "invalid named call label inventory");
+      auto invalid_slot=valid;
+      for(auto& node:invalid_slot.functions.back().nodes)
+        if(node.kind==calls::Kind::Call)node.argument_slots={1,9};
+      reject_diagnostic([&]{calls::verify(invalid_slot);},
+                        "callable named-binding slots mismatch");
+      auto non_call_slot=valid;
+      non_call_slot.functions.back().nodes.front().argument_slots={0};
+      reject_diagnostic([&]{calls::verify(non_call_slot);},
+                        "unexpected non-call argument bindings");
+      // Both interpreter and native emitter accept public Module objects.
+      // A valid in-range entry index must not redirect to another function.
+      auto forged_entry=valid;
+      forged_entry.entry=0; // pair is a helper, not main.
+      reject_diagnostic([&]{calls::verify(forged_entry);},
+                        "callable entry must name main");
+      reject_diagnostic([&]{(void)calls::interpret(
+        forged_entry,std::array<std::int64_t,1>{4});},
+                        "callable entry must name main");
+      reject_diagnostic([&]{(void)calls::emit_asm(
+        forged_entry,Arch::X86_64);},
+                        "callable entry must name main");
+      auto forged_missing_main=valid;
+      forged_missing_main.functions.back().name="renamed_main";
+      reject_diagnostic([&]{calls::verify(forged_missing_main);},
+                        "callable entry must name main");
+      // Confirm the legitimate source entry, not just its numeric index.
+      ensure(valid.functions[static_cast<std::size_t>(valid.entry)].name=="main",
+             "source entry must name main");
+      auto renamed_formal=valid;
+      renamed_formal.functions.front().parameters[0]="changed";
+      reject_diagnostic([&]{calls::verify(renamed_formal);},
+                        "unknown named argument: a");
+      auto forged_guard_local=calls::parse("fnc main():int{const ok=1;return ok;}");
+      for(auto& node:forged_guard_local.functions[0].nodes)
+        if(node.kind==calls::Kind::Let)node.name="guard";
+      reject_diagnostic([&]{calls::verify(forged_guard_local);},
+                        "invalid callable local name");
+    }
     // Opt-in callable program has its own fully verified representation.
     // Unlike the scalar profile, these helpers compile to real native calls.
     auto fact=calls::parse(
@@ -619,6 +772,15 @@ int main() {
       " fnc main(n:int):int{return fact(n);}");
     ensure(calls::interpret(fact,std::array<std::int64_t,1>{5})==120,
            "bounded direct recursion and lazy branch");
+    const auto exponential=calls::parse(
+      "fnc fib(n:int):int{return if n<=1 then n else fib(n-1)+fib(n-2);}"
+      "fnc main(n:int):int{return fib(n);}");
+    reject_diagnostic([&]{(void)calls::interpret(
+      exponential,std::array<std::int64_t,1>{25});},
+      "callable execution budget exceeded");
+    const auto exponential_asm=calls::emit_asm(exponential,Arch::X86_64);
+    ensure(exponential_asm.find("  js .Lores_budget")!=std::string::npos,
+           "native exponential work must be execution-budgeted");
     ensure(calls::interpret(fact,std::array<std::int64_t,1>{10})==3628800,
            "recursive checked i64 return");
     ensure(calls::emit_asm(fact,Arch::X86_64).find("  call .Lores_fn_")!=std::string::npos,

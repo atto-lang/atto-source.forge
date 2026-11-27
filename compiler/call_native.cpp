@@ -23,6 +23,7 @@ constexpr std::size_t kMaxDepth = 128;
 constexpr std::size_t kMaxStackDepth = 128;
 constexpr std::size_t kMaxEvalSteps = 200000;
 constexpr std::size_t kMaxLocals = 32;
+constexpr std::size_t kMaxCommentNesting = 128;
 bool letter(char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_'; }
 bool digit(char c) { return c >= '0' && c <= '9'; }
 bool valid_identifier(std::string_view name) {
@@ -32,6 +33,41 @@ bool valid_identifier(std::string_view name) {
 }
 bool space(char c) { return c == ' ' || c == '\r' || c == '\n' || c == '\t' || c == '\v' || c == '\f'; }
 struct Token { std::string_view text; std::size_t offset=0; };
+
+// Signature-resolved, bounded binding; labels never select overloads.
+std::vector<std::size_t> bind_call_slots(const Node& call,const Function& fn) {
+  if(call.children.size()!=fn.parameters.size())
+    throw std::runtime_error("function arity mismatch");
+  // Nonzero-arity calls must retain complete provenance. Erasing both
+  // inventories cannot silently turn a named call into a positional call.
+  if(call.argument_labels.size()!=call.children.size())
+    throw std::runtime_error("invalid named call label inventory");
+  std::vector<std::size_t> slots;
+  std::vector<bool> assigned(fn.parameters.size(),false);
+  std::size_t positional=0;
+  bool seen_named=false;
+  slots.reserve(call.children.size());
+  for(std::size_t i=0;i<call.children.size();++i) {
+    const std::string& label=call.argument_labels[i];
+    std::size_t slot=0;
+    if(label.empty()) {
+      if(seen_named)
+        throw std::runtime_error("positional argument after named argument");
+      slot=positional++;
+    } else {
+      seen_named=true;
+      const auto it=std::find(fn.parameters.begin(),fn.parameters.end(),label);
+      if(it==fn.parameters.end())
+        throw std::runtime_error("unknown named argument: "+label);
+      slot=static_cast<std::size_t>(it-fn.parameters.begin());
+    }
+    if(slot>=assigned.size() || assigned[slot])
+      throw std::runtime_error("duplicate named argument or positional collision");
+    assigned[slot]=true;
+    slots.push_back(slot);
+  }
+  return slots;
+}
 
 class Parser {
  public:
@@ -49,8 +85,8 @@ class Parser {
         const auto found=names_.find(node.name);
         if (found==names_.end()) fail("unknown function");
         node.callee=found->second;
-        if (node.children.size()!=module_.functions.at(static_cast<std::size_t>(node.callee)).parameters.size())
-          fail("function arity mismatch");
+        node.argument_slots=bind_call_slots(
+          node,module_.functions.at(static_cast<std::size_t>(node.callee)));
       }
     }
     verify(module_);
@@ -78,6 +114,28 @@ class Parser {
         while (at_<text_.size() && text_[at_]!='\n' && text_[at_]!='\r') ++at_;
         continue;
       }
+      // The scalar frontend and Java accept bounded nested block comments.
+      // Refuse unterminated or over-nested input before parser/IR publication.
+      if (c=='/' && at_+1<text_.size() && text_[at_+1]=='*') {
+        const auto start=at_;
+        at_+=2;
+        std::size_t depth=1;
+        while(depth!=0) {
+          if(at_==text_.size())
+            throw std::runtime_error("unterminated block comment at byte "+
+                                     std::to_string(start));
+          if(at_+1<text_.size() && text_[at_]=='/' && text_[at_+1]=='*') {
+            if(++depth>kMaxCommentNesting)
+              throw std::runtime_error("block comment nesting too deep at byte "+
+                                       std::to_string(start));
+            at_+=2;
+          } else if(at_+1<text_.size() && text_[at_]=='*' && text_[at_+1]=='/') {
+            --depth;
+            at_+=2;
+          } else ++at_;
+        }
+        continue;
+      }
       break;
     }
     const std::size_t begin=at_;
@@ -100,6 +158,13 @@ class Parser {
       ++at_;
     } else if (c=='-' && at_<text_.size() && text_[at_]=='>') {
       ++at_;
+    } else if(c=='%' || c=='^') {
+      // Do not parse these as a legacy numeric operator or silently discard
+      // their operands. The i64 scalar and native-call entrypoints agree.
+      throw std::runtime_error(
+        std::string(c=='%' ? "legacy % operator is removed; use Integer.rem/mod"
+                           : "legacy ^/^^ operators are removed; use Integer.pow/bitXor")+
+        " at byte "+std::to_string(begin));
     } else if (std::string_view("()+-*{};:,<>=").find(c)==std::string_view::npos) {
       at_=begin;
       fail("invalid character");
@@ -113,6 +178,10 @@ class Parser {
   void expect(std::string_view s) {if(!take(s))fail("unexpected token");}
   std::string identifier() {
     if (token_.text.empty() || !letter(token_.text[0])) fail("expected identifier");
+    // Scalar and native-call frontends must agree: checked guard CFG is
+    // unsupported. A local/function/parameter named guard cannot bypass it.
+    if (token_.text=="guard")
+      fail("GUARD_BACKEND_UNSUPPORTED: checked early-exit CFG lowering required");
     const std::string result(token_.text);
     next();
     return result;
@@ -121,7 +190,10 @@ class Parser {
     if (++node_count_>kMaxNodes || current_->nodes.size()>=kMaxNodesPerFunction)
       fail("callable AST node budget exceeded");
     const int idx=static_cast<int>(current_->nodes.size());
-    current_->nodes.push_back({kind,value,std::move(name),std::move(children),-1});
+    // Keep every aggregate member explicit. Missing-field-initializers
+    // becomes an error under strict compiler builds and can hide new IR state.
+    current_->nodes.push_back({kind,value,std::move(name),std::move(children),
+                               -1,{},{} });
     return idx;
   }
   void definition() {
@@ -132,24 +204,25 @@ class Parser {
     }
     expect("fnc");
     const std::string name=identifier();
-    if (name=="int"||name=="const"||name=="return"||name=="if"||name=="else"||name=="then")
+    if (name=="int"||name=="const"||name=="return"||name=="if"||name=="else"||name=="then"||name=="guard")
       fail("reserved function name");
     if (names_.contains(name))fail("duplicate function");
     if (module_.functions.size()>=kMaxFunctions)fail("function count budget exceeded");
     const int index=static_cast<int>(module_.functions.size());
     names_[name]=index;
-    module_.functions.push_back({name,{},{}});
+    module_.functions.push_back({name,{},{},-1});
     current_=&module_.functions.back();
     local_names_.clear();
     expect("(");
     if (token_.text!=")") {
       do {
+        const bool type_first=take("int");
         const std::string param=identifier();
         if (param=="int"||param=="const"||param=="if"||param=="then"||param=="else"||
-            param=="return"||param=="fnc"||
+            param=="return"||param=="fnc"||param=="guard"||
             std::find(current_->parameters.begin(),current_->parameters.end(),param)
             !=current_->parameters.end())fail("invalid or duplicate parameter");
-        expect(":");expect("int");
+        if(!type_first){expect(":");expect("int");}
         current_->parameters.push_back(param);
         if(current_->parameters.size()>4)fail("function parameter budget exceeded");
         if (!take(","))break;
@@ -277,15 +350,37 @@ class Parser {
         fail("unknown parameter");
       }
       std::vector<int> args;
+      std::vector<std::string> labels;
+      bool named_seen=false;
       if (token_.text!=")") {
         do {
+          std::string label;
+          if(!token_.text.empty() && letter(token_.text.front())) {
+            const auto cursor=at_;
+            const auto saved=token_;
+            const std::string candidate(token_.text);
+            next();
+            if(take(":") || take("=")) {
+              if(token_.text=="=") fail("Pair or malformed label requires typed lowering");
+              label=candidate;
+              named_seen=true;
+            } else {
+              at_=cursor;
+              token_=saved;
+            }
+          }
+          if(label.empty() && named_seen)
+            fail("positional argument after named argument");
+          labels.push_back(std::move(label));
           args.push_back(expr(d+1));
           if(args.size()>4)fail("call argument budget exceeded");
           if(!take(","))break;
         }while(true);
       }
       expect(")");
-      return add(Kind::Call,0,name,std::move(args));
+      const int index=add(Kind::Call,0,name,std::move(args));
+      current_->nodes[static_cast<std::size_t>(index)].argument_labels=std::move(labels);
+      return index;
     }
     fail("expected callable expression");
   }
@@ -340,8 +435,14 @@ struct Evaluator {
       return visit(fn,n.children[pred ? 1u:2u],args,depth,locals);
     }
     if(n.kind==Kind::Call) {
-      std::vector<std::int64_t> vals;
-      for (int arg:n.children) vals.push_back(visit(fn,arg,args,depth,locals));
+      // Eagerly evaluate operands in lexical order, then place each value
+      // in its declared formal slot; never reorder guest evaluation.
+      std::vector<std::int64_t> vals(n.children.size());
+      for(std::size_t i=0;i<n.children.size();++i) {
+        const auto value=visit(fn,n.children[i],args,depth,locals);
+        const auto slot=n.argument_slots.at(i);
+        vals[slot]=value;
+      }
       return evaluate(static_cast<std::size_t>(n.callee),vals,depth+1);
     }
     const auto a=visit(fn,n.children.at(0),args,depth,locals);
@@ -368,6 +469,12 @@ struct Native {
   void emit_node(const Function& fn,int index,
                  const std::map<std::string,int>& locals) {
     const auto& n=fn.nodes.at(static_cast<std::size_t>(index));
+    // The interpreter charges one visit per evaluated AST node. Enforce
+    // the same bounded work at runtime, including in exponential recursion
+    // whose call depth remains well below kMaxStackDepth. %r9 is private to
+    // this narrow in-module x86-64 callable ABI: only generated functions
+    // call each other, none clobber the per-entry budget register.
+    out<<"  subq $1, %r9\n  js .Lores_budget\n";
     if(n.kind==Kind::Constant) {
       out<<"  movabsq $"<<n.value<<", %rax\n";
     } else if(n.kind==Kind::Parameter) {
@@ -393,8 +500,10 @@ struct Native {
       out<<".Lores_end_"<<tag<<":\n";
     } else if(n.kind==Kind::Call) {
       for (int child:n.children)emit_node(fn,child,locals);
-      for (std::size_t i=0;i<n.children.size();++i)
-        out<<"  movq "<<value_slot(n.children[i])<<", "<<argument_reg(i)<<"\n";
+      for (std::size_t i=0;i<n.children.size();++i) {
+        const auto slot=n.argument_slots.at(i);
+        out<<"  movq "<<value_slot(n.children[i])<<", "<<argument_reg(slot)<<"\n";
+      }
       out<<"  movq -40(%rbp), %r8\n"
          <<"  addq $1, %r8\n"
          <<"  call .Lores_fn_"<<n.callee<<"\n";
@@ -430,6 +539,7 @@ struct Native {
   std::string build() {
     out<<".text\n.globl oresforge_entry\n.type oresforge_entry, @function\n"
        <<"oresforge_entry:\n  xorl %r8d, %r8d\n"
+       <<"  movq $"<<kMaxEvalSteps<<", %r9\n"
        <<"  jmp .Lores_fn_"<<program.entry<<"\n";
     for (std::size_t i=0;i<program.functions.size();++i) {
       const auto& fn=program.functions[i];
@@ -448,6 +558,7 @@ struct Native {
     }
     out<<".Lores_depth:\n  ud2\n"
        <<".Lores_overflow:\n  ud2\n"
+       <<".Lores_budget:\n  ud2\n"
        <<".size oresforge_entry, .-oresforge_entry\n"
        <<".section .note.GNU-stack,\"\",@progbits\n";
     return out.str();
@@ -462,6 +573,11 @@ Module parse(std::string_view source) {
 void verify(const Module& m) {
   if(m.entry<0 || static_cast<std::size_t>(m.entry)>=m.functions.size())
     throw std::runtime_error("invalid callable main");
+  // Public Module clients may mutate entry after source parsing. Never run
+  // an arbitrary helper as the program entry by redirecting an in-range ID.
+  // The source compiler chooses main by name; the public verifier must agree.
+  if(m.functions[static_cast<std::size_t>(m.entry)].name!="main")
+    throw std::runtime_error("callable entry must name main");
   if (m.functions.size()>kMaxFunctions)throw std::runtime_error("function count budget exceeded");
   std::map<std::string,std::size_t> names;
   std::size_t total=0;
@@ -471,7 +587,7 @@ void verify(const Module& m) {
     // even for helper functions that the entry never calls.
     if(!valid_identifier(fn.name) ||
        fn.name=="int" || fn.name=="const" || fn.name=="return" ||
-       fn.name=="if" || fn.name=="else" || fn.name=="then" ||
+       fn.name=="if" || fn.name=="else" || fn.name=="then" || fn.name=="guard" ||
        !names.emplace(fn.name,fi).second)
       throw std::runtime_error("duplicate or invalid function");
     if(fn.parameters.size()>4)throw std::runtime_error("function parameter budget exceeded");
@@ -483,7 +599,7 @@ void verify(const Module& m) {
       if(!valid_identifier(param) ||
          param=="int" || param=="const" || param=="if" ||
          param=="then" || param=="else" || param=="return" ||
-         param=="fnc" || !parameters.insert(param).second)
+         param=="fnc" || param=="guard" || !parameters.insert(param).second)
         throw std::runtime_error("invalid or duplicate callable parameter");
     }
     if(fn.nodes.empty() || fn.nodes.size()>kMaxNodesPerFunction)
@@ -506,6 +622,9 @@ void verify(const Module& m) {
         case Kind::Local: case Kind::Let: break;
         default: throw std::runtime_error("unknown callable opcode");
       }
+      if(n.kind!=Kind::Call &&
+         (!n.argument_labels.empty() || !n.argument_slots.empty()))
+        throw std::runtime_error("unexpected non-call argument bindings");
       if(n.kind!=Kind::Call && n.kind!=Kind::Local && n.kind!=Kind::Let &&
          !n.name.empty())
         throw std::runtime_error("unexpected callable symbol payload");
@@ -519,7 +638,7 @@ void verify(const Module& m) {
         throw std::runtime_error("invalid callable local payload");
       if(n.kind==Kind::Let &&
          (n.name=="int"||n.name=="const"||n.name=="return"||n.name=="fnc"||
-          n.name=="if"||n.name=="then"||n.name=="else"))
+          n.name=="if"||n.name=="then"||n.name=="else"||n.name=="guard"))
         throw std::runtime_error("invalid callable local name");
       for(int arg:n.children) {
         if(arg<0 || static_cast<std::size_t>(arg)>=i)
@@ -542,6 +661,12 @@ void verify(const Module& m) {
           throw std::runtime_error("function arity mismatch");
         if(n.name!=m.functions[static_cast<std::size_t>(n.callee)].name)
           throw std::runtime_error("callable target/name mismatch");
+        const auto expected=bind_call_slots(
+          n,m.functions[static_cast<std::size_t>(n.callee)]);
+        // Every nonzero-arity call needs explicit source-owned bindings.
+        // Hosts cannot erase metadata and reinterpret it as positional.
+        if(n.argument_slots!=expected)
+          throw std::runtime_error("callable named-binding slots mismatch");
       } else if(n.callee!=-1)throw std::runtime_error("unexpected callable target");
     }
     // Independently validate lexical scope on the owned expression tree.
@@ -577,8 +702,8 @@ void verify(const Module& m) {
         throw std::runtime_error("callable AST unreachable node");
     }
   }
-  if(m.functions[static_cast<std::size_t>(m.entry)].name!="main")
-    throw std::runtime_error("callable entry is not main");
+  // Entry identity was already enforced near the top of verify(); do not
+  // repeat checks with a second, inconsistent diagnostic at the end.
 }
 std::int64_t interpret(const Module& m,std::span<const std::int64_t> args) {
   verify(m);
