@@ -31,6 +31,8 @@ function(verify_guest fixture want_rc want_out want_err)
   endif()
 endfunction()
 verify_guest(arithmetic "0" "34\n" "")
+# Actual guest, not just parser acceptance: Greek case, Han and supplementary scalar names.
+verify_guest(unicode_identifiers "0" "42\n" "")
 verify_guest(overflow "70" "" "E_OVERFLOW\n")
 verify_guest(divzero "71" "" "E_DIVZERO\n")
 verify_guest(minimum "0" "-9223372036854775808\n" "")
