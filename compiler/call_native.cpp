@@ -19,6 +19,9 @@ constexpr std::size_t kMaxNodes = 4096;
 constexpr std::size_t kMaxNodesPerFunction = 256;
 constexpr std::size_t kMaxDepth = 128;
 constexpr std::size_t kMaxStackDepth = 128;
+constexpr std::size_t kMaxInternalArgs = 6;
+constexpr std::size_t kMaxEntryArgs = 4; // existing public CLI/driver ABI
+constexpr std::size_t kFrameHeaderSlots = kMaxInternalArgs + 1; // formals + depth
 constexpr std::size_t kMaxEvalSteps = 200000;
 bool letter(char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_'; }
 bool digit(char c) { return c >= '0' && c <= '9'; }
@@ -197,7 +200,7 @@ class Parser {
         if(!type_first) { expect(":"); typed_bool=take("bool"); if(!typed_bool) expect("int"); }
         current_->parameters.push_back(param);
         current_->boolean_parameters.push_back(typed_bool);
-        if(current_->parameters.size()>4)fail("function parameter budget exceeded");
+        if(current_->parameters.size()>kMaxInternalArgs)fail("function parameter budget exceeded");
         if (!take(","))break;
       } while(true);
     }
@@ -386,7 +389,7 @@ class Parser {
       if (token_.text!=")") {
         do {
           const int arg=expr(d+1); args.push_back(arg);
-          if(args.size()>4)fail("call argument budget exceeded");
+          if(args.size()>kMaxInternalArgs)fail("call argument budget exceeded");
           if(!take(","))break;
         }while(true);
       }
@@ -475,7 +478,7 @@ struct Evaluator {
 };
 
 const char* argument_reg(std::size_t i) {
-  constexpr const char* regs[]={"%rdi","%rsi","%rdx","%rcx"};
+  constexpr const char* regs[]={"%rdi","%rsi","%rdx","%rcx","%r8","%r9"};
   return regs[i];
 }
 struct Native {
@@ -484,7 +487,7 @@ struct Native {
   std::ostringstream out;
   std::size_t label=0;
   std::string value_slot(int id) const {
-    return "-"+std::to_string(8u*(static_cast<std::size_t>(id)+6u))+"(%rbp)";
+    return "-"+std::to_string(8u*(static_cast<std::size_t>(id)+kFrameHeaderSlots+1u))+"(%rbp)";
   }
   std::string parameter_slot(int id) const {
     return "-"+std::to_string(8u*(static_cast<std::size_t>(id)+1u))+"(%rbp)";
@@ -518,8 +521,9 @@ struct Native {
       for (int child:n.children)emit_node(fn,child);
       for (std::size_t i=0;i<n.children.size();++i)
         out<<"  movq "<<value_slot(n.children[i])<<", "<<argument_reg(i)<<"\n";
-      out<<"  movq -40(%rbp), %r8\n"
-         <<"  addq $1, %r8\n"
+      // r10 is caller-saved and outside all six SysV integer argument registers.
+      out<<"  movq -56(%rbp), %r10\n"
+         <<"  addq $1, %r10\n"
          <<"  call .Lores_fn_"<<n.callee<<"\n";
     } else {
       emit_node(fn,n.children[0]);
@@ -552,20 +556,20 @@ struct Native {
   }
   std::string build() {
     out<<".text\n.globl oresforge_entry\n.type oresforge_entry, @function\n"
-       <<"oresforge_entry:\n  xorl %r8d, %r8d\n"
+       <<"oresforge_entry:\n  xorl %r10d, %r10d\n"
        <<"  jmp .Lores_fn_"<<program.entry<<"\n";
     for (std::size_t i=0;i<program.functions.size();++i) {
       const auto& fn=program.functions[i];
-      const std::size_t slots=5u+fn.nodes.size();
+      const std::size_t slots=kFrameHeaderSlots+fn.nodes.size();
       const std::size_t bytes=((slots*8u+15u)/16u)*16u;
       out<<".Lores_fn_"<<i<<":\n"
-         <<"  cmpq $"<<kMaxStackDepth<<", %r8\n"
+         <<"  cmpq $"<<kMaxStackDepth<<", %r10\n"
          <<"  jae .Lores_depth\n"
          <<"  pushq %rbp\n  movq %rsp, %rbp\n"
          <<"  subq $"<<bytes<<", %rsp\n";
-      for (std::size_t arg=0;arg<4;++arg)
+      for (std::size_t arg=0;arg<fn.parameters.size();++arg)
         out<<"  movq "<<argument_reg(arg)<<", "<<parameter_slot(static_cast<int>(arg))<<"\n";
-      out<<"  movq %r8, -40(%rbp)\n";
+      out<<"  movq %r10, -56(%rbp)\n";
       emit_node(fn,fn.result);
       out<<"  leave\n  ret\n";
     }
@@ -592,7 +596,9 @@ void verify(const Module& m) {
     const auto& fn=m.functions[fi];
     if(fn.name.empty() || !names.emplace(fn.name,fi).second)
       throw std::runtime_error("duplicate or invalid function");
-    if(fn.parameters.size()>4)throw std::runtime_error("function parameter budget exceeded");
+    if(fn.parameters.size()>kMaxInternalArgs)throw std::runtime_error("function parameter budget exceeded");
+    if(fi==static_cast<std::size_t>(m.entry) && fn.parameters.size()>kMaxEntryArgs)
+      throw std::runtime_error("public entry parameter budget exceeded");
     if(!fn.boolean_parameters.empty() && fn.boolean_parameters.size()!=fn.parameters.size())
       throw std::runtime_error("invalid callable formal type inventory");
     if(fi==static_cast<std::size_t>(m.entry) &&

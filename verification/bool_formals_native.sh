@@ -40,4 +40,13 @@ negative 'fnc f(int x):int{return x;} fnc main():int{return f(true);}' 'Boolean 
 negative 'fnc f(bool b):int{return b+1;} fnc main():int{return 42;}' 'Boolean is not an int'
 negative 'fnc main(bool b):int{return b ? 42 : 7;}' 'Boolean entry parameter requires explicit int adapter'
 negative 'fnc f(bool b):bool{return 1;} fnc main():int{return 42;}' 'condition_not_bool'
-echo 'FORGE_TYPED_BOOLEAN_FORMALS_NATIVE_PASS positives=4 negatives=5'
+# Distinct fifth/sixth values and mixed types detect collision with the old
+# depth register; a nested call forces depth preservation across call frames.
+positive 'fnc f(int a,int b,int c,int d,int e,int f):int{return a+b+c+d+e-f;} fnc main():int{return f(1,2,3,4,37,5);}' 42
+positive 'fnc f(int a,int b,int c,int d,bool e,int f):int{return e ? f : a;} fnc g(int x):int{return f(7,2,3,4,true,x);} fnc main():int{return g(42);}' 42
+positive 'fnc f(int a,int b,int c,int d,int e,bool f):int{return f ? e : a;} fnc main():int{return f(7,2,3,4,42,false);}' 7
+negative 'fnc f(int a,int b,int c,int d,int e,int f,int g):int{return a;} fnc main():int{return 42;}' 'function parameter budget exceeded'
+negative 'fnc f(int a):int{return a;} fnc main():int{return f(1,2,3,4,5,6,7);}' 'call argument budget exceeded'
+negative 'fnc main(int a,int b,int c,int d,int e):int{return a;}' 'public entry parameter budget exceeded'
+negative 'fnc f(int a,int b,int c,int d,bool e,int f):int{return f;} fnc main():int{return f(1,2,3,4,5,6);}' 'int is not a Boolean argument'
+echo 'FORGE_TYPED_BOOLEAN_FORMALS_NATIVE_PASS positives=7 negatives=9'
