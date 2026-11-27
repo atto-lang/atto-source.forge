@@ -94,4 +94,52 @@ with tempfile.TemporaryDirectory() as tmp:
         result = subprocess.run([str(emitter), str(src)], capture_output=True, timeout=10)
         if result.returncode != 1 or result.stdout or b'actor source:' not in result.stderr:
             raise RuntimeError('invalid source was not rejected before emission')
-    print('FORGE_STAGE0_NATIVE: 5 standalone guests, 14 alias emission controls, 22 source denials PASS')
+    # Exercise the trusted native heap ABI independently of parser admission.
+    # Each denial runs in a fresh process: native invariant failures abort.
+    probe = work / 'sealed_heap_probe.c'
+    probe.write_text(r'''
+#include "runtime/arena/ActorOwnedI64Heap.h"
+#include <stdlib.h>
+#include <string.h>
+int main(int argc, char** argv) {
+    if (argc != 2) return 2;
+    OresActorI64Heap* h = ores_actor_i64_heap_open(1, 1, 2);
+    OresActorTurn t = ores_actor_i64_heap_enter(h, 1, 1);
+    ores_actor_i64_heap_field_init_protected(h, t.domain, t.epoch, 0, 40);
+    ores_actor_i64_heap_field_init_mutable(h, t.domain, t.epoch, 1, 10);
+    OresActorSlot forged = {t.domain, 0, 1};
+    if (!strcmp(argv[1], "field-read")) (void)ores_actor_i64_heap_field_read(h,t.domain,t.epoch,0);
+    else if (!strcmp(argv[1], "field-write")) ores_actor_i64_heap_field_write(h,t.domain,t.epoch,0,99);
+    else if (!strcmp(argv[1], "slot-read")) (void)ores_actor_i64_heap_read(h,t,forged);
+    else if (!strcmp(argv[1], "slot-write")) ores_actor_i64_heap_write(h,t,forged,99);
+    else if (!strcmp(argv[1], "slot-borrow")) (void)ores_actor_i64_heap_borrow(h,t,forged);
+    else if (!strcmp(argv[1], "slot-borrow-mut")) (void)ores_actor_i64_heap_borrow_mut(h,t,forged);
+    else if (!strcmp(argv[1], "slot-drop")) ores_actor_i64_heap_drop(h,t,forged);
+    else if (!strcmp(argv[1], "readonly-write")) {
+        OresActorLoan r = ores_actor_i64_heap_field_borrow(h,t,0);
+        ores_actor_i64_heap_loan_write(h,t,r,99);
+    } else if (!strcmp(argv[1], "ok")) {
+        OresActorLoan r = ores_actor_i64_heap_field_borrow(h,t,0);
+        if (ores_actor_i64_heap_loan_read(h,t,r)!=40) return 3;
+        ores_actor_i64_heap_release(h,r);
+        OresActorLoan w = ores_actor_i64_heap_field_borrow_mut(h,t,0);
+        ores_actor_i64_heap_loan_write(h,t,w,42);
+        if (ores_actor_i64_heap_loan_read(h,t,w)!=42) return 4;
+        ores_actor_i64_heap_release(h,w);
+        ores_actor_i64_heap_field_write(h,t.domain,t.epoch,1,11);
+        if (ores_actor_i64_heap_field_read(h,t.domain,t.epoch,1)!=11) return 5;
+    } else return 2;
+    ores_actor_i64_heap_leave(h,t);
+    ores_actor_i64_heap_retire(h);
+    return ores_actor_i64_heap_try_destroy(h) ? 0 : 6;
+}
+''', encoding='ascii')
+    binary = work / 'sealed_heap_probe'
+    run([a.cc, '-std=c11', *flags, '-I.', str(probe), str(heap), '-o', str(binary)])
+    run([str(binary), 'ok'])
+    for mode in ('field-read','field-write','slot-read','slot-write','slot-borrow',
+                 'slot-borrow-mut','slot-drop','readonly-write'):
+        result = subprocess.run([str(binary), mode], capture_output=True, timeout=10)
+        if result.returncode != -6 or result.stdout or b'ERROR: AddressSanitizer' in result.stderr or b'runtime error:' in result.stderr:
+            raise RuntimeError('expected native invariant abort: ' + mode)
+    print('FORGE_STAGE0_NATIVE: 5 standalone guests, 14 alias emission controls, 22 source denials, 9 heap authority controls PASS')
