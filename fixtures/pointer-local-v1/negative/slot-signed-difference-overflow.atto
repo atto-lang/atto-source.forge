@@ -1,0 +1,2 @@
+// expect-error: E_POINTER_PROFILE
+pub fnc main(): int { let a: int = -9223372036854775808; let b: int = 9223372036854775807; let mut RawPointer<int> p = RawPointer.empty<int>(); ref! p to a; val first = deref! p; unref! p; ref! p to b; val second = deref! p; unref! p; return 0 - first; }

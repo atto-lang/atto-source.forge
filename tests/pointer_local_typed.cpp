@@ -46,6 +46,15 @@ int main() {
       std::string(exact).find("= 42;"), 5, "= 9223372036854775807;"));
   assert(max_i64.ok() && max_i64.local &&
          max_i64.local->initial == std::numeric_limits<std::int64_t>::max());
+  auto minimum = parse_source(std::string(exact).replace(
+      std::string(exact).find("= 42;"), 5, "= -9223372036854775808;"));
+  assert(minimum.ok() && minimum.local && validate_ast(minimum) &&
+         minimum.local->initial == std::numeric_limits<std::int64_t>::min());
+  auto min_code = emit_cpp(minimum);
+  assert(min_code && min_code->find("std::numeric_limits<atto::forge::i64>::min()") != std::string::npos);
+  auto underflow = parse_source(std::string(exact).replace(
+      std::string(exact).find("= 42;"), 5, "= -9223372036854775809;"));
+  assert(!underflow.ok() && underflow.error == ParseError::literal_out_of_range);
   auto overflow = parse_source(std::string(exact).replace(
       std::string(exact).find("= 42;"), 5, "= 9223372036854775808;"));
   assert(!overflow.ok() && overflow.error == ParseError::literal_out_of_range);
@@ -87,5 +96,25 @@ int main() {
   signed_plan.steps[0].x=std::numeric_limits<std::int64_t>::max();
   signed_plan.steps[5].y=1;
   assert(!verify_point_placement(signed_plan));
+  auto mixed=parse_source("define struct Packet { i8 tag; int count; i16 tail; } with { constructor(i8 tag, int count, i16 tail) { self.tag = tag; self.count = count; self.tail = tail; } } pub fnc main(): int { let Storage<Packet> s = alloc! Packet; let mut RawPointer<Packet> p = RawPointer.empty<Packet>(); new Packet(-3, 40, 5) at s; ref! p to s; val a = (deref! p).tag; val b = (deref! p).count; val c = (deref! p).tail; unref! p; destroy! s; free! s; return a + b + c; }");
+  assert(mixed.ok()&&mixed.flat_placement&&validate_ast(mixed)&&emit_cpp(mixed));
+  assert(emit_cpp(mixed)->find("sizeof(AttoFlat)==24")!=std::string::npos);
+  auto forged_flat=mixed;forged_flat.flat_placement->steps[0].values[0]=128;
+  assert(!validate_ast(forged_flat)&&!emit_cpp(forged_flat));
+  forged_flat=mixed;forged_flat.flat_placement->steps[2].field=3;
+  assert(!validate_ast(forged_flat));
+  forged_flat=mixed;forged_flat.flat_placement->widths[0]=3;
+  assert(!validate_ast(forged_flat));
+  forged_flat=mixed;forged_flat.flat_placement->steps.pop_back();
+  assert(!validate_ast(forged_flat));
+  auto nested=parse_source("define struct Payload { int count; i8 flag; } with { constructor(int count, i8 flag) { self.count = count; self.flag = flag; } } define struct Packet { i8 tag; Payload pair; i16 tail; } with { constructor(i8 tag, Payload pair, i16 tail) { self.tag = tag; self.pair = pair; self.tail = tail; } } pub fnc main(): int { let Storage<Packet> s = alloc! Packet; let mut RawPointer<Packet> p = RawPointer.empty<Packet>(); new Packet(-3, Payload(40, -2), 7) at s; ref! p to s; val a = (deref! p).tag; val b = (deref! p).pair.count; val c = (deref! p).pair.flag; val d = (deref! p).tail; unref! p; destroy! s; free! s; return a + b + c + d; }");
+  assert(nested.ok()&&nested.flat_placement&&validate_ast(nested)&&emit_cpp(nested));
+  assert(emit_cpp(nested)->find("sizeof(AttoFlat)==32")!=std::string::npos);
+  auto invalid=nested;invalid.flat_placement->owners[1].fields[1].second.owner=1;
+  assert(!validate_ast(invalid)&&!emit_cpp(invalid));
+  invalid=nested;invalid.flat_placement->owners[0].fields[0].second.scalar.align=4;
+  assert(!validate_ast(invalid));
+  invalid=nested;invalid.flat_placement->widths[1]=4;
+  assert(!validate_ast(invalid));
   return 0;
 }
