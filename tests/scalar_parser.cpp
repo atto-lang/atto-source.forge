@@ -5,6 +5,19 @@
 using namespace atto::forge;
 using namespace atto::forge::scalar;
 int main() {
+  for (const auto* call : {"stdio.out.write(\"A\")", "process.stdout.write(\"A\")",
+                           "stdio /* inert */ .out.write(\"A\")", "process.stdout /* nested /* ok */ */ .write(\"A\")"}) {
+    const auto source = std::string("pub fnc main(): int {") + call + "; return 42;}";
+    for (const auto& rejected : {parse_source(source), parse_verified_strict_i64(source)}) {
+      assert(rejected.error == ParseError::stdout_profile_unsupported);
+      assert(parse_error_name(rejected.error) == "E_STDOUT_PROFILE_UNSUPPORTED");
+      assert(rejected.nodes.empty());
+    }
+  }
+  assert(parse_source("fnc main(): int {return 42; /* stdio.out.write(\"A\") */}").ok());
+  assert(parse_source("fnc main(): int {return \"process.stdout.write(42)\";}").error != ParseError::stdout_profile_unsupported);
+  assert(parse_source("fnc main(): int {return object.stdio.out.write(42);}").error != ParseError::stdout_profile_unsupported);
+
   assert(parse_source("fnc main(): int {val Φ = 20; val φ = 22; return Φ + φ;}").ok());
   assert(parse_source("fnc main(): int {val 数量 = 20; val 𠮷 = 22; return 数量 + 𠮷;}").ok());
   assert(!parse_source("fnc main(): int {return 未定義;}").ok());

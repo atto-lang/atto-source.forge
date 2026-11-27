@@ -28,7 +28,7 @@ struct Node {
   std::vector<LoopExit> exits{};
 };
 enum class ParseError {
-  none, lexical, ownership_bang_unsupported, suspension_unsupported, pointer_profile, syntax, literal_out_of_range, depth_limit, node_limit, telemetry, verify_unproven, verify_unsupported, unit_name, unit_duplicate, unit_dimension, unit_scale, unit_limit, unit_erasure, unit_attachment, unit_inexact, unit_range, refinement_empty, refinement_binding, refinement_precondition, refinement_return, refinement_duplicate, refinement_postcondition, refinement_contract, refinement_export, refinement_body, refinement_call, refinement_cast, i32_range, new_required, lock_unsupported, task_unsupported, task_return_type, pair_key_type, pair_scope, pair_escape, pair_projection, pair_key_unsupported, missing_initializer, entry_scope, entry_escape, entry_projection, source_bidi, bool_operand, duplicate_local, unbound_local, spawn_options_unsupported
+  none, lexical, ownership_bang_unsupported, suspension_unsupported, pointer_profile, syntax, literal_out_of_range, depth_limit, node_limit, telemetry, verify_unproven, verify_unsupported, unit_name, unit_duplicate, unit_dimension, unit_scale, unit_limit, unit_erasure, unit_attachment, unit_inexact, unit_range, refinement_empty, refinement_binding, refinement_precondition, refinement_return, refinement_duplicate, refinement_postcondition, refinement_contract, refinement_export, refinement_body, refinement_call, refinement_cast, i32_range, new_required, lock_unsupported, task_unsupported, task_return_type, pair_key_type, pair_scope, pair_escape, pair_projection, pair_key_unsupported, missing_initializer, entry_scope, entry_escape, entry_projection, source_bidi, bool_operand, duplicate_local, unbound_local, spawn_options_unsupported, stdout_profile_unsupported
 };
 // Stable sanitized diagnostics; never echo user source bytes.
 [[nodiscard]] constexpr std::string_view parse_error_name(ParseError error) noexcept {
@@ -42,6 +42,7 @@ enum class ParseError {
     case ParseError::ownership_bang_unsupported: return "E_OWNERSHIP_BANG_UNSUPPORTED";
     case ParseError::suspension_unsupported: return "E_SUSPENDS_UNSUPPORTED";
     case ParseError::spawn_options_unsupported: return "E_SPAWN_OPTIONS_UNSUPPORTED";
+    case ParseError::stdout_profile_unsupported: return "E_STDOUT_PROFILE_UNSUPPORTED";
     case ParseError::pointer_profile: return "E_POINTER_PROFILE";
     case ParseError::syntax: return "E_PARSE_SYNTAX";
     case ParseError::literal_out_of_range: return "E_PARSE_RANGE";
@@ -2045,6 +2046,23 @@ public:
                   ? ParseError::source_bidi : ParseError::lexical;
       out_.error_offset = lexed.error_offset;
       return;
+    }
+    // The scalar lane has no host output authority or bounded stdout runtime.
+    // Identify complete endpoint calls in tokens, not in comments or literals.
+    const auto is = [&](std::size_t i, Kind kind, std::string_view word = {}) {
+      return i < tokens_.size() && tokens_[i].kind == kind &&
+        (word.empty() || source_.substr(tokens_[i].offset, tokens_[i].length) == word);
+    };
+    for (std::size_t i = 0; i + 5 < tokens_.size(); ++i) {
+      if (i > 0 && (is(i - 1, Kind::dot) || is(i - 1, Kind::double_colon))) continue;
+      const bool endpoint = (is(i, Kind::name, "stdio") && is(i + 2, Kind::name, "out")) ||
+                            (is(i, Kind::name, "process") && is(i + 2, Kind::name, "stdout"));
+      if (endpoint && is(i + 1, Kind::dot) && is(i + 3, Kind::dot) &&
+          is(i + 4, Kind::name, "write") && is(i + 5, Kind::lparen)) {
+        out_.error = ParseError::stdout_profile_unsupported;
+        out_.error_offset = tokens_[i].offset;
+        return;
+      }
     }
     // Neither this restricted scalar profile nor its verified variant can
     // construct an actor. Reject executable spawn heads before scalar IR,

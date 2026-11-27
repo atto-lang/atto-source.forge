@@ -48,5 +48,41 @@ int main() {
   for(std::size_t i=0;i<full.size();++i) full[i]={i==1023?park:empty,std::vector<std::optional<std::size_t>>(16,(i+1)%1024)};
   rows=infer_parking(full);
   check(std::all_of(rows.begin(),rows.end(),[&](auto r){return r==park;}));
-  std::cout<<"PASS: Forge parking effect graph, 256 oracle trials, exact budgets and rejection fences\n";
+  // Shared JS/Wasm boundary contract: all bit pairs and exact graph capacity.
+  const auto facts=[](unsigned b){return ParkingEffects{bool(b&1),bool(b&2),bool(b&4)};};
+  for(unsigned a=0;a<8;++a) for(unsigned b=0;b<8;++b) {
+    const auto pair=infer_parking({{facts(a),{1}}, {facts(b),{}}});
+    const auto bits=a|b;
+    check(pair[0]==facts(bits) && pair[1]==facts(b));
+    check(pair[0].requires_resumable_frame()==(bits!=0));
+    check(pair[0].requires_suspend_annotation()==bool(bits&1));
+    check(pair[0].safe_with_exclusive_loan()==(bits==0));
+  }
+  full[0].direct=susp;
+  full.back().calls.back()=std::nullopt;
+  rows=infer_parking(full);
+  check(std::all_of(rows.begin(),rows.end(),[&](auto r){return r==facts(7);}));
+  full[0].calls.push_back(1);
+  reject(full);
+  const std::vector<CallableParking> graph={
+    {empty,{1,1}}, {empty,{2}}, {park,{1}}, {susp,{std::nullopt}}, {empty,{}}, {empty,{3}}
+  };
+  const std::vector<ParkingEffects> expected={park,park,park,facts(5),empty,facts(5)};
+  check(infer_parking(graph)==expected);
+  const std::vector<std::size_t> order={5,2,4,1,3,0};
+  std::vector<CallableParking> remapped;
+  std::vector<ParkingEffects> reordered;
+  for(auto old:order) {
+    auto node=graph[old];
+    for(auto& target:node.calls) if(target)
+      target=static_cast<std::size_t>(std::find(order.begin(),order.end(),*target)-order.begin());
+    remapped.push_back(node);
+    reordered.push_back(expected[old]);
+  }
+  check(infer_parking(remapped)==reordered);
+  check(infer_parking({}).empty());
+  rows=infer_parking(graph);
+  std::fill(rows.begin(),rows.end(),facts(7));
+  check(infer_parking(graph)==expected);
+  std::cout<<"PASS: Forge parking effect graph, 256 oracle trials, 64 effect pairs, exact budgets and locality\n";
 }

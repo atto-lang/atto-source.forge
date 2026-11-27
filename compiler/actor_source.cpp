@@ -46,7 +46,7 @@ class Parser final {
             ++next_byte_;
         } else if (c == ':' && next_byte_ < source_.size() && source_[next_byte_] == ':') {
             ++next_byte_;
-        } else if (std::string_view(":(),;=+-").find(static_cast<char>(c)) == std::string_view::npos) {
+        } else if (std::string_view(":(),;=+-{}|.").find(static_cast<char>(c)) == std::string_view::npos) {
             fail("unsupported actor syntax");
         }
         token_ = source_.substr(token_at_, next_byte_ - token_at_);
@@ -72,7 +72,8 @@ class Parser final {
             "enum", "false", "fnc", "for", "guard", "if", "import",
             "in", "int", "let", "match", "mut", "null", "or", "pub",
             "receive", "recover", "return", "routine", "rt", "select",
-            "self", "share", "state", "struct", "suspends", "take",
+            "self", "share", "state", "state_ro", "state_w", "handle_state",
+            "handle_state_ro", "handle_state_w", "struct", "suspends", "take",
             "then", "trait", "true", "type", "void", "while", "xor",
             "panic", "raise", "throw", "trap"
         };
@@ -100,18 +101,61 @@ public:
             throw std::runtime_error("actor source: invalid bounded source length");
         advance();
     }
-    struct Plan {std::int64_t initial; bool subtract;};
+    enum class Scope { legacy, read, write };
+    struct Plan {std::int64_t initial; bool subtract; Scope scope;};
     Plan parse() {
         expect("define"); expect("actor");
-        const auto actor = ident(); (void)actor;
-        expect("as"); expect("let"); expect("int");
+        const auto actor = ident();
+        expect("as");
+        const bool sealed = token_ == "state";
+        if (sealed) { advance(); expect("{"); }
+        expect("let"); expect("int");
         const auto field = ident();
         expect(":");
         const auto initial = literal();
+        if (sealed) { if (token_ == ";") advance(); expect("}"); }
         expect("receive"); expect("("); expect("int");
         const auto message = ident();
-        if (message == field) fail("field and message names collide");
+        if (field == "_" || message == "_" || actor == "_" || message == field)
+            fail("invalid actor, field or message binding");
         expect(")"); expect("->"); expect("int"); expect("::");
+        if (sealed) {
+            expect("return");
+            // Only the lexical self receiver can qualify a sealed intrinsic.
+            if (token_ == "self") { advance(); expect("."); }
+            bool read = false;
+            if (token_ == "state_ro" || token_ == "handle_state_ro") {
+                read = true; advance(); expect("(");
+            } else if (token_ == "state_w" || token_ == "handle_state_w") {
+                advance(); expect("(");
+            } else {
+                expect("handle_state"); expect("(");
+                const auto critical_at = token_at_;
+                expect("critical");
+                if (token_ == "-") {
+                    if (token_at_ != critical_at + 8) fail("critical mode must be adjacent");
+                    advance();
+                    if (token_at_ != critical_at + 9) fail("critical mode must be adjacent");
+                    if (token_ == "read") { read = true; advance(); }
+                    else expect("write");
+                }
+            }
+            expect("|"); const auto binder = ident(); expect("|");
+            if (binder == "_" || binder == actor || binder == field || binder == message)
+                fail("state binder collides with nominal actor, field or message");
+            expect("->");
+            bool subtract = false;
+            const auto projection = [&] { expect(binder); expect("."); expect(field); };
+            if (read) { projection(); }
+            else {
+                expect("{"); projection(); expect("="); projection();
+                subtract = token_ == "-"; if (subtract) advance(); else expect("+");
+                expect(message); expect(";"); expect("return"); projection(); expect(";"); expect("}");
+            }
+            expect(")"); if (token_ == ";") advance();
+            expect("end"); expect("end"); if (!token_.empty()) fail("trailing actor source");
+            return {initial, subtract, read ? Scope::read : Scope::write};
+        }
         expect(field); expect("="); expect(field);
         const bool subtract = token_ == "-";
         if (!subtract) expect("+"); else advance();
@@ -121,7 +165,7 @@ public:
         if (token_ == ";") advance();
         expect("end"); expect("end");
         if (!token_.empty()) fail("trailing actor source");
-        return {initial, subtract};
+        return {initial, subtract, Scope::legacy};
     }
 };
 } // namespace
@@ -138,7 +182,10 @@ std::string emit_cxx(std::string_view source) {
               "#include <limits>\n#include <stdexcept>\n"
               "extern \"C\" void oresforge_actor_init(OresActorI64Heap* h, std::uint64_t d, std::uint64_t e, oresforge::runtime::ActorFrameStack& frames) {\n"
               "  (void)frames;\n"
-              "  ores_actor_i64_heap_field_init_mutable(h, d, e, 0, ";
+              "  ";
+    output << (plan.scope == Parser::Scope::legacy
+        ? "ores_actor_i64_heap_field_init_mutable" : "ores_actor_i64_heap_field_init_protected")
+           << "(h, d, e, 0, ";
     if (plan.initial == std::numeric_limits<std::int64_t>::min())
         output << "std::numeric_limits<std::int64_t>::min()";
     else output << plan.initial;
@@ -153,7 +200,45 @@ std::string emit_cxx(std::string_view source) {
               "    frames.read(token, frame, 0, bytes);\n"
               "    std::int64_t argument = 0;\n"
               "    std::memcpy(&argument, bytes.data(), sizeof(argument));\n"
-              "    const auto before = ores_actor_i64_heap_field_read(h, d, e, 0);\n"
+              ;
+    if (plan.scope != Parser::Scope::legacy) {
+        // The scope guard drains the native heap loan on normal and exceptional
+        // exit, before the frame is popped and before the actor result escapes.
+        output << "    const auto result = [&]() -> std::int64_t {\n"
+                  "      const OresActorTurn turn{d, e};\n"
+                  "      struct Guard { OresActorI64Heap* heap; OresActorLoan loan;\n"
+                  "        ~Guard() noexcept { ores_actor_i64_heap_release(heap, loan); } };\n"
+                  "      const Guard guard{h, ";
+        output << (plan.scope == Parser::Scope::read ? "ores_actor_i64_heap_field_borrow" : "ores_actor_i64_heap_field_borrow_mut");
+        output << "(h, turn, 0)};\n"
+                  "      const auto old = ores_actor_i64_heap_loan_read(h, turn, guard.loan);\n";
+        if (plan.scope == Parser::Scope::read) {
+            output << "      (void)argument; return old;\n";
+        } else {
+            output << "      const auto max = std::numeric_limits<std::int64_t>::max();\n"
+                      "      const auto min = std::numeric_limits<std::int64_t>::min();\n";
+            if (plan.subtract) {
+                output << "      if ((argument < 0 && old > max + argument) || (argument > 0 && old < min + argument))\n"
+                          "        throw std::overflow_error(\"actor-local protected subtract overflow\");\n"
+                          "      const auto next = static_cast<std::int64_t>(old - argument);\n";
+            } else {
+                output << "      if ((argument > 0 && old > max - argument) || (argument < 0 && old < min - argument))\n"
+                          "        throw std::overflow_error(\"actor-local protected add overflow\");\n"
+                          "      const auto next = static_cast<std::int64_t>(old + argument);\n";
+            }
+            output << "      ores_actor_i64_heap_loan_write(h, turn, guard.loan, next);\n"
+                      "      return next;\n";
+        }
+        output << "    }();\n"
+                  "    frames.pop(token, frame);\n"
+                  "    return result;\n"
+                  "  } catch (...) {\n"
+                  "    if (!frames.poisoned()) frames.pop(token, frame);\n"
+                  "    throw;\n"
+                  "  }\n}\n";
+        return output.str();
+    }
+    output << "    const auto before = ores_actor_i64_heap_field_read(h, d, e, 0);\n"
               "    std::memcpy(bytes.data(), &before, sizeof(before));\n"
               "    frames.write(token, frame, 8, bytes);\n"
               "    frames.read(token, frame, 8, bytes);\n"
