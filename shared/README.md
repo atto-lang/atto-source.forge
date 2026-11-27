@@ -7,3 +7,5 @@ Explicit `--counted-ready-v1` compiler entry emits static C++ from a bounded Att
 - `runtime/NativeSelectArbiter.hpp`: `2d85351e66e55aae19eb5e6a08a434643c2dc4e0`
 - `runtime/NativeSelectableI64Channel.hpp`: `bcb3a3eb9e0504f4bfa4808531a17126cacd0325`
 - `runtime/NativeSelectableI64Future.hpp`: `0c972dc190fc25533792a928461298492ba3b5ea`
+
+Raw Future select frontend update: exact CountedReadyGuest.hpp blob `5f99e184ab71eb8eb3022d16bbcc04d1843ba335` from LLVM PR #988 head `295a594a22f18203cb0234dffcff572cf8e5e692`. Runtime headers retain the existing pins above. The shared header is not independent native lowering; Forge guest execution is required separately.
