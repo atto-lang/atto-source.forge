@@ -49,6 +49,10 @@ class Parser {
       public_decl = take("pub"); expect("define");
       public_decl = take("pub") || public_decl;
     }
+    // A known unsupported owner kind is not an obsolete-marker syntax
+    // rejection. Keep profile admission separate from grammar conformance.
+    if (token_.text == "actor" || token_.text == "struct")
+      fail("DECL_KIND_UNSUPPORTED: bounded Forge nominal profile supports classes, not actor/struct owners");
     expect("class");
     result_.owner = identifier();
     for (const auto& contract : contracts_)
