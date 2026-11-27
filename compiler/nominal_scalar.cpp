@@ -39,13 +39,33 @@ class Parser {
   ScalarClass parse() {
     // This is a deliberate opt-in compiler profile. There is no generic
     // fallback to the scalar expression compiler or an actor-state bypass.
-    take("pub");
+    bool public_decl = take("pub");
     expect("define");
-    take("pub");
+    public_decl = take("pub") || public_decl;
+    while (token_.text == "interface" || token_.text == "trait") {
+      if (public_decl) fail("public contract unsupported in local profile");
+      next();
+      parse_contract();
+      public_decl = take("pub"); expect("define");
+      public_decl = take("pub") || public_decl;
+    }
     expect("class");
     result_.owner = identifier();
+    for (const auto& contract : contracts_)
+      if (contract.name == result_.owner) fail("duplicate nominal declaration");
+    if (take("implements")) {
+      do {
+        auto name = identifier();
+        if (std::find(implements_.begin(), implements_.end(), name) != implements_.end())
+          fail("duplicate implements entry");
+        if (implements_.size() >= 16) fail("implements budget exceeded");
+        implements_.push_back(std::move(name));
+      } while (take(","));
+    }
     expect("as");
     if (!take("let")) return parse_fieldless();
+    if (!contracts_.empty() || !implements_.empty())
+      fail("stateful contract implementation unsupported in bounded profile");
     expect("int");
     result_.field = identifier();
     expect("=");
@@ -166,37 +186,88 @@ class Parser {
     return result_;
   }
  private:
+  // Abstract, local i64 obligations only. Never introduce runtime interface
+  // objects or erase a declaration before checking its exact public slot.
+  struct Signature { std::string name; std::string parameter; };
+  struct Contract { std::string name; std::vector<Signature> methods; };
+  std::vector<Contract> contracts_;
+  std::vector<std::string> implements_;
+  std::vector<Signature> method_signatures_;
+  Signature shared_signature() {
+    std::string name = identifier();
+    if (name == "method" && token_.text != "(")
+      fail("obsolete method introducer; use mtd");
+    if (name == "fnc" || (name == "mtd" && token_.text != "("))
+      name = identifier();
+    if (name == "fnc" || name == "self" || name == "static" || name == "mut")
+      fail("reserved nominal method name");
+    expect("(");
+    bool closed = false;
+    if (take("self")) {
+      if (take(")")) {
+        if (!take("(")) closed = true;
+      } else {
+        expect(",");
+        if (token_.text == ")") fail("trailing receiver comma");
+      }
+    }
+    std::string parameter;
+    if (!closed && !take(")")) {
+      expect("int"); parameter = identifier();
+      if (parameter == "self") fail("invalid shared receiver parameter");
+      expect(")");
+    }
+    if (!take(":")) expect("->");
+    expect("int");
+    return {std::move(name), std::move(parameter)};
+  }
+  void parse_contract() {
+    if (contracts_.size() >= 16) fail("contract declaration budget exceeded");
+    Contract contract{identifier(), {}};
+    for (const auto& prior : contracts_)
+      if (prior.name == contract.name) fail("duplicate nominal declaration");
+    expect("as");
+    while (!take("end")) {
+      if (contract.methods.size() >= 16) fail("contract method budget exceeded");
+      take("pub");
+      auto signature = shared_signature();
+      expect(";");
+      for (const auto& prior : contract.methods)
+        if (prior.name == signature.name && prior.parameter.empty() == signature.parameter.empty())
+          fail("duplicate native method name/arity");
+      contract.methods.push_back(std::move(signature));
+    }
+    contracts_.push_back(std::move(contract));
+  }
+  void validate_contracts() const {
+    for (const auto& name : implements_) {
+      const auto found = std::find_if(contracts_.begin(), contracts_.end(),
+          [&](const Contract& contract) { return contract.name == name; });
+      if (found == contracts_.end()) fail("E_IMPL_UNRESOLVED: unknown local contract");
+      for (const auto& required : found->methods) {
+        const auto actual = std::find_if(method_signatures_.begin(), method_signatures_.end(),
+            [&](const Signature& method) { return method.name == required.name &&
+                method.parameter.empty() == required.parameter.empty(); });
+        if (actual == method_signatures_.end()) fail("MISSING_INSTANCE_OBLIGATION");
+        const auto index = static_cast<std::size_t>(actual - method_signatures_.begin());
+        if (!result_.methods[index].public_method) fail("E_IMPL_VISIBILITY: required public method");
+        if (actual->parameter != required.parameter) fail("E_IMPL_SIGNATURE: required parameter mismatch");
+      }
+    }
+    for (const auto& contract : contracts_)
+      if (std::find(implements_.begin(), implements_.end(), contract.name) == implements_.end())
+        fail("E_CONTRACT_PROFILE: unused local contract unsupported");
+  }
   // Closed fieldless profile: a public, statically selected i64 method on
   // a fresh receiver. No fields, mutable self, escaping receiver or dispatch table.
   ScalarClass parse_fieldless() {
     while (!take("end")) {
       if (result_.methods.size() >= 16) fail("nominal method budget exceeded");
       const bool pub = take("pub");
-      std::string name = identifier();
-      if (name == "method" && token_.text != "(")
-        fail("obsolete method introducer; use mtd");
-      if (name == "fnc" || (name == "mtd" && token_.text != "("))
-        name = identifier();
-      if (name == "fnc" || name == "self" || name == "static" || name == "mut")
-        fail("reserved nominal method name");
-      expect("(");
-      bool closed = false;
-      if (take("self")) {
-        if (take(")")) {
-          if (!take("(")) closed = true;
-        } else {
-          expect(",");
-          if (token_.text == ")") fail("trailing receiver comma");
-        }
-      }
-      std::string parameter;
-      if (!closed && !take(")")) {
-        expect("int"); parameter = identifier();
-        if (parameter == "self") fail("invalid shared receiver parameter");
-        expect(")");
-      }
-      if (!take(":")) expect("->");
-      expect("int"); expect("{"); expect("return");
+      const auto signature = shared_signature();
+      const auto& name = signature.name;
+      const auto& parameter = signature.parameter;
+      expect("{"); expect("return");
       const auto kind = parameter.empty() ? Method::Kind::Constant : Method::Kind::ArgumentAdd;
       if (!parameter.empty()) { expect(parameter); expect("+"); }
       const auto immediate = integer();
@@ -204,7 +275,9 @@ class Parser {
       declare_method(name, kind, parameter.empty() ? 0u : 1u);
       result_.methods.back().immediate = immediate;
       result_.methods.back().public_method = pub;
+      method_signatures_.push_back(signature);
     }
+    validate_contracts();
     take("pub"); expect("fnc"); expect("main"); expect("("); expect(")");
     if (!take(":")) expect("->");
     expect("int"); expect("{"); expect("return"); expect("new");

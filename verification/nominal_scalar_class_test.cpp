@@ -133,6 +133,40 @@ int main() {
     overflow(fieldless);
     require(emit_x86_64_asm(fieldless).find("jo .Loresforge_nominal_overflow")!=std::string::npos,
             "fieldless checked addition omitted overflow trap");
+    // Abstract contracts are checked before erasure; native code is identical
+    // to the concrete fieldless profile, with no runtime interface object.
+    const std::string concrete = "define class C as pub ping(int n):int{return n+2;} end "
+        "pub fnc main():int{return new C().ping(40);}";
+    const auto concrete_code = emit_x86_64_asm(parse(concrete));
+    for (const std::string kind : {"interface", "trait"}) {
+      for (const std::string marker : {"", "mtd ", "fnc "}) {
+        const auto source = "define " + kind + " Required as " + marker +
+            "ping(self)(int n):int; end define class C implements Required as "
+            "pub ping(int n):int{return n+2;} end pub fnc main():int{return new C().ping(40);}";
+        const auto program = parse(source);
+        require(interpret(program)==42 && emit_x86_64_asm(program)==concrete_code,
+                "contract changed native lowering");
+      }
+    }
+    const std::string contract = "define interface Required as ping(int n):int; end ";
+    const std::string main = " end pub fnc main():int{return new C().ping(40);}";
+    rejects(contract+"define class C implements Required as"+main, "MISSING_INSTANCE_OBLIGATION");
+    rejects(contract+"define class C implements Required as ping(int n):int{return n+2;}"+main,
+            "E_IMPL_VISIBILITY");
+    rejects(contract+"define class C implements Required as pub ping(int x):int{return x+2;}"+main,
+            "E_IMPL_SIGNATURE");
+    rejects(contract+"define class C implements Missing as pub ping(int n):int{return n+2;}"+main,
+            "E_IMPL_UNRESOLVED");
+    rejects(contract+"define class C implements Required,Required as pub ping(int n):int{return n+2;}"+main,
+            "duplicate implements entry");
+    rejects(contract+concrete,"E_CONTRACT_PROFILE");
+    rejects("pub "+contract+concrete,"public contract unsupported");
+    rejects(contract+"define trait Required as ping(int n):int; end "+concrete,"duplicate nominal declaration");
+    rejects("define trait Required as ping(int n):int; mtd ping(self,int n):int; end "+concrete,
+            "duplicate native method name/arity");
+    rejects("define trait Required as ping(int n):int{return n+2;} end "+concrete);
+    rejects(contract+"define class C implements Required as let int value=40; end "+main,
+            "stateful contract implementation unsupported");
     const auto split = parse(R"ores(
       define class Counter as let int count=40;
         read():int{return self.count;}
