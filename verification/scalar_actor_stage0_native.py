@@ -56,12 +56,35 @@ with tempfile.TemporaryDirectory() as tmp:
     run([a.cxx, '-std=c++20', *flags, '-pthread', '-I.', str(cpp), str(heap),
          'runtime/scalar_actor.cpp', 'verification/scalar_actor_stage0_read_guest.cpp', '-o', str(binary)])
     run([str(binary)])
+    # The canonical aliases must emit byte-identical native code, not just
+    # coincidentally produce the same scalar result.
+    alias_cases = [
+        (sealed_source(37, '+'), 'state_w(', ['state_w(', 'handle_state_w(',
+          'handle_state(critical-write ', 'handle_state(critical '], 'sealed_add'),
+        (read_source(), 'state_ro(', ['state_ro(', 'handle_state_ro(',
+          'handle_state(critical-read '], 'sealed_read'),
+    ]
+    for canonical, old, aliases, label in alias_cases:
+        expected_cpp = (work / (label + '.cpp')).read_bytes()
+        for alias in aliases:
+            for prefix in ('', 'self.'):
+                src = work / 'alias.atto'
+                src.write_text(canonical.replace(old, prefix + alias), encoding='ascii')
+                got = subprocess.run([str(emitter), str(src)], capture_output=True, check=True, timeout=10)
+                if got.stdout != expected_cpp:
+                    raise RuntimeError('alias changed verified native output')
     for bad in [sealed_source(0, '+').replace('state_w', 'state_ro'),
                 sealed_source(0, '+').replace('s.total = s.total + msg', 'total = total + msg'),
                 sealed_source(0, '+').replace('return s.total;', 'return s;'),
                 sealed_source(0, '+').replace('|s|', '|msg|'),
                 sealed_source(0, '+').replace('return s.total;', 'await msg; return s.total;'),
                 sealed_source(0, '+').replace('return s.total;', 'return state_ro(|x| -> x.total);'),
+                sealed_source(0, '+').replace('state_w(', 'other.state_w('),
+                sealed_source(0, '+').replace('state_w(', 'state_w(critical-write '),
+                sealed_source(0, '+').replace('state_w(', 'handle_state(critical -write '),
+                sealed_source(0, '+').replace('|s|', '|_|').replace('s.total', '_.total'),
+                sealed_source(0, '+').replace('|s|', '|Counter|').replace('s.total', 'Counter.total'),
+                read_source().replace('state_ro(', 'handle_state(critical-write '),
                 source(2**63, '+'), source(-2**63-1, '-'), source(0, '+') + ' junk',
                 source(0, '+').replace('total + msg','await msg'),
                 source(0, '+').replace('Counter','await'), ' ' * 8193,
@@ -71,4 +94,4 @@ with tempfile.TemporaryDirectory() as tmp:
         result = subprocess.run([str(emitter), str(src)], capture_output=True, timeout=10)
         if result.returncode != 1 or result.stdout or b'actor source:' not in result.stderr:
             raise RuntimeError('invalid source was not rejected before emission')
-    print('FORGE_STAGE0_NATIVE: 5 standalone guests, 16 source denials PASS')
+    print('FORGE_STAGE0_NATIVE: 5 standalone guests, 14 alias emission controls, 22 source denials PASS')
