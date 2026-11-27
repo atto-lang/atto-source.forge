@@ -193,11 +193,11 @@ void ores_actor_i64_heap_drop(OresActorI64Heap* heap,
 
 static OresActorLoan borrow_slot(OresActorI64Heap* heap,
                                 OresActorTurn turn, OresActorSlot slot,
-                                unsigned char exclusive) {
+                                unsigned char exclusive, unsigned char fixed_only) {
     lock_heap(heap);
     require_turn(heap, turn);
     ActorSlot* s = checked_slot(heap, slot);
-    if (s->writer || (exclusive && (s->loans || (s->fixed_field && !s->field_mutable)))
+    if ((fixed_only && !s->fixed_field) || s->writer || (exclusive && (s->loans || (s->fixed_field && !s->field_mutable)))
         || s->loans == UINT32_MAX || heap->active_loans >= MAX_LOANS
         || heap->next_loan_nonce == UINT64_MAX) rejected();
     unsigned found = MAX_LOANS;
@@ -219,11 +219,21 @@ static OresActorLoan borrow_slot(OresActorI64Heap* heap,
 }
 OresActorLoan ores_actor_i64_heap_borrow(OresActorI64Heap* heap,
                                        OresActorTurn turn, OresActorSlot slot) {
-    return borrow_slot(heap, turn, slot, 0);
+    return borrow_slot(heap, turn, slot, 0, 0);
 }
 OresActorLoan ores_actor_i64_heap_borrow_mut(OresActorI64Heap* heap,
                                            OresActorTurn turn, OresActorSlot slot) {
-    return borrow_slot(heap, turn, slot, 1);
+    return borrow_slot(heap, turn, slot, 1, 0);
+}
+/* Fixed fields never change generation: reserve_field requires generation 1
+ * and fixed slots cannot be dropped. The check and grant share one lock. */
+OresActorLoan ores_actor_i64_heap_field_borrow(OresActorI64Heap* heap, OresActorTurn turn, uint64_t index) {
+    OresActorSlot slot = {turn.domain, index, 1};
+    return borrow_slot(heap, turn, slot, 0, 1);
+}
+OresActorLoan ores_actor_i64_heap_field_borrow_mut(OresActorI64Heap* heap, OresActorTurn turn, uint64_t index) {
+    OresActorSlot slot = {turn.domain, index, 1};
+    return borrow_slot(heap, turn, slot, 1, 1);
 }
 static ActorSlot* require_loan(OresActorI64Heap* heap, OresActorLoan loan, int writing) {
     if (loan.domain != heap->domain || !loan.nonce) rejected();

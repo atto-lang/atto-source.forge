@@ -28,10 +28,16 @@ with tempfile.TemporaryDirectory() as tmp:
     run([a.cc, '-std=c11', *flags, '-c', 'runtime/arena/ActorOwnedI64Heap.c', '-o', str(heap)])
     def source(initial, op):
         return f'define actor Counter as let int total: {initial} receive(int msg) -> int :: total = total {op} msg; return total; end end\n'
+    def sealed_source(initial, op):
+        return f'define actor Counter as state {{ let int total: {initial}; }} receive(int msg) -> int :: return state_w(|s| -> {{ s.total = s.total {op} msg; return s.total; }}); end end\n'
+    def read_source():
+        return 'define actor Counter as state { let int total: 42; } receive(int msg) -> int :: return state_ro(|s| -> s.total); end end\n'
     for label, initial, op, expected in [('add', 37, '+', [39,38,42,40,'INT64_MAX']),
-                                          ('sub', 47, '-', [45,46,42,44,'INT64_MIN'])]:
+                                          ('sub', 47, '-', [45,46,42,44,'INT64_MIN']),
+                                          ('sealed_add', 37, '+', [39,38,42,40,'INT64_MAX']),
+                                          ('sealed_sub', 47, '-', [45,46,42,44,'INT64_MIN'])]:
         src = work / (label + '.atto')
-        src.write_text(source(initial, op), encoding='ascii')
+        src.write_text((sealed_source if label.startswith('sealed_') else source)(initial, op), encoding='ascii')
         cpp = work / (label + '.cpp')
         with cpp.open('wb') as out:
             subprocess.run([str(emitter), str(src)], stdout=out, check=True, timeout=10)
@@ -40,7 +46,23 @@ with tempfile.TemporaryDirectory() as tmp:
         run([a.cxx, '-std=c++20', *flags, '-pthread', '-I.', *macros, str(cpp), str(heap),
              'runtime/scalar_actor.cpp', 'verification/scalar_actor_stage0_guest.cpp', '-o', str(binary)])
         run([str(binary)])
-    for bad in [source(2**63, '+'), source(-2**63-1, '-'), source(0, '+') + ' junk',
+    # Read-only compiled callback is exercised with the same real actor heap.
+    src = work / 'sealed_read.atto'
+    src.write_text(read_source(), encoding='ascii')
+    cpp = work / 'sealed_read.cpp'
+    with cpp.open('wb') as out:
+        subprocess.run([str(emitter), str(src)], stdout=out, check=True, timeout=10)
+    binary = work / 'sealed_read'
+    run([a.cxx, '-std=c++20', *flags, '-pthread', '-I.', str(cpp), str(heap),
+         'runtime/scalar_actor.cpp', 'verification/scalar_actor_stage0_read_guest.cpp', '-o', str(binary)])
+    run([str(binary)])
+    for bad in [sealed_source(0, '+').replace('state_w', 'state_ro'),
+                sealed_source(0, '+').replace('s.total = s.total + msg', 'total = total + msg'),
+                sealed_source(0, '+').replace('return s.total;', 'return s;'),
+                sealed_source(0, '+').replace('|s|', '|msg|'),
+                sealed_source(0, '+').replace('return s.total;', 'await msg; return s.total;'),
+                sealed_source(0, '+').replace('return s.total;', 'return state_ro(|x| -> x.total);'),
+                source(2**63, '+'), source(-2**63-1, '-'), source(0, '+') + ' junk',
                 source(0, '+').replace('total + msg','await msg'),
                 source(0, '+').replace('Counter','await'), ' ' * 8193,
                 *[source(0, '+').replace('Counter', word) for word in ('panic', 'raise', 'throw', 'trap')]]:
@@ -49,4 +71,4 @@ with tempfile.TemporaryDirectory() as tmp:
         result = subprocess.run([str(emitter), str(src)], capture_output=True, timeout=10)
         if result.returncode != 1 or result.stdout or b'actor source:' not in result.stderr:
             raise RuntimeError('invalid source was not rejected before emission')
-    print('FORGE_STAGE0_NATIVE: 2 standalone guests, 10 source denials PASS')
+    print('FORGE_STAGE0_NATIVE: 5 standalone guests, 16 source denials PASS')
