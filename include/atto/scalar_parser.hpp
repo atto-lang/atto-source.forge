@@ -1,6 +1,7 @@
 #pragma once
 // Restricted native Atto scalar parser: one main() with a scalar return.
 #include "atto/scalar_lexer.hpp"
+#include "atto/reusable_slot.hpp"
 #include "atto/decimal_i64.hpp"
 #include "atto/exact_quantity_scale.hpp"
 #include <algorithm>
@@ -107,6 +108,7 @@ struct Parsed {
   // Named entries open a scope. Empty entries close the innermost scope.
   // Remaining scopes close with the terminal scalar result or checked error.
   std::vector<std::optional<std::string>> trace_steps;
+  std::optional<ReusableSlot> reusable_slot;
   [[nodiscard]] bool ok() const noexcept {
     return error == ParseError::none && !nodes.empty() && root < nodes.size();
   }
@@ -131,6 +133,14 @@ inline constexpr std::size_t max_trace_depth = 16;
 [[nodiscard]] inline bool validate_ast(const Parsed& p) {
   if (!p.ok() || p.nodes.size() > max_nodes ||
       p.root != p.nodes.size() - 1) return false;
+  if (p.reusable_slot) {
+    const auto value = verify_reusable_slot(*p.reusable_slot);
+    if (!value || p.local || !p.trace_steps.empty() || p.nodes.size() != 1 ||
+        p.root != 0 || p.nodes[0].op != Op::literal || p.nodes[0].value != *value ||
+        p.nodes[0].left || p.nodes[0].right || p.nodes[0].upper ||
+        !p.nodes[0].states.empty() || !p.nodes[0].effects.empty() ||
+        !p.nodes[0].updates.empty() || !p.nodes[0].exits.empty()) return false;
+  }
   if (p.local) {
     // A forged or mutated typed plan must not be allowed to change its
     // value, launder a raw address, or become an owning pointer. There is
@@ -1869,6 +1879,109 @@ class Parser {
     ++pos_;
     return true;
   }
+
+  [[nodiscard]] bool reusable_pointer() {
+    ReusableSlot plan;
+    std::vector<std::string> names;
+    auto reject_slot = [&]() { fail(ParseError::pointer_profile); return false; };
+    auto slot_id = [&]() -> std::optional<std::string> {
+      auto id = local_id();
+      if (!id) return std::nullopt;
+      const std::string_view reserved[] = {"RawPointer", "mut", "null", "true", "false",
+        "to", "empty", "await", "suspends", "actor", "class", "struct", "define",
+        "new", "copy", "borrow", "drop", "take", "share", "freeze", "weak", "pin",
+        "if", "else", "end", "while", "for", "task", "select", "defer", "recover"};
+      if (!((*id)[0] >= 'a' && (*id)[0] <= 'z') && (*id)[0] != '_') {
+        fail(ParseError::pointer_profile); return std::nullopt;
+      }
+      for (auto word : reserved) if (*id == word) {
+        fail(ParseError::pointer_profile); return std::nullopt;
+      }
+      return id;
+    };
+    auto index_of = [&](const std::string& id) {
+      return static_cast<std::size_t>(std::find(names.begin(), names.end(), id) - names.begin());
+    };
+    auto integer = [&]() -> std::optional<i64> {
+      if (current().kind != Kind::integer) return std::nullopt;
+      auto value = parse_decimal_i64(text());
+      if (value) ++pos_;
+      return value;
+    };
+    if (!expected("let")) return false;
+    while (!name("mut")) {
+      if (plan.owners.size() >= 16) return reject_slot();
+      auto owner = slot_id();
+      if (!owner || index_of(*owner) != names.size() ||
+          !expected(Kind::colon) || !expected("int") || !expected(Kind::equals))
+        return reject_slot();
+      const auto value = integer();
+      if (!value || !expected(Kind::semicolon)) return reject_slot();
+      names.push_back(*owner); plan.owners.push_back(*value);
+      if (!expected("let")) return false;
+    }
+    if (!expected("RawPointer") || !expected(Kind::lt) ||
+        !expected("int") || !expected(Kind::gt)) return false;
+    auto handle = slot_id();
+    if (!handle || index_of(*handle) != names.size() ||
+        !expected(Kind::equals) || !expected("RawPointer") || !expected(Kind::dot) ||
+        !expected("empty") || !expected(Kind::lt) || !expected("int") ||
+        !expected(Kind::gt) || !expected(Kind::lparen) || !expected(Kind::rparen) ||
+        !expected(Kind::semicolon)) return reject_slot();
+    std::optional<std::size_t> bound;
+    while (!(current().kind == Kind::name && text() == "return")) {
+      if (plan.steps.size() >= 32) return reject_slot();
+      if (current().kind == Kind::name && text() == "ref") {
+        if (bound || !local_op("ref") || !expected(*handle) || !expected("to"))
+          return reject_slot();
+        auto owner = slot_id();
+        if (!owner || index_of(*owner) >= plan.owners.size()) return reject_slot();
+        bound = index_of(*owner);
+        plan.steps.push_back({ReusableSlot::Kind::bind, *bound});
+      } else if (name("val")) {
+        auto result = slot_id();
+        if (!result || *result == *handle || index_of(*result) != names.size() ||
+            !bound || !expected(Kind::equals) || current().kind != Kind::name ||
+            text() != "deref" || !local_op("deref") || !expected(*handle))
+          return reject_slot();
+        plan.steps.push_back({ReusableSlot::Kind::read, *bound});
+        names.push_back(*result);
+      } else if (current().kind == Kind::name && text() == "unref") {
+        if (!bound || !local_op("unref") || !expected(*handle)) return reject_slot();
+        plan.steps.push_back({ReusableSlot::Kind::detach, 0});
+        bound.reset();
+      } else return reject_slot();
+      if (!expected(Kind::semicolon)) return false;
+    }
+    if (bound || !expected("return")) return reject_slot();
+    bool subtract = false;
+    do {
+      if (plan.result.size() >= 32) return reject_slot();
+      if (current().kind == Kind::integer) {
+        auto v = integer();
+        if (!v) return reject_slot();
+        plan.result.push_back({true, *v, subtract});
+      } else {
+        auto id = slot_id();
+        if (!id || index_of(*id) == names.size()) return reject_slot();
+        plan.result.push_back({false, static_cast<i64>(index_of(*id)), subtract});
+      }
+      if (take(Kind::plus)) subtract = false;
+      else if (take(Kind::minus)) subtract = true;
+      else break;
+    } while (true);
+    if (!expected(Kind::semicolon) || !expected(Kind::rbrace) ||
+        current().kind != Kind::end) return reject_slot();
+    const auto value = verify_reusable_slot(plan);
+    if (!value) return reject_slot();
+    // This closed profile permits full compile-time scalar promotion.
+    // The retained typed proof is checked again by validate_ast before emission.
+    auto root = append(Node{Op::literal, 0, 0, *value});
+    if (!root) return false;
+    out_.root = *root;
+    out_.reusable_slot = std::move(plan);
+    return true;
+  }
   [[nodiscard]] bool local_pointer() {
     auto owner = local_id();
     if (!owner || !expected(Kind::colon) ||
@@ -1991,6 +2104,17 @@ public:
     if (!signature_ok || !take(Kind::lbrace)) {
       fail(ParseError::syntax);
       return std::move(out_);
+    }
+    if (!strict_ && helpers_.empty() && refinements_.empty() && public_entry && fnc &&
+        pos_ == 8 && current().kind == Kind::name && text() == "let") {
+      bool slot_token = false;
+      for (std::size_t i = pos_; i < tokens_.size(); ++i)
+        if (tokens_[i].kind == Kind::name &&
+            source_.substr(tokens_[i].offset, tokens_[i].length) == "RawPointer") slot_token = true;
+      if (slot_token) {
+        (void)reusable_pointer();
+        return std::move(out_);
+      }
     }
     // Only the isolated no-declaration local pointer program is eligible.
     // Never divert normal bindings, refinements, helpers or strict verification.
