@@ -220,6 +220,13 @@ if(BUILD_TESTING)
         "-DOUTPUT_ROOT=${CMAKE_CURRENT_BINARY_DIR}/atto-shared-scalar-native"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/verification/atto_scalar_native.cmake")
     set_tests_properties(oresforge_shared_atto_native_scalar_aot PROPERTIES TIMEOUT 90)
+    add_test(NAME oresforge_declarative_export_native
+      COMMAND "${CMAKE_COMMAND}"
+        "-DFORGE_COMPILER=$<TARGET_FILE:oresforge>"
+        "-DFORGE_CXX=${CMAKE_CXX_COMPILER}"
+        "-DOUTPUT_ROOT=${CMAKE_CURRENT_BINARY_DIR}/atto-export-native"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/verification/declarative_export_native.cmake")
+    set_tests_properties(oresforge_declarative_export_native PROPERTIES TIMEOUT 90)
   endif()
   add_test(NAME oresforge_cli_legacy_ores_guest
     COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.ores")
