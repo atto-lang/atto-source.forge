@@ -1,6 +1,7 @@
 #include "compiler/frontend.hpp"
 #include "../shared/oreslang/backend/CountedReadyGuest.hpp"
 #include "compiler/call_native.hpp"
+#include "compiler/nominal_scalar.hpp"
 #include "compiler/source_input.hpp"
 #include "compiler/ir.hpp"
 #include "compiler/optimization_cli.hpp"
@@ -75,6 +76,22 @@ int main(int argc,char** argv) {
       std::cout.flush();
       return 0;
     }
+    // Opt-in bounded class methods. The legacy scalar/actor paths remain
+    // fail-closed until general nominal dispatch and ownership lowering exist.
+    if (argc==3 && std::string(argv[1])=="run-class") {
+      const auto program=oresforge::nominal::parse(read_file(argv[2]));
+      std::cout<<oresforge::nominal::interpret(program)<<'\n';
+      std::cout.flush();
+      return 0;
+    }
+    if (argc==4 && std::string(argv[1])=="emit-class-asm") {
+      if (std::string(argv[2])!="x86_64")
+        throw std::runtime_error("bounded nominal class codegen supports only x86_64");
+      const auto program=oresforge::nominal::parse(read_file(argv[3]));
+      std::cout<<oresforge::nominal::emit_x86_64_asm(program);
+      std::cout.flush();
+      return 0;
+    }
     // A separate stage-0 callable profile: true SysV native calls and lazy
     // runtime branches. Legacy scalar and runtime-entry modes remain intact.
     if (argc>=3 && (std::string(argv[1])=="run-calls" || std::string(argv[1])=="run-result-calls" || std::string(argv[1])=="run-option-calls" || std::string(argv[1])=="run-effect-calls")) {
@@ -143,7 +160,7 @@ int main(int argc,char** argv) {
       std::cout.flush();
       return 0;
     }
-    std::cerr<<"usage: oresforge check <file.atto|file.ores> | run|ir <file.atto|file.ores> | emit-asm <arch> <file.atto|file.ores> | run-runtime <file.atto|file.ores> [i64-args...] | ir-runtime <file.atto|file.ores> | emit-runtime-asm <arch> <file.atto|file.ores> | run-calls|run-result-calls|run-option-calls|run-effect-calls <file.atto|file.ores> [i64-args...] | emit-call-asm x86_64 <file.atto|file.ores> | ir-alloc <file.atto|file.ores> | emit-alloc-asm x86_64 <file.atto|file.ores>\n";
+    std::cerr<<"usage: oresforge run-class <file.atto|file.ores> | emit-class-asm x86_64 <file.atto|file.ores> | check <file.atto|file.ores> | run|ir <file.atto|file.ores> | emit-asm <arch> <file.atto|file.ores> | run-runtime <file.atto|file.ores> [i64-args...] | ir-runtime <file.atto|file.ores> | emit-runtime-asm <arch> <file.atto|file.ores> | run-calls|run-result-calls|run-option-calls|run-effect-calls <file.atto|file.ores> [i64-args...] | emit-call-asm x86_64 <file.atto|file.ores> | ir-alloc <file.atto|file.ores> | emit-alloc-asm x86_64 <file.atto|file.ores>\n";
     return 2;
   } catch (const std::exception& e) {
     std::cerr<<"oresforge: "<<e.what()<<'\n';

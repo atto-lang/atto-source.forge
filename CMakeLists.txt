@@ -984,3 +984,9 @@ if(BUILD_TESTING)
     set_tests_properties(oresforge_closed_native_default_allocation PROPERTIES TIMEOUT 180)
   endif()
 endif()
+
+# Bounded nominal class profile; preserve both existing compiler paths.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_sources(oresforge_core PRIVATE compiler/nominal_scalar.cpp)
+endif()
+include(cmake/nominal_scalar.cmake)

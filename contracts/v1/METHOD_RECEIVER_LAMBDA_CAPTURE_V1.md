@@ -22,6 +22,14 @@ remains the same slot as `foo(self, int x)` and `foo(int x)`.
 `mut self` changes receiver borrowing rules, not overload selection;
 it never grants an actor direct state mutation or mailbox dispatch authority.
 
+`x()` and `x(mut self)()` duplicate the same `x/0` instance slot;
+`x(int n)` and `x(mut self, int n)` duplicate `x/1`. Both declaration
+orders must reject once nominal method parsing is implemented.
+`y(mut self, int n)` and legacy split `y(mut self)(int n)` share `y/1`,
+while `x(string a)` and `y(mut self, int n)` may coexist because the
+method names differ. These fixtures are normative; Forge's present scalar
+frontend rejects the entire class/actor feature before overload analysis.
+
 Overloads are selected by owner, instance/static namespace, name and
 value-parameter count. Receiver spelling, generics, return type, effects,
 mutability and ordinary argument types are not distinguishing keys.
@@ -92,12 +100,31 @@ not substitute a scalar mutation or an unprotected callback.
 ## 5. Current rollout boundary
 
 * Java/GraalVM: implementation is on draft PR #1087, unverified CI.
-* LLVM: restricted scalar actor `on_message` supports optional receiver
-  marker on parity-gate branch; general class methods and lambda captures
-  remain unsupported.
-* .NET and Forge: scalar bootstrap; reject method and lambda policies.
-* Wasm: uses the real native LLVM compiler and its restrictions; no independent
-  source-language implementation of these features.
+* LLVM: a restricted synchronous scalar-class method subset has receiver
+  erasure and host selector tests; native guest verification is still required.
+  Actor methods and general lexical captures are not proven by that subset.
+* .NET: a host-side nominal receiver-slot registry is staged, but the
+  structured frontend still rejects class/actor methods before CIL lowering.
+* Forge: the default scalar bootstrap still explicitly rejects class/actor
+  methods, including the receiver-erasure collision corpus. A **separate,
+  opt-in stage-1** `run-class` / `emit-class-asm x86_64` profile parses
+  exactly one i64 scalar field **per instance**, up to 16 named source
+  methods (checked scalar add/subtract writers and read-only accessors),
+  up to 8 independent instances, and up to 32 ordered construct/call/return
+  operations in a restricted main. The compiler keeps a method identity
+  table keyed by name and caller-visible arity; inline and split mutable
+  receivers are erased from caller arity. The method operations are checked
+  and statically inlined into stack-owned x86-64 storage without guest
+  heap allocation or GC. This does NOT provide generic method-body IR,
+  dynamic dispatch, inheritance, actor state, escaping borrow support, or
+  full borrow/lifetime analysis. Source-to-native local component execution
+  (including ASan/UBSan) passed for one and two instances; full repository
+  CMake/CLI integration and source-org CTest are still unverified.
+* Wasm: uses a pinned LLVM compiler and has a bounded scalar-class wasm32
+  guest test matrix. Passing compiled guest evidence remains required; actor
+  methods and lexical captures are still outside the verified subset.
 
 This is a phased migration. Cross-backend parity is **NOT ACHIEVED** until
 all required positive code executes and negative cases reject as specified.
+
+The bounded profile also provides a separately buildable `forge_nominal` CLI. Its isolated GCC and Clang CTest suites passed locally; complete merged-tree CI remains required.
