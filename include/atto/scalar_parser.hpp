@@ -109,7 +109,9 @@ struct Parsed {
     return error == ParseError::none && !nodes.empty() && root < nodes.size();
   }
 };
-inline constexpr std::size_t max_nodes = 128;
+inline constexpr std::size_t max_nodes = 256;
+inline constexpr std::size_t max_strict_nodes = 128;
+inline constexpr std::size_t max_ordinary_bindings = 64;
 inline constexpr int max_parse_depth = 24;
 inline constexpr std::size_t max_trace_depth = 16;
 
@@ -624,7 +626,7 @@ class Parser {
     return name("int") || name("infer");
   }
   [[nodiscard]] std::optional<std::size_t> append(Node n) {
-    if (out_.nodes.size() >= max_nodes) {
+    if (out_.nodes.size() >= (strict_ ? max_strict_nodes : max_nodes)) {
       fail(ParseError::node_limit);
       return std::nullopt;
     }
@@ -1167,7 +1169,7 @@ class Parser {
     // Template graph has already been type-checked over the declared
     // parameter intervals. Instantiate once, with only backward edges.
     for(std::size_t i=h.params.size();i<h.nodes.size();++i){
-      if(out_.nodes.size()>=max_nodes){fail(ParseError::node_limit);return std::nullopt;}
+      if(out_.nodes.size()>=(strict_?max_strict_nodes:max_nodes)){fail(ParseError::node_limit);return std::nullopt;}
       Node n=h.nodes[i];
       if(n.op!=Op::literal){
         if(n.left>=map.size()){fail(ParseError::syntax);return std::nullopt;}
@@ -1470,7 +1472,7 @@ class Parser {
         binding->second=*version;effects.push_back(*version);
         continue;
       }
-      if(bindings_.size()>=32||current().kind!=Kind::name){fail(ParseError::syntax);return std::nullopt;}
+      if(bindings_.size()>=(strict_?32:max_ordinary_bindings)||current().kind!=Kind::name){fail(ParseError::syntax);return std::nullopt;}
       auto n=text();++pos_;
       if(!strict_&&immutable&&n=="bool"){
         if(current().kind!=Kind::name){fail(ParseError::syntax);return std::nullopt;}
@@ -1696,7 +1698,7 @@ class Parser {
       if(spelling=="main")break;
       // Keep existing type-first entrypoint spellings on the legacy path.
       if((spelling=="int"||spelling=="infer")&&pos_+2<tokens_.size()&&tokens_[pos_+2].kind==Kind::left_arrow)break;
-      if(refinements_.empty()||helpers_.size()>=16)return false;
+      if((strict_&&refinements_.empty())||helpers_.size()>=16)return false;
       ++pos_;
       if(current().kind!=Kind::name||!binding_name(text()))return false;
       const auto fname=text();++pos_;
@@ -1742,7 +1744,7 @@ class Parser {
       out_.root=*root;
       if(!validate_ast(out_))return false;
       helpers_.push_back(Helper{fname,std::move(params),*result,std::move(out_.nodes),std::move(dims_),std::move(scales_),std::move(ranges_)});
-      out_.nodes.clear();out_.root=0;dims_.clear();scales_.clear();ranges_.clear();bindings_.clear();strict_arrays_.clear();
+      out_.nodes.clear();out_.root=0;dims_.clear();scales_.clear();ranges_.clear();bindings_.clear();strict_arrays_.clear();boolean_slots_.clear();
     }
     return true;
   }
@@ -2014,6 +2016,6 @@ public:
   return Parser(src, std::move(lexed)).parse();
 }
 [[nodiscard]] inline Parsed parse_verified_strict_i64(std::string_view src) {
-  return Parser(src, tokenize(src), true).parse();
+  return Parser(src, tokenize(src, max_strict_tokens), true).parse();
 }
 }  // namespace atto::forge::scalar

@@ -94,6 +94,12 @@ int main() {
       "pub fnc main(): int { val bool b = true; return b; }",
       "pub fnc main(): int { if false && ¬1 then return 42; else return 0; fi }",
       "pub fnc main(): int { val bool b = true; if b¬ then return 42; else return 0; fi }"})assert(!parse_source(source).ok());
+  assert(evaluate_source("fnc 合計(int Φ, int φ, int 数量, int 𠮷): int { return Φ + φ + 数量 + 𠮷; } pub fnc main(): int { return 合計(10,20,30,40); }").value==100);
+  // An unused parameter still evaluates exactly once and traps before the result.
+  assert(evaluate_source("fnc f(int x): int { return 42; } pub fnc main(): int { return f(1/0); }").error==EvalError::divide_by_zero);
+  assert(!parse_source("fnc f(int x): int { return f(x); } pub fnc main(): int { return f(1); }").ok());
+  assert(!parse_source("fnc f(int x): int { return missing; } pub fnc main(): int { return 42; }").ok());
+  assert(evaluate_source("fnc f(): int { val bool b = true; return b ? 42 : 0; } pub fnc main(): int { val x = 1; return f()+x; }").value==43);
   const std::string unicode_prefix = "type R = int where self >= 1 and self <= 42; ";
   for (const auto* body : {
       "fnc f(int x) -> int { if ¬(x == 0) { return 42/x; } return 42; } pub fnc main() -> int { return f(1); }",
