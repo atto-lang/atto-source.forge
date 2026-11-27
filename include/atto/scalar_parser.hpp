@@ -2131,8 +2131,10 @@ class Parser {
       return static_cast<std::size_t>(std::find(names.begin(), names.end(), id) - names.begin());
     };
     auto integer = [&]() -> std::optional<i64> {
+      const bool negative = take(Kind::minus);
       if (current().kind != Kind::integer) return std::nullopt;
-      auto value = parse_decimal_i64(text());
+      const auto raw = text();
+      auto value = negative ? parse_decimal_i64(std::string("-")+std::string(raw)) : parse_decimal_i64(raw);
       if (value) ++pos_;
       return value;
     };
@@ -2185,7 +2187,7 @@ class Parser {
     bool subtract = false;
     do {
       if (plan.result.size() >= 32) return reject_slot();
-      if (current().kind == Kind::integer) {
+      if (current().kind == Kind::integer || current().kind == Kind::minus) {
         auto v = integer();
         if (!v) return reject_slot();
         plan.result.push_back({true, *v, subtract});
