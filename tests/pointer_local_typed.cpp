@@ -49,5 +49,22 @@ int main() {
   auto overflow = parse_source(std::string(exact).replace(
       std::string(exact).find("= 42;"), 5, "= 9223372036854775808;"));
   assert(!overflow.ok() && overflow.error == ParseError::literal_out_of_range);
+  auto slot = parse_source("pub fnc main(): int { let a: int = 40; let b: int = 2; let mut RawPointer<int> p = RawPointer.empty<int>(); ref! p to a; val first = deref! p; unref! p; ref! p to b; val second = deref! p; unref! p; return first + second; }");
+  assert(slot.ok() && slot.reusable_slot && validate_ast(slot) && emit_cpp(slot));
+  auto bad = slot;
+  bad.reusable_slot->steps[1].index = 1;
+  assert(!validate_ast(bad) && !emit_cpp(bad));
+  bad = slot;
+  bad.reusable_slot->steps.pop_back();
+  assert(!validate_ast(bad));
+  bad = slot;
+  bad.nodes[0].value = 43;
+  assert(!validate_ast(bad));
+  for (const std::string body : {"val x = deref! p; return x;", "p = null; return 42;",
+       "ref! p to a; ref! p to a; unref! p; return 42;", "ref! p to a; return 42;",
+       "ref! p to a; unref! p; unref! p; return 42;", "return p;"}) {
+    const auto invalid = parse_source("pub fnc main(): int { let a: int = 42; let mut RawPointer<int> p = RawPointer.empty<int>(); " + body + " }");
+    assert(!invalid.ok() && !emit_cpp(invalid));
+  }
   return 0;
 }
