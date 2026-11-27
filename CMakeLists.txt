@@ -580,6 +580,19 @@ if(BUILD_TESTING)
   target_link_libraries(oresforge_select_continuation_lease_host PRIVATE Threads::Threads)
   add_test(NAME oresforge_select_continuation_lease_host COMMAND oresforge_select_continuation_lease_host)
 
+  # Exact shared LLVM regression: independent concurrent owner settlement.
+  add_executable(oresforge_select_continuation_multi_owner_host
+    verification/native_select_continuation_multi_owner_test.cpp)
+  target_include_directories(oresforge_select_continuation_multi_owner_host PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/shared")
+  target_compile_features(oresforge_select_continuation_multi_owner_host PRIVATE cxx_std_20)
+  target_compile_options(oresforge_select_continuation_multi_owner_host PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall -Wextra -Wpedantic -Werror>)
+  target_link_libraries(oresforge_select_continuation_multi_owner_host PRIVATE Threads::Threads)
+  add_test(NAME oresforge_select_continuation_multi_owner_host
+    COMMAND oresforge_select_continuation_multi_owner_host)
+  set_tests_properties(oresforge_select_continuation_multi_owner_host PROPERTIES TIMEOUT 60)
+
   set_tests_properties(oresforge_actor_private_frames_host PROPERTIES
     TIMEOUT 30 LABELS "host-only;actor-logical-frames")
 
