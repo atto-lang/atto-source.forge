@@ -5,6 +5,22 @@
 using namespace atto::forge;
 using namespace atto::forge::scalar;
 int main() {
+  // Explicit update spellings use the existing verified arithmetic path.
+  for(const auto* source : {
+      "fnc main():int{let int x=40;set x++;set ++x;return x;}",
+      "fnc main():int{let int x=44;set x--;set --x;return x;}",
+      "fnc main():int{let int x=20;set x+=2;set x-=1;set x*=2;return x;}",
+      "fnc main():int{let int x=40;set! (x=x+2);return x;}"}) {
+    assert(parse_verified_strict_i64(source).ok());
+  }
+  for(const auto* source : {
+      "fnc main():int{val int x=40;set x++;return x;}",
+      "fnc main():int{set missing++;return 42;}",
+      "fnc main():int{let int x=40;set x+ =2;return x;}",
+      "fnc main():int{let int x=40;set ++x++;return x;}",
+      "fnc main():int{let int x=9223372036854775807;set x++;return x;}"}) {
+    assert(!parse_verified_strict_i64(source).ok());
+  }
   // Pointer<int> ref!/deref!/unref! is admitted only by the distinct
   // closed-world local-pointer parser, never as an untyped ownership call.
   for (const std::string_view expression : {
