@@ -1979,7 +1979,10 @@ class Parser {
       if(name("new")){
         step.kind=K::construct;
         const auto args=[&](auto&& self,std::size_t index,unsigned depth)->bool{
-          if(depth>=8||!w(plan.owners[index].identity)||!k(Kind::lparen))return false;
+          if(depth>=8||!w(plan.owners[index].identity))return false;
+          // Alias syntax is confined to typed nested constructor expressions.
+          if(depth>0&&take(Kind::dot)){if(!name("make")&&!w("new"))return false;}
+          if(!k(Kind::lparen))return false;
           const auto& fs=plan.owners[index].fields;
           for(std::size_t i=0;i<fs.size();++i){
             if(i&&!k(Kind::comma))return false;
