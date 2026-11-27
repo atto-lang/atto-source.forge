@@ -44,6 +44,8 @@ struct Expr {
 using ExprPtr = std::unique_ptr<Expr>;
 struct Function {
   std::vector<std::string> parameters;
+  std::unordered_set<std::string> rebindable;
+  std::vector<std::pair<std::string, ExprPtr>> assignments;
   ExprPtr body;
 };
 
@@ -90,7 +92,7 @@ class Parser {
         bindings.emplace(main.parameters[i],add(Op::Parameter,
                                                static_cast<std::int64_t>(i)));
     }
-    const int result=lower(*main.body,bindings,active,0);
+    const int result=lower_body(main,bindings,active,0);
     add(Op::Return,0,result);
     verify(program_);
     return std::move(program_);
@@ -522,12 +524,21 @@ class Parser {
           error("tuple-v2 parameter requires typed ownership/ABI lowering");
         // Both canonical type-first and legacy name-colon-type scalar
         // parameters use the same checked ABI and duplicate-name rules.
-        const bool type_first=take("int");
-        const std::string parameter=identifier();
+        bool rebind=false;
+        bool contextual_name=false;
+        if (take("rebind")) {
+          if (tok_.text==":") contextual_name=true;
+          else rebind=true;
+        }
+        const bool type_first=!contextual_name && take("int");
+        const std::string parameter=contextual_name ? "rebind" : identifier();
+        if (rebind && !type_first && parameter=="rebind" && tok_.text!=":")
+          error("E_SYNTAX: duplicate rebind marker");
         if (parameter=="int" || parameter=="fnc" || parameter=="return" ||
             std::find(fn.parameters.begin(),fn.parameters.end(),parameter)!=fn.parameters.end())
           error("invalid or duplicate parameter");
         if (!type_first) { expect(":"); expect("int"); }
+        if (rebind) fn.rebindable.insert(parameter);
         fn.parameters.push_back(parameter);
         if (fn.parameters.size()>64) error("too many parameters");
         if (!take(",")) break;
@@ -548,6 +559,18 @@ class Parser {
     aggregate_types_.clear();
     aggregate_locals_.clear();
     while (tok_.text=="const") aggregate_binding(fn);
+    // The restricted scalar profile admits only straight-line formal writes.
+    // Keep each RHS in source order, even when its result is later discarded.
+    while (tok_.kind==Kind::Word &&
+           std::find(fn.parameters.begin(),fn.parameters.end(),tok_.text)!=fn.parameters.end()) {
+      const auto parameter=identifier();
+      if (!fn.rebindable.contains(parameter)) error("E_IMMUTABLE_REBIND: fixed parameter");
+      if (fn.assignments.size()>=64) error("parameter assignment budget exceeded");
+      expect("=");
+      auto rhs=expression(0);
+      expect(";");
+      fn.assignments.emplace_back(parameter,std::move(rhs));
+    }
     if (tok_.text=="guard")
       error("GUARD_BACKEND_UNSUPPORTED: early-exit CFG and ownership lowering required");
     if (!take("^")) expect("return");
@@ -691,9 +714,19 @@ class Parser {
       throw std::runtime_error("function call depth exceeded");
     active.push_back(name);
     const auto& fn=functions_.at(name);
+    for (const auto& assignment:fn.assignments)
+      walk_calls(*assignment.second,fn,active,complete);
     walk_calls(*fn.body,fn,active,complete);
     active.pop_back();
     complete.insert(name);
+  }
+  int lower_body(const Function& fn,std::unordered_map<std::string,int>& env,
+                 std::vector<std::string>& active,std::size_t call_depth) {
+    for (const auto& assignment:fn.assignments) {
+      const int next_value=lower(*assignment.second,env,active,call_depth);
+      env.at(assignment.first)=next_value;
+    }
+    return lower(*fn.body,env,active,call_depth);
   }
   int lower(const Expr& e,const std::unordered_map<std::string,int>& env,
             std::vector<std::string>& active,std::size_t call_depth) {
@@ -732,7 +765,7 @@ class Parser {
         for (std::size_t i=0; i<e.children.size(); ++i)
           bound.emplace(fn.parameters[i],lower(*e.children[i],env,active,call_depth));
         active.push_back(e.name);
-        const int result=lower(*fn.body,bound,active,call_depth+1);
+        const int result=lower_body(fn,bound,active,call_depth+1);
         active.pop_back();
         return result;
       }

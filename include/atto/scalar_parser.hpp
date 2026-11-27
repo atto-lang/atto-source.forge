@@ -1490,6 +1490,65 @@ class Parser {
   }
   using MutableTypes=std::vector<std::pair<std::string_view,Refinement>>;
   using ContinueBranch=std::function<std::optional<std::size_t>(int)>;
+  // Contextual explicit update marker. Do not reinterpret a binding named set.
+  bool explicit_update_at(std::size_t k) const {
+    return k+1<tokens_.size() && tokens_[k].kind==Kind::name
+      && source_.substr(tokens_[k].offset,tokens_[k].length)=="set"
+      && (tokens_[k+1].kind==Kind::name || tokens_[k+1].kind==Kind::bang
+          || tokens_[k+1].kind==Kind::plus || tokens_[k+1].kind==Kind::minus);
+  }
+  std::optional<std::string_view> explicit_update_target(std::size_t k) const {
+    if(!explicit_update_at(k))return std::nullopt;
+    ++k;
+    if(k<tokens_.size()&&tokens_[k].kind==Kind::bang){
+      ++k;
+      if(k<tokens_.size()&&tokens_[k].kind==Kind::lparen)++k;
+    }
+    if(k+1<tokens_.size()&&(tokens_[k].kind==Kind::plus||tokens_[k].kind==Kind::minus)
+       &&tokens_[k+1].kind==tokens_[k].kind)k+=2;
+    if(k>=tokens_.size()||tokens_[k].kind!=Kind::name)return std::nullopt;
+    return source_.substr(tokens_[k].offset,tokens_[k].length);
+  }
+  bool update_pair(Kind a,Kind b){
+    if(pos_+1>=tokens_.size()||current().kind!=a||tokens_[pos_+1].kind!=b
+       ||current().offset+current().length!=tokens_[pos_+1].offset)return false;
+    pos_+=2;return true;
+  }
+  bool scalar_update(MutableTypes& mutable_types,std::vector<std::size_t>& effects){
+    const bool explicit_set=explicit_update_at(pos_);
+    bool wrapped=false;
+    std::optional<Op> op;
+    bool increment=false;
+    if(explicit_set){
+      ++pos_;
+      if(take(Kind::bang))wrapped=take(Kind::lparen);
+      if(update_pair(Kind::plus,Kind::plus)){op=Op::add;increment=true;}
+      else if(update_pair(Kind::minus,Kind::minus)){op=Op::sub;increment=true;}
+    }
+    if(current().kind!=Kind::name){fail(ParseError::verify_unsupported);return false;}
+    const auto key=text();++pos_;
+    auto binding=std::find_if(bindings_.begin(),bindings_.end(),[&](auto& x){return x.first==key;});
+    auto decl=std::find_if(mutable_types.begin(),mutable_types.end(),[&](auto& x){return x.first==key;});
+    if(binding==bindings_.end()||decl==mutable_types.end()){fail(ParseError::verify_unsupported);return false;}
+    const auto old=binding->second;
+    if(explicit_set&&!increment){
+      if(update_pair(Kind::plus,Kind::plus)){op=Op::add;increment=true;}
+      else if(update_pair(Kind::minus,Kind::minus)){op=Op::sub;increment=true;}
+      else if(update_pair(Kind::plus,Kind::equals))op=Op::add;
+      else if(update_pair(Kind::minus,Kind::equals))op=Op::sub;
+      else if(update_pair(Kind::star,Kind::equals))op=Op::mul;
+    }
+    if(!op&&!take(Kind::equals))return false;
+    auto value=increment?append(Node{Op::literal,0,0,1}):expr(0);
+    if(!value)return false;
+    if(op){value=append(Node{*op,old,*value,0});if(!value)return false;}
+    if(wrapped&&!take(Kind::rparen))return false;
+    if(!take(Kind::semicolon)||!compatible(*value,decl->second,ParseError::refinement_binding))return false;
+    auto version=append(Node{Op::copy,*value,0,0});if(!version)return false;
+    ranges_[*version].width=decl->second.width;binding->second=*version;effects.push_back(*version);
+    return true;
+  }
+
   bool strict_loop(MutableTypes mutable_types,std::vector<std::size_t>& effects,int depth){
     if(depth>16){fail(ParseError::depth_limit);return false;}
     auto brace=pos_;
@@ -1500,8 +1559,10 @@ class Parser {
       const auto& t=tokens_[k];
       if(t.kind==Kind::lbrace)++nesting;
       else if(t.kind==Kind::rbrace)--nesting;
-      else if(t.kind==Kind::name&&k+1<tokens_.size()&&tokens_[k+1].kind==Kind::equals){
-        const auto key=source_.substr(t.offset,t.length);
+      else if(explicit_update_at(k)||(t.kind==Kind::name&&k+1<tokens_.size()&&tokens_[k+1].kind==Kind::equals)){
+        const auto target=explicit_update_at(k)?explicit_update_target(k):std::optional<std::string_view>{source_.substr(t.offset,t.length)};
+        if(!target)continue;
+        const auto key=*target;
         if(std::any_of(mutable_types.begin(),mutable_types.end(),[&](auto& x){return x.first==key;})&&
            std::find(writes.begin(),writes.end(),key)==writes.end())writes.push_back(key);
       }
@@ -1582,14 +1643,7 @@ class Parser {
         if(mut)mutable_types.emplace_back(key,*want);
         continue;
       }
-      if(current().kind!=Kind::name||pos_+1>=tokens_.size()||tokens_[pos_+1].kind!=Kind::equals){fail(ParseError::verify_unsupported);return false;}
-      const auto key=text();pos_+=2;
-      auto binding=std::find_if(bindings_.begin(),bindings_.end(),[&](auto& x){return x.first==key;});
-      auto decl=std::find_if(mutable_types.begin(),mutable_types.end(),[&](auto& x){return x.first==key;});
-      if(binding==bindings_.end()||decl==mutable_types.end()){fail(ParseError::verify_unsupported);return false;}
-      auto value=expr(0);if(!value||!take(Kind::semicolon)||!compatible(*value,decl->second,ParseError::refinement_binding))return false;
-      auto version=append(Node{Op::copy,*value,0,0});if(!version)return false;
-      ranges_[*version].width=decl->second.width;binding->second=*version;group.effects.push_back(*version);
+      if(!scalar_update(mutable_types,group.effects))return false;
     }
     for(auto key:writes){
       auto binding=std::find_if(bindings_.begin(),bindings_.end(),[&](auto& x){return x.first==key;});
@@ -1619,16 +1673,8 @@ class Parser {
       const bool immutable=name("val");
       const bool mut=!immutable&&strict_&&name("let");
       if(!immutable&&!mut){
-        if(!strict_||current().kind!=Kind::name||pos_+1>=tokens_.size()||tokens_[pos_+1].kind!=Kind::equals)break;
-        const auto n=text();pos_+=2;
-        auto binding=std::find_if(bindings_.begin(),bindings_.end(),[&](const auto& x){return x.first==n;});
-        auto decl=std::find_if(mutable_types.begin(),mutable_types.end(),[&](const auto& x){return x.first==n;});
-        if(binding==bindings_.end()||decl==mutable_types.end()){fail(ParseError::verify_unsupported);return std::nullopt;}
-        auto value=expr(0);
-        if(!value||!take(Kind::semicolon)||!compatible(*value,decl->second,ParseError::refinement_binding))return std::nullopt;
-        auto version=append(Node{Op::copy,*value,0,0});if(!version)return std::nullopt;
-        ranges_[*version].width=decl->second.width;
-        binding->second=*version;effects.push_back(*version);
+        if(!strict_||(!explicit_update_at(pos_)&&(current().kind!=Kind::name||pos_+1>=tokens_.size()||tokens_[pos_+1].kind!=Kind::equals)))break;
+        if(!scalar_update(mutable_types,effects))return std::nullopt;
         continue;
       }
       if(bindings_.size()>=(strict_?32:max_ordinary_bindings)||current().kind!=Kind::name){fail(ParseError::syntax);return std::nullopt;}
