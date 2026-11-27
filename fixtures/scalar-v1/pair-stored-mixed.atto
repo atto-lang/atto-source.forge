@@ -1,0 +1,1 @@
+fnc main():int {const x:=40;const r={y:2};return x.value+r.y;}
