@@ -105,7 +105,7 @@ public:
     struct Plan {std::int64_t initial; bool subtract; Scope scope;};
     Plan parse() {
         expect("define"); expect("actor");
-        const auto actor = ident(); (void)actor;
+        const auto actor = ident();
         expect("as");
         const bool sealed = token_ == "state";
         if (sealed) { advance(); expect("{"); }
@@ -116,14 +116,33 @@ public:
         if (sealed) { if (token_ == ";") advance(); expect("}"); }
         expect("receive"); expect("("); expect("int");
         const auto message = ident();
-        if (message == field) fail("field and message names collide");
+        if (field == "_" || message == "_" || actor == "_" || message == field)
+            fail("invalid actor, field or message binding");
         expect(")"); expect("->"); expect("int"); expect("::");
         if (sealed) {
             expect("return");
-            const bool read = token_ == "state_ro";
-            if (!read) expect("state_w"); else advance();
-            expect("("); expect("|"); const auto binder = ident(); expect("|");
-            if (binder == field || binder == message) fail("state binder collides with field or message");
+            // Only the lexical self receiver can qualify a sealed intrinsic.
+            if (token_ == "self") { advance(); expect("."); }
+            bool read = false;
+            if (token_ == "state_ro" || token_ == "handle_state_ro") {
+                read = true; advance(); expect("(");
+            } else if (token_ == "state_w" || token_ == "handle_state_w") {
+                advance(); expect("(");
+            } else {
+                expect("handle_state"); expect("(");
+                const auto critical_at = token_at_;
+                expect("critical");
+                if (token_ == "-") {
+                    if (token_at_ != critical_at + 8) fail("critical mode must be adjacent");
+                    advance();
+                    if (token_at_ != critical_at + 9) fail("critical mode must be adjacent");
+                    if (token_ == "read") { read = true; advance(); }
+                    else expect("write");
+                }
+            }
+            expect("|"); const auto binder = ident(); expect("|");
+            if (binder == "_" || binder == actor || binder == field || binder == message)
+                fail("state binder collides with nominal actor, field or message");
             expect("->");
             bool subtract = false;
             const auto projection = [&] { expect(binder); expect("."); expect(field); };
