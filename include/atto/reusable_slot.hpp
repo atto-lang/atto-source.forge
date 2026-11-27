@@ -1,4 +1,5 @@
 #pragma once
+#include "atto/checked_i64.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -21,7 +22,6 @@ struct ReusableSlot {
   if (p.owners.size() > 16 || p.steps.size() > 32 ||
       p.result.empty() || p.result.size() > 32) return std::nullopt;
   std::vector<std::int64_t> values = p.owners;
-  for (auto v : values) if (v < 0) return std::nullopt;
   std::optional<std::size_t> bound;
   for (const auto& step : p.steps) {
     switch (step.kind) {
@@ -43,17 +43,12 @@ struct ReusableSlot {
   if (bound || p.result.front().subtract) return std::nullopt;
   std::int64_t answer = 0;
   for (const auto& t : p.result) {
-    if (t.value < 0) return std::nullopt;
-    if (!t.literal && static_cast<std::uint64_t>(t.value) >= values.size()) return std::nullopt;
+    if (!t.literal && (t.value < 0 || static_cast<std::uint64_t>(t.value) >= values.size())) return std::nullopt;
     const auto value = t.literal ? t.value : values[static_cast<std::size_t>(t.value)];
-    // Every operand is nonnegative; both guard expressions are representable.
-    if (t.subtract) {
-      if (answer < std::numeric_limits<std::int64_t>::min() + value) return std::nullopt;
-      answer -= value;
-    } else {
-      if (answer > std::numeric_limits<std::int64_t>::max() - value) return std::nullopt;
-      answer += value;
-    }
+    const auto next = t.subtract ? atto::forge::checked_sub(answer,value)
+                                 : atto::forge::checked_add(answer,value);
+    if (!next) return std::nullopt;
+    answer = *next;
   }
   return answer;
 }
