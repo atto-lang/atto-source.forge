@@ -8,6 +8,22 @@ static std::string program(const std::string& expr) {
   return "pub fnc main(): int { return " + expr + "; }";
 }
 int main() {
+  // Ordinary fixed locals execute through the checked scalar graph.
+  for (const auto* declaration : {"int x=42;", "const x=42;",
+      "const int x=42;", "const x:int=42;", "const x as int=42;",
+      "val int x=42;", "val x as int=42;", "const mut int x=42;",
+      "const mut x as int=42;"}) {
+    const auto input=std::string("fnc main():int{")+declaration+"return x;}";
+    const auto result=evaluate_source(input);
+    assert(result.ok()&&result.value==42);
+  }
+  assert(evaluate_source("fnc main():int{val int y=40;const x as int=y+2;return x;}").value==42);
+  for (const auto* invalid : {"const x as bool=42;", "const int x;",
+      "val mut int x=42;", "const int x=1;const x as int=42;",
+      "const mut int x=1;x=42;", "int x=1;x=42;"}) {
+    const auto input=std::string("fnc main():int{")+invalid+"return x;}";
+    assert(!parse_source(input).ok());
+  }
   struct Case { const char* expr; i64 expected; };
   for (const auto c : {
     Case{"42",42}, {"4 + 5 * 6",34}, {"(4 + 5) * 6",54},
