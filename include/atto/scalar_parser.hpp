@@ -1,4 +1,5 @@
 #pragma once
+#include "measure_prelude.hpp"
 // Restricted native Atto scalar parser: one main() with a scalar return.
 #include "atto/scalar_lexer.hpp"
 #include "atto/reusable_slot.hpp"
@@ -2244,6 +2245,23 @@ public:
   }
 };
 
+[[nodiscard]] inline bool requests_measure_prelude(std::string_view src,const Lexed& lexed) {
+  const auto& ts=lexed.tokens;
+  auto word=[&](std::size_t i){return src.substr(ts[i].offset,ts[i].length);};
+  if(ts.size()<5 || ts[0].kind!=Kind::name || word(0)!="pub" ||
+     ts[1].kind!=Kind::name || word(1)!="fnc" || ts[2].kind!=Kind::name ||
+     word(2)!="main" || ts[3].kind!=Kind::lparen) return false;
+  for(std::size_t i=4;i+3<ts.size();++i) {
+    if(ts[i].kind==Kind::integer && ts[i+1].kind==Kind::lt && ts[i+2].kind==Kind::name &&
+       ts[i+3].kind==Kind::gt && ts[i].offset+ts[i].length==ts[i+1].offset)
+      for(auto n:measure_units) if(word(i+2)==n)return true;
+    if(ts[i].kind==Kind::name && word(i)=="val" && ts[i+1].kind==Kind::name)
+      for(auto n:measure_aliases)
+        if((word(i+1)==n && ts[i+2].kind==Kind::name && ts[i+3].kind==Kind::equals) ||
+           (ts[i+2].kind==Kind::colon && ts[i+3].kind==Kind::name && word(i+3)==n))return true;
+  }
+  return false;
+}
 [[nodiscard]] inline Parsed parse_source(std::string_view src) {
   auto lexed = tokenize(src);
   if (lexed.error == LexError::token_limit && lexed.tokens.size() >= 2) {
@@ -2257,6 +2275,15 @@ public:
       lexed=tokenize(src,max_quantity_tokens);
   }
   if (!lexed.ok()) return Parser(src, std::move(lexed)).parse();
+  if(requests_measure_prelude(src,lexed)) {
+    const auto prefix=std::string(measure_source)+"\n";
+    const auto expanded=prefix+std::string(src);
+    // Reuse complete existing quantity admission; leading declarations
+    // prevent recursion. No runtime catalog or alternate guest emitter.
+    auto result=parse_source(expanded);
+    if(!result.ok())result.error_offset=result.error_offset>=prefix.size()?result.error_offset-prefix.size():0;
+    return result;
+  }
   // Preserve the existing constructor diagnostic from #51 without
   // replacing current-main lexer/shift, cast, telemetry or AST semantics.
   const auto is = [&](std::size_t i, Kind kind, std::string_view value = {}) {
