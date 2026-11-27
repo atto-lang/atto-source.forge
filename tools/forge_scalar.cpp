@@ -31,7 +31,7 @@ int main(int argc, char** argv) {
     if (!text.empty()) file.read(text.data(), static_cast<std::streamsize>(size));
     if (!file || file.peek() != std::char_traits<char>::eof())
       return deny("E_SOURCE: changing or truncated input");
-    const auto named=atto::forge::recursive::admit(text,atto::forge::scalar::tokenize(text));
+    const auto named=atto::forge::recursive::admit(text);
     if(named.selected){
       if(!named.stage||!atto::forge::recursive::emit(named.stage->body,named.stage->input))
         return deny("E_NAMED_STAGE_PROFILE");
@@ -129,7 +129,7 @@ int main(int argc, char** argv) {
       return deny("E_DURABLE_COUNTER_ACTOR_ABI");
     }
   } else {
-    const auto named=atto::forge::recursive::admit(source,atto::forge::scalar::tokenize(source));
+    const auto named=atto::forge::recursive::admit(source);
     if(named.selected){
       if(strict||!named.stage)return deny("E_NAMED_STAGE_PROFILE");
       generated=atto::forge::recursive::emit(named.stage->body,named.stage->input);
