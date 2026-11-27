@@ -1,0 +1,1 @@
+fnc main(): int { val Φ = 10; val φ = 11; val 数量 = 9; val 𠮷 = 12; return Φ + φ + 数量 + 𠮷; }

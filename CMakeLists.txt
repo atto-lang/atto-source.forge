@@ -31,7 +31,7 @@ if(BUILD_TESTING)
     add_test(NAME forge_scalar_early_return_native
       COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/verification/scalar_early_return_native.sh"
         "$<TARGET_FILE:oresforge>" "${CMAKE_CXX_COMPILER}")
-    set_tests_properties(forge_scalar_early_return_native PROPERTIES TIMEOUT 30)
+    set_tests_properties(forge_scalar_early_return_native PROPERTIES TIMEOUT 60)
   endif()
   # This executes the REAL Forge compiler frontend on the backend-owned Atto
   # module and refuses a false-positive class/time compiler admission.
@@ -1029,4 +1029,12 @@ if(BUILD_TESTING)
     add_test(NAME oresforge_closed_native_default_allocation COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/native_alloc_executable.py" "$<TARGET_FILE:oresforge>")
     set_tests_properties(oresforge_closed_native_default_allocation PROPERTIES TIMEOUT 180)
   endif()
+endif()
+
+# Host/compiler-analysis regression only; not compiled guest evidence.
+if(BUILD_TESTING)
+  add_executable(atto_runtime_parking_effects_test tests/runtime_parking_effects.cpp)
+  target_include_directories(atto_runtime_parking_effects_test PRIVATE .)
+  target_compile_features(atto_runtime_parking_effects_test PRIVATE cxx_std_20)
+  add_test(NAME atto_runtime_parking_effects COMMAND atto_runtime_parking_effects_test)
 endif()

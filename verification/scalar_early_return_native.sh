@@ -53,8 +53,32 @@ ATTO
 "$work/fallthrough" > "$work/stdout" 2> "$work/stderr"
 cmp "$work/expected" "$work/stdout"
 test ! -s "$work/stderr"
+# All six canonical scalar spellings, both true and false, with the
+# same numerical oracle. Assemble and link each actual generated guest.
+count=0
+for predicate in true false; do
+  if [[ "$predicate" == true ]]; then expected=5; else expected=6; fi
+  for body in \
+    "return if $predicate then 5 else 6 fi;" \
+    "return $predicate ? 5 : 6;" \
+    "return $predicate ? { return 5; } : { return 6; };" \
+    "do if $predicate then return 5; else return 6; fi" \
+    "if $predicate do return 5; else return 6; fi" \
+    "if $predicate { return 5; } else { return 6; }"; do
+    printf 'pub fnc main(): int { %s }\n' "$body" > "$work/form.atto"
+    "$compiler" emit-call-asm x86_64 "$work/form.atto" > "$work/form.s"
+    test -s "$work/form.s"
+    "$cxx" -x assembler "$work/form.s" -x c++ "$work/driver.cpp" -o "$work/form"
+    printf '%s\n' "$expected" > "$work/form.expected"
+    "$work/form" > "$work/stdout" 2> "$work/stderr"
+    cmp "$work/form.expected" "$work/stdout"
+    test ! -s "$work/stderr"
+    count=$((count+1))
+  done
+done
+test "$count" = 12
 negative=0
-for body in 'if 1 then return 1; fi return 42;' 'if true then return 1; return 42;' 'if true then return true; fi return 42;' 'if true then return 42; fi' 'if true then let x = 1; fi return 42;' 'if true then return 1; else return 2; fi return 42;'; do
+for body in 'if 1 then return 1; fi return 42;' 'if true then return 1; return 42;' 'if true then return true; fi return 42;' 'if true then return 42; fi' 'if true then let x = 1; fi return 42;' 'if true do return 1; else return 2; fi return 42;'; do
   printf 'pub fnc main(): int { %s }\n' "$body" > "$work/negative.atto"
   status=0
   "$compiler" emit-call-asm x86_64 "$work/negative.atto" > "$work/negative.s" 2> "$work/negative.err" || status=$?
@@ -63,4 +87,4 @@ for body in 'if 1 then return 1; fi return 42;' 'if true then return 1; return 4
   test -s "$work/negative.err"
   negative=$((negative+1))
 done
-echo "FORGE_EARLY_RETURN positive=2 negative=$negative failures=0"
+echo "FORGE_EARLY_RETURN positive=14 negative=$negative failures=0"

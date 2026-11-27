@@ -379,10 +379,8 @@ class Parser {
   // Reuse the verified lazy If tree: true continues, false returns early.
   int terminal_body(std::size_t d) {
     depth(d);
-    // Bounded imperative early return. Reuse the existing verified lazy
-    // integer If tree; no locals, general statement bodies or implicit
-    // returns are admitted. The bare then form preserves historical
-    // pure-library policy sources.
+    // Restricted terminal scalar conditionals. Both explicit return
+    // arms lower to the same checked lazy tree as value conditionals.
     const bool prefixed = take("do");
     if (prefixed || token_.text=="if") {
       expect("if");
@@ -391,9 +389,16 @@ class Parser {
       bool braced=false;
       if (prefixed) expect("then");
       else if (take("{")) braced=true;
-      else if (!take("do")) expect("then");
+      else if (!take("do")) expect("then"); // historical library spelling
       const int yes=terminal_return(d+1);
-      expect(braced?"}":"fi");
+      if (braced) expect("}");
+      if (take("else")) {
+        if (braced) expect("{");
+        const int no=terminal_return(d+1);
+        expect(braced?"}":"fi");
+        return add(Kind::If,0,{}, {condition,yes,no});
+      }
+      if (!braced) expect("fi");
       const int no=terminal_body(d+1);
       return add(Kind::If,0,{}, {condition,yes,no});
     }
@@ -437,9 +442,11 @@ class Parser {
       const int yes=expr(d+1);
       expect("else");
       const int no=expr(d+1);
-      // Legacy if expressions retain the unclosed stage-0 spelling.
-      // Negated value forms require their explicit canonical terminator.
+      // Admit the canonical explicit fi. Preserve historical unclosed
+      // ordinary value-if in this migration-compatible native-call lane.
+      // Negated forms still require the terminator.
       if (negated) expect("fi");
+      else take("fi");
       require_integer(yes);
       require_integer(no);
       return add(Kind::If,0,{}, {condition,yes,no});
@@ -553,6 +560,8 @@ class Parser {
   }
   int factor(std::size_t d) {
     depth(d);
+    if(token_.text=="spawn")
+      fail("E_SPAWN_OPTIONS_UNSUPPORTED: actor spawn requires typed initialization, resource admission and runtime lowering");
     if(take("+")) { const int value=factor(d+1); require_integer(value); return value; }
     if(take("-")) {
       if(token_.text=="9223372036854775808"){
