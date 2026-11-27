@@ -19,3 +19,7 @@ Status: proposal only; no compiler implementation or execution claimed. Keep dra
 ## Backend-specific implementation and evidence
 
 Keep borrowed argument in typed engine IR and register allocation; no reference box, retain/release, or spill mandated by binding semantics. Inspect interpreter/JIT/AOT independently and verify cleanup on deopt if supported.
+
+## 2026-11-27 canonical correction
+
+[Spec #318](https://github.com/atto-lang/atto-spec/pull/318) and [conformance #736](https://github.com/atto-lang/atto-platform-conformance/pull/736): named formal `rebind` grants permission; `set n = value;` performs local assignment. Bare formal assignment and `rebind n = value;` must reject. This stage-0 change covers straight-line scalar formals only; match alias migration, object borrowing, CFG joins and source guest evidence remain outstanding. Preserve caller identity and unused-marker IR equality.

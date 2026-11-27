@@ -549,8 +549,13 @@ class Parser {
     while (tok_.text=="const") aggregate_binding(fn);
     // The restricted scalar profile admits only straight-line formal writes.
     // Keep each RHS in source order, even when its result is later discarded.
-    while (tok_.kind==Kind::Word &&
-           std::find(fn.parameters.begin(),fn.parameters.end(),tok_.text)!=fn.parameters.end()) {
+    while (tok_.text=="set" ||
+           (tok_.kind==Kind::Word &&
+            std::find(fn.parameters.begin(),fn.parameters.end(),tok_.text)!=fn.parameters.end())) {
+      // A contextual set is the operation; rebind is permission only.
+      // A parameter named set remains a normal identifier, not a bare assignment.
+      if (!take("set") || tok_.text=="=")
+        error("E_EXPLICIT_REBIND: use set name = value");
       const auto parameter=identifier();
       if (!fn.rebindable.contains(parameter)) error("E_IMMUTABLE_REBIND: fixed parameter");
       if (fn.assignments.size()>=64) error("parameter assignment budget exceeded");
