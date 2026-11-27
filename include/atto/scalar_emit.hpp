@@ -104,27 +104,54 @@ inline constexpr std::size_t max_emitted_bytes = 64 * 1024;
   if (!validate_ast(p)) return std::nullopt;
 
   if(p.flat_placement){
-    const auto& plan=*p.flat_placement;const auto layout=flat_layout(plan);if(!layout)return std::nullopt;
+    const auto& plan=*p.flat_placement;const auto shape=flat_shape(plan);if(!shape)return std::nullopt;
     using K=FlatPlacement::Kind;
-    std::string code="#include <cstddef>\n#include <cstdint>\n#include <cstdio>\n#include <memory>\n#include <limits>\nstruct AttoFlat {\n";
+    std::string code="#include <cstddef>\n#include <cstdint>\n#include <cstdio>\n#include <memory>\n#include <limits>\n";
     auto ty=[](std::uint64_t width){return "std::int"+std::to_string(width*8)+"_t";};
     auto literal=[](std::int64_t v)->std::string{
       if(v==std::numeric_limits<std::int64_t>::min())return "std::numeric_limits<std::int64_t>::min()";
       return std::to_string(v)+"LL";
     };
-    for(std::size_t i=0;i<plan.widths.size();++i)code+="  "+ty(plan.widths[i])+" f"+std::to_string(i)+";\n";
-    code+="};\nstatic_assert(sizeof(AttoFlat)=="+std::to_string(layout->storage.size)+" && alignof(AttoFlat)=="+std::to_string(layout->storage.align)+");\n";
-    for(std::size_t i=0;i<plan.widths.size();++i)code+="static_assert(offsetof(AttoFlat,f"+std::to_string(i)+")=="+std::to_string(layout->fields[i].offset)+");\n";
+    const auto root=plan.owners.size()-1;
+    auto type_name=[&](std::size_t i){return i==root?std::string("AttoFlat"):"AttoNested"+std::to_string(i);};
+    for(std::size_t i=0;i<plan.owners.size();++i){
+      const auto name=type_name(i);code+="struct "+name+" {\n";
+      const auto& fields=plan.owners[i].fields;
+      for(std::size_t j=0;j<fields.size();++j){
+        const auto& field=fields[j].second;
+        code+="  "+(field.kind==layout::Kind::nominal?type_name(field.owner):ty(field.scalar.size))+" f"+std::to_string(j)+";\n";
+      }
+      const auto& lay=shape->layouts[i];
+      code+="};\nstatic_assert(sizeof("+name+")=="+std::to_string(lay.storage.size)+" && alignof("+name+")=="+std::to_string(lay.storage.align)+");\n";
+      for(std::size_t j=0;j<fields.size();++j)code+="static_assert(offsetof("+name+",f"+std::to_string(j)+")=="+std::to_string(lay.fields[j].offset)+");\n";
+    }
+    auto projection=[&](std::size_t i){
+      std::string s;for(auto cell:shape->leaves[i].path){if(!s.empty())s+=".";s+="f"+std::to_string(cell);}return s;
+    };
     code+="int main(){\n  alignas(AttoFlat) std::byte storage[sizeof(AttoFlat)];\n  AttoFlat* live=nullptr;\n  [[maybe_unused]] const AttoFlat* slot=nullptr;\n";
     std::size_t next=0;
     for(const auto& s:plan.steps){
       switch(s.kind){
         case K::construct:
           code+="  live=std::construct_at(reinterpret_cast<AttoFlat*>(storage)";
-          for(std::size_t i=0;i<s.values.size();++i)code+=",static_cast<"+ty(plan.widths[i])+">("+literal(s.values[i])+")";
+          {
+            std::size_t cursor=0;
+            const auto aggregate=[&](auto&& self,std::size_t index)->std::string{
+              std::string out=type_name(index)+"{";
+              const auto& fields=plan.owners[index].fields;
+              for(std::size_t i=0;i<fields.size();++i){
+                if(i)out+=",";
+                const auto& field=fields[i].second;
+                if(field.kind==layout::Kind::nominal)out+=self(self,field.owner);
+                else out+="static_cast<"+ty(field.scalar.size)+">("+literal(s.values[cursor++])+")";
+              }
+              return out+"}";
+            };
+            code+=","+aggregate(aggregate,root);
+          }
           code+=");\n";break;
         case K::bind:code+="  slot=live;\n";break;
-        case K::copy_field:code+="  [[maybe_unused]] const std::int64_t v"+std::to_string(next++)+"=slot->f"+std::to_string(s.field)+";\n";break;
+        case K::copy_field:code+="  [[maybe_unused]] const std::int64_t v"+std::to_string(next++)+"=slot->"+projection(s.field)+";\n";break;
         case K::detach:code+="  slot=nullptr;\n";break;
         case K::destroy:code+="  std::destroy_at(live); live=nullptr;\n";break;
         case K::free:code+="  // verified storage released at frame exit\n";break;

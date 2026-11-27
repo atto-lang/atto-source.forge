@@ -9,6 +9,7 @@ struct FlatPlacement {
   enum class Kind { construct, bind, copy_field, detach, destroy, free };
   struct Step { Kind kind; std::vector<std::int64_t> values{}; std::size_t field=0; };
   std::vector<std::uint64_t> widths;
+  std::vector<layout::Decl> owners;
   std::vector<Step> steps;
   std::vector<std::size_t> result;
 };
@@ -21,17 +22,39 @@ struct FlatPlacement {
     default:return false;
   }
 }
-[[nodiscard]] inline std::optional<layout::Layout> flat_layout(const FlatPlacement& p){
-  if(p.widths.empty()||p.widths.size()>8)return std::nullopt;
-  layout::Decl d{"Flat",{}};
-  for(auto w:p.widths){
-    if(!fits_flat(w,0))return std::nullopt;
-    d.fields.push_back({std::to_string(d.fields.size()),{layout::Kind::scalar,{w,w},0,1}});
+struct FlatLeaf {std::uint64_t width;std::vector<std::size_t> path;};
+struct FlatShape {std::vector<layout::Layout> layouts;std::vector<FlatLeaf> leaves;};
+[[nodiscard]] inline std::optional<FlatShape> flat_shape(const FlatPlacement& p){
+  if(p.owners.empty()||p.owners.size()>8)return std::nullopt;
+  auto layouts=layout::plan(p.owners);if(!layouts)return std::nullopt;
+  std::vector<FlatLeaf> leaves;std::vector<std::size_t> path;
+  const auto visit=[&](auto&& self,std::size_t owner)->bool{
+    if(path.size()>=8||owner>=p.owners.size())return false;
+    const auto& fields=p.owners[owner].fields;
+    for(std::size_t i=0;i<fields.size();++i){
+      const auto& ty=fields[i].second;path.push_back(i);
+      if(ty.kind==layout::Kind::scalar){
+        if(!fits_flat(ty.scalar.size,0)||ty.scalar.size!=ty.scalar.align||leaves.size()>=8)return false;
+        leaves.push_back({ty.scalar.size,path});
+      }else if(ty.kind==layout::Kind::nominal){
+        if(ty.owner>=owner||!self(self,ty.owner))return false;
+      }else return false;
+      path.pop_back();
+    }
+    return true;
+  };
+  if(!visit(visit,p.owners.size()-1)||leaves.size()!=p.widths.size())return std::nullopt;
+  for(std::size_t i=0;i<leaves.size();++i)if(leaves[i].width!=p.widths[i])return std::nullopt;
+  // Validate even declarations not reachable from the last owner.
+  for(std::size_t i=0;i<p.owners.size();++i)for(const auto& [name,ty]:p.owners[i].fields){
+    (void)name;
+    if(ty.kind==layout::Kind::nominal){if(ty.owner>=i)return std::nullopt;}
+    else if(ty.kind!=layout::Kind::scalar||!fits_flat(ty.scalar.size,0)||ty.scalar.size!=ty.scalar.align)return std::nullopt;
   }
-  auto l=layout::plan({d});if(!l)return std::nullopt;return (*l)[0];
+  return FlatShape{std::move(*layouts),std::move(leaves)};
 }
 [[nodiscard]] inline std::optional<std::int64_t> verify_flat_placement(const FlatPlacement& p){
-  if(!flat_layout(p)||p.steps.empty()||p.steps.size()>32||p.result.empty()||p.result.size()>8)return std::nullopt;
+  if(!flat_shape(p)||p.steps.empty()||p.steps.size()>32||p.result.empty()||p.result.size()>8)return std::nullopt;
   enum class State{empty,live,freed};State state=State::empty;
   unsigned generation=0;std::optional<unsigned> bound;
   std::vector<std::int64_t> fields,values;
