@@ -116,7 +116,7 @@ class Parser {
       while (at_<text_.size() && (letter(text_[at_])||digit(text_[at_]))) ++at_;
       const auto word=text_.substr(begin,at_-begin);
       const bool bang_keyword=word=="trap" || word=="throw" || word=="raise" ||
-          word=="panic" || word=="copy" || word=="take" || word=="borrow" ||
+          word=="panic" || word=="copy" || word=="take" || word=="move" || word=="borrow" ||
           word=="share" || word=="pin" || word=="drop" || word=="pipe" ||
           word=="rpipe" || word=="stop" || word=="expand";
       const bool word_neq=text_.substr(at_,3)=="!eq" &&
@@ -131,6 +131,8 @@ class Parser {
         // Only trap is admitted by this restricted native-call frontend.
         // Other keywords keep their existing fail-closed lowering gates.
         if (word=="trap") ++at_;
+        else if (word=="take" || word=="move")
+          throw std::runtime_error("BANG_KEYWORD_NATIVE_CALL_UNSUPPORTED: typed lowering required at byte "+std::to_string(begin));
       }
     } else if (digit(c)) {
       while (at_<text_.size() && digit(text_[at_])) ++at_;
