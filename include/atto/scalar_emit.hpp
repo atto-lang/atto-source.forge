@@ -102,6 +102,41 @@ inline constexpr std::size_t max_emitted_bytes = 64 * 1024;
 }
 [[nodiscard]] inline std::optional<std::string> emit_cpp(const Parsed& p) {
   if (!validate_ast(p)) return std::nullopt;
+
+  if(p.point_placement){
+    using K=PointPlacement::Kind;
+    std::string code=R"(#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <memory>
+struct Point {
+  std::int64_t x,y;
+  Point(std::int64_t a,std::int64_t b) noexcept:x(a),y(b){}
+};
+static_assert(sizeof(Point)==16 && alignof(Point)==8);
+int main(){
+  alignas(Point) std::byte storage[sizeof(Point)];
+  Point* live=nullptr;
+  [[maybe_unused]] const Point* slot=nullptr;
+)";
+    std::size_t next=0;
+    for(const auto& s:p.point_placement->steps){
+      switch(s.kind){
+      case K::construct:
+        code+="  live=std::construct_at(reinterpret_cast<Point*>(storage),"+std::to_string(s.x)+ "LL,"+std::to_string(s.y)+"LL);\n";break;
+      case K::bind:code+="  slot=live;\n";break;
+      case K::copy_field:code+="  [[maybe_unused]] const std::int64_t v"+std::to_string(next++)+"=slot->"+(s.field?"y":"x")+";\n";break;
+      case K::detach:code+="  slot=nullptr;\n";break;
+      case K::destroy:code+="  std::destroy_at(live); live=nullptr;\n";break;
+      case K::free:code+="  // verified storage released at frame exit\n";break;
+      }
+    }
+    code+="  std::printf(\"%lld\\n\", static_cast<long long>(v"+std::to_string(p.point_placement->result[0]);
+    if(p.point_placement->result.size()==2)code+="+v"+std::to_string(p.point_placement->result[1]);
+    code+="));\n  return 0;\n}\n";
+    if(code.size()>max_emitted_bytes)return std::nullopt;
+    return code;
+  }
   for(const auto& n:p.nodes)if(n.op==Op::choose||n.op==Op::loop_value||n.op==Op::loop_group)return emit_lazy_cpp(p);
   std::string code = R"(#include <atto/checked_i64.hpp>
 #include <cstdio>
