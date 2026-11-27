@@ -642,6 +642,18 @@ int main() {
         "fnc main():int{return 2^^3;}");},
                         "legacy ^/^^ operators are removed");
     }
+    // Scalar inlining frontend must agree with the separate native-call parser.
+    for (const auto* call : {"pair(b=2,a=4)", "pair(b:2,a=4)", "pair(4,b=2)"}) {
+      const std::string code = "fnc pair(a:int,b:int):int{return a*10+b;}"
+        "fnc main():int{return " + std::string(call) + ";}";
+      ensure(interpret(parse_source(code))==42, "named separator scalar result");
+    }
+    reject_diagnostic([&] { (void)parse_source(
+      "fnc pair(a:int,b:int):int{return a*10+b;}"
+      "fnc main():int{return pair(a=4,a:2);}"); }, "duplicate named argument");
+    reject_diagnostic([&] { (void)parse_source(
+      "fnc pair(a:int,b:int):int{return a*10+b;}"
+      "fnc main():int{return pair(a:=4,b=2);}"); }, "Pair or malformed label");
     // Named call metadata must be fully validated even when an embedding
     // host passes a forged Module directly, bypassing source admission.
     {
