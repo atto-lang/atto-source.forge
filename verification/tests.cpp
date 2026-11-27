@@ -68,6 +68,10 @@ int main() {
     const auto discarded=parse_runtime_source("fnc main(rebind int n):int{n=n+1;n=42;return n;}");
     const std::array<std::int64_t,1> overflow_arg={std::numeric_limits<std::int64_t>::max()};
     reject([&] { (void)interpret(discarded,overflow_arg); });
+    ensure(interpret(source("match 42 over on _ as rebind -> rebind end"))==42,
+           "contextual alias name is not consumed as marker");
+    ensure(interpret(source("match 42 over on _ as rebind rebind -> rebind end"))==42,
+           "contextual alias name with explicit marker");
     ensure(interpret(source("match 42 over on _ as int z -> z end"))==42,
            "typed scalar alias");
     ensure(interpret(source("match 40 over on _ as const z -> z+2 end"))==42,

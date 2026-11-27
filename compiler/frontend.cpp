@@ -580,16 +580,19 @@ class Parser {
     auto subject=expression(0);
     if (!take("over") || !take("on") || !take("_") || !take("as")) unsupported_match();
     bool rebind=false;
-    if (take("rebind")) {
-      rebind=true;
-      if (tok_.text=="rebind") {
+    if (tok_.text=="rebind") {
+      const auto saved_tok=tok_; const auto saved_at=at_;
+      next(); const bool is_name=tok_.text=="->";
+      tok_=saved_tok; at_=saved_at;
+      if (!is_name) { next(); rebind=true; }
+      if (rebind && tok_.text=="rebind") {
         // Contextual name remains legal when it ends the modifier sequence.
         const auto saved_tok=tok_; const auto saved_at=at_;
         next(); const bool is_name=tok_.text=="->";
         tok_=saved_tok; at_=saved_at;
         if (!is_name) error("E_SYNTAX: duplicate rebind marker");
       }
-      if (tok_.text=="const" || tok_.text=="val" || tok_.text=="let")
+      if (rebind && (tok_.text=="const" || tok_.text=="val" || tok_.text=="let"))
         error("E_SYNTAX: conflicting alias marker");
     } else if (take("const") || take("val")) { }
     else if (take("let")) rebind=true;
