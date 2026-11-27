@@ -1,4 +1,5 @@
 #pragma once
+#include "atto/checked_i64.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -28,7 +29,7 @@ struct PointPlacement {
     if(s.kind!=PointPlacement::Kind::copy_field&&s.field) return std::nullopt;
     switch(s.kind){
       case PointPlacement::Kind::construct:
-        if(state!=State::empty||bound||s.x<0||s.y<0)return std::nullopt;
+        if(state!=State::empty||bound)return std::nullopt;
         fields={s.x,s.y};++generation;state=State::live;break;
       case PointPlacement::Kind::bind:
         if(state!=State::live||bound)return std::nullopt;
@@ -51,8 +52,10 @@ struct PointPlacement {
   if(state!=State::freed||bound)return std::nullopt;
   std::int64_t answer=0;
   for(auto i:p.result){
-    if(i>=values.size()||answer>std::numeric_limits<std::int64_t>::max()-values[i])return std::nullopt;
-    answer+=values[i];
+    if(i>=values.size())return std::nullopt;
+    const auto sum=atto::forge::checked_add(answer,values[i]);
+    if(!sum)return std::nullopt;
+    answer=*sum;
   }
   return answer;
 }
