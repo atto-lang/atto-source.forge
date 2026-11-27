@@ -68,6 +68,22 @@ int main() {
     const auto discarded=parse_runtime_source("fnc main(rebind int n):int{n=n+1;n=42;return n;}");
     const std::array<std::int64_t,1> overflow_arg={std::numeric_limits<std::int64_t>::max()};
     reject([&] { (void)interpret(discarded,overflow_arg); });
+    ensure(interpret(source("match 42 over on _ as int z -> z end"))==42,
+           "typed scalar alias");
+    ensure(interpret(source("match 40 over on _ as const z -> z+2 end"))==42,
+           "fixed runtime scalar alias");
+    ensure(interpret(source("match 20 over on _ as rebind int z -> {z=z+1;z=z+1;return z+20;} end"))==42,
+           "ordered scalar alias SSA replacements");
+    ensure(interpret(parse_source("fnc f(int z):int{return match z over on _ as rebind int z -> {z=z+2;return z;} end;} fnc main():int{return f(20)+20;}"))==42,
+           "alias shadows caller scalar without writeback");
+    reject_diagnostic([] { (void)source("match 42 over on _ as int z -> {z=0;return z;} end"); }, "E_IMMUTABLE_REBIND");
+    reject_diagnostic([] { (void)source("match 42 over on _ as bool z -> 1 end"); }, "E_TYPE");
+    reject_diagnostic([] { (void)source("match 42 over on _ as rebind rebind int z -> z end"); }, "E_SYNTAX");
+    reject_diagnostic([] { (void)source("match 42 over on _ as mut z -> z end"); }, "E_UNSUPPORTED");
+    reject_diagnostic([] { (void)source("match 42 over on _ as int z when true -> z end"); }, "MATCH_DEFAULT_BACKEND_UNSUPPORTED");
+    reject([] { (void)source("match z over on _ as int z -> z end"); });
+    reject([] { (void)source("match 42 over on _ as int z -> missing(z) end"); });
+    reject([] { (void)interpret(source("match (9223372036854775807+1) over on _ as int z -> 42 end")); });
     // Checked literal aggregate aliases reach the existing scalar IR and
     // native emitter, not a host-language aggregate evaluator.
     const auto named_aggregates=parse_source(

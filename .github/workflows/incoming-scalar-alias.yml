@@ -1,0 +1,59 @@
+name: Forge scalar wildcard alias native guest
+on:
+  push:
+    branches: ['draft/fixed-parameter-ssa-rebind-20261126']
+  pull_request:
+    paths:
+      - 'compiler/frontend.cpp'
+      - 'verification/tests.cpp'
+      - 'contracts/incoming-scalar-bindings-v1/**'
+      - '.github/workflows/incoming-scalar-alias.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Pin exact tree and shared source
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git write-tree)" = "$(git rev-parse HEAD^{tree})"
+          test "$(git hash-object --no-filters contracts/incoming-scalar-bindings-v1/incoming-alias-typed.atto)" = a468f12a990b9e228b3dda649ba839526d3a32f9
+      - name: Build and test real compiler
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+          cmake --build build --target oresforge oresforge_tests --parallel 2
+          ctest --test-dir build -R '^oresforge_unit$' --no-tests=error --output-on-failure
+      - name: Execute compiled native guest and reject bad alias
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          printf '%s\n' 'extern "C" long long oresforge_entry(); int main(){return static_cast<int>(oresforge_entry());}' > "$work/driver.cpp"
+          printf '%s\n' 'pub fnc main(): int { return match 20 over on _ as rebind int z -> {z=z+2;return z+20;} end; }' > "$work/rebind.atto"
+          for source in contracts/incoming-scalar-bindings-v1/incoming-alias-typed.atto "$work/rebind.atto"; do
+            test "$(./build/oresforge run "$source")" = 42
+            ./build/oresforge emit-asm x86_64 "$source" > "$work/guest.s"
+            for opt in 0 2; do
+              c++ -O"$opt" "$work/driver.cpp" "$work/guest.s" -o "$work/guest"
+              status=0
+              timeout 10s "$work/guest" || status=$?
+              test "$status" = 42
+            done
+          done
+          printf '%s\n' 'pub fnc main(): int { return match 42 over on _ as bool z -> 1 end; }' > "$work/reject.atto"
+          status=0
+          ./build/oresforge emit-asm x86_64 "$work/reject.atto" > "$work/reject.s" 2> "$work/reject.log" || status=$?
+          test "$status" = 1
+          test ! -s "$work/reject.s"
+          grep -Fq E_TYPE "$work/reject.log"

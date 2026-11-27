@@ -34,7 +34,7 @@ struct Token { Kind kind; std::string_view text; std::size_t offset; };
 // semantically equivalent to invoking such a function, but NOT native ABI
 // calls, stack frames, mutable locals, recursion, or dynamic dispatch.
 struct Expr {
-  enum class Tag { Constant, Parameter, Negative, Add, Sub, Mul, Call };
+  enum class Tag { Constant, Parameter, Negative, Add, Sub, Mul, Call, ScalarAlias };
   Tag tag;
   std::int64_t value = 0;
   std::string name;
@@ -200,10 +200,8 @@ class Parser {
       // Scalar bootstrap lacks nominal enum declarations and compiler-owned
       // prebound virtual method slots. Never attempt arity-only fallback.
       if (tok_.text=="enum") error("nominal enum overloads require compiler-bound dispatch");
-      // Match must never be interpreted as an ordinary scalar name or
-      // silently ignored by unreachable helper inlining.
-      if (tok_.text=="match")
-        error("MATCH_DEFAULT_BACKEND_UNSUPPORTED: typed match requires pattern CFG, exhaustiveness and checked fallback lowering");
+      // Match is admitted only by the explicit return-position scalar alias
+      // grammar; identifier() and factor() deny all other uses.
       if (tok_.text=="gen" || tok_.text=="generator")
         error("generator declarations require iterator-frame and continuation lowering");
       // Fail closed on named language features before the scalar grammar
@@ -307,6 +305,8 @@ class Parser {
     if (tok_.kind!=Kind::Word) error("expected identifier");
     if (tok_.text=="guard")
       error("GUARD_BACKEND_UNSUPPORTED: guard is reserved until checked CFG and ownership lowering");
+    if (tok_.text=="match")
+      error("MATCH_DEFAULT_BACKEND_UNSUPPORTED: typed match requires pattern CFG, exhaustiveness and checked fallback lowering");
     std::string name(tok_.text);
     next(); return name;
   }
@@ -562,13 +562,65 @@ class Parser {
     if (tok_.text=="guard")
       error("GUARD_BACKEND_UNSUPPORTED: early-exit CFG and ownership lowering required");
     if (!take("^")) expect("return");
-    fn.body=expression(0);
+    fn.body=tok_.text=="match" ? scalar_alias_return() : expression(0);
     if (tok_.text=="^") error("single caret is only a return statement; integer XOR uses ^^");
     expect(";"); expect("}");
     aggregate_types_.clear();
     aggregate_locals_.clear();
     if (functions_.contains(name)) error("duplicate function");
     functions_.emplace(name,std::move(fn));
+  }
+  // Exactly one unguarded wildcard arm is exhaustive without a CFG.
+  // Children are subject, zero or more ordered replacement RHSs, and result.
+  ExprPtr scalar_alias_return() {
+    const auto unsupported_match=[&] {
+      error("MATCH_DEFAULT_BACKEND_UNSUPPORTED: only a single unguarded wildcard scalar alias is admitted");
+    };
+    expect("match");
+    auto subject=expression(0);
+    if (!take("over") || !take("on") || !take("_") || !take("as")) unsupported_match();
+    bool rebind=false;
+    if (take("rebind")) {
+      rebind=true;
+      if (tok_.text=="rebind") {
+        // Contextual name remains legal when it ends the modifier sequence.
+        const auto saved_tok=tok_; const auto saved_at=at_;
+        next(); const bool is_name=tok_.text=="->";
+        tok_=saved_tok; at_=saved_at;
+        if (!is_name) error("E_SYNTAX: duplicate rebind marker");
+      }
+      if (tok_.text=="const" || tok_.text=="val" || tok_.text=="let")
+        error("E_SYNTAX: conflicting alias marker");
+    } else if (take("const") || take("val")) { }
+    else if (take("let")) rebind=true;
+    if (tok_.text=="mut") error("E_UNSUPPORTED: scalar alias has no mutable referent");
+    if (tok_.text=="bool" || tok_.text=="boolean")
+      error("E_TYPE: alias annotation must equal int subject type");
+    (void)take("int");
+    const auto name=identifier();
+    if (name=="_" || reserved_aggregate_name(name) || aggregate_locals_.contains(name))
+      error("E_SYNTAX: invalid scalar alias name");
+    if (!take("->")) unsupported_match();
+    std::vector<ExprPtr> children;
+    children.push_back(std::move(subject));
+    if (take("{")) {
+      while (tok_.text==name) {
+        next();
+        if (!rebind) error("E_IMMUTABLE_REBIND: fixed scalar match alias");
+        if (children.size()>64) error("scalar alias assignment budget exceeded");
+        expect("=");
+        children.push_back(expression(0));
+        expect(";");
+      }
+      if (!take("^")) expect("return");
+      children.push_back(expression(0));
+      expect(";"); expect("}");
+    } else {
+      children.push_back(expression(0));
+    }
+    (void)take(",");
+    if (!take("end")) unsupported_match();
+    return node(Expr::Tag::ScalarAlias,std::move(children),0,name);
   }
   ExprPtr expression(std::size_t depth) {
     check_depth(depth);
@@ -642,7 +694,9 @@ class Parser {
     }
     if (tok_.kind==Kind::Word) {
       const std::size_t offset=tok_.offset;
-      if (tok_.text=="match" || tok_.text=="switch")
+      if (tok_.text=="match")
+        error("MATCH_DEFAULT_BACKEND_UNSUPPORTED: only return-position scalar alias match is admitted");
+      if (tok_.text=="switch")
         error("expected integer");
       const std::string name=identifier();
       if (const auto it=aggregate_locals_.find(name); it!=aggregate_locals_.end())
@@ -674,8 +728,17 @@ class Parser {
   }
   void walk_calls(const Expr& e,const Function& owner,
                   std::vector<std::string>& active,
-                  std::unordered_set<std::string>& complete) const {
-    if (e.tag==Expr::Tag::Parameter &&
+                  std::unordered_set<std::string>& complete,
+                  const std::unordered_set<std::string>& aliases = {}) const {
+    if (e.tag==Expr::Tag::ScalarAlias) {
+      walk_calls(*e.children.at(0),owner,active,complete,aliases);
+      auto local=aliases;
+      local.insert(e.name);
+      for (std::size_t i=1;i<e.children.size();++i)
+        walk_calls(*e.children[i],owner,active,complete,local);
+      return;
+    }
+    if (e.tag==Expr::Tag::Parameter && !aliases.contains(e.name) &&
         std::find(owner.parameters.begin(),owner.parameters.end(),e.name)==
         owner.parameters.end())
       throw std::runtime_error("expected integer at byte "+std::to_string(e.offset));
@@ -688,7 +751,7 @@ class Parser {
       validate_calls(e.name,active,complete);
     }
     for (const auto& child:e.children)
-      walk_calls(*child,owner,active,complete);
+      walk_calls(*child,owner,active,complete,aliases);
   }
   void validate_calls(const std::string& name,
                       std::vector<std::string>& active,
@@ -736,6 +799,16 @@ class Parser {
         const Op op=e.tag==Expr::Tag::Add?Op::Add:
                     e.tag==Expr::Tag::Sub?Op::Sub:Op::Mul;
         return add(op,0,a,b);
+      }
+      case Expr::Tag::ScalarAlias: {
+        const int subject=lower(*e.children.at(0),env,active,call_depth);
+        auto local=env;
+        local.insert_or_assign(e.name,subject);
+        for (std::size_t i=1;i+1<e.children.size();++i) {
+          const int replacement=lower(*e.children[i],local,active,call_depth);
+          local.at(e.name)=replacement;
+        }
+        return lower(*e.children.back(),local,active,call_depth);
       }
       case Expr::Tag::Call: {
         auto found=functions_.find(e.name);
