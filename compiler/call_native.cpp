@@ -379,6 +379,24 @@ class Parser {
   // Reuse the verified lazy If tree: true continues, false returns early.
   int terminal_body(std::size_t d) {
     depth(d);
+    // Bounded imperative early return. Reuse the existing verified lazy
+    // integer If tree; no locals, general statement bodies or implicit
+    // returns are admitted. The bare then form preserves historical
+    // pure-library policy sources.
+    const bool prefixed = take("do");
+    if (prefixed || token_.text=="if") {
+      expect("if");
+      const int condition=logical_or(d+1);
+      require_boolean(condition);
+      bool braced=false;
+      if (prefixed) expect("then");
+      else if (take("{")) braced=true;
+      else if (!take("do")) expect("then");
+      const int yes=terminal_return(d+1);
+      expect(braced?"}":"fi");
+      const int no=terminal_body(d+1);
+      return add(Kind::If,0,{}, {condition,yes,no});
+    }
     if (!take("guard")) return terminal_return(d+1);
     int condition=logical_or(d+1);
     require_boolean(condition);
