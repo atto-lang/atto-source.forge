@@ -27,6 +27,12 @@ if(BUILD_TESTING AND ORESFORGE_EXPERIMENTAL_STAGE0_NATIVE_TESTS)
     TIMEOUT 180 LABELS "experimental;compiled-guest;legacy-syntax")
 endif()
 if(BUILD_TESTING)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$")
+    add_test(NAME forge_scalar_early_return_native
+      COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/verification/scalar_early_return_native.sh"
+        "$<TARGET_FILE:oresforge>" "${CMAKE_CXX_COMPILER}")
+    set_tests_properties(forge_scalar_early_return_native PROPERTIES TIMEOUT 30)
+  endif()
   # This executes the REAL Forge compiler frontend on the backend-owned Atto
   # module and refuses a false-positive class/time compiler admission.
   add_executable(oresforge_std_time_frontend_admission_test
