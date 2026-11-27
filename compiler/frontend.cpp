@@ -1,4 +1,5 @@
 #include "compiler/source_utf8.hpp"
+#include "compiler/topic_publish_source_gate.hpp"
 #include "compiler/frontend.hpp"
 #include <algorithm>
 #include <charconv>
@@ -175,11 +176,25 @@ class Parser {
         ++at_;
       }
       tok_={Kind::Word,source_.substr(start,at_-start),start};
+      // Require whitespace after the complete contextual bang keyword.
+      if ((tok_.text=="trap" || tok_.text=="throw" || tok_.text=="raise" ||
+           tok_.text=="panic" || tok_.text=="copy" || tok_.text=="take" || tok_.text=="move" ||
+           tok_.text=="borrow" || tok_.text=="share" || tok_.text=="pin" ||
+           tok_.text=="drop" || tok_.text=="pipe" || tok_.text=="rpipe" ||
+           tok_.text=="stop" || tok_.text=="expand") &&
+          at_<source_.size() && source_[at_]=='!' &&
+          source_.substr(at_,2)!="!=" &&
+          !(source_.substr(at_,3)=="!eq" && (at_+3==source_.size() ||
+             (!ascii_alnum(static_cast<unsigned char>(source_[at_+3])) && source_[at_+3]!='_')))) {
+        const auto after=at_+((tok_.text=="copy" && source_.substr(at_,2)=="!!") ? 2 : 1);
+        if (after>=source_.size() || !ascii_space(static_cast<unsigned char>(source_[after])))
+          error("E_BANG_KEYWORD_WHITESPACE: whitespace required after bang keyword");
+      }
       // A contextual ownership operator requires the verb immediately next
       // to '!'. The stage-0 scalar IR has no ownership kind or runtime loan
       // authority; never reinterpret copy!/take!/borrow!/share! as a call.
       // The same guard catches 'mut borrow!' at the borrow token.
-      if ((tok_.text=="copy" || tok_.text=="take" ||
+      if ((tok_.text=="copy" || tok_.text=="take" || tok_.text=="move" ||
            tok_.text=="borrow" || tok_.text=="share") &&
           at_<source_.size() && source_[at_]=='!' &&
           !(at_+1<source_.size() && source_[at_+1]=='=') &&
@@ -575,6 +590,8 @@ class Parser {
   }
   ExprPtr factor(std::size_t depth) {
     check_depth(depth);
+    if (tok_.text=="spawn")
+      error("E_SPAWN_OPTIONS_UNSUPPORTED: actor spawn requires typed initialization, resource admission and runtime lowering");
     if (tok_.text=="rt") {
       next();
       const std::string operation(tok_.text);
@@ -730,12 +747,14 @@ class Parser {
 Program parse_source(std::string_view source) {
   if (source.size() > 1024 * 1024) throw std::runtime_error("source exceeds 1 MiB bootstrap limit");
   oresforge::source::validate_utf8(source);
+  oresforge::source::reject_unlowered_topic_publish(source);
   return Parser(source).parse();
 }
 Program parse_runtime_source(std::string_view source) {
   if (source.size() > 1024 * 1024)
     throw std::runtime_error("source exceeds 1 MiB bootstrap limit");
   oresforge::source::validate_utf8(source);
+  oresforge::source::reject_unlowered_topic_publish(source);
   return Parser(source,true).parse();
 }
 
