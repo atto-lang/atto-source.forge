@@ -48,6 +48,17 @@ if(BUILD_TESTING)
   add_test(NAME forge_source_terminal_control_admission
     COMMAND oresforge_source_control_admission_test)
   set_tests_properties(forge_source_terminal_control_admission PROPERTIES TIMEOUT 15)
+  # Fail-closed typed Topic publish denial on all Forge native source frontends.
+  # No native Topic ABI or compiled guest feature support is claimed.
+  add_executable(oresforge_topic_publish_source_gate_test
+    tests/topic_publish_source_gate_test.cpp)
+  target_include_directories(oresforge_topic_publish_source_gate_test PRIVATE .)
+  target_link_libraries(oresforge_topic_publish_source_gate_test PRIVATE oresforge_core)
+  target_compile_features(oresforge_topic_publish_source_gate_test PRIVATE cxx_std_20)
+  add_test(NAME forge_topic_publish_alias_no_artifact
+    COMMAND oresforge_topic_publish_source_gate_test
+      "${CMAKE_CURRENT_SOURCE_DIR}/contracts/atto-ensemble-v1/canonical-unlowered-try-publish.atto")
+  set_tests_properties(forge_topic_publish_alias_no_artifact PROPERTIES TIMEOUT 15)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   set(ORE_NUMERIC_I64_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated_numeric_i64_cases.hpp")
   add_custom_command(
