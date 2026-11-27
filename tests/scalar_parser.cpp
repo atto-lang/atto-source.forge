@@ -5,6 +5,20 @@
 using namespace atto::forge;
 using namespace atto::forge::scalar;
 int main() {
+  // Bounded catalog allowance must not change ordinary or strict lexing.
+  std::string catalog = "define dimension Length; define unit Meter: Length;";
+  for(int i=0;i<48;++i) catalog += "define unit Measure"+std::to_string(i)+": Length = Meter * 1;";
+  catalog += "type Positive = int where self > 0; type Negative = int where self < 0;";
+  const auto small = std::string("pub fnc main() -> int {val a=42<Measure47>; return a/1<Measure47>;}");
+  assert(parse_source(catalog+small).ok());
+  assert(!parse_verified_strict_i64(catalog+small).ok());
+  std::string large = "pub fnc main() -> int {return 1";
+  for(int i=0;i<260;++i)large += "+1";
+  large += ";}";
+  assert(!parse_source(catalog+large).ok());
+  assert(!parse_source(large).ok());
+  assert(!tokenize(std::string(max_tokens+1,'+')).ok());
+  assert(!tokenize(std::string(max_quantity_tokens+1,'+'),max_quantity_tokens).ok());
   // The old unit-only cap rejected a valid 33rd declaration as generic syntax.
   // The lexical and dimension budgets remain unchanged.
   std::string unit_catalog = "define dimension Length; define unit Meter: Length;";

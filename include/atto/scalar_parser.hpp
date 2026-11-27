@@ -2465,6 +2465,11 @@ public:
       if(placement){(void)placement_flat();return std::move(out_);}
     }
     if (!declarations() || !refinement_declarations()) { fail(ParseError::syntax); return std::move(out_); }
+    // No expanded executable-body budget: only successfully parsed declarations
+    // are exempt from the original ordinary token ceiling (EOF included).
+    if (!strict_ && tokens_.size()-pos_ > max_tokens+1) {
+      fail(ParseError::lexical); return std::move(out_);
+    }
     if(strict_&&refinements_.empty()){fail(ParseError::verify_unsupported);return std::move(out_);}
     if(!helper_declarations()){fail(ParseError::syntax);return std::move(out_);}
     const bool public_entry=name("pub");
@@ -2531,6 +2536,16 @@ public:
 
 [[nodiscard]] inline Parsed parse_source(std::string_view src) {
   auto lexed = tokenize(src);
+  if (lexed.error == LexError::token_limit && lexed.tokens.size() >= 2) {
+    const auto word = [&](std::size_t i, std::string_view expected) {
+      const auto& t=lexed.tokens[i];
+      return t.kind==Kind::name && src.substr(t.offset,t.length)==expected;
+    };
+    // Retry only a lexer-authenticated file-leading quantity declaration.
+    // The parser below must validate the full catalog before granting its allowance.
+    if(word(0,"define") && (word(1,"dimension") || word(1,"unit")))
+      lexed=tokenize(src,max_quantity_tokens);
+  }
   if (!lexed.ok()) return Parser(src, std::move(lexed)).parse();
   // Preserve the existing constructor diagnostic from #51 without
   // replacing current-main lexer/shift, cast, telemetry or AST semantics.
