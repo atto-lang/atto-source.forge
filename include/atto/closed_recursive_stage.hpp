@@ -9,7 +9,7 @@
 #include <vector>
 
 namespace atto::forge::recursive {
-enum class Op { literal, arg, self, neg, add, sub, mul, div };
+enum class Op { literal, arg, self, neg, add, sub, mul, div, local };
 struct Node {
   Op op;
   std::size_t left=0, right=0;
@@ -21,8 +21,9 @@ struct Stage {
   std::size_t subject=0;
   std::vector<Arm> arms;
 };
-inline constexpr std::size_t max_nodes=512, max_depth=64, max_edges=1024;
-[[nodiscard]] inline bool validate(const Stage& p) {
+inline constexpr std::size_t max_nodes=512, max_depth=64, max_edges=1024, max_bindings=16;
+[[nodiscard]] inline bool validate(const Stage& p,std::size_t local_count=0) {
+  if(local_count>max_bindings)return false;
   if(p.nodes.empty()||p.nodes.size()>max_nodes||p.subject>=p.nodes.size()||
      p.arms.empty()||p.arms.size()>64)return false;
   std::vector<std::size_t> depth(p.nodes.size(),1);
@@ -31,6 +32,7 @@ inline constexpr std::size_t max_nodes=512, max_depth=64, max_edges=1024;
     switch(n.op){
       case Op::literal:if(n.left||n.right)return false;break;
       case Op::arg:if(n.left||n.right||n.value)return false;break;
+      case Op::local:if(n.left>=local_count||n.right||n.value)return false;break;
       case Op::self:case Op::neg:
         if(n.left>=i||n.right||n.value)return false;
         depth[i]=1+depth[n.left];break;
@@ -65,10 +67,10 @@ struct Frame { std::size_t id,depth; i64 arg; unsigned phase=0; i64 left=0; };
 [[noreturn]] static void fail(const char* text,int code){std::fputs(text,stderr);std::exit(code);}
 )";
 }
-[[nodiscard]] inline std::optional<std::string> emit_function(const Stage& p,std::size_t function_id){
-  if(!validate(p)||function_id>max_stages)return std::nullopt;
+[[nodiscard]] inline std::optional<std::string> emit_function(const Stage& p,std::size_t function_id,std::size_t local_count=0){
+  if(!validate(p,local_count)||function_id>max_stages+max_bindings)return std::nullopt;
   auto idx=[](std::size_t n){return std::to_string(n);};
-  std::string out="static i64 evaluate"+idx(function_id)+"(i64 input){\n";
+  std::string out="static i64 evaluate"+idx(function_id)+"(i64 input"+(local_count?", [[maybe_unused]] const std::vector<i64>& locals":"")+"){\n";
   out+=R"(  std::vector<Frame> frames;
   i64 result=0;
   auto push=[&](std::size_t id,i64 arg,std::size_t depth){
@@ -86,6 +88,7 @@ struct Frame { std::size_t id,depth; i64 arg; unsigned phase=0; i64 left=0; };
     out+="      case "+idx(i)+": { ";
     if(n.op==Op::literal)out+="finish("+number(n.value)+");";
     else if(n.op==Op::arg)out+="finish(f.arg);";
+    else if(n.op==Op::local)out+="finish(locals["+idx(n.left)+"]);";
     else {
       out+="if(f.phase==0){frames.back().phase=1;"+child(n.left)+"} ";
       if(n.op==Op::neg)out+="else finish(checked(atto::forge::checked_neg(result)));";
@@ -115,20 +118,35 @@ struct Frame { std::size_t id,depth; i64 arg; unsigned phase=0; i64 left=0; };
   if(out.size()>256*1024)return {};
   return out;
 }
-// Upstream is a closed arithmetic expression; no arg/self even in dead nodes.
-// Each stage is separately validated and receives exactly the previous value.
-[[nodiscard]] inline std::optional<std::string> emit_pipeline(const Stage& upstream,const std::vector<Stage>& stages){
-  if(stages.empty()||stages.size()>max_stages||!validate(upstream)||
-     upstream.arms.size()!=1||upstream.arms.front().key)return {};
-  for(const auto& n:upstream.nodes)if(n.op==Op::arg||n.op==Op::self)return {};
-  auto first=emit_function(upstream,0);if(!first)return {};
-  auto out=preamble()+*first;
-  std::string main="int main(){auto value=evaluate0(0);";
-  for(std::size_t i=0;i<stages.size();++i){
-    auto fn=emit_function(stages[i],i+1);if(!fn)return {};
+// Binding initializers and upstream are closed, with backward local-slot
+// references only. Eagerly execute each initializer even if unused.
+[[nodiscard]] inline bool validate_prefix(const Stage& p,std::size_t local_count){
+  if(!validate(p,local_count)||p.arms.size()!=1||p.arms.front().key)return false;
+  for(const auto& n:p.nodes)if(n.op==Op::arg||n.op==Op::self)return false;
+  return true;
+}
+[[nodiscard]] inline std::optional<std::string> emit_pipeline(const Stage& upstream,const std::vector<Stage>& stages,const std::vector<Stage>& bindings={}){
+  if(stages.empty()||stages.size()>max_stages||bindings.size()>max_bindings||
+     !validate_prefix(upstream,bindings.size()))return {};
+  auto out=preamble();
+  std::string main="int main(){";
+  if(!bindings.empty())main+="std::vector<i64> locals;";
+  for(std::size_t i=0;i<bindings.size();++i){
+    if(!validate_prefix(bindings[i],i))return {};
+    auto fn=emit_function(bindings[i],i,i);if(!fn)return {};
     out+=*fn;
     if(out.size()>256*1024)return {};
-    main+="value=evaluate"+std::to_string(i+1)+"(value);";
+    main+="locals.push_back(evaluate"+std::to_string(i)+"(0"+(i?",locals":"")+"));";
+  }
+  const auto base=bindings.size();
+  auto first=emit_function(upstream,base,base);if(!first)return {};
+  out+=*first;
+  main+="auto value=evaluate"+std::to_string(base)+"(0"+(base?",locals":"")+");";
+  for(std::size_t i=0;i<stages.size();++i){
+    auto fn=emit_function(stages[i],base+i+1);if(!fn)return {};
+    out+=*fn;
+    if(out.size()>256*1024)return {};
+    main+="value=evaluate"+std::to_string(base+i+1)+"(value);";
   }
   out+=main+"std::printf(\"%lld\\n\",static_cast<long long>(value));}\n";
   if(out.size()>256*1024)return {};
