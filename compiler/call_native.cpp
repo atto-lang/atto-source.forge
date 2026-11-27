@@ -196,7 +196,7 @@ class Parser {
     }
     // A scalar call graph cannot grant a protected region or actor identity.
     if (take("state")) {
-      if (token_.text=="container")
+      if (token_.text=="container" || token_.text=="on")
         fail("STATE_CONTAINER_BACKEND_UNSUPPORTED: protected heap region and critical guard lowering required");
       fail("unexpected declaration after state");
     }
