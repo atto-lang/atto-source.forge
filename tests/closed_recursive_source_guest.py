@@ -51,6 +51,27 @@ negative = [
     stage(10,"return v;").replace("}; }","}; return fib(2); }"),
     stage(10,"return "+"("*65+"v"+")"*65+";"),
 ]
+def local(bindings, expr, body="return v;", name="f"):
+    return f"pub fnc main(): int {{ {bindings} return {expr} |> fnc {name}(int v): int {{ {body} }}; }}"
+positive += [
+    ("local",local("val int x=6;","x*7"),0,"42\n",""),
+    ("local_chain",local("val int x=6; val int y=x+1;","x*y"),0,"42\n",""),
+    ("local_unused_error",local("val int bad=1/0;","42"),71,"","E_DIVZERO\n"),
+    ("local_order",local("val int bad=9223372036854775807+1; val int later=1/0;","42"),70,"","E_OVERFLOW\n"),
+    ("local_name_shadow",local("val int f=42;","f"),0,"42\n",""),
+    ("local_param_shadow",local("val int v=42;","v-1","return v+1;"),0,"42\n",""),
+    ("local_16",local("".join(f"val int x{i}={i};" for i in range(16)),"x15"),0,"15\n",""),
+]
+negative += [
+    local("val int x=x;","x"),
+    local("val int x=y; val int y=1;","x"),
+    local("val int x=1; val int x=2;","x"),
+    local("val int x=1;","x","return v+x;"),
+    local("let int x=1;","x"),
+    local("val bool x=true;","1"),
+    local("val int x=1; x=2;","x"),
+    local("".join(f"val int x{i}={i};" for i in range(17)),"x16"),
+]
 exact = """pub fnc main(): int {
     return 55 |> fnc fib(int v): int {
         ^ match v over
