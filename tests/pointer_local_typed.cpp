@@ -96,5 +96,16 @@ int main() {
   signed_plan.steps[0].x=std::numeric_limits<std::int64_t>::max();
   signed_plan.steps[5].y=1;
   assert(!verify_point_placement(signed_plan));
+  auto mixed=parse_source("define struct Packet { i8 tag; int count; i16 tail; } with { constructor(i8 tag, int count, i16 tail) { self.tag = tag; self.count = count; self.tail = tail; } } pub fnc main(): int { let Storage<Packet> s = alloc! Packet; let mut RawPointer<Packet> p = RawPointer.empty<Packet>(); new Packet(-3, 40, 5) at s; ref! p to s; val a = (deref! p).tag; val b = (deref! p).count; val c = (deref! p).tail; unref! p; destroy! s; free! s; return a + b + c; }");
+  assert(mixed.ok()&&mixed.flat_placement&&validate_ast(mixed)&&emit_cpp(mixed));
+  assert(emit_cpp(mixed)->find("sizeof(AttoFlat)==24")!=std::string::npos);
+  auto forged_flat=mixed;forged_flat.flat_placement->steps[0].values[0]=128;
+  assert(!validate_ast(forged_flat)&&!emit_cpp(forged_flat));
+  forged_flat=mixed;forged_flat.flat_placement->steps[2].field=3;
+  assert(!validate_ast(forged_flat));
+  forged_flat=mixed;forged_flat.flat_placement->widths[0]=3;
+  assert(!validate_ast(forged_flat));
+  forged_flat=mixed;forged_flat.flat_placement->steps.pop_back();
+  assert(!validate_ast(forged_flat));
   return 0;
 }

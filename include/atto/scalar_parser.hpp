@@ -3,6 +3,7 @@
 #include "atto/scalar_lexer.hpp"
 #include "atto/reusable_slot.hpp"
 #include "atto/point_placement.hpp"
+#include "atto/flat_placement.hpp"
 #include "atto/decimal_i64.hpp"
 #include "atto/exact_quantity_scale.hpp"
 #include <algorithm>
@@ -111,6 +112,7 @@ struct Parsed {
   std::vector<std::optional<std::string>> trace_steps;
   std::optional<ReusableSlot> reusable_slot;
   std::optional<PointPlacement> point_placement;
+  std::optional<FlatPlacement> flat_placement;
   [[nodiscard]] bool ok() const noexcept {
     return error == ParseError::none && !nodes.empty() && root < nodes.size();
   }
@@ -135,6 +137,14 @@ inline constexpr std::size_t max_trace_depth = 16;
 [[nodiscard]] inline bool validate_ast(const Parsed& p) {
   if (!p.ok() || p.nodes.size() > max_nodes ||
       p.root != p.nodes.size() - 1) return false;
+  if(p.flat_placement){
+    const auto value=verify_flat_placement(*p.flat_placement);
+    if(!value||p.local||p.reusable_slot||p.point_placement||!p.trace_steps.empty()||p.nodes.size()!=1||
+       p.root!=0||p.nodes[0].op!=Op::literal||p.nodes[0].value!=*value||
+       p.nodes[0].left||p.nodes[0].right||p.nodes[0].upper||
+       !p.nodes[0].states.empty()||!p.nodes[0].effects.empty()||
+       !p.nodes[0].updates.empty()||!p.nodes[0].exits.empty())return false;
+  }
   if (p.point_placement) {
     const auto value=verify_point_placement(*p.point_placement);
     if(!value||p.local||p.reusable_slot||!p.trace_steps.empty()||p.nodes.size()!=1||
@@ -2031,6 +2041,92 @@ class Parser {
   }
 
 
+  [[nodiscard]] bool placement_flat() {
+    using K=FlatPlacement::Kind;FlatPlacement plan;
+    std::vector<std::string> fields,types,names;
+    auto bad=[&](){fail(ParseError::pointer_profile);return false;};
+    auto w=[&](std::string_view v){return expected(v);};
+    auto k=[&](Kind v){return expected(v);};
+    auto op=[&](std::string_view v){return current().kind==Kind::name&&text()==v&&local_op(v);};
+    auto number=[&]()->std::optional<i64>{
+      const bool negative=take(Kind::minus);if(current().kind!=Kind::integer)return std::nullopt;
+      const auto raw=text();auto v=negative?parse_decimal_i64(std::string("-")+std::string(raw)):parse_decimal_i64(raw);
+      if(v)++pos_;
+      return v;
+    };
+    auto ident=[&]()->std::optional<std::string>{
+      auto n=local_id();if(!n||n->empty()||n->size()>64||(*n)[0]<'a'||(*n)[0]>'z')return std::nullopt;
+      for(char ch:*n)if(!((ch>='a'&&ch<='z')||(ch>='0'&&ch<='9')||ch=='_'))return std::nullopt;
+      const std::string_view reserved[]={"s","p","i8","i16","i32","i64","mut","new","at","alloc","destroy","free","define","struct","with","constructor","self","null","true","false","await","suspends","susp","if","else","end","while","for","class","actor","spawn","task","select","defer","recover","copy","borrow","take","share","drop","move","pin","import","export","use","namespace","module","const","unsafe","to","empty","void","panic","trap","throw","raise","set"};
+      for(auto v:reserved)if(*n==v)return std::nullopt;
+      return n;
+    };
+    if(!w("define")||!w("struct")||current().kind!=Kind::name)return bad();
+    const std::string owner(text());++pos_;
+    if(owner.empty()||owner.size()>64||owner[0]<'A'||owner[0]>'Z')return bad();
+    for(char ch:owner)if(!((ch>='a'&&ch<='z')||(ch>='A'&&ch<='Z')||(ch>='0'&&ch<='9')||ch=='_'))return bad();
+    const std::string_view reserved_types[]={"Array","FixedArray","Vector","List","FixedList","Slice","Map","Set","Pair","Entry","Record","Tuple","Option","Result","Future","Channel","ActorRef","ActorId","Storage","RawPointer","Pointer","String","Bool","Integer","Any","Unknown","Object","Error","Symbol","Mutex","MutexGuard","SharedMutex","Generator","Iterator","Function","Fnc","ActorMail","ReadLoan","WriteLoan","Atomic","AtomicRef","AtomicBool","AtomicInt","AtomicLong","AtomicI8","AtomicI16","AtomicI32","AtomicI64","AtomicU8","AtomicU16","AtomicU32","AtomicU64","Arc","Weak","Box","Rc","RwLock","RwLockReadGuard","RwLockWriteGuard","UnsafeCell"};
+    for(auto v:reserved_types)if(owner==v)return bad();
+    if(!k(Kind::lbrace))return bad();
+    while(current().kind!=Kind::rbrace){
+      if(fields.size()>=8||current().kind!=Kind::name)return bad();
+      const std::string ty(text());++pos_;
+      const std::uint64_t width=ty=="i8"?1:ty=="i16"?2:ty=="i32"?4:ty=="int"||ty=="i64"?8:0;
+      auto f=ident();if(!width||!f||std::find(fields.begin(),fields.end(),*f)!=fields.end()||!k(Kind::semicolon))return bad();
+      fields.push_back(*f);types.push_back(ty);plan.widths.push_back(width);
+    }
+    if(fields.empty()||!k(Kind::rbrace)||!w("with")||!k(Kind::lbrace)||!w("constructor")||!k(Kind::lparen))return bad();
+    for(std::size_t i=0;i<fields.size();++i){
+      if((i&&!k(Kind::comma))||!w(types[i])||!w(fields[i]))return bad();
+    }
+    if(!k(Kind::rparen)||!k(Kind::lbrace))return bad();
+    for(const auto& f:fields)if(!w("self")||!k(Kind::dot)||!w(f)||!k(Kind::equals)||!w(f)||!k(Kind::semicolon))return bad();
+    if(!k(Kind::rbrace)||!k(Kind::rbrace)||!w("pub")||!w("fnc")||!w("main")||!k(Kind::lparen)||!k(Kind::rparen)||!k(Kind::colon)||!w("int")||!k(Kind::lbrace)||
+       !w("let")||!w("Storage")||!k(Kind::lt)||!w(owner)||!k(Kind::gt)||!w("s")||!k(Kind::equals)||!op("alloc")||!w(owner)||!k(Kind::semicolon)||
+       !w("let")||!w("mut")||!w("RawPointer")||!k(Kind::lt)||!w(owner)||!k(Kind::gt)||!w("p")||!k(Kind::equals)||
+       !w("RawPointer")||!k(Kind::dot)||!w("empty")||!k(Kind::lt)||!w(owner)||!k(Kind::gt)||!k(Kind::lparen)||!k(Kind::rparen)||!k(Kind::semicolon))return bad();
+    while(!(current().kind==Kind::name&&text()=="return")){
+      if(plan.steps.size()>=32)return bad();
+      FlatPlacement::Step step{K::free};
+      if(name("new")){
+        step.kind=K::construct;if(!w(owner)||!k(Kind::lparen))return bad();
+        for(std::size_t i=0;i<fields.size();++i){
+          if(i&&!k(Kind::comma))return bad();
+          auto v=number();if(!v||!fits_flat(plan.widths[i],*v))return bad();step.values.push_back(*v);
+        }
+        if(!k(Kind::rparen)||!w("at")||!w("s"))return bad();
+      }else if(current().kind==Kind::name&&text()=="ref"){
+        if(!op("ref")||!w("p")||!w("to")||!w("s"))return bad();
+        step.kind=K::bind;
+      }else if(name("val")){
+        auto n=ident();if(!n||std::find(names.begin(),names.end(),*n)!=names.end()||std::find(fields.begin(),fields.end(),*n)!=fields.end()||
+          !k(Kind::equals)||!k(Kind::lparen)||!op("deref")||!w("p")||!k(Kind::rparen)||!k(Kind::dot)||current().kind!=Kind::name)return bad();
+        const auto f=std::find(fields.begin(),fields.end(),text());if(f==fields.end())return bad();++pos_;
+        step.kind=K::copy_field;step.field=static_cast<std::size_t>(f-fields.begin());names.push_back(*n);
+      }else if(current().kind==Kind::name&&text()=="unref"){
+        if(!op("unref")||!w("p"))return bad();
+        step.kind=K::detach;
+      }else if(current().kind==Kind::name&&text()=="destroy"){
+        if(!op("destroy")||!w("s"))return bad();
+        step.kind=K::destroy;
+      }else if(current().kind==Kind::name&&text()=="free"){
+        if(!op("free")||!w("s"))return bad();
+        step.kind=K::free;
+      }else return bad();
+      if(!k(Kind::semicolon))return bad();
+      plan.steps.push_back(std::move(step));
+    }
+    if(!w("return"))return bad();
+    do{
+      auto n=ident();if(!n||plan.result.size()>=8)return bad();
+      auto i=std::find(names.begin(),names.end(),*n);if(i==names.end())return bad();
+      plan.result.push_back(static_cast<std::size_t>(i-names.begin()));
+    }while(take(Kind::plus));
+    if(!k(Kind::semicolon)||!k(Kind::rbrace)||current().kind!=Kind::end)return bad();
+    auto result=verify_flat_placement(plan);if(!result)return bad();
+    auto root=append(Node{Op::literal,0,0,*result});if(!root)return bad();
+    out_.root=*root;out_.flat_placement=std::move(plan);return true;
+  }
   [[nodiscard]] bool placement_point() {
     using K=PointPlacement::Kind;
     PointPlacement plan;
@@ -2317,8 +2413,13 @@ public:
     if (out_.error != ParseError::none) return std::move(out_);
     if(!strict_&&current().kind==Kind::name&&text()=="define"&&tokens_.size()>2&&
        tokens_[1].kind==Kind::name&&source_.substr(tokens_[1].offset,tokens_[1].length)=="struct"&&
-       tokens_[2].kind==Kind::name&&source_.substr(tokens_[2].offset,tokens_[2].length)=="Point"){
-      (void)placement_point();return std::move(out_);
+       tokens_[2].kind==Kind::name){
+      if(source_.substr(tokens_[2].offset,tokens_[2].length)=="Point"){
+        (void)placement_point();return std::move(out_);
+      }
+      // Only claim the closed physical storage lane, not ordinary structs.
+      const bool placement=std::any_of(tokens_.begin(),tokens_.end(),[&](const Token& tok){return tok.kind==Kind::name&&source_.substr(tok.offset,tok.length)=="Storage";});
+      if(placement){(void)placement_flat();return std::move(out_);}
     }
     if (!declarations() || !refinement_declarations()) { fail(ParseError::syntax); return std::move(out_); }
     if(strict_&&refinements_.empty()){fail(ParseError::verify_unsupported);return std::move(out_);}
