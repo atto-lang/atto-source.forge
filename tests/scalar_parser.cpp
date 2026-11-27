@@ -15,7 +15,7 @@ int main() {
     // Existing verified profile requires an explicit refinement declaration.
     const auto full=std::string("type Counter = int where self >= 0 and self <= 100; ")+source;
     const auto parsed=parse_verified_strict_i64(full);
-    if(!parsed.ok()) std::fprintf(stderr,"%s: %s at %zu\n",source,parse_error_name(parsed.error),parsed.error_offset);
+    if(!parsed.ok()) std::fprintf(stderr,"%s: %s at %zu\n",source,std::string(parse_error_name(parsed.error)).c_str(),parsed.error_offset);
     assert(parsed.ok());
   }
   for(const auto* source : {
