@@ -36,7 +36,7 @@ static_assert(checked_rem(-7, 3) == std::optional<i64>{-1});
 static_assert(!checked_div(1, 0));
 static_assert(!checked_rem(1, 0));
 static_assert(!checked_div(MIN, -1));
-static_assert(!checked_rem(MIN, -1));
+static_assert(checked_rem(MIN, -1) == std::optional<i64>{0});
 
 static_assert(!checked_neg(MIN));
 static_assert(!checked_abs(MIN));
@@ -85,7 +85,7 @@ int main() {
   require(checked_div(MAX, -1) == std::optional<i64>{-MAX});
   require(checked_rem(MAX, -1) == std::optional<i64>{0});
   require(!checked_div(MIN, -1));
-  require(!checked_rem(MIN, -1));
+  require(checked_rem(MIN, -1) == std::optional<i64>{0});
   require(!checked_div(0, 0));
   require(!checked_rem(0, 0));
   require(!checked_neg(MIN));

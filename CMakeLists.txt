@@ -714,6 +714,33 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 add_test(NAME checked_i64_test COMMAND checked_i64_test)
 
+# Execute every case of the shared Java/JS numeric corpus against the real,
+# exact-header Forge C++ primitives. This is HOST-ONLY arithmetic evidence;
+# the separate shared_checked_i64_native_guests test builds actual .atto guests.
+file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/contracts/checked-i64-all-backends-v1/cases.tsv"
+     ATTO_SHARED_I64_SHA256)
+if(NOT ATTO_SHARED_I64_SHA256 STREQUAL
+   "e56dfccea11757ff18fc72a81ba5d643380e69184ab309eedf45e1e7b940e133")
+  message(FATAL_ERROR "shared checked-i64 corpus SHA-256 mismatch")
+endif()
+add_executable(shared_checked_i64_header_oracle_test
+  tests/shared_checked_i64_header_oracle.cpp)
+target_link_libraries(shared_checked_i64_header_oracle_test PRIVATE
+  atto_forge_checked_i64)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(shared_checked_i64_header_oracle_test PRIVATE
+    -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(shared_checked_i64_header_oracle_test PRIVATE
+      -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(shared_checked_i64_header_oracle_test PRIVATE
+      -fsanitize=address,undefined)
+  endif()
+endif()
+add_test(NAME shared_checked_i64_header_oracle_test
+  COMMAND shared_checked_i64_header_oracle_test
+    "${CMAKE_CURRENT_SOURCE_DIR}/contracts/checked-i64-all-backends-v1/cases.tsv")
+
 # Host-only ownership contract model: not a Forge guest compiler.
 # Run sanitizer-backed native lifetime and concurrent weak-reference tests.
 find_package(Threads REQUIRED)
@@ -895,6 +922,17 @@ add_test(NAME scalar_guest_conformance
     "-DFORGE=$<TARGET_FILE:forge_scalar>"
     "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/scalar-conformance"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/scalar_conformance.cmake")
+
+# The exact Java/JS/11-backend corpus is compiled to 15 restricted Forge native
+# scalar guest binaries, not merely interpreted by host arithmetic functions.
+add_test(NAME shared_checked_i64_native_guests
+  COMMAND "${CMAKE_COMMAND}"
+    "-DROOT=${CMAKE_CURRENT_SOURCE_DIR}"
+    "-DCXX=${CMAKE_CXX_COMPILER}"
+    "-DSANITIZERS=${ATTO_FORGE_SANITIZERS}"
+    "-DFORGE=$<TARGET_FILE:forge_scalar>"
+    "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/shared-checked-i64-guests"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/shared_checked_i64_guests.cmake")
 
 # Failed compiler inputs yield typed bounded diagnostics, no echoed source.
 add_test(NAME scalar_cli_diagnostics

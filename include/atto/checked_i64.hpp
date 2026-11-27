@@ -56,8 +56,10 @@ using u64 = std::uint64_t;
 }
 
 [[nodiscard]] constexpr std::optional<i64> checked_rem(i64 a, i64 b) noexcept {
-  if (b == 0 || (a == std::numeric_limits<i64>::min() && b == -1))
-    return std::nullopt;
+  if (b == 0) return std::nullopt;
+  // The quotient MIN / -1 is unrepresentable, but the mathematical
+  // remainder is exactly zero. Avoid native signed-rem UB on this pair.
+  if (a == std::numeric_limits<i64>::min() && b == -1) return i64{0};
   return a % b;
 }
 // Both operations must reject INT64_MIN to avoid signed overflow.
