@@ -15,6 +15,7 @@ using scalar::Token;
 struct SourceStage {
   Stage upstream;
   std::vector<Stage> stages;
+  std::vector<Stage> bindings;
 };
 struct Admission {
   bool selected=false;
@@ -26,6 +27,7 @@ class NamedStageParser {
   const std::vector<Token>& tokens_;
   std::size_t pos_=0;
   std::string_view self_,param_;
+  std::vector<std::string_view> locals_;
   Stage body_;
   const Token& current() const {return tokens_[pos_];}
   std::string_view word() const {return source_.substr(current().offset,current().length);}
@@ -61,6 +63,11 @@ class NamedStageParser {
     if(take(Kind::lparen)){auto n=expression(depth+1,0);if(!n||!take(Kind::rparen))return {};return n;}
     if(current().kind!=Kind::name)return {};
     const auto n=word();++pos_;
+    if(self_.empty()){
+      const auto it=std::find(locals_.begin(),locals_.end(),n);
+      if(it==locals_.end())return {};
+      return append({Op::local,static_cast<std::size_t>(it-locals_.begin())});
+    }
     if(n==param_)return append({Op::arg});
     if(n!=self_||!take(Kind::lparen))return {};
     auto v=expression(depth+1,0);
@@ -123,15 +130,33 @@ class NamedStageParser {
     if(!take(Kind::rbrace)||!validate(body_))return {};
     return std::move(body_);
   }
+  std::optional<Stage> parse_prefix(){
+    body_=Stage{};
+    auto value=expression(0,0);if(!value)return {};
+    auto subject=append({Op::literal,0,0,0});if(!subject)return {};
+    body_.subject=*subject;body_.arms.push_back({std::nullopt,*value});
+    if(!validate_prefix(body_,locals_.size()))return {};
+    return std::move(body_);
+  }
   std::optional<SourceStage> parse(){
     if(!name("pub")||!name("fnc")||!name("main")||!take(Kind::lparen)||!take(Kind::rparen)||
-       !(take(Kind::colon)||take(Kind::arrow))||!name("int")||!take(Kind::lbrace)||
-       !(name("return")||take(Kind::caret)))return {};
-    auto input=expression(0,0);if(!input)return {};
-    auto subject=append({Op::literal,0,0,0});if(!subject)return {};
-    body_.subject=*subject;body_.arms.push_back({std::nullopt,*input});
-    if(!validate(body_))return {};
-    SourceStage program{std::move(body_),{}};
+       !(take(Kind::colon)||take(Kind::arrow))||!name("int")||!take(Kind::lbrace))return {};
+    SourceStage program{};
+    // This initial binding profile is explicit immutable i64 only. No
+    // shadowing, mutation, captures, inferred types or const folding.
+    while(name("val")){
+      if(locals_.size()>=max_bindings||!name("int"))return {};
+      auto local=identifier();
+      if(!local||std::find(locals_.begin(),locals_.end(),*local)!=locals_.end()||
+         !take(Kind::equals))return {};
+      auto init=parse_prefix();
+      if(!init||!take(Kind::semicolon))return {};
+      program.bindings.push_back(std::move(*init));
+      locals_.push_back(*local);
+    }
+    if(!(name("return")||take(Kind::caret)))return {};
+    auto upstream=parse_prefix();if(!upstream)return {};
+    program.upstream=std::move(*upstream);
     while(pipe_here()){
       if(program.stages.size()>=max_stages)return {};
       auto stage=parse_stage();if(!stage)return {};
