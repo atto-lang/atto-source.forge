@@ -494,6 +494,9 @@ class Parser {
   }
   [[nodiscard]] bool declarations() {
     while (name("define")) {
+      // Keep the shared file-local declaration bound; lexical and dimension
+      // limits are independent and remain in force.
+      if (dimensions_.size() + units_.size() >= 128) {fail(ParseError::unit_limit);return false;}
       const bool dimension = name("dimension");
       if ((!dimension && !name("unit")) || current().kind != Kind::name) return false;
       if (known_name(text())) {fail(ParseError::unit_duplicate);return false;}
@@ -503,7 +506,7 @@ class Parser {
         if (dimensions_.size() == Dim{}.size()) {fail(ParseError::unit_limit);return false;}
         dimensions_.push_back(n);
       } else {
-        if (units_.size() == 32 || !take(Kind::colon) || current().kind != Kind::name) return false;
+        if (!take(Kind::colon) || current().kind != Kind::name) return false;
         std::size_t d = 0;
         while (d < dimensions_.size() && dimensions_[d] != text()) ++d;
         if (d == dimensions_.size()) {fail(ParseError::unit_name);return false;}
