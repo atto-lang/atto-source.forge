@@ -1,5 +1,5 @@
 #pragma once
-// Restricted, closed typed i64 recursion IR. Not yet source-parser admission.
+// Restricted, closed typed i64 recursion IR, including closed scalar upstreams.
 // Emit a native state machine with explicit activations, no C++ recursion.
 #include "atto/checked_i64.hpp"
 #include <cstddef>
@@ -51,21 +51,25 @@ inline constexpr std::size_t max_nodes=512, max_depth=64, max_edges=1024;
   if(p.arms.back().key)return false;
   return true;
 }
-[[nodiscard]] inline std::optional<std::string> emit(const Stage& p,i64 input){
-  if(!validate(p))return std::nullopt;
-  auto number=[](i64 n){
-    return n==std::numeric_limits<i64>::min()?std::string("(-9223372036854775807LL-1LL)"):std::to_string(n)+"LL";
-  };
-  auto idx=[](std::size_t n){return std::to_string(n);};
-  std::string out=R"(#include "atto/checked_i64.hpp"
+inline constexpr std::size_t max_stages=16;
+[[nodiscard]] inline std::string number(i64 n){
+  return n==std::numeric_limits<i64>::min()?std::string("(-9223372036854775807LL-1LL)"):std::to_string(n)+"LL";
+}
+[[nodiscard]] inline std::string preamble(){
+  return R"(#include "atto/checked_i64.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
 using atto::forge::i64;
 struct Frame { std::size_t id,depth; i64 arg; unsigned phase=0; i64 left=0; };
 [[noreturn]] static void fail(const char* text,int code){std::fputs(text,stderr);std::exit(code);}
-static i64 evaluate(i64 input){
-  std::vector<Frame> frames;
+)";
+}
+[[nodiscard]] inline std::optional<std::string> emit_function(const Stage& p,std::size_t function_id){
+  if(!validate(p)||function_id>max_stages)return std::nullopt;
+  auto idx=[](std::size_t n){return std::to_string(n);};
+  std::string out="static i64 evaluate"+idx(function_id)+"(i64 input){\n";
+  out+=R"(  std::vector<Frame> frames;
   i64 result=0;
   auto push=[&](std::size_t id,i64 arg,std::size_t depth){
     if(frames.size()>=1025u*66u)fail("E_STACK\n",75);
@@ -101,8 +105,33 @@ static i64 evaluate(i64 input){
     out+=(a.key?"case "+number(*a.key)+":":"default:")+child(a.body)+"break;";
   }
   out+="}}else finish(result);break;}\n      default:fail(\"E_IR\\n\",76);\n    }\n  }\n  return result;\n}\n";
-  out+="int main(){std::printf(\"%lld\\n\",static_cast<long long>(evaluate("+number(input)+")));}\n";
   if(out.size()>256*1024)return std::nullopt;
+  return out;
+}
+[[nodiscard]] inline std::optional<std::string> emit(const Stage& p,i64 input){
+  auto fn=emit_function(p,0);if(!fn)return {};
+  auto out=preamble()+*fn;
+  out+="int main(){std::printf(\"%lld\\n\",static_cast<long long>(evaluate0("+number(input)+")));}\n";
+  if(out.size()>256*1024)return {};
+  return out;
+}
+// Upstream is a closed arithmetic expression; no arg/self even in dead nodes.
+// Each stage is separately validated and receives exactly the previous value.
+[[nodiscard]] inline std::optional<std::string> emit_pipeline(const Stage& upstream,const std::vector<Stage>& stages){
+  if(stages.empty()||stages.size()>max_stages||!validate(upstream)||
+     upstream.arms.size()!=1||upstream.arms.front().key)return {};
+  for(const auto& n:upstream.nodes)if(n.op==Op::arg||n.op==Op::self)return {};
+  auto first=emit_function(upstream,0);if(!first)return {};
+  auto out=preamble()+*first;
+  std::string main="int main(){auto value=evaluate0(0);";
+  for(std::size_t i=0;i<stages.size();++i){
+    auto fn=emit_function(stages[i],i+1);if(!fn)return {};
+    out+=*fn;
+    if(out.size()>256*1024)return {};
+    main+="value=evaluate"+std::to_string(i+1)+"(value);";
+  }
+  out+=main+"std::printf(\"%lld\\n\",static_cast<long long>(value));}\n";
+  if(out.size()>256*1024)return {};
   return out;
 }
 } // namespace atto::forge::recursive
