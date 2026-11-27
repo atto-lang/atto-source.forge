@@ -535,6 +535,8 @@ class Parser {
   }
   int factor(std::size_t d) {
     depth(d);
+    if(token_.text=="spawn")
+      fail("E_SPAWN_OPTIONS_UNSUPPORTED: actor spawn requires typed initialization, resource admission and runtime lowering");
     if(take("+")) { const int value=factor(d+1); require_integer(value); return value; }
     if(take("-")) {
       if(token_.text=="9223372036854775808"){
