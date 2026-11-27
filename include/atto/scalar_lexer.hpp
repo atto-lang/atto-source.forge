@@ -22,6 +22,8 @@ struct Lexed {
 inline constexpr std::size_t max_source_bytes = 16 * 1024;
 // Ordinary bounded scalar lane admits larger lexical programs; strict proof budget stays unchanged.
 inline constexpr std::size_t max_tokens = 512;
+// Ordinary quantity catalog declarations get a separate bounded allowance.
+inline constexpr std::size_t max_quantity_tokens = 2048;
 inline constexpr std::size_t max_strict_tokens = 256;
 
 [[nodiscard]] inline Lexed tokenize(std::string_view src, std::size_t token_budget = max_tokens) {
@@ -93,7 +95,7 @@ inline constexpr std::size_t max_strict_tokens = 256;
       }
       continue;
     }
-    if (out.tokens.size() >= max_tokens || out.tokens.size() >= token_budget) {
+    if (out.tokens.size() >= max_quantity_tokens || out.tokens.size() >= token_budget) {
       out.error = LexError::token_limit;
       out.error_offset = i;
       return out;
