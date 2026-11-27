@@ -58,3 +58,5 @@ check_diag(infix_caret "fnc main(): int {return 12 ^ 10;}" "E_PARSE_SYNTAX")
 check_diag(split_xor "fnc main(): int {return 12 ^ ^ 10;}" "E_PARSE_SYNTAX")
 check_diag(double_return "fnc main(): int {^^ 42;}" "E_PARSE_SYNTAX")
 check_diag(boolean_xor "fnc main(): int {return true ^^ false;}" "E_PARSE_SYNTAX")
+
+check_diag(grouped_spawn "fnc main(): int {return spawn Worker() with {};}" "E_SPAWN_OPTIONS_UNSUPPORTED")

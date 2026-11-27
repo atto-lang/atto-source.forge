@@ -27,7 +27,7 @@ struct Node {
   std::vector<LoopExit> exits{};
 };
 enum class ParseError {
-  none, lexical, ownership_bang_unsupported, suspension_unsupported, pointer_profile, syntax, literal_out_of_range, depth_limit, node_limit, telemetry, verify_unproven, verify_unsupported, unit_name, unit_duplicate, unit_dimension, unit_scale, unit_limit, unit_erasure, unit_attachment, unit_inexact, unit_range, refinement_empty, refinement_binding, refinement_precondition, refinement_return, refinement_duplicate, refinement_postcondition, refinement_contract, refinement_export, refinement_body, refinement_call, refinement_cast, i32_range, new_required, lock_unsupported, task_unsupported, task_return_type, pair_key_type, pair_scope, pair_escape, pair_projection, pair_key_unsupported, missing_initializer, entry_scope, entry_escape, entry_projection, source_bidi, bool_operand, duplicate_local, unbound_local
+  none, lexical, ownership_bang_unsupported, suspension_unsupported, pointer_profile, syntax, literal_out_of_range, depth_limit, node_limit, telemetry, verify_unproven, verify_unsupported, unit_name, unit_duplicate, unit_dimension, unit_scale, unit_limit, unit_erasure, unit_attachment, unit_inexact, unit_range, refinement_empty, refinement_binding, refinement_precondition, refinement_return, refinement_duplicate, refinement_postcondition, refinement_contract, refinement_export, refinement_body, refinement_call, refinement_cast, i32_range, new_required, lock_unsupported, task_unsupported, task_return_type, pair_key_type, pair_scope, pair_escape, pair_projection, pair_key_unsupported, missing_initializer, entry_scope, entry_escape, entry_projection, source_bidi, bool_operand, duplicate_local, unbound_local, spawn_options_unsupported
 };
 // Stable sanitized diagnostics; never echo user source bytes.
 [[nodiscard]] constexpr std::string_view parse_error_name(ParseError error) noexcept {
@@ -40,6 +40,7 @@ enum class ParseError {
     case ParseError::unbound_local: return "E_UNBOUND_LOCAL";
     case ParseError::ownership_bang_unsupported: return "E_OWNERSHIP_BANG_UNSUPPORTED";
     case ParseError::suspension_unsupported: return "E_SUSPENDS_UNSUPPORTED";
+    case ParseError::spawn_options_unsupported: return "E_SPAWN_OPTIONS_UNSUPPORTED";
     case ParseError::pointer_profile: return "E_POINTER_PROFILE";
     case ParseError::syntax: return "E_PARSE_SYNTAX";
     case ParseError::literal_out_of_range: return "E_PARSE_RANGE";
@@ -1930,6 +1931,20 @@ public:
               ? ParseError::suspension_unsupported : lexed.error == LexError::source_bidi
                   ? ParseError::source_bidi : ParseError::lexical;
       out_.error_offset = lexed.error_offset;
+      return;
+    }
+    // Neither this restricted scalar profile nor its verified variant can
+    // construct an actor. Reject executable spawn heads before scalar IR,
+    // without treating inert comments, quotes or property names as keywords.
+    for (std::size_t i = 0; i + 1 < tokens_.size(); ++i) {
+      const auto& token = tokens_[i];
+      if (token.kind == Kind::name && tokens_[i + 1].kind == Kind::name &&
+          (i == 0 || tokens_[i - 1].kind != Kind::dot) &&
+          source_.substr(token.offset, token.length) == "spawn") {
+        out_.error = ParseError::spawn_options_unsupported;
+        out_.error_offset = token.offset;
+        return;
+      }
     }
   }
   [[nodiscard]] Parsed parse() {

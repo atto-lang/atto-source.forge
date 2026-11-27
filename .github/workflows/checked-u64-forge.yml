@@ -4,6 +4,7 @@ on:
     paths:
       - 'tools/forge_checked_u64.cpp'
       - 'tests/checked_u64_forge_native.test.mjs'
+      - 'tests/checked_u64_division.py'
       - 'contracts/atto-xo-checked-u64-debit-v1/**'
       - '.github/workflows/checked-u64-forge.yml'
 permissions:
@@ -22,3 +23,6 @@ jobs:
           clang++ --version
           g++ --version
           node --test tests/checked_u64_forge_native.test.mjs
+      - name: Execute bounded quotient and cross-target arithmetic checks
+        run: |
+          ATTO_U64_DIV_SOURCE="$PWD/tools/forge_checked_u64.cpp" python3 tests/checked_u64_division.py
