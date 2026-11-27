@@ -1630,7 +1630,12 @@ class Parser {
         if(!strict_loop(mutable_types,effects,depth+1))return std::nullopt;
         continue;
       }
-      const bool immutable=name("val");
+      // Ordinary fixed locals share the checked val lowering. Do not
+      // expand the strict refinement or mutable SSA admission boundary.
+      const bool ordinary_type_first=!strict_&&current().kind==Kind::name&&text()=="int";
+      const bool ordinary_const=!strict_&&!ordinary_type_first&&name("const");
+      if(ordinary_const) (void)name("mut");
+      const bool immutable=ordinary_type_first||ordinary_const||name("val");
       const bool mut=!immutable&&strict_&&name("let");
       if(!immutable&&!mut){
         if(!strict_||current().kind!=Kind::name||pos_+1>=tokens_.size()||tokens_[pos_+1].kind!=Kind::equals)break;
@@ -1658,7 +1663,7 @@ class Parser {
         bindings_.emplace_back(n,p->node);effects.push_back(p->node);continue;
       }
       std::optional<Refinement> want;
-      if(take(Kind::colon)){
+      if(take(Kind::colon)||(!strict_&&name("as"))){
         if(current().kind!=Kind::name){fail(ParseError::syntax);return std::nullopt;}
         want=annotation(text());++pos_;if(!want){fail(ParseError::syntax);return std::nullopt;}
       }else if(current().kind!=Kind::equals){
@@ -2525,7 +2530,7 @@ public:
       out_.root=*result;return std::move(out_);
     }
     std::vector<std::string_view> aliases;
-    auto root = strict_||!helpers_.empty()||(current().kind==Kind::name&&(text()=="val"||text()=="if"||(!refinements_.empty()&&text()=="let"))) ? binding_body() : body(aliases);
+    auto root = strict_||!helpers_.empty()||(current().kind==Kind::name&&(text()=="val"||text()=="const"||text()=="int"||text()=="if"||(!refinements_.empty()&&text()=="let"))) ? binding_body() : body(aliases);
     if (!root || current().kind != Kind::end) {
       fail(ParseError::syntax);
       return std::move(out_);
