@@ -5,6 +5,16 @@
 using namespace atto::forge;
 using namespace atto::forge::scalar;
 int main() {
+  // The old unit-only cap rejected a valid 33rd declaration as generic syntax.
+  // The lexical and dimension budgets remain unchanged.
+  std::string unit_catalog = "define dimension Length; define unit Meter: Length;";
+  for (int i=0;i<32;++i) {
+    unit_catalog += "define unit Unit" + std::to_string(i) + ": Length = Meter * 1;";
+  }
+  assert(parse_source(unit_catalog + "type Positive = int where self > 0; pub fnc main() -> int {val a=42<Unit31>; return a/1<Unit31>;}").ok());
+  const auto duplicate = parse_source(unit_catalog + "define unit Unit31: Length = Meter * 1; pub fnc main() -> int {return 42;}");
+  assert(duplicate.error == ParseError::unit_duplicate);
+  assert(duplicate.nodes.empty());
   for(const auto* source : {
     "fnc main():int {const x:=42;const Pair<int> p=x;return p.value;}",
     "fnc main():int {const x=x:=42;const Pair<int> p=x;return p.value;}",
