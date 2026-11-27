@@ -85,7 +85,7 @@ class NamedStageParser {
       left=append({op,*left,*right});if(!left)return {};
     }
   }
-public:
+  friend Admission admit(std::string_view);
   NamedStageParser(std::string_view s,const std::vector<Token>& ts):source_(s),tokens_(ts){}
   std::size_t offset() const{return current().offset;}
   std::optional<SourceStage> parse(){
@@ -128,7 +128,8 @@ public:
 };
 // Never fall back to the ordinary scalar parser after selecting this profile.
 // Lexical errors remain the canonical lexer's responsibility.
-[[nodiscard]] inline Admission admit(std::string_view source,const scalar::Lexed& lexed){
+[[nodiscard]] inline Admission admit(std::string_view source){
+  const auto lexed=scalar::tokenize(source);
   if(!lexed.ok())return {};
   for(std::size_t i=0;i+2<lexed.tokens.size();++i){
     const auto& a=lexed.tokens[i];const auto& b=lexed.tokens[i+1];const auto& c=lexed.tokens[i+2];
