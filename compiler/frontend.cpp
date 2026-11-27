@@ -453,13 +453,14 @@ class Parser {
           std::string label;
           if (tok_.kind==Kind::Word) {
             // Speculative one-token lookahead does not consume the actual
-            // operand unless a colon follows the identifier (also across
+            // operand unless ':' or '=' follows the identifier (also across
             // whitespace and comments). Restore both cursor and token.
             const auto saved_at=at_;
             const auto saved_token=tok_;
             const std::string candidate(tok_.text);
             next();
-            if (take(":")) {
+            if (take(":") || take("=")) {
+              if (tok_.text=="=") error("Pair or malformed label requires typed lowering");
               label=candidate;
               named_seen=true;
             } else {
