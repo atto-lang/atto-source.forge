@@ -3,6 +3,14 @@
 #include <string>
 using namespace atto::forge::scalar;
 int main() {
+  const auto fixed=emit_cpp_source("fnc main():int{val int x=42;return x;}");
+  assert(fixed);
+  for (const auto* declaration : {"int x=42;", "const int x=42;",
+      "const x:int=42;", "const x as int=42;", "const mut int x=42;"}) {
+    const auto input=std::string("fnc main():int{")+declaration+"return x;}";
+    assert(emit_cpp_source(input)==fixed);
+  }
+  assert(!emit_cpp_source("fnc main():int{const int x=1;const int x=42;return x;}"));
   const auto source = "pub fnc main(): int {return 4 + 5 * 6;}";
   const auto c = emit_cpp_source(source);
   assert(c && c == emit_cpp_source(source));

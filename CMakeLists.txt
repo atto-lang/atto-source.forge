@@ -10,6 +10,23 @@ endif()
 add_executable(oresforge compiler/main.cpp)
 target_link_libraries(oresforge PRIVATE oresforge_core)
 include(CTest)
+# Isolated native host reference only; no compiler/guest support promotion.
+if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  find_package(Threads REQUIRED)
+  add_executable(oresforge_fixed_pool_host_reference
+    verification/fixed-pool/fixed_buffer_reuse_prototype_test.cpp)
+  target_include_directories(oresforge_fixed_pool_host_reference PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/verification/fixed-pool")
+  target_compile_features(oresforge_fixed_pool_host_reference PRIVATE cxx_std_20)
+  target_link_libraries(oresforge_fixed_pool_host_reference PRIVATE Threads::Threads)
+  target_compile_options(oresforge_fixed_pool_host_reference PRIVATE -Wall -Wextra -Werror)
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    # The test intentionally pairs overridden new/delete with malloc/free.
+    target_compile_options(oresforge_fixed_pool_host_reference PRIVATE -Wno-mismatched-new-delete)
+  endif()
+  add_test(NAME forge_fixed_pool_host_reference COMMAND oresforge_fixed_pool_host_reference)
+  set_tests_properties(forge_fixed_pool_host_reference PROPERTIES TIMEOUT 180 LABELS "host-only;experimental")
+endif()
 option(ORESFORGE_EXPERIMENTAL_STAGE0_NATIVE_TESTS "Enable legacy scalar actor source-to-native witness (not production actor support)" OFF)
 if(BUILD_TESTING AND ORESFORGE_EXPERIMENTAL_STAGE0_NATIVE_TESTS)
   if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -203,6 +220,13 @@ if(BUILD_TESTING)
         "-DOUTPUT_ROOT=${CMAKE_CURRENT_BINARY_DIR}/atto-shared-scalar-native"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/verification/atto_scalar_native.cmake")
     set_tests_properties(oresforge_shared_atto_native_scalar_aot PROPERTIES TIMEOUT 90)
+    add_test(NAME oresforge_declarative_export_native
+      COMMAND "${CMAKE_COMMAND}"
+        "-DFORGE_COMPILER=$<TARGET_FILE:oresforge>"
+        "-DFORGE_CXX=${CMAKE_CXX_COMPILER}"
+        "-DOUTPUT_ROOT=${CMAKE_CURRENT_BINARY_DIR}/atto-export-native"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/verification/declarative_export_native.cmake")
+    set_tests_properties(oresforge_declarative_export_native PROPERTIES TIMEOUT 90)
   endif()
   add_test(NAME oresforge_cli_legacy_ores_guest
     COMMAND oresforge run "${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.ores")
@@ -697,6 +721,33 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 add_test(NAME checked_i64_test COMMAND checked_i64_test)
 
+# Execute every case of the shared Java/JS numeric corpus against the real,
+# exact-header Forge C++ primitives. This is HOST-ONLY arithmetic evidence;
+# the separate shared_checked_i64_native_guests test builds actual .atto guests.
+file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/contracts/checked-i64-all-backends-v1/cases.tsv"
+     ATTO_SHARED_I64_SHA256)
+if(NOT ATTO_SHARED_I64_SHA256 STREQUAL
+   "e56dfccea11757ff18fc72a81ba5d643380e69184ab309eedf45e1e7b940e133")
+  message(FATAL_ERROR "shared checked-i64 corpus SHA-256 mismatch")
+endif()
+add_executable(shared_checked_i64_header_oracle_test
+  tests/shared_checked_i64_header_oracle.cpp)
+target_link_libraries(shared_checked_i64_header_oracle_test PRIVATE
+  atto_forge_checked_i64)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(shared_checked_i64_header_oracle_test PRIVATE
+    -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(shared_checked_i64_header_oracle_test PRIVATE
+      -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(shared_checked_i64_header_oracle_test PRIVATE
+      -fsanitize=address,undefined)
+  endif()
+endif()
+add_test(NAME shared_checked_i64_header_oracle_test
+  COMMAND shared_checked_i64_header_oracle_test
+    "${CMAKE_CURRENT_SOURCE_DIR}/contracts/checked-i64-all-backends-v1/cases.tsv")
+
 # Host-only ownership contract model: not a Forge guest compiler.
 # Run sanitizer-backed native lifetime and concurrent weak-reference tests.
 find_package(Threads REQUIRED)
@@ -879,6 +930,17 @@ add_test(NAME scalar_guest_conformance
     "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/scalar-conformance"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/scalar_conformance.cmake")
 
+# The exact Java/JS/11-backend corpus is compiled to 15 restricted Forge native
+# scalar guest binaries, not merely interpreted by host arithmetic functions.
+add_test(NAME shared_checked_i64_native_guests
+  COMMAND "${CMAKE_COMMAND}"
+    "-DROOT=${CMAKE_CURRENT_SOURCE_DIR}"
+    "-DCXX=${CMAKE_CXX_COMPILER}"
+    "-DSANITIZERS=${ATTO_FORGE_SANITIZERS}"
+    "-DFORGE=$<TARGET_FILE:forge_scalar>"
+    "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/shared-checked-i64-guests"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/shared_checked_i64_guests.cmake")
+
 # Failed compiler inputs yield typed bounded diagnostics, no echoed source.
 add_test(NAME scalar_cli_diagnostics
   COMMAND "${CMAKE_COMMAND}"
@@ -919,6 +981,19 @@ add_test(NAME scalar_check_only
 
 # Bounded local Pointer<int> compiler-native guest parity. This runs real
 # generated source under GCC/Clang and sanitizers, never a Python model.
+add_executable(physical_layout_test tests/physical_layout.cpp)
+target_link_libraries(physical_layout_test PRIVATE atto_forge_checked_i64)
+if(MSVC)
+  target_compile_options(physical_layout_test PRIVATE /UNDEBUG)
+else()
+  target_compile_options(physical_layout_test PRIVATE -Wall -Wextra -Werror -pedantic -UNDEBUG)
+  if(ATTO_FORGE_SANITIZERS)
+    target_compile_options(physical_layout_test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(physical_layout_test PRIVATE -fsanitize=address,undefined)
+  endif()
+endif()
+add_test(NAME physical_layout_test COMMAND physical_layout_test)
+
 add_executable(pointer_local_typed_test tests/pointer_local_typed.cpp)
 target_link_libraries(pointer_local_typed_test PRIVATE atto_forge_checked_i64)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")

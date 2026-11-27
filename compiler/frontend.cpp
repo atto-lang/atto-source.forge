@@ -64,6 +64,7 @@ class Parser {
       if (tok_.text=="use" || tok_.text=="namespace")
         error(has_namespace ? "FORGE_NAMESPACE_DUPLICATE: duplicate file header" :
               "FORGE_NAMESPACE_HEADER_ORDER: namespace must precede declarations");
+      if (tok_.text=="export") { file_export(); continue; }
       definition();
     }
     if (!functions_.contains("main")) error("missing main function");
@@ -116,6 +117,7 @@ class Parser {
   std::unordered_map<std::string,Aggregate> aggregate_types_;
   std::unordered_map<std::string,Aggregate> aggregate_locals_;
   std::size_t node_count_=0;
+  std::size_t export_count_=0;
   static constexpr std::size_t kMaxExpressionDepth=128;
   static constexpr std::size_t kMaxCallDepth=64;
   static constexpr std::size_t kMaxInstructions=100000;
@@ -473,6 +475,23 @@ class Parser {
     if (field->is_bool) error("aggregate bool cannot be used as int");
     return node(Expr::Tag::Constant,{},field->value);
   }
+  // Only the existing process entrypoint is supported. A source export
+  // cannot mint a new native ABI, runtime entrypoint or package authority.
+  void file_export() {
+    if (runtime_entry_) error("EXPORT_RUNTIME_ENTRY_UNSUPPORTED: source exports cannot grant actor entry authority");
+    if (++export_count_ > 128) error("EXPORT_SOURCE_LIMIT: too many directives");
+    expect("export");
+    expect("pub");
+    if (take("[")) {
+      expect("pkg"); expect("]");
+      error("EXPORT_PACKAGE_LINKER_UNSUPPORTED: package identity requires a checked linker");
+    }
+    if (tok_.text=="class" || tok_.text=="actor" || tok_.text=="module")
+      error("EXPORT_KIND_UNSUPPORTED: scalar entrypoint only");
+    (void)take("fnc");
+    if (tok_.text!="main") error("EXPORT_TARGET_UNSUPPORTED: scalar main only");
+    expect("main"); expect(";");
+  }
   void definition() {
     bool defined=false, public_=false;
     while (tok_.text=="define" || tok_.text=="pub") {
@@ -481,7 +500,7 @@ class Parser {
     }
     if (tok_.text=="state") {
       next();
-      if (tok_.text=="container")
+      if (tok_.text=="container" || tok_.text=="on")
         error("STATE_CONTAINER_BACKEND_UNSUPPORTED: protected heap region and critical guard lowering required");
       error("unexpected declaration after state");
     }
