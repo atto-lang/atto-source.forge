@@ -107,5 +107,14 @@ int main() {
   assert(!validate_ast(forged_flat));
   forged_flat=mixed;forged_flat.flat_placement->steps.pop_back();
   assert(!validate_ast(forged_flat));
+  auto nested=parse_source("define struct Payload { int count; i8 flag; } with { constructor(int count, i8 flag) { self.count = count; self.flag = flag; } } define struct Packet { i8 tag; Payload pair; i16 tail; } with { constructor(i8 tag, Payload pair, i16 tail) { self.tag = tag; self.pair = pair; self.tail = tail; } } pub fnc main(): int { let Storage<Packet> s = alloc! Packet; let mut RawPointer<Packet> p = RawPointer.empty<Packet>(); new Packet(-3, Payload(40, -2), 7) at s; ref! p to s; val a = (deref! p).tag; val b = (deref! p).pair.count; val c = (deref! p).pair.flag; val d = (deref! p).tail; unref! p; destroy! s; free! s; return a + b + c + d; }");
+  assert(nested.ok()&&nested.flat_placement&&validate_ast(nested)&&emit_cpp(nested));
+  assert(emit_cpp(nested)->find("sizeof(AttoFlat)==32")!=std::string::npos);
+  auto invalid=nested;invalid.flat_placement->owners[1].fields[1].second.owner=1;
+  assert(!validate_ast(invalid)&&!emit_cpp(invalid));
+  invalid=nested;invalid.flat_placement->owners[0].fields[0].second.scalar.align=4;
+  assert(!validate_ast(invalid));
+  invalid=nested;invalid.flat_placement->widths[1]=4;
+  assert(!validate_ast(invalid));
   return 0;
 }

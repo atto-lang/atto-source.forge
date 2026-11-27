@@ -1903,7 +1903,7 @@ class Parser {
 
   [[nodiscard]] bool placement_flat() {
     using K=FlatPlacement::Kind;FlatPlacement plan;
-    std::vector<std::string> fields,types,names;
+    std::vector<std::string> fields,names;
     auto bad=[&](){fail(ParseError::pointer_profile);return false;};
     auto w=[&](std::string_view v){return expected(v);};
     auto k=[&](Kind v){return expected(v);};
@@ -1921,27 +1921,55 @@ class Parser {
       for(auto v:reserved)if(*n==v)return std::nullopt;
       return n;
     };
-    if(!w("define")||!w("struct")||current().kind!=Kind::name)return bad();
-    const std::string owner(text());++pos_;
-    if(owner.empty()||owner.size()>64||owner[0]<'A'||owner[0]>'Z')return bad();
-    for(char ch:owner)if(!((ch>='a'&&ch<='z')||(ch>='A'&&ch<='Z')||(ch>='0'&&ch<='9')||ch=='_'))return bad();
     const std::string_view reserved_types[]={"Array","FixedArray","Vector","List","FixedList","Slice","Map","Set","Pair","Entry","Record","Tuple","Option","Result","Future","Channel","ActorRef","ActorId","Storage","RawPointer","Pointer","String","Bool","Integer","Any","Unknown","Object","Error","Symbol","Mutex","MutexGuard","SharedMutex","Generator","Iterator","Function","Fnc","ActorMail","ReadLoan","WriteLoan","Atomic","AtomicRef","AtomicBool","AtomicInt","AtomicLong","AtomicI8","AtomicI16","AtomicI32","AtomicI64","AtomicU8","AtomicU16","AtomicU32","AtomicU64","Arc","Weak","Box","Rc","RwLock","RwLockReadGuard","RwLockWriteGuard","UnsafeCell"};
-    for(auto v:reserved_types)if(owner==v)return bad();
-    if(!k(Kind::lbrace))return bad();
-    while(current().kind!=Kind::rbrace){
-      if(fields.size()>=8||current().kind!=Kind::name)return bad();
-      const std::string ty(text());++pos_;
-      const std::uint64_t width=ty=="i8"?1:ty=="i16"?2:ty=="i32"?4:ty=="int"||ty=="i64"?8:0;
-      auto f=ident();if(!width||!f||std::find(fields.begin(),fields.end(),*f)!=fields.end()||!k(Kind::semicolon))return bad();
-      fields.push_back(*f);types.push_back(ty);plan.widths.push_back(width);
+    while(current().kind==Kind::name&&text()=="define"){
+      if(plan.owners.size()>=8||!w("define")||!w("struct")||current().kind!=Kind::name)return bad();
+      std::string owner(text());++pos_;
+      if(owner.empty()||owner.size()>64||owner[0]<'A'||owner[0]>'Z')return bad();
+      for(char ch:owner)if(!((ch>='a'&&ch<='z')||(ch>='A'&&ch<='Z')||(ch>='0'&&ch<='9')||ch=='_'))return bad();
+      for(auto v:reserved_types)if(owner==v)return bad();
+      for(const auto& d:plan.owners)if(d.identity==owner)return bad();
+      if(!k(Kind::lbrace))return bad();
+      layout::Decl decl{owner,{}};std::vector<std::string> spellings;
+      while(current().kind!=Kind::rbrace){
+        if(decl.fields.size()>=8||current().kind!=Kind::name)return bad();
+        const std::string ty(text());++pos_;
+        const std::uint64_t width=ty=="i8"?1:ty=="i16"?2:ty=="i32"?4:ty=="int"||ty=="i64"?8:0;
+        layout::Type type{layout::Kind::scalar,{width,width},0,1};
+        if(!width){
+          const auto it=std::find_if(plan.owners.begin(),plan.owners.end(),[&](const auto& d){return d.identity==ty;});
+          if(it==plan.owners.end())return bad();
+          type={layout::Kind::nominal,{0,0},static_cast<std::size_t>(it-plan.owners.begin()),1};
+        }
+        auto f=ident();if(!f||!k(Kind::semicolon))return bad();
+        for(const auto& field:decl.fields)if(field.first==*f)return bad();
+        decl.fields.push_back({*f,type});spellings.push_back(ty);
+      }
+      if(decl.fields.empty()||!k(Kind::rbrace)||!w("with")||!k(Kind::lbrace)||!w("constructor")||!k(Kind::lparen))return bad();
+      for(std::size_t i=0;i<decl.fields.size();++i){
+        if((i&&!k(Kind::comma))||!w(spellings[i])||!w(decl.fields[i].first))return bad();
+      }
+      if(!k(Kind::rparen)||!k(Kind::lbrace))return bad();
+      for(const auto& f:decl.fields)if(!w("self")||!k(Kind::dot)||!w(f.first)||!k(Kind::equals)||!w(f.first)||!k(Kind::semicolon))return bad();
+      if(!k(Kind::rbrace)||!k(Kind::rbrace))return bad();
+      plan.owners.push_back(std::move(decl));
     }
-    if(fields.empty()||!k(Kind::rbrace)||!w("with")||!k(Kind::lbrace)||!w("constructor")||!k(Kind::lparen))return bad();
-    for(std::size_t i=0;i<fields.size();++i){
-      if((i&&!k(Kind::comma))||!w(types[i])||!w(fields[i]))return bad();
-    }
-    if(!k(Kind::rparen)||!k(Kind::lbrace))return bad();
-    for(const auto& f:fields)if(!w("self")||!k(Kind::dot)||!w(f)||!k(Kind::equals)||!w(f)||!k(Kind::semicolon))return bad();
-    if(!k(Kind::rbrace)||!k(Kind::rbrace)||!w("pub")||!w("fnc")||!w("main")||!k(Kind::lparen)||!k(Kind::rparen)||!k(Kind::colon)||!w("int")||!k(Kind::lbrace)||
+    if(plan.owners.empty())return bad();
+    const auto root_owner=plan.owners.size()-1;
+    const auto& owner=plan.owners.back().identity;
+    const auto flatten=[&](auto&& self,std::size_t index,std::string prefix,unsigned depth)->bool{
+      if(depth>=8)return false;
+      for(const auto& [name,ty]:plan.owners[index].fields){
+        auto path=prefix.empty()?name:prefix+"."+name;
+        if(ty.kind==layout::Kind::scalar){
+          if(fields.size()>=8)return false;
+          fields.push_back(path);plan.widths.push_back(ty.scalar.size);
+        }else if(!self(self,ty.owner,path,depth+1))return false;
+      }
+      return true;
+    };
+    if(!flatten(flatten,root_owner,"",0)||!flat_shape(plan))return bad();
+    if(!w("pub")||!w("fnc")||!w("main")||!k(Kind::lparen)||!k(Kind::rparen)||!k(Kind::colon)||!w("int")||!k(Kind::lbrace)||
        !w("let")||!w("Storage")||!k(Kind::lt)||!w(owner)||!k(Kind::gt)||!w("s")||!k(Kind::equals)||!op("alloc")||!w(owner)||!k(Kind::semicolon)||
        !w("let")||!w("mut")||!w("RawPointer")||!k(Kind::lt)||!w(owner)||!k(Kind::gt)||!w("p")||!k(Kind::equals)||
        !w("RawPointer")||!k(Kind::dot)||!w("empty")||!k(Kind::lt)||!w(owner)||!k(Kind::gt)||!k(Kind::lparen)||!k(Kind::rparen)||!k(Kind::semicolon))return bad();
@@ -1949,19 +1977,31 @@ class Parser {
       if(plan.steps.size()>=32)return bad();
       FlatPlacement::Step step{K::free};
       if(name("new")){
-        step.kind=K::construct;if(!w(owner)||!k(Kind::lparen))return bad();
-        for(std::size_t i=0;i<fields.size();++i){
-          if(i&&!k(Kind::comma))return bad();
-          auto v=number();if(!v||!fits_flat(plan.widths[i],*v))return bad();step.values.push_back(*v);
-        }
-        if(!k(Kind::rparen)||!w("at")||!w("s"))return bad();
+        step.kind=K::construct;
+        const auto args=[&](auto&& self,std::size_t index,unsigned depth)->bool{
+          if(depth>=8||!w(plan.owners[index].identity)||!k(Kind::lparen))return false;
+          const auto& fs=plan.owners[index].fields;
+          for(std::size_t i=0;i<fs.size();++i){
+            if(i&&!k(Kind::comma))return false;
+            const auto& ty=fs[i].second;
+            if(ty.kind==layout::Kind::nominal){if(!self(self,ty.owner,depth+1))return false;}
+            else {auto v=number();if(!v||!fits_flat(ty.scalar.size,*v)||step.values.size()>=8)return false;step.values.push_back(*v);}
+          }
+          return k(Kind::rparen);
+        };
+        if(!args(args,root_owner,0)||!w("at")||!w("s"))return bad();
       }else if(current().kind==Kind::name&&text()=="ref"){
         if(!op("ref")||!w("p")||!w("to")||!w("s"))return bad();
         step.kind=K::bind;
       }else if(name("val")){
-        auto n=ident();if(!n||std::find(names.begin(),names.end(),*n)!=names.end()||std::find(fields.begin(),fields.end(),*n)!=fields.end()||
+        auto n=ident();if(!n||std::find(names.begin(),names.end(),*n)!=names.end()||std::any_of(plan.owners.back().fields.begin(),plan.owners.back().fields.end(),[&](const auto& f){return f.first==*n;})||
           !k(Kind::equals)||!k(Kind::lparen)||!op("deref")||!w("p")||!k(Kind::rparen)||!k(Kind::dot)||current().kind!=Kind::name)return bad();
-        const auto f=std::find(fields.begin(),fields.end(),text());if(f==fields.end())return bad();++pos_;
+        std::string projection(text());++pos_;
+        for(unsigned depth=1;depth<8&&take(Kind::dot);++depth){
+          if(current().kind!=Kind::name)return bad();
+          projection+="."+std::string(text());++pos_;
+        }
+        const auto f=std::find(fields.begin(),fields.end(),projection);if(f==fields.end())return bad();
         step.kind=K::copy_field;step.field=static_cast<std::size_t>(f-fields.begin());names.push_back(*n);
       }else if(current().kind==Kind::name&&text()=="unref"){
         if(!op("unref")||!w("p"))return bad();
