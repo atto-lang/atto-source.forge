@@ -29,15 +29,20 @@ struct Node {
   std::vector<LoopExit> exits{};
 };
 enum class ParseError {
-  none, lexical, ownership_bang_unsupported, suspension_unsupported, pointer_profile, syntax, literal_out_of_range, depth_limit, node_limit, telemetry, verify_unproven, verify_unsupported, unit_name, unit_duplicate, unit_dimension, unit_scale, unit_limit, unit_erasure, unit_attachment, unit_inexact, unit_range, refinement_empty, refinement_binding, refinement_precondition, refinement_return, refinement_duplicate, refinement_postcondition, refinement_contract, refinement_export, refinement_body, refinement_call, refinement_cast, i32_range, new_required, lock_unsupported, task_unsupported, task_return_type, pair_key_type, pair_scope, pair_escape, pair_projection, pair_key_unsupported, missing_initializer, entry_scope, entry_escape, entry_projection
+  none, lexical, ownership_bang_unsupported, suspension_unsupported, pointer_profile, syntax, literal_out_of_range, depth_limit, node_limit, telemetry, verify_unproven, verify_unsupported, unit_name, unit_duplicate, unit_dimension, unit_scale, unit_limit, unit_erasure, unit_attachment, unit_inexact, unit_range, refinement_empty, refinement_binding, refinement_precondition, refinement_return, refinement_duplicate, refinement_postcondition, refinement_contract, refinement_export, refinement_body, refinement_call, refinement_cast, i32_range, new_required, lock_unsupported, task_unsupported, task_return_type, pair_key_type, pair_scope, pair_escape, pair_projection, pair_key_unsupported, missing_initializer, entry_scope, entry_escape, entry_projection, source_bidi, bool_operand, duplicate_local, unbound_local, spawn_options_unsupported
 };
 // Stable sanitized diagnostics; never echo user source bytes.
 [[nodiscard]] constexpr std::string_view parse_error_name(ParseError error) noexcept {
   switch (error) {
     case ParseError::none: return "NONE";
     case ParseError::lexical: return "E_PARSE_LEXICAL";
+    case ParseError::source_bidi: return "E_SOURCE_BIDI";
+    case ParseError::bool_operand: return "E_BOOL_OPERAND";
+    case ParseError::duplicate_local: return "E_DUPLICATE_LOCAL";
+    case ParseError::unbound_local: return "E_UNBOUND_LOCAL";
     case ParseError::ownership_bang_unsupported: return "E_OWNERSHIP_BANG_UNSUPPORTED";
     case ParseError::suspension_unsupported: return "E_SUSPENDS_UNSUPPORTED";
+    case ParseError::spawn_options_unsupported: return "E_SPAWN_OPTIONS_UNSUPPORTED";
     case ParseError::pointer_profile: return "E_POINTER_PROFILE";
     case ParseError::syntax: return "E_PARSE_SYNTAX";
     case ParseError::literal_out_of_range: return "E_PARSE_RANGE";
@@ -109,7 +114,9 @@ struct Parsed {
     return error == ParseError::none && !nodes.empty() && root < nodes.size();
   }
 };
-inline constexpr std::size_t max_nodes = 128;
+inline constexpr std::size_t max_nodes = 256;
+inline constexpr std::size_t max_strict_nodes = 128;
+inline constexpr std::size_t max_ordinary_bindings = 64;
 inline constexpr int max_parse_depth = 24;
 inline constexpr std::size_t max_trace_depth = 16;
 
@@ -440,6 +447,16 @@ class Parser {
   };
   std::vector<Range> ranges_;
   std::vector<std::pair<std::string_view,std::size_t>> bindings_;
+  // Boolean slots are admitted only by the ordinary typed predicate path.
+  // They never flow into the scalar numeric expression parser.
+  std::vector<std::size_t> boolean_slots_;
+  bool boolean_slot(std::size_t slot) const {
+    return std::find(boolean_slots_.begin(),boolean_slots_.end(),slot)!=boolean_slots_.end();
+  }
+  std::optional<std::size_t> boolean_binding(std::string_view spelling) const {
+    for(const auto& b:bindings_)if(b.first==spelling&&boolean_slot(b.second))return b.second;
+    return std::nullopt;
+  }
   std::vector<std::string_view> dimensions_;
   struct Unit { std::string_view name; std::size_t dim; Scale scale; };
   std::vector<Unit> units_;
@@ -630,7 +647,7 @@ class Parser {
     return name("int") || name("infer");
   }
   [[nodiscard]] std::optional<std::size_t> append(Node n) {
-    if (out_.nodes.size() >= max_nodes) {
+    if (out_.nodes.size() >= (strict_ ? max_strict_nodes : max_nodes)) {
       fail(ParseError::node_limit);
       return std::nullopt;
     }
@@ -1106,6 +1123,7 @@ class Parser {
     if(current().kind==Kind::name){
       for(const auto& h:helpers_)if(h.name==text()){++pos_;return call(h,depth+1);}
       for(const auto& b:bindings_)if(b.first==text()){
+        if(boolean_slot(b.second)){fail(ParseError::bool_operand);return std::nullopt;}
         const auto key=b.first;
         ++pos_;
         auto a=std::find_if(strict_arrays_.begin(),strict_arrays_.end(),[&](const auto& x){return x.first==key;});
@@ -1132,11 +1150,12 @@ class Parser {
       }
     }
     if(current().kind==Kind::name&&pos_+1<tokens_.size()&&tokens_[pos_+1].kind==Kind::lparen&&!refinements_.empty()){fail(ParseError::refinement_call);return std::nullopt;}
+    if(current().kind==Kind::name&&binding_name(text())&&pos_+1<tokens_.size()&&tokens_[pos_+1].kind!=Kind::lparen){fail(ParseError::unbound_local);return std::nullopt;}
     fail(ParseError::syntax);
     return std::nullopt;
   }
   [[nodiscard]] bool binding_name(std::string_view n) const {
-    if(n.empty()||n[0]<'a'||n[0]>'z'||known_name(n))return false;
+    if(n.empty()||(!(n[0]>='a'&&n[0]<='z')&&!portable_nonascii_name_start(unicode_at(n,0).value))||known_name(n))return false;
     for(auto s:{"val","let","int","i64","i32","bool","float","string","void","return","self","main","fnc","pub","define","type","where","as","and","units","in","true","false","if","else","end","begin","while","loop","sync","task","await","suspends","infer","new","match","const","mut","using","unit","dimension","_"})if(n==s)return false;
     for(const auto& b:bindings_)if(b.first==n)return false;
     for(const auto& a:strict_arrays_)if(a.first==n)return false;
@@ -1171,7 +1190,7 @@ class Parser {
     // Template graph has already been type-checked over the declared
     // parameter intervals. Instantiate once, with only backward edges.
     for(std::size_t i=h.params.size();i<h.nodes.size();++i){
-      if(out_.nodes.size()>=max_nodes){fail(ParseError::node_limit);return std::nullopt;}
+      if(out_.nodes.size()>=(strict_?max_strict_nodes:max_nodes)){fail(ParseError::node_limit);return std::nullopt;}
       Node n=h.nodes[i];
       if(n.op!=Op::literal){
         if(n.left>=map.size()){fail(ParseError::syntax);return std::nullopt;}
@@ -1213,6 +1232,29 @@ class Parser {
   std::optional<Predicate> predicate(const Facts& incoming,int depth){
     if(depth>16){fail(ParseError::depth_limit);return std::nullopt;}
     set_facts(incoming);
+    // The strict scalar lane admits only typed predicate negation, never
+    // integer truthiness. Parenthesize comparisons to retain unary precedence.
+    if(take(Kind::bang)||take(Kind::unicode_not)){
+      if(current().kind!=Kind::lparen && current().kind!=Kind::bang &&
+          current().kind!=Kind::unicode_not &&
+          !(current().kind==Kind::name&&(text()=="true"||text()=="false"||boolean_binding(text()).has_value()))){
+        fail(current().kind==Kind::integer?ParseError::bool_operand:ParseError::verify_unsupported);return std::nullopt;
+      }
+      auto p=predicate(incoming,depth+1);if(!p)return std::nullopt;
+      auto zero=append(Node{Op::literal,0,0,0});if(!zero)return std::nullopt;
+      auto neg=append(Node{Op::eq,p->node,*zero,0});if(!neg)return std::nullopt;
+      return Predicate{*neg,std::move(p->no),std::move(p->yes)};
+    }
+    if(current().kind==Kind::name&&(text()=="true"||text()=="false")){
+      const bool truth=name("true");if(!truth)(void)name("false");
+      auto node=append(Node{Op::literal,0,0,truth?1:0});if(!node)return std::nullopt;
+      return Predicate{*node,incoming,incoming};
+    }
+    if(current().kind==Kind::name){
+      if(auto b=boolean_binding(text())){++pos_;auto node=append(Node{Op::copy,*b,0,0});
+        if(!node)return std::nullopt;
+        return Predicate{*node,incoming,incoming};}
+    }
     if(take(Kind::lparen)){auto p=guard_or(incoming,depth+1);if(!p||!take(Kind::rparen))return std::nullopt;return p;}
     auto a=expr(0);if(!a)return std::nullopt;
     Op op,inverse;
@@ -1255,8 +1297,42 @@ class Parser {
       p=Predicate{*c,join_facts(p->yes,q->yes),std::move(q->no)};
     }return p;
   }
+  // Ordinary terminal conditional returns reuse the checked Boolean guard
+  // grammar and lazy choose node; no integer truthiness or new mutable lane.
+  std::optional<std::size_t> scalar_return_expression(){
+    if(!strict_){
+      unsigned nesting=0;bool conditional=false;
+      for(auto i=pos_;i<tokens_.size();++i){
+        const auto k=tokens_[i].kind;
+        if(k==Kind::lparen||k==Kind::lbracket)++nesting;
+        else if(k==Kind::rparen||k==Kind::rbracket){if(!nesting)break;--nesting;}
+        else if(!nesting&&(k==Kind::semicolon||k==Kind::rbrace||k==Kind::end))break;
+        else if(!nesting&&k==Kind::question){
+          if(i>pos_&&tokens_[i-1].kind==Kind::name&&source_.substr(tokens_[i-1].offset,tokens_[i-1].length)=="as")break;
+          conditional=true;break;
+        }
+      }
+      if(conditional){
+        const auto incoming=facts();auto p=guard_or(incoming,0);
+        if(!p||!take(Kind::question)){fail(ParseError::syntax);return std::nullopt;}
+        auto y=expr(0);if(!y||!take(Kind::colon)){fail(ParseError::syntax);return std::nullopt;}
+        auto n=expr(0);if(!n)return std::nullopt;
+        set_facts(incoming);
+        return append(Node{Op::choose,p->node,*y,static_cast<i64>(*n)});
+      }
+    }
+    return expr(0);
+  }
   std::optional<std::size_t> returning(int depth){
     if(depth>16){fail(ParseError::depth_limit);return std::nullopt;}
+    if(!strict_&&name("if")){
+      const auto incoming=facts();auto p=guard_or(incoming,0);
+      if(!p||!name("then")){fail(ParseError::syntax);return std::nullopt;}
+      auto y=returning(depth+1);if(!y||!name("else")){fail(ParseError::syntax);return std::nullopt;}
+      auto n=returning(depth+1);if(!n||!name("fi")){fail(ParseError::syntax);return std::nullopt;}
+      set_facts(incoming);
+      return append(Node{Op::choose,p->node,*y,static_cast<i64>(*n)});
+    }
     if(strict_&&name("if")){
       auto incoming=facts();bool old=guarded_;guarded_=true;
       auto p=guard_or(incoming,0);if(!p||!take(Kind::lbrace))return std::nullopt;
@@ -1272,7 +1348,7 @@ class Parser {
       return result;
     }
     if(!name("return")&&!take(Kind::caret)){fail(ParseError::syntax);return std::nullopt;}
-    auto root=expr(0);if(!root||!take(Kind::semicolon))return std::nullopt;return root;
+    auto root=scalar_return_expression();if(!root||!take(Kind::semicolon))return std::nullopt;return root;
   }
   using MutableTypes=std::vector<std::pair<std::string_view,Refinement>>;
   using ContinueBranch=std::function<std::optional<std::size_t>(int)>;
@@ -1417,8 +1493,18 @@ class Parser {
         binding->second=*version;effects.push_back(*version);
         continue;
       }
-      if(bindings_.size()>=32||current().kind!=Kind::name){fail(ParseError::syntax);return std::nullopt;}
+      if(bindings_.size()>=(strict_?32:max_ordinary_bindings)||current().kind!=Kind::name){fail(ParseError::syntax);return std::nullopt;}
       auto n=text();++pos_;
+      if(!strict_&&immutable&&n=="bool"){
+        if(current().kind!=Kind::name){fail(ParseError::syntax);return std::nullopt;}
+        n=text();++pos_;
+        if(std::any_of(bindings_.begin(),bindings_.end(),[&](const auto& b){return b.first==n;})){fail(ParseError::duplicate_local);return std::nullopt;}
+        if(!binding_name(n)||!take(Kind::equals)){fail(ParseError::syntax);return std::nullopt;}
+        const auto incoming=facts();auto p=guard_or(incoming,0);
+        if(!p||!take(Kind::semicolon)){fail(ParseError::syntax);return std::nullopt;}
+        set_facts(incoming);boolean_slots_.push_back(p->node);
+        bindings_.emplace_back(n,p->node);effects.push_back(p->node);continue;
+      }
       std::optional<Refinement> want;
       if(take(Kind::colon)){
         if(current().kind!=Kind::name){fail(ParseError::syntax);return std::nullopt;}
@@ -1430,6 +1516,7 @@ class Parser {
       }
       if(mut&&!want){fail(ParseError::verify_unsupported);return std::nullopt;}
       if(strict_&&current().kind==Kind::semicolon){fail(ParseError::missing_initializer);return std::nullopt;}
+      if(std::any_of(bindings_.begin(),bindings_.end(),[&](const auto& b){return b.first==n;})){fail(ParseError::duplicate_local);return std::nullopt;}
       if(!binding_name(n)||!take(Kind::equals)){fail(ParseError::syntax);return std::nullopt;}
       if(strict_&&name("Array")){
         if(mut||want){fail(ParseError::verify_unsupported);return std::nullopt;}
@@ -1632,7 +1719,7 @@ class Parser {
       if(spelling=="main")break;
       // Keep existing type-first entrypoint spellings on the legacy path.
       if((spelling=="int"||spelling=="infer")&&pos_+2<tokens_.size()&&tokens_[pos_+2].kind==Kind::left_arrow)break;
-      if(refinements_.empty()||helpers_.size()>=16)return false;
+      if((strict_&&refinements_.empty())||helpers_.size()>=16)return false;
       ++pos_;
       if(current().kind!=Kind::name||!binding_name(text()))return false;
       const auto fname=text();++pos_;
@@ -1678,7 +1765,7 @@ class Parser {
       out_.root=*root;
       if(!validate_ast(out_))return false;
       helpers_.push_back(Helper{fname,std::move(params),*result,std::move(out_.nodes),std::move(dims_),std::move(scales_),std::move(ranges_)});
-      out_.nodes.clear();out_.root=0;dims_.clear();scales_.clear();ranges_.clear();bindings_.clear();strict_arrays_.clear();
+      out_.nodes.clear();out_.root=0;dims_.clear();scales_.clear();ranges_.clear();bindings_.clear();strict_arrays_.clear();boolean_slots_.clear();
     }
     return true;
   }
@@ -1741,7 +1828,7 @@ class Parser {
     }
     if (name("return") || take(Kind::caret)) {
       const auto previous_size = out_.nodes.size();
-      auto value = expr(0);
+      auto value = scalar_return_expression();
       if (!value || !scalar_cast(*value) || !take(Kind::semicolon)) {
         fail(ParseError::syntax);
         return std::nullopt;
@@ -2041,8 +2128,23 @@ public:
       out_.error = lexed.error == LexError::ownership_bang_unsupported
           ? ParseError::ownership_bang_unsupported
           : lexed.error == LexError::suspension_unsupported
-              ? ParseError::suspension_unsupported : ParseError::lexical;
+              ? ParseError::suspension_unsupported : lexed.error == LexError::source_bidi
+                  ? ParseError::source_bidi : ParseError::lexical;
       out_.error_offset = lexed.error_offset;
+      return;
+    }
+    // Neither this restricted scalar profile nor its verified variant can
+    // construct an actor. Reject executable spawn heads before scalar IR,
+    // without treating inert comments, quotes or property names as keywords.
+    for (std::size_t i = 0; i + 1 < tokens_.size(); ++i) {
+      const auto& token = tokens_[i];
+      if (token.kind == Kind::name && tokens_[i + 1].kind == Kind::name &&
+          (i == 0 || tokens_[i - 1].kind != Kind::dot) &&
+          source_.substr(token.offset, token.length) == "spawn") {
+        out_.error = ParseError::spawn_options_unsupported;
+        out_.error_offset = token.offset;
+        return;
+      }
     }
   }
   [[nodiscard]] Parsed parse() {
@@ -2102,7 +2204,7 @@ public:
       }
     }
     std::vector<std::string_view> aliases;
-    auto root = strict_||!helpers_.empty()||(current().kind==Kind::name&&(text()=="val"||(!refinements_.empty()&&text()=="let"))) ? binding_body() : body(aliases);
+    auto root = strict_||!helpers_.empty()||(current().kind==Kind::name&&(text()=="val"||text()=="if"||(!refinements_.empty()&&text()=="let"))) ? binding_body() : body(aliases);
     if (!root || current().kind != Kind::end) {
       fail(ParseError::syntax);
       return std::move(out_);
@@ -2145,6 +2247,6 @@ public:
   return Parser(src, std::move(lexed)).parse();
 }
 [[nodiscard]] inline Parsed parse_verified_strict_i64(std::string_view src) {
-  return Parser(src, tokenize(src), true).parse();
+  return Parser(src, tokenize(src, max_strict_tokens), true).parse();
 }
 }  // namespace atto::forge::scalar

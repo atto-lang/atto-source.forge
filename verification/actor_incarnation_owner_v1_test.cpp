@@ -4,6 +4,11 @@
 #include <chrono>
 #include <cstdint>
 #include <exception>
+#include <condition_variable>
+#include <memory>
+#include <mutex>
+#include <string_view>
+#include <vector>
 #include <iostream>
 #include <optional>
 #include <stdexcept>
@@ -19,7 +24,109 @@ template <typename F> static void denied(F&& f, const char* reason) {
   throw std::runtime_error(reason);
 }
 
+// Real native owner instances and physical turns, not a scheduler/guest test.
+static void simultaneous_owner_failures() {
+  constexpr std::size_t count = 64;
+  constexpr std::size_t credits = 320;
+  const auto baseline = ActorMemoryAggregateBudgetV1::process().reserved();
+  ActorMemoryAggregateBudgetV1 budget((count + 1) * credits);
+  std::vector<std::unique_ptr<ActorIncarnationOwnerV1>> owners;
+  std::vector<ActorRef> refs;
+  std::vector<std::thread> workers;
+  std::array<std::exception_ptr,count> errors{};
+  std::mutex mutex;
+  std::condition_variable cv;
+  std::size_t entered = 0;
+  bool release = false;
+  auto join = [&] {
+    { std::lock_guard lock(mutex); release = true; }
+    cv.notify_all();
+    for (auto& worker : workers) if (worker.joinable()) worker.join();
+  };
+  ActorIncarnationOwnerV1 sibling(9900, budget, 256, 64, 4, 2);
+  const auto sibling_ref = sibling.ref();
+  try {
+    for (std::size_t i = 0; i < count; ++i) {
+      owners.push_back(std::make_unique<ActorIncarnationOwnerV1>(
+          9901 + i, budget, 256, 64, 4, 2));
+      refs.push_back(owners.back()->ref());
+      owners.back()->send(refs.back(), std::array<std::uint8_t,1>{7});
+      owners.back()->send(refs.back(), std::array<std::uint8_t,1>{99});
+    }
+    for (std::size_t i = 0; i < count; ++i) {
+      workers.emplace_back([&, i] {
+        try {
+          owners[i]->dispatch_one(refs[i], [&](auto& ctx, auto message) {
+            require(message.size() == 1 && message[0] == 7, "unexpected DATA");
+            auto h = ctx.heap_alloc(8);
+            ctx.heap_write(h, 0, std::array<std::uint8_t,1>{7});
+            {
+              std::unique_lock lock(mutex);
+              ++entered;
+              cv.notify_all();
+              cv.wait(lock, [&]{ return release; });
+            }
+            throw std::runtime_error("expected simultaneous owner failure");
+          });
+        } catch (...) { errors[i] = std::current_exception(); }
+      });
+    }
+    {
+      std::unique_lock lock(mutex);
+      require(cv.wait_for(lock, std::chrono::seconds(15),
+                          [&]{ return entered == count; }),
+              "not all physical turns entered");
+    }
+    for (std::size_t i = 0; i < count; ++i) {
+      owners[i]->stop();
+      require(owners[i]->queued() == 0, "STOP retained queued DATA");
+      denied([&]{ owners[i]->restart(); }, "restart before physical exit");
+      denied([&]{ owners[i]->send(refs[i], std::array<std::uint8_t,1>{1}); },
+             "STOP allowed old DATA authority");
+    }
+    require(budget.reserved() == (count + 1) * credits,
+            "STOP prematurely refunded a live physical turn");
+    sibling.send(sibling_ref, std::array<std::uint8_t,1>{42});
+    require(sibling.dispatch_one(sibling_ref, [](auto&, auto message) {
+      require(message.size() == 1 && message[0] == 42, "sibling DATA corrupted");
+    }), "sibling failed while peers were retiring");
+    join();
+    require(budget.reserved() == credits, "failed owners leaked credits");
+    for (std::size_t i = 0; i < count; ++i) {
+      require(errors[i] != nullptr, "worker did not report expected failure");
+      try { std::rethrow_exception(errors[i]); }
+      catch (const std::runtime_error& e) {
+        require(std::string_view(e.what()) == "expected simultaneous owner failure",
+                "unexpected worker failure");
+      }
+      require(owners[i]->stopped(), "failed owner still live");
+      const auto next = owners[i]->restart();
+      require(next.generation == refs[i].generation + 1, "generation mismatch");
+      denied([&]{ owners[i]->send(refs[i], std::array<std::uint8_t,1>{1}); },
+             "retired owner reference revived");
+      owners[i]->send(next, std::array<std::uint8_t,1>{42});
+      require(owners[i]->dispatch_one(next, [](auto& ctx, auto message) {
+        auto h = ctx.heap_alloc(8);
+        std::array<std::uint8_t,1> out{255};
+        ctx.heap_read(h, 0, out);
+        require(out[0] == 0 && message.size() == 1 && message[0] == 42,
+                "replacement memory or DATA corrupted");
+      }), "replacement failed");
+      owners[i]->stop();
+      require(budget.reserved() == credits, "replacement leaked credits");
+    }
+    sibling.stop();
+    require(budget.reserved() == 0 &&
+        ActorMemoryAggregateBudgetV1::process().reserved() == baseline,
+        "aggregate reservation leak");
+  } catch (...) {
+    join();
+    throw;
+  }
+}
+
 int main() {
+  simultaneous_owner_failures();
   ActorMemoryAggregateBudgetV1 budget(1024);
   const auto initial = ActorMemoryAggregateBudgetV1::process().reserved();
   // Each actor reserves exactly 256 heap bytes + 64 frame bytes.

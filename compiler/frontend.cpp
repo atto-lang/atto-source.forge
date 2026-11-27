@@ -1,5 +1,7 @@
 #include "compiler/source_utf8.hpp"
+#include "compiler/topic_publish_source_gate.hpp"
 #include "compiler/frontend.hpp"
+#include "include/atto/portable_unicode_identifier.hpp"
 #include <algorithm>
 #include <charconv>
 #include <memory>
@@ -14,18 +16,15 @@
 #include <utility>
 namespace oresforge {
 namespace {
-// Grammar admission is deliberately ASCII-only. C-library isalpha/isspace
-// change across locales, which is incompatible with reproducible bootstraps.
-// UTF-8 remains accepted in comments but not identifiers/spacing.
+// Numeric and whitespace grammar remains ASCII. Identifier admission
+// uses the same portable scalar grammar as the verified scalar frontend.
 constexpr bool ascii_space(unsigned char c) {
   return c==' ' || c=='\t' || c=='\n' || c=='\r' || c=='\v' || c=='\f';
 }
-constexpr bool ascii_alpha(unsigned char c) {
-  return (c>='A' && c<='Z') || (c>='a' && c<='z');
-}
 constexpr bool ascii_digit(unsigned char c) { return c>='0' && c<='9'; }
-constexpr bool ascii_alnum(unsigned char c) {
-  return ascii_alpha(c) || ascii_digit(c);
+bool identifier_part_at(std::string_view text, std::size_t offset) {
+  auto scalar = atto::forge::scalar::unicode_at(text, offset);
+  return scalar.width && atto::forge::scalar::portable_name_part(scalar.value);
 }
 enum class Kind { Word, Number, Punct, End };
 struct Token { Kind kind; std::string_view text; std::size_t offset; };
@@ -167,26 +166,40 @@ class Parser {
     if (c=='@')
       throw std::runtime_error("annotations require typed target validation and AOT lowering; unsupported in Forge stage-0 at byte "+
                                std::to_string(start));
-    if (ascii_alpha(c) || c=='_') {
-      ++at_;
-      while (at_<source_.size()) {
-        c=static_cast<unsigned char>(source_[at_]);
-        if (!ascii_alnum(c) && c!='_') break;
-        ++at_;
-      }
+    const auto scalar=atto::forge::scalar::unicode_at(source_,at_);
+    if (scalar.width && atto::forge::scalar::portable_name_start(scalar.value)) {
+      at_ += scalar.width;
+      while (identifier_part_at(source_,at_))
+        at_ += atto::forge::scalar::unicode_at(source_,at_).width;
+      // Unsupported non-ASCII suffixes cannot be hidden by an earlier unknown-name diagnostic.
+      if (at_<source_.size() && static_cast<unsigned char>(source_[at_])>=0x80)
+        error("invalid character");
       tok_={Kind::Word,source_.substr(start,at_-start),start};
+      // Require whitespace after the complete contextual bang keyword.
+      if ((tok_.text=="trap" || tok_.text=="throw" || tok_.text=="raise" ||
+           tok_.text=="panic" || tok_.text=="copy" || tok_.text=="take" || tok_.text=="move" ||
+           tok_.text=="borrow" || tok_.text=="share" || tok_.text=="pin" ||
+           tok_.text=="drop" || tok_.text=="pipe" || tok_.text=="rpipe" ||
+           tok_.text=="stop" || tok_.text=="expand") &&
+          at_<source_.size() && source_[at_]=='!' &&
+          source_.substr(at_,2)!="!=" &&
+          !(source_.substr(at_,3)=="!eq" && (at_+3==source_.size() ||
+             !identifier_part_at(source_,at_+3)))) {
+        const auto after=at_+((tok_.text=="copy" && source_.substr(at_,2)=="!!") ? 2 : 1);
+        if (after>=source_.size() || !ascii_space(static_cast<unsigned char>(source_[after])))
+          error("E_BANG_KEYWORD_WHITESPACE: whitespace required after bang keyword");
+      }
       // A contextual ownership operator requires the verb immediately next
       // to '!'. The stage-0 scalar IR has no ownership kind or runtime loan
       // authority; never reinterpret copy!/take!/borrow!/share! as a call.
       // The same guard catches 'mut borrow!' at the borrow token.
-      if ((tok_.text=="copy" || tok_.text=="take" ||
+      if ((tok_.text=="copy" || tok_.text=="take" || tok_.text=="move" ||
            tok_.text=="borrow" || tok_.text=="share") &&
           at_<source_.size() && source_[at_]=='!' &&
           !(at_+1<source_.size() && source_[at_+1]=='=') &&
           !(source_.substr(at_,3)=="!eq" &&
               (at_+3==source_.size() ||
-               (!ascii_alnum(static_cast<unsigned char>(source_[at_+3])) &&
-                source_[at_+3]!='_'))))
+               !identifier_part_at(source_,at_+3))))
         error("OWNERSHIP_BANG_BACKEND_UNSUPPORTED: typed ownership and Forge native lowering required");
       if (tok_.text=="any" || tok_.text=="unknown" ||
           tok_.text=="Any" || tok_.text=="Unknown")
@@ -253,8 +266,7 @@ class Parser {
         unsupported_real=true;
       if (at_<source_.size() && source_[at_]=='d' &&
           (at_+1==source_.size() ||
-           (!ascii_alnum(static_cast<unsigned char>(source_[at_+1])) &&
-            source_[at_+1]!='_')))
+           !identifier_part_at(source_,at_+1)))
         unsupported_real=true;
       if (unsupported_real)
         throw std::runtime_error("floating-point/decimal literal requires typed "
@@ -575,6 +587,8 @@ class Parser {
   }
   ExprPtr factor(std::size_t depth) {
     check_depth(depth);
+    if (tok_.text=="spawn")
+      error("E_SPAWN_OPTIONS_UNSUPPORTED: actor spawn requires typed initialization, resource admission and runtime lowering");
     if (tok_.text=="rt") {
       next();
       const std::string operation(tok_.text);
@@ -730,12 +744,14 @@ class Parser {
 Program parse_source(std::string_view source) {
   if (source.size() > 1024 * 1024) throw std::runtime_error("source exceeds 1 MiB bootstrap limit");
   oresforge::source::validate_utf8(source);
+  oresforge::source::reject_unlowered_topic_publish(source);
   return Parser(source).parse();
 }
 Program parse_runtime_source(std::string_view source) {
   if (source.size() > 1024 * 1024)
     throw std::runtime_error("source exceeds 1 MiB bootstrap limit");
   oresforge::source::validate_utf8(source);
+  oresforge::source::reject_unlowered_topic_publish(source);
   return Parser(source,true).parse();
 }
 

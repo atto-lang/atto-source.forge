@@ -48,6 +48,17 @@ if(BUILD_TESTING)
   add_test(NAME forge_source_terminal_control_admission
     COMMAND oresforge_source_control_admission_test)
   set_tests_properties(forge_source_terminal_control_admission PROPERTIES TIMEOUT 15)
+  # Fail-closed typed Topic publish denial on all Forge native source frontends.
+  # No native Topic ABI or compiled guest feature support is claimed.
+  add_executable(oresforge_topic_publish_source_gate_test
+    tests/topic_publish_source_gate_test.cpp)
+  target_include_directories(oresforge_topic_publish_source_gate_test PRIVATE .)
+  target_link_libraries(oresforge_topic_publish_source_gate_test PRIVATE oresforge_core)
+  target_compile_features(oresforge_topic_publish_source_gate_test PRIVATE cxx_std_20)
+  add_test(NAME forge_topic_publish_alias_no_artifact
+    COMMAND oresforge_topic_publish_source_gate_test
+      "${CMAKE_CURRENT_SOURCE_DIR}/contracts/atto-ensemble-v1/canonical-unlowered-try-publish.atto")
+  set_tests_properties(forge_topic_publish_alias_no_artifact PROPERTIES TIMEOUT 15)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   set(ORE_NUMERIC_I64_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated_numeric_i64_cases.hpp")
   add_custom_command(
@@ -211,6 +222,22 @@ if(BUILD_TESTING)
   add_test(NAME oresforge_state_region_provenance_v1
     COMMAND oresforge_state_region_provenance)
   set_tests_properties(oresforge_state_region_provenance_v1 PROPERTIES TIMEOUT 15)
+  add_executable(oresforge_state_region_ledger verification/state_region_ledger_test.cpp)
+  target_include_directories(oresforge_state_region_ledger PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_state_region_ledger PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_state_region_ledger PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME oresforge_state_region_ledger_v1 COMMAND oresforge_state_region_ledger)
+  set_tests_properties(oresforge_state_region_ledger_v1 PROPERTIES TIMEOUT 15)
+  add_executable(oresforge_protected_scalar_state verification/protected_scalar_state_test.cpp)
+  target_include_directories(oresforge_protected_scalar_state PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_features(oresforge_protected_scalar_state PRIVATE cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(oresforge_protected_scalar_state PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME oresforge_protected_scalar_state_v1 COMMAND oresforge_protected_scalar_state)
+  set_tests_properties(oresforge_protected_scalar_state_v1 PROPERTIES TIMEOUT 15)
   # Host-only positive filesystem resolution substrate, not guest import linking.
   add_executable(oresforge_root_resolver_test verification/project_root_resolver_test.cpp)
   target_include_directories(oresforge_root_resolver_test PRIVATE .)
@@ -568,6 +595,19 @@ if(BUILD_TESTING)
   target_compile_features(oresforge_select_continuation_lease_host PRIVATE cxx_std_20)
   target_link_libraries(oresforge_select_continuation_lease_host PRIVATE Threads::Threads)
   add_test(NAME oresforge_select_continuation_lease_host COMMAND oresforge_select_continuation_lease_host)
+
+  # Exact shared LLVM regression: independent concurrent owner settlement.
+  add_executable(oresforge_select_continuation_multi_owner_host
+    verification/native_select_continuation_multi_owner_test.cpp)
+  target_include_directories(oresforge_select_continuation_multi_owner_host PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/shared")
+  target_compile_features(oresforge_select_continuation_multi_owner_host PRIVATE cxx_std_20)
+  target_compile_options(oresforge_select_continuation_multi_owner_host PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall -Wextra -Wpedantic -Werror>)
+  target_link_libraries(oresforge_select_continuation_multi_owner_host PRIVATE Threads::Threads)
+  add_test(NAME oresforge_select_continuation_multi_owner_host
+    COMMAND oresforge_select_continuation_multi_owner_host)
+  set_tests_properties(oresforge_select_continuation_multi_owner_host PROPERTIES TIMEOUT 60)
 
   set_tests_properties(oresforge_actor_private_frames_host PROPERTIES
     TIMEOUT 30 LABELS "host-only;actor-logical-frames")
@@ -995,4 +1035,12 @@ if(BUILD_TESTING)
     add_test(NAME oresforge_closed_native_default_allocation COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/verification/native_alloc_executable.py" "$<TARGET_FILE:oresforge>")
     set_tests_properties(oresforge_closed_native_default_allocation PROPERTIES TIMEOUT 180)
   endif()
+endif()
+
+# Host/compiler-analysis regression only; not compiled guest evidence.
+if(BUILD_TESTING)
+  add_executable(atto_runtime_parking_effects_test tests/runtime_parking_effects.cpp)
+  target_include_directories(atto_runtime_parking_effects_test PRIVATE .)
+  target_compile_features(atto_runtime_parking_effects_test PRIVATE cxx_std_20)
+  add_test(NAME atto_runtime_parking_effects COMMAND atto_runtime_parking_effects_test)
 endif()

@@ -5,6 +5,29 @@
 using namespace atto::forge;
 using namespace atto::forge::scalar;
 int main() {
+  assert(parse_source("fnc main(): int {val Φ = 20; val φ = 22; return Φ + φ;}").ok());
+  assert(parse_source("fnc main(): int {val 数量 = 20; val 𠮷 = 22; return 数量 + 𠮷;}").ok());
+  assert(!parse_source("fnc main(): int {return 未定義;}").ok());
+  // Grouped actor options cannot reach scalar IR or guest emission.
+  for (const auto* expr : {
+      "spawn Worker() with {}",
+      "spawn Worker() with { schedule { max_parallelism = 2; affinity = sticky; } }",
+      "spawn Worker() with { resources { heap_size = 64 * 1024 * 1024; stack_size = 65536; mailbox_capacity = 1024; } }",
+      "spawn Worker() with { init { name = \"worker-1\"; seed = 42; } }",
+      "await spawn Worker() with {}",
+      "spawn /* nested /* comment */ ok */ Worker() with {}",
+      "spawn Worker() with schedule(max_parallelism=2)",
+      "spawn Worker()"
+  }) {
+    const auto source = std::string("fnc main(): int {return ") + expr + ";}";
+    const auto rejected = parse_source(source);
+    assert(rejected.error == ParseError::spawn_options_unsupported);
+    assert(parse_error_name(rejected.error) == "E_SPAWN_OPTIONS_UNSUPPORTED");
+    assert(rejected.nodes.empty());
+  }
+  assert(parse_source("fnc main(): int {return 42; /* spawn Worker() with {} */}").ok());
+  assert(parse_source("fnc main(): int {return \"spawn Worker() with {}\";}").error != ParseError::spawn_options_unsupported);
+  assert(parse_source("fnc main(): int {return process.spawn(42);}").error != ParseError::spawn_options_unsupported);
   // All four effect spellings must fail closed in the scalar profile.
   for (const std::string_view spelling : {"suspends", "susp", "\xE2\xA7\x96", "\xE2\x88\x82"}) {
     const auto source = std::string("pub ") + std::string(spelling) +
@@ -169,9 +192,10 @@ int main() {
   assert(parse_source(flat).ok());
   assert(nested.error == ParseError::depth_limit);
   std::string many = "fnc main(): int {return 1";
-  for (int i = 0; i < 70; ++i) many += "+1";
+  for (std::size_t i = 0; i < max_nodes/2+6; ++i) many += "+1";
   many += ";}";
   auto budget = parse_source(many);
   assert(budget.error == ParseError::node_limit);
+  assert(!tokenize(std::string(max_strict_tokens+1,'+'),max_strict_tokens).ok());
   assert(parse_source(std::string(16385, 'a')).error == ParseError::lexical);
 }

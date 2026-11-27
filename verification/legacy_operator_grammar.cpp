@@ -99,30 +99,31 @@ int main() {
     // reject them deliberately until it has checked move/borrow/share IR.
     accept("pub fnc main(): int { /* copy! 42 */ return 7; }");
     reject("pub fnc main(): int { return copy!42; }",
-           "OWNERSHIP_BANG_BACKEND_UNSUPPORTED");
+           "E_BANG_KEYWORD_WHITESPACE");
     reject("pub fnc main(): int { return copy! 42; }",
            "OWNERSHIP_BANG_BACKEND_UNSUPPORTED");
     reject("pub fnc main(): int { return take!42; }",
-           "OWNERSHIP_BANG_BACKEND_UNSUPPORTED");
+           "E_BANG_KEYWORD_WHITESPACE");
     reject("pub fnc main(): int { return borrow! foo; }",
            "OWNERSHIP_BANG_BACKEND_UNSUPPORTED");
     reject("pub fnc main(): int { return borrow! mut foo; }",
            "OWNERSHIP_BANG_BACKEND_UNSUPPORTED");
     reject("pub fnc main(): int { return borrow!mut foo; }",
-           "OWNERSHIP_BANG_BACKEND_UNSUPPORTED");
-    // The verb is adjacent to '!': trivia afterward cannot launder a loan.
+           "E_BANG_KEYWORD_WHITESPACE");
+    // The verb is adjacent to '!': ASCII whitespace is required after it.
+    // Spaced forms retain the typed-lowering denial; comments alone are not separators.
     reject("pub fnc main(): int { return borrow!\nmut foo; }",
            "OWNERSHIP_BANG_BACKEND_UNSUPPORTED");
     reject("pub fnc main(): int { return borrow!/* checked loan */mut foo; }",
-           "OWNERSHIP_BANG_BACKEND_UNSUPPORTED");
+           "E_BANG_KEYWORD_WHITESPACE");
     reject("pub fnc main(): int { return mut borrow!\nfoo; }",
            "OWNERSHIP_BANG_BACKEND_UNSUPPORTED");
     reject("pub fnc main(): int { return mut borrow!foo; }",
-           "OWNERSHIP_BANG_BACKEND_UNSUPPORTED");
+           "E_BANG_KEYWORD_WHITESPACE");
     reject("pub fnc main(): int { return share! foo; }",
            "OWNERSHIP_BANG_BACKEND_UNSUPPORTED");
     reject("pub fnc main(): int { return copy!eqfoo; }",
-           "OWNERSHIP_BANG_BACKEND_UNSUPPORTED");
+           "E_BANG_KEYWORD_WHITESPACE");
     not_ownership("pub fnc main(): int { return copy!eq foo; }");
     reject("pub fnc main(): int { return rt borrow mut foo; }",
            "runtime ownership operation requires typed lowering in Forge");
