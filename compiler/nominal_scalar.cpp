@@ -45,7 +45,7 @@ class Parser {
     expect("class");
     result_.owner = identifier();
     expect("as");
-    expect("let");
+    if (!take("let")) return parse_fieldless();
     expect("int");
     result_.field = identifier();
     expect("=");
@@ -166,6 +166,62 @@ class Parser {
     return result_;
   }
  private:
+  // Closed fieldless profile: a public, statically selected i64 method on
+  // a fresh receiver. No fields, mutable self, escaping receiver or dispatch table.
+  ScalarClass parse_fieldless() {
+    while (!take("end")) {
+      if (result_.methods.size() >= 16) fail("nominal method budget exceeded");
+      const bool pub = take("pub");
+      std::string name = identifier();
+      if (name == "method" && token_.text != "(")
+        fail("obsolete method introducer; use mtd");
+      if (name == "fnc" || (name == "mtd" && token_.text != "("))
+        name = identifier();
+      if (name == "fnc" || name == "self" || name == "static" || name == "mut")
+        fail("reserved nominal method name");
+      expect("(");
+      bool closed = false;
+      if (take("self")) {
+        if (take(")")) {
+          if (!take("(")) closed = true;
+        } else {
+          expect(",");
+          if (token_.text == ")") fail("trailing receiver comma");
+        }
+      }
+      std::string parameter;
+      if (!closed && !take(")")) {
+        expect("int"); parameter = identifier();
+        if (parameter == "self") fail("invalid shared receiver parameter");
+        expect(")");
+      }
+      if (!take(":")) expect("->");
+      expect("int"); expect("{"); expect("return");
+      const auto kind = parameter.empty() ? Method::Kind::Constant : Method::Kind::ArgumentAdd;
+      if (!parameter.empty()) { expect(parameter); expect("+"); }
+      const auto immediate = integer();
+      expect(";"); expect("}");
+      declare_method(name, kind, parameter.empty() ? 0u : 1u);
+      result_.methods.back().immediate = immediate;
+      result_.methods.back().public_method = pub;
+    }
+    take("pub"); expect("fnc"); expect("main"); expect("("); expect(")");
+    if (!take(":")) expect("->");
+    expect("int"); expect("{"); expect("return"); expect("new");
+    expect(result_.owner); expect("("); expect(")"); expect(".");
+    const auto name = identifier(); expect("(");
+    std::size_t arity = 0;
+    std::int64_t argument = 0;
+    if (!take(")")) { argument = integer(); arity = 1; expect(")"); }
+    const auto method = find_method(name, arity);
+    if (!result_.methods[method].public_method) fail("private fieldless method");
+    expect(";"); expect("}");
+    if (!token_.text.empty()) fail("unsupported trailing nominal source");
+    result_.instances.push_back("temporary_receiver");
+    add_step({Step::Kind::Construct,0,0,0});
+    add_step({Step::Kind::ReturnRead,0,method,argument});
+    return result_;
+  }
   void declare_method(const std::string& name, Method::Kind kind,
                       std::size_t value_arity) {
     for (const auto& prior : result_.methods)
@@ -284,7 +340,8 @@ class Parser {
   }
 };
 void validate(const ScalarClass& p) {
-  if (!valid_identifier(p.owner) || !valid_identifier(p.field) ||
+  const bool fieldless = p.field.empty();
+  if (!valid_identifier(p.owner) || (!fieldless && !valid_identifier(p.field)) ||
       p.methods.empty() || p.methods.size()>16 ||
       p.instances.empty() || p.instances.size()>8 ||
       p.steps.empty() || p.steps.size()>32 ||
@@ -292,10 +349,11 @@ void validate(const ScalarClass& p) {
     throw std::runtime_error("invalid nominal scalar IR");
   std::vector<bool> constructed(p.instances.size(),false);
   for (const auto& method:p.methods) {
-    const bool recognized = method.kind == Method::Kind::Add ||
-      method.kind == Method::Kind::Subtract || method.kind == Method::Kind::Read;
+    const bool recognized = fieldless
+      ? method.kind == Method::Kind::Constant || method.kind == Method::Kind::ArgumentAdd
+      : method.kind == Method::Kind::Add || method.kind == Method::Kind::Subtract || method.kind == Method::Kind::Read;
     if (!recognized || !valid_identifier(method.name) ||
-        method.value_arity != (method.kind == Method::Kind::Read ? 0u : 1u))
+        method.value_arity != ((method.kind == Method::Kind::Read || method.kind == Method::Kind::Constant) ? 0u : 1u))
       throw std::runtime_error("invalid nominal method IR");
   }
   for (std::size_t i=0;i<p.methods.size();++i)
@@ -308,6 +366,9 @@ void validate(const ScalarClass& p) {
   for (std::size_t i=0;i<p.instances.size();++i)
     for (std::size_t j=0;j<i;++j)
       if(p.instances[i]==p.instances[j]) throw std::runtime_error("duplicate nominal binding");
+  if (fieldless && (p.instances.size()!=1 || p.steps.size()!=2 ||
+      p.steps.front().kind!=Step::Kind::Construct))
+    throw std::runtime_error("invalid fieldless nominal shape");
   for (std::size_t i=0;i<p.steps.size();++i) {
     const auto& step=p.steps[i];
     if(step.instance>=p.instances.size()) throw std::runtime_error("invalid nominal instance slot");
@@ -325,7 +386,9 @@ void validate(const ScalarClass& p) {
       if(step.kind==Step::Kind::Mutate && kind==Method::Kind::Read)
         throw std::runtime_error("mutable operation targets read method");
       if(step.kind==Step::Kind::ReturnRead &&
-         (kind!=Method::Kind::Read || step.argument!=0 || i!=p.steps.size()-1))
+         (i!=p.steps.size()-1 || (fieldless
+          ? !p.methods[step.method].public_method || (kind==Method::Kind::Constant && step.argument!=0)
+          : kind!=Method::Kind::Read || step.argument!=0)))
         throw std::runtime_error("invalid nominal return method");
     }
   }
@@ -336,6 +399,15 @@ ScalarClass parse(std::string_view source) {return Parser(source).parse();}
 
 std::int64_t interpret(const ScalarClass& p) {
   validate(p);
+  if (p.field.empty()) {
+    const auto& step=p.steps.back();
+    const auto& method=p.methods[step.method];
+    if (method.kind==Method::Kind::Constant) return method.immediate;
+    std::int64_t result=0;
+    if (__builtin_add_overflow(step.argument,method.immediate,&result))
+      throw std::runtime_error("i64 add overflow");
+    return result;
+  }
   std::vector<std::int64_t> values(p.instances.size());
   for(const auto& step:p.steps) {
     if(step.kind == Step::Kind::Construct) {
@@ -358,6 +430,16 @@ std::int64_t interpret(const ScalarClass& p) {
 
 std::string emit_x86_64_asm(const ScalarClass& p) {
   validate(p);
+  if (p.field.empty()) {
+    const auto& step=p.steps.back();
+    const auto& method=p.methods[step.method];
+    std::string out=".text\n.globl oresforge_entry\n.type oresforge_entry, @function\noresforge_entry:\n";
+    out+="  movabsq $"+std::to_string(method.kind==Method::Kind::Constant ? method.immediate : step.argument)+", %rax\n";
+    if (method.kind==Method::Kind::ArgumentAdd)
+      out+="  movabsq $"+std::to_string(method.immediate)+", %rdx\n  addq %rdx, %rax\n  jo .Loresforge_nominal_overflow\n";
+    out+="  ret\n.Loresforge_nominal_overflow:\n  ud2\n.size oresforge_entry, .-oresforge_entry\n";
+    return out;
+  }
   const auto bytes=((p.instances.size()*8u+15u)/16u)*16u;
   std::string out=".text\n.globl oresforge_entry\n.type oresforge_entry, @function\n"
                   "oresforge_entry:\n  subq $"+std::to_string(bytes)+", %rsp\n";

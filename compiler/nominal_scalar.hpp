@@ -14,10 +14,12 @@ namespace oresforge::nominal {
 // i64 field and statically inlines method bodies into a caller-owned frame.
 // This IR separates method identity from individual receiver call sites.
 struct Method {
-  enum class Kind { Add, Subtract, Read };
+  enum class Kind { Add, Subtract, Read, Constant, ArgumentAdd };
   std::string name;
   Kind kind;
   std::size_t value_arity = 0;
+  std::int64_t immediate = 0;
+  bool public_method = false;
 };
 struct Step {
   enum class Kind { Construct, Mutate, ReturnRead };

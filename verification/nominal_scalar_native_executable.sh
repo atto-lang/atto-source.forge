@@ -101,3 +101,23 @@ for name in read mtd method; do
   done
 done
 echo 'Forge contextual method matrix: 36 native guests and 36 diagnostic/no-output checks passed'
+
+# Fieldless shared receiver: no runtime receiver storage and no spelling-dependent code.
+for marker in '' 'mtd ' 'fnc '; do
+  for form in '(int n)' '(self,int n)' '(self)(int n)'; do
+    printf 'define class C as pub %sping%s:int{return n+2;} end\npub fnc main():int{return new C().ping(40);}\n' "$marker" "$form" > "$work/fieldless.atto"
+    test "$("$compiler" run-class "$work/fieldless.atto")" = 42
+    "$compiler" emit-class-asm x86_64 "$work/fieldless.atto" > "$work/fieldless.s"
+    if [ ! -f "$work/fieldless.baseline.s" ]; then
+      cp "$work/fieldless.s" "$work/fieldless.baseline.s"
+    fi
+    cmp "$work/fieldless.baseline.s" "$work/fieldless.s"
+    if grep -F '%rsp' "$work/fieldless.s" >/dev/null; then
+      echo 'fieldless receiver allocated stack storage' >&2
+      exit 1
+    fi
+    "$clang" -x assembler "$work/fieldless.s" -x c "$work/main.c" -o "$work/fieldless_native"
+    "$work/fieldless_native"
+  done
+done
+echo 'Forge fieldless receiver matrix: 9 native guests passed'

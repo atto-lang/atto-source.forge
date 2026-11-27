@@ -108,6 +108,31 @@ int main() {
     require(interpret(parse(prefix + "mtd /* marker */ " + writer +
         "mtd /* name */ mtd" + reader + mainStart + "mtd();}")) == 42,
         "comments changed contextual method marker admission");
+    // Fieldless profile uses the same receiver-erased slots and checked
+    // scalar lowering, but needs no guest stack slot for the receiver.
+    for (const std::string name : {"ping", "mtd", "method"}) {
+      std::string baseline;
+      for (const std::string marker : {"", "mtd ", "fnc "}) {
+        for (const std::string form : {"(int n)", "(self,int n)", "(self)(int n)"}) {
+          const auto src = "define class C as pub " + marker + name + form +
+              ":int{return n+2;} end pub fnc main():int{return new C()." + name + "(40);}";
+          const auto program = parse(src);
+          require(interpret(program)==42, "fieldless receiver guest value");
+          const auto code = emit_x86_64_asm(program);
+          if (baseline.empty()) baseline = code;
+          require(code==baseline && code.find("%rsp")==std::string::npos,
+                  "fieldless method spelling changed native lowering or allocated receiver storage");
+        }
+      }
+    }
+    rejects("define class C as ping():int{return 42;} end fnc main():int{return new C().ping();}",
+            "private fieldless method");
+    rejects("define class C as pub ping(self,):int{return 42;} end fnc main():int{return new C().ping();}",
+            "trailing receiver comma");
+    const auto fieldless = parse("define class C as pub ping(int n):int{return n+1;} end fnc main():int{return new C().ping(9223372036854775807);}");
+    overflow(fieldless);
+    require(emit_x86_64_asm(fieldless).find("jo .Loresforge_nominal_overflow")!=std::string::npos,
+            "fieldless checked addition omitted overflow trap");
     const auto split = parse(R"ores(
       define class Counter as let int count=40;
         read():int{return self.count;}
