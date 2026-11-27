@@ -483,7 +483,7 @@ class Parser {
     }
     if (tok_.text=="state") {
       next();
-      if (tok_.text=="container")
+      if (tok_.text=="container" || tok_.text=="on")
         error("STATE_CONTAINER_BACKEND_UNSUPPORTED: protected heap region and critical guard lowering required");
       error("unexpected declaration after state");
     }
