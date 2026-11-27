@@ -1,5 +1,6 @@
 #include "atto/scalar_parser.hpp"
 #include <cassert>
+#include <cstdio>
 #include <limits>
 #include <string>
 using namespace atto::forge;
@@ -11,7 +12,11 @@ int main() {
       "fnc main():int{let int x=44;set x--;set --x;return x;}",
       "fnc main():int{let int x=20;set x+=2;set x-=1;set x*=2;return x;}",
       "fnc main():int{let int x=40;set! (x=x+2);return x;}"}) {
-    assert(parse_verified_strict_i64(source).ok());
+    // Existing verified profile requires an explicit refinement declaration.
+    const auto full=std::string("type Counter = int where self >= 0 and self <= 100; ")+source;
+    const auto parsed=parse_verified_strict_i64(full);
+    if(!parsed.ok()) std::fprintf(stderr,"%s: %s at %zu\n",source,parse_error_name(parsed.error),parsed.error_offset);
+    assert(parsed.ok());
   }
   for(const auto* source : {
       "fnc main():int{val int x=40;set x++;return x;}",
@@ -19,7 +24,8 @@ int main() {
       "fnc main():int{let int x=40;set x+ =2;return x;}",
       "fnc main():int{let int x=40;set ++x++;return x;}",
       "fnc main():int{let int x=9223372036854775807;set x++;return x;}"}) {
-    assert(!parse_verified_strict_i64(source).ok());
+    const auto full=std::string("type Counter = int where self >= 0 and self <= 100; ")+source;
+    assert(!parse_verified_strict_i64(full).ok());
   }
   // Pointer<int> ref!/deref!/unref! is admitted only by the distinct
   // closed-world local-pointer parser, never as an untyped ownership call.
