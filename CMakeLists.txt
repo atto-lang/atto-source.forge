@@ -10,6 +10,23 @@ endif()
 add_executable(oresforge compiler/main.cpp)
 target_link_libraries(oresforge PRIVATE oresforge_core)
 include(CTest)
+# Isolated native host reference only; no compiler/guest support promotion.
+if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  find_package(Threads REQUIRED)
+  add_executable(oresforge_fixed_pool_host_reference
+    verification/fixed-pool/fixed_buffer_reuse_prototype_test.cpp)
+  target_include_directories(oresforge_fixed_pool_host_reference PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/verification/fixed-pool")
+  target_compile_features(oresforge_fixed_pool_host_reference PRIVATE cxx_std_20)
+  target_link_libraries(oresforge_fixed_pool_host_reference PRIVATE Threads::Threads)
+  target_compile_options(oresforge_fixed_pool_host_reference PRIVATE -Wall -Wextra -Werror)
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    # The test intentionally pairs overridden new/delete with malloc/free.
+    target_compile_options(oresforge_fixed_pool_host_reference PRIVATE -Wno-mismatched-new-delete)
+  endif()
+  add_test(NAME forge_fixed_pool_host_reference COMMAND oresforge_fixed_pool_host_reference)
+  set_tests_properties(forge_fixed_pool_host_reference PROPERTIES TIMEOUT 180 LABELS "host-only;experimental")
+endif()
 option(ORESFORGE_EXPERIMENTAL_STAGE0_NATIVE_TESTS "Enable legacy scalar actor source-to-native witness (not production actor support)" OFF)
 if(BUILD_TESTING AND ORESFORGE_EXPERIMENTAL_STAGE0_NATIVE_TESTS)
   if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
