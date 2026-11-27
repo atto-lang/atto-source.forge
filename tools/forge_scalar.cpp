@@ -33,7 +33,7 @@ int main(int argc, char** argv) {
       return deny("E_SOURCE: changing or truncated input");
     const auto named=atto::forge::recursive::admit(text);
     if(named.selected){
-      if(!named.stage||!atto::forge::recursive::emit(named.stage->body,named.stage->input))
+      if(!named.stage||!atto::forge::recursive::emit_pipeline(named.stage->upstream,named.stage->stages))
         return deny("E_NAMED_STAGE_PROFILE");
       return 0;
     }
@@ -132,7 +132,7 @@ int main(int argc, char** argv) {
     const auto named=atto::forge::recursive::admit(source);
     if(named.selected){
       if(strict||!named.stage)return deny("E_NAMED_STAGE_PROFILE");
-      generated=atto::forge::recursive::emit(named.stage->body,named.stage->input);
+      generated=atto::forge::recursive::emit_pipeline(named.stage->upstream,named.stage->stages);
       if(!generated)return deny("E_NAMED_STAGE_PROFILE");
     }else{
     const auto parsed = strict ? atto::forge::scalar::parse_verified_strict_i64(source) : atto::forge::scalar::parse_source(source);
