@@ -2078,11 +2078,13 @@ class Parser {
     if (!owner || !expected(Kind::colon) ||
         !expected("int") || !expected(Kind::equals))
       return false;
+    const bool negative = take(Kind::minus);
     if (current().kind != Kind::integer) {
       fail(ParseError::pointer_profile);
       return false;
     }
-    auto initial = parse_decimal_i64(text());
+    const auto raw = text();
+    auto initial = negative ? parse_decimal_i64(std::string("-")+std::string(raw)) : parse_decimal_i64(raw);
     if (!initial) {
       fail(ParseError::literal_out_of_range);
       return false;
