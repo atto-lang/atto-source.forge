@@ -462,6 +462,8 @@ class Parser {
   using RecordFields = std::vector<std::pair<std::string_view,std::size_t>>;
   // Only root-local const literal i64 records, never a runtime record handle.
   std::vector<std::pair<std::string_view,RecordFields>> record_locals_;
+  // Distinct positional metadata; no runtime aggregate handle or name projection.
+  std::vector<std::pair<std::string_view,std::vector<std::size_t>>> tuple_locals_;
   struct LocalPair { std::string_view name, key; std::size_t payload; };
   // Distinct nominal source metadata; only the explicit value projection
   // enters the checked scalar DAG. No key allocation or product ABI.
@@ -1177,6 +1179,16 @@ class Parser {
         if(!name("value")){fail(ParseError::pair_projection);return std::nullopt;}
         return postfix(append(Node{Op::copy,pair.payload,0,0}));
       }
+      for(const auto& tuple:tuple_locals_)if(tuple.first==text()){
+        ++pos_;
+        if(!take(Kind::lbracket)||current().kind!=Kind::integer){fail(ParseError::syntax);return std::nullopt;}
+        const auto slot=parse_source_decimal(text());++pos_;
+        if(!take(Kind::rbracket)||!slot||*slot<0||
+           static_cast<std::uint64_t>(*slot)>=tuple.second.size()){
+          fail(ParseError::unbound_local);return std::nullopt;
+        }
+        return postfix(append(Node{Op::copy,tuple.second[static_cast<std::size_t>(*slot)],0,0}));
+      }
       for(const auto& record:record_locals_)if(record.first==text()){
         ++pos_;
         if(!take(Kind::dot)||current().kind!=Kind::name){fail(ParseError::syntax);return std::nullopt;}
@@ -1248,7 +1260,7 @@ class Parser {
        (tokens_[pos_+3].kind==Kind::name&&word_at(pos_+3)=="Pair"&&tokens_[pos_+4].kind==Kind::dot));
   }
   [[nodiscard]] bool local_pair_binding() {
-    if(pair_locals_.size()+record_locals_.size()>=16){fail(ParseError::node_limit);return false;}
+    if(pair_locals_.size()+record_locals_.size()+tuple_locals_.size()+bindings_.size()>=16){fail(ParseError::node_limit);return false;}
     if(!name("const"))return false;
     const bool typed=name("Pair");
     if(typed&&(!take(Kind::lt)||!name("int")||!take(Kind::gt))){fail(ParseError::syntax);return false;}
@@ -1256,6 +1268,8 @@ class Parser {
     const auto local=text();++pos_;
     for(const auto& p:pair_locals_)if(p.name==local){fail(ParseError::duplicate_local);return false;}
     for(const auto& r:record_locals_)if(r.first==local){fail(ParseError::duplicate_local);return false;}
+    for(const auto& t:tuple_locals_)if(t.first==local){fail(ParseError::duplicate_local);return false;}
+    for(const auto& b:bindings_)if(b.first==local){fail(ParseError::duplicate_local);return false;}
     std::string_view key=local;
     std::optional<std::size_t> payload;
     bool factory=false;
@@ -1296,19 +1310,51 @@ class Parser {
         continue;
       }
       ++pos_;
-      if(record_locals_.size()+pair_locals_.size()>=16){fail(ParseError::node_limit);return std::nullopt;}
-      (void)name("Record");
+      if(record_locals_.size()+pair_locals_.size()+tuple_locals_.size()+bindings_.size()>=16){fail(ParseError::node_limit);return std::nullopt;}
+      const bool typed_record=name("Record");
+      const bool typed_tuple=!typed_record&&name("Tuple");
       if(current().kind!=Kind::name||!record_label(text())){fail(ParseError::syntax);return std::nullopt;}
       const auto local=text();++pos_;
       for(const auto& old:record_locals_)if(old.first==local){fail(ParseError::duplicate_local);return std::nullopt;}
       for(const auto& old:pair_locals_)if(old.name==local){fail(ParseError::duplicate_local);return std::nullopt;}
+      for(const auto& old:tuple_locals_)if(old.first==local){fail(ParseError::duplicate_local);return std::nullopt;}
+      for(const auto& old:bindings_)if(old.first==local){fail(ParseError::duplicate_local);return std::nullopt;}
       if(!take(Kind::equals)){fail(ParseError::syntax);return std::nullopt;}
       const bool brace=take(Kind::lbrace);
       if(!brace&&!take(Kind::lparen)){fail(ParseError::syntax);return std::nullopt;}
       const auto close=brace?Kind::rbrace:Kind::rparen;
+      if(typed_tuple&&brace){fail(ParseError::syntax);return std::nullopt;}
+      // Empty parentheses default to Tuple; explicit Record owns its own
+      // empty shape. Inferred positional i64 literals are bounded to the
+      // same scalar leaf grammar as named fields. A comma-free single leaf
+      // is scalar unless the explicit Tuple context selects one slot.
+      if(!brace&&!typed_record&&(typed_tuple||current().kind==close||
+          current().kind==Kind::integer||current().kind==Kind::minus)){
+        std::vector<std::size_t> slots;
+        bool saw_comma=false;
+        while(current().kind!=close){
+          if(slots.size()>=16){fail(ParseError::node_limit);return std::nullopt;}
+          const bool negative=take(Kind::minus);
+          if(current().kind!=Kind::integer){fail(ParseError::syntax);return std::nullopt;}
+          const auto digits=text();++pos_;
+          auto value=negative?parse_source_decimal(std::string("-")+std::string(digits)):parse_source_decimal(digits);
+          if(!value){fail(ParseError::literal_out_of_range);return std::nullopt;}
+          auto node=append(Node{Op::literal,0,0,*value});
+          if(!node)return std::nullopt;
+          slots.push_back(*node);
+          if(!take(Kind::comma))break;
+          saw_comma=true;
+        }
+        if(!take(close)||!take(Kind::semicolon)){fail(ParseError::syntax);return std::nullopt;}
+        if(!typed_tuple&&slots.size()==1&&!saw_comma)
+          bindings_.emplace_back(local,slots.front());
+        else tuple_locals_.emplace_back(local,std::move(slots));
+        continue;
+      }
+      if(current().kind==close&&!typed_record){fail(ParseError::syntax);return std::nullopt;}
       bool ordinary=false;
       RecordFields fields;
-      do{
+      if(current().kind!=close) do{
         if(fields.size()>=16||current().kind!=Kind::name||!record_label(text())){fail(ParseError::syntax);return std::nullopt;}
         const auto field=text();++pos_;
         for(const auto& old:fields)if(old.first==field){fail(ParseError::duplicate_local);return std::nullopt;}
@@ -1326,7 +1372,7 @@ class Parser {
         fields.emplace_back(field,*node);
         if(!take(Kind::comma)||current().kind==close)break;
       }while(true);
-      if((!brace&&!ordinary)||!take(close)||!take(Kind::semicolon)){fail(ParseError::syntax);return std::nullopt;}
+      if((!brace&&!ordinary&&!fields.empty())||!take(close)||!take(Kind::semicolon)){fail(ParseError::syntax);return std::nullopt;}
       record_locals_.emplace_back(local,std::move(fields));
     }
     if(!name("return")){fail(ParseError::syntax);return std::nullopt;}
