@@ -1,4 +1,5 @@
 #include "compiler/frontend.hpp"
+#include "compiler/readonly_native.hpp"
 #include "../shared/oreslang/backend/CountedReadyGuest.hpp"
 #include "compiler/call_native.hpp"
 #include "compiler/source_input.hpp"
@@ -129,6 +130,13 @@ int main(int argc,char** argv) {
       std::cout.flush();
       return 0;
     }
+    if (argc==4 && std::string(argv[1])=="emit-readonly-asm") {
+      const auto source=read_file(argv[3]);
+      const auto assembly=oresforge::readonly_native::compile(source,oresforge::parse_arch(argv[2]));
+      std::cout<<assembly;
+      std::cout.flush();
+      return 0;
+    }
     if (argc==4 && std::string(argv[1])=="emit-runtime-asm") {
       auto target=oresforge::parse_arch(argv[2]);
       auto program=oresforge::parse_runtime_source(read_file(argv[3]));
@@ -143,7 +151,7 @@ int main(int argc,char** argv) {
       std::cout.flush();
       return 0;
     }
-    std::cerr<<"usage: oresforge check <file.atto|file.ores> | run|ir <file.atto|file.ores> | emit-asm <arch> <file.atto|file.ores> | run-runtime <file.atto|file.ores> [i64-args...] | ir-runtime <file.atto|file.ores> | emit-runtime-asm <arch> <file.atto|file.ores> | run-calls|run-result-calls|run-option-calls|run-effect-calls <file.atto|file.ores> [i64-args...] | emit-call-asm x86_64 <file.atto|file.ores> | ir-alloc <file.atto|file.ores> | emit-alloc-asm x86_64 <file.atto|file.ores>\n";
+    std::cerr<<"usage: oresforge check <file.atto|file.ores> | run|ir <file.atto|file.ores> | emit-asm <arch> <file.atto|file.ores> | run-runtime <file.atto|file.ores> [i64-args...] | ir-runtime <file.atto|file.ores> | emit-runtime-asm <arch> <file.atto|file.ores> | run-calls|run-result-calls|run-option-calls|run-effect-calls <file.atto|file.ores> [i64-args...] | emit-readonly-asm <arch> <file.atto> | emit-call-asm x86_64 <file.atto|file.ores> | ir-alloc <file.atto|file.ores> | emit-alloc-asm x86_64 <file.atto|file.ores>\n";
     return 2;
   } catch (const std::exception& e) {
     std::cerr<<"oresforge: "<<e.what()<<'\n';
