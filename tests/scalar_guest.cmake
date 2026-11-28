@@ -39,6 +39,63 @@ verify_guest(pair-stored-different "0" "42\n" "")
 verify_guest(pair-stored-mixed "0" "42\n" "")
 # Actual guest, not just parser acceptance: Greek case, Han and supplementary scalar names.
 verify_guest(unicode_identifiers "0" "42\n" "")
+
+# Contextual Product local slice: execute the real compiler and generated
+# native binary at both O0 and O2. No separate reference evaluator.
+set(product_cases
+  "const t=()|return 42"
+  "const Tuple t=()|const Record r=()|const Record s={}|return 42"
+  "const Tuple t=(42)|return t[0]"
+  "const Tuple t=(42,)|return t[0]"
+  "const x=(42)|return x"
+  "const t=(40,2)|return t[0]+t[1]"
+  "const t=(/* empty */)|return 42")
+set(product_id 0)
+foreach(body IN LISTS product_cases)
+  math(EXPR product_id "${product_id}+1")
+  string(REPLACE "|" ";" body "${body}")
+  set(source "${OUT_DIR}/product-${product_id}.atto")
+  set(cpp "${OUT_DIR}/product-${product_id}.cpp")
+  file(WRITE "${source}" "fnc main():int {${body};}")
+  execute_process(COMMAND "${FORGE}" "${source}" -o "${cpp}" RESULT_VARIABLE rc ERROR_VARIABLE err)
+  if(NOT "${rc}" STREQUAL "0")
+    message(FATAL_ERROR "product ${product_id}: frontend failed: ${err}")
+  endif()
+  foreach(opt O0 O2)
+    set(binary "${OUT_DIR}/product-${product_id}-${opt}")
+    execute_process(COMMAND "${CXX}" -std=c++20 -Wall -Wextra -Werror "-${opt}"
+      ${guest_flags} "-I${ROOT}/include" "${cpp}" -o "${binary}"
+      RESULT_VARIABLE rc ERROR_VARIABLE err)
+    if(NOT "${rc}" STREQUAL "0")
+      message(FATAL_ERROR "product ${product_id} ${opt}: C++ failed: ${err}")
+    endif()
+    execute_process(COMMAND "${binary}" RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+    if(NOT "${rc}" STREQUAL "0" OR NOT "${out}" STREQUAL "42\n" OR NOT "${err}" STREQUAL "")
+      message(FATAL_ERROR "product ${product_id} ${opt}: wrong guest result ${rc} [${out}] [${err}]")
+    endif()
+  endforeach()
+endforeach()
+# Use fresh paths: a rejection cannot leave a newly emitted executable input.
+set(product_bad_cases
+  "const t=()|return t[0]"
+  "const Record r=()|return r[0]"
+  "const x=(42)|return x[0]"
+  "const Tuple t=(42)|return t"
+  "const t=()|const Record t=()|return 0"
+  "const t=()|const Record r=t|return 0")
+foreach(body IN LISTS product_bad_cases)
+  math(EXPR product_id "${product_id}+1")
+  string(REPLACE "|" ";" body "${body}")
+  set(source "${OUT_DIR}/product-bad-${product_id}.atto")
+  set(cpp "${OUT_DIR}/product-bad-${product_id}.cpp")
+  file(REMOVE "${cpp}")
+  file(WRITE "${source}" "fnc main():int {${body};}")
+  execute_process(COMMAND "${FORGE}" "${source}" -o "${cpp}" RESULT_VARIABLE rc)
+  if(NOT "${rc}" STREQUAL "2" OR EXISTS "${cpp}")
+    message(FATAL_ERROR "product negative ${product_id}: accepted or emitted an artifact")
+  endif()
+endforeach()
+
 verify_guest(overflow "70" "" "E_OVERFLOW\n")
 verify_guest(divzero "71" "" "E_DIVZERO\n")
 verify_guest(minimum "0" "-9223372036854775808\n" "")
