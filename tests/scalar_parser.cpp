@@ -17,7 +17,7 @@ int main() {
        input.find("rpipe") + 1 == input.find("pipe") ? 1 : 0));
   }
   assert(parse_source("fnc main():int{/* outer /* pipe rpipe */ inner */ return 42;}").ok());
-  assert(parse_source("fnc main():int{let int pipeline = 42; return pipeline;}").ok());
+  assert(parse_source("fnc main():int{val pipeline = 42; return pipeline;}").ok());
   assert(parse_source("fnc main():int{return 40 | 2;}").ok());
   assert(parse_source("pub susp fnc main():int{return 1 pipe 2;}").error == ParseError::suspension_unsupported);
   assert(parse_source("fnc main():int{return 1 pipe @;}").error == ParseError::lexical);
