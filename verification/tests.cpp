@@ -718,7 +718,7 @@ int main() {
     ensure(x86_identity.find("movq %rdi, %rax")!=std::string::npos &&
            x86_identity.find("%rsp")==std::string::npos,
            "x86 incoming identity has no reference-storage slot or frame");
-    ensure(arm_identity.find("  ret\\n")!=std::string::npos &&
+    ensure(arm_identity.find("  ret\n")!=std::string::npos &&
            arm_identity.find("mov x0, x0")==std::string::npos &&
            arm_identity.find("[sp")==std::string::npos &&
            arm_identity.find("sub sp")==std::string::npos,
