@@ -5,6 +5,50 @@
 using namespace atto::forge;
 using namespace atto::forge::scalar;
 int main() {
+  for (const auto* source : {"fnc main():int{return 1 pipe 2;}",
+                             "fnc main():int{return 2 rpipe 1;}",
+                             "fnc main():int{return a pipe b rpipe c;}"}) {
+    const auto result = parse_source(source);
+    assert(!result.ok() && result.error == ParseError::unsupported_continuous_pipe);
+    assert(parse_error_name(result.error) == "E_UNSUPPORTED_CONTINUOUS_PIPE");
+    const std::string_view input(source);
+    assert(result.error_offset == input.find("pipe") -
+      (input.find("rpipe") != std::string_view::npos &&
+       input.find("rpipe") + 1 == input.find("pipe") ? 1 : 0));
+  }
+  assert(parse_source("fnc main():int{/* outer /* pipe rpipe */ inner */ return 42;}").ok());
+  assert(parse_source("fnc main():int{val pipeline = 42; return pipeline;}").ok());
+  assert(parse_source("fnc main():int{return 40 | 2;}").ok());
+  assert(parse_source("pub susp fnc main():int{return 1 pipe 2;}").error == ParseError::suspension_unsupported);
+  assert(parse_source("fnc main():int{return 1 pipe @;}").error == ParseError::lexical);
+  // Contiguous double-angle I/O is a distinct unsupported expression,
+  // not a numeric shift. Preserve exact byte offsets and strict rejection.
+  for (const auto* source : {
+    "fnc main(): int {return 1 >>;}",
+    "fnc main(): int {return (1 >>);}",
+    "fnc main(): int {return 1 << 2;}",
+    "fnc main(): int {return 1<<2;}",
+    "fnc main(): int {return 1 >> 2;}",
+    "fnc main(): int {return << 1;}"
+  }) {
+    const auto rejected = parse_source(source);
+    assert(!rejected.ok());
+    assert(rejected.error == ParseError::io_direction_unsupported);
+    assert(parse_error_name(rejected.error) == "E_IO_DIRECTION_UNSUPPORTED");
+    const std::string_view input(source);
+    const auto offset = input.find("<<") != std::string_view::npos
+      ? input.find("<<") : input.find(">>");
+    assert(rejected.error_offset == offset);
+  }
+  for (const auto* source : {"fnc main():int{return 1 < < 2;}",
+                             "fnc main():int{return 1 > > 2;}"}) {
+    const auto rejected = parse_source(source);
+    assert(!rejected.ok());
+    assert(rejected.error != ParseError::io_direction_unsupported);
+  }
+  assert(parse_source("fnc main():int{return 1 <<< 3 | 8 >>> 2;}").ok());
+  assert(parse_source("fnc main():int{/* outer /* << >> */ inner */ return 42;}").ok());
+  assert(parse_source("fnc main():int{return <int>42;}").ok());
   // Bounded catalog allowance must not change ordinary or strict lexing.
   std::string catalog = "define dimension Length; define unit Meter: Length;";
   for(int i=0;i<48;++i) catalog += "define unit Measure"+std::to_string(i)+": Length = Meter * 1;";
@@ -52,28 +96,6 @@ int main() {
     "fnc main():int {const x:=9223372036854775808;return 0;}"
   }) assert(!parse_source(source).ok());
   for(const auto* source : {
-    "fnc main():int {const t=();const Record r=();const Record s={};return 42;}",
-    "fnc main():int {const Tuple t=(42);return t[0];}",
-    "fnc main():int {const Tuple t=(42,);return t[0];}",
-    "fnc main():int {const t=(40,2);return t[0]+t[1];}",
-    "fnc main():int {const x=(42);return x;}",
-    "fnc main():int {const t=(/*empty*/);const Tuple u=(42);return u[0];}"
-  }) assert(parse_source(source).ok());
-  for(const auto* source : {
-    "fnc main():int {const t=();return t[0];}",
-    "fnc main():int {const Record r=();return r.a;}",
-    "fnc main():int {const Tuple t=(42);return t.a;}",
-    "fnc main():int {const Record r={a:42};return r[0];}",
-    "fnc main():int {const t=(42);return t[0];}",
-    "fnc main():int {const t=();const Record t=();return 0;}",
-    "fnc main():int {const t=();const p=Pair.of(\"p\",42);const Tuple p=();return 0;}",
-    "fnc main():int {const Tuple t={a:42};return 0;}",
-    "fnc main():int {const Tuple t=(a:42);return 0;}",
-    "fnc main():int {const Tuple t=(42);return t[1];}",
-    "fnc main():int {const t=();const Record r=t;return 0;}",
-    "fnc main():int {const r={};return 0;}"
-  }) assert(!parse_source(source).ok());
-  for(const auto* source : {
     "fnc main():int {const r={foo:=40,bar:2};return r.foo+r.bar;}",
     "fnc main():int {const Record r=(foo:=40,bar=2);return r.foo+r.bar;}",
     "fnc main():int {const r=(foo:40,bar:=2);return r.foo+r.bar;}",
@@ -92,6 +114,40 @@ int main() {
     "fnc main():int {const r={foo:1+2};return 0;}",
     "fnc main():int {const r={foo:true};return 0;}",
     "fnc main():int {const r={foo:9223372036854775808};return 0;}"
+  }) assert(!parse_source(source).ok());
+  for(const auto* source : {
+    "fnc main():int {const t=();return 42;}",
+    "fnc main():int {const Tuple t=();const Record r=();const Record s={};return 42;}",
+    "fnc main():int {const Tuple t=(42);return t[0];}",
+    "fnc main():int {const Tuple t=(42,);return t[0];}",
+    "fnc main():int {const x=(42);return x;}",
+    "fnc main():int {const t=(40,2);return t[0]+t[1];}",
+    "fnc main():int {const t=(/* empty */);return 42;}"
+  }) {
+    const auto parsed=parse_source(source);
+    assert(parsed.ok() && validate_ast(parsed));
+  }
+  for(const auto* source : {
+    "fnc main():int {const t=();return t[0];}",
+    "fnc main():int {const Record r=();return r.a;}",
+    "fnc main():int {const Record r=();return r[0];}",
+    "fnc main():int {const t=();return t.a;}",
+    "fnc main():int {const x=(42);return x[0];}",
+    "fnc main():int {const Tuple t=(42);return t[1];}",
+    "fnc main():int {const Tuple t=(42);return t[\"0\"];}",
+    "fnc main():int {const Tuple t=(42);return t[-1];}",
+    "fnc main():int {const Tuple t=(42);return t;}",
+    "fnc main():int {const t=();const Record t=();return 0;}",
+    "fnc main():int {const Tuple t=(42);return t.a;}",
+    "fnc main():int {const Record r={a:42};return r[0];}",
+    "fnc main():int {const Tuple t=(a:42);return 0;}",
+    "fnc main():int {const t=();const p=Pair.of(\"p\",42);const Tuple p=();return 0;}",
+    "fnc main():int {const t=();const t:=42;return 0;}",
+    "fnc main():int {const x=(42);const Tuple x=();return 0;}",
+    "fnc main():int {const t=();const Record r=t;return 0;}",
+    "fnc main():int {const Tuple t={a:42};return 0;}",
+    "fnc main():int {const Record r=(42);return 0;}",
+    "fnc main():int {const r={};return 0;}"
   }) assert(!parse_source(source).ok());
   for (const auto* call : {"stdio.out.write(\"A\")", "process.stdout.write(\"A\")",
                            "stdio /* inert */ .out.write(\"A\")", "process.stdout /* nested /* ok */ */ .write(\"A\")"}) {

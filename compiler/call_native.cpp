@@ -20,6 +20,8 @@ constexpr std::size_t kMaxNodes = 4096;
 constexpr std::size_t kMaxNodesPerFunction = 256;
 constexpr std::size_t kMaxDepth = 128;
 constexpr std::size_t kMaxStackDepth = 128;
+constexpr std::size_t kEntryArgs = 4;
+constexpr std::size_t kInternalArgs = 8;
 constexpr std::size_t kMaxEvalSteps = 200000;
 bool letter(char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_'; }
 bool digit(char c) { return c >= '0' && c <= '9'; }
@@ -149,7 +151,7 @@ class Parser {
       ++at_;
     } else if (c=='^' && at_<text_.size() && text_[at_]=='^') {
       ++at_;
-    } else if (std::string_view("()+-*/{};:,<>=^?").find(c)==std::string_view::npos) {
+    } else if (std::string_view("()+-*/{};:,<>=^?&").find(c)==std::string_view::npos) {
       at_=begin;
       fail("invalid character");
     }
@@ -237,7 +239,7 @@ class Parser {
             !=current_->parameters.end())fail("invalid or duplicate parameter");
         if(!type_first) { expect(":");expect("int"); }
         current_->parameters.push_back(param);
-        if(current_->parameters.size()>4)fail("function parameter budget exceeded");
+        if(current_->parameters.size()>(name=="main"?kEntryArgs:kInternalArgs))fail("function parameter budget exceeded");
         if (!take(","))break;
       } while(true);
     }
@@ -500,11 +502,21 @@ class Parser {
   }
   int integer_xor(std::size_t d) {
     depth(d);
-    int left=comparison(d+1);
+    int left=integer_and(d+1);
     while (take("^^")) {
-      const int right=comparison(d+1);
+      const int right=integer_and(d+1);
       require_integer(left); require_integer(right);
       left=add(Kind::IntegerXor,0,{}, {left,right});
+    }
+    return left;
+  }
+  int integer_and(std::size_t d) {
+    depth(d);
+    int left=comparison(d+1);
+    while(take("&")) {
+      const int right=comparison(d+1);
+      require_integer(left); require_integer(right);
+      left=add(Kind::IntegerAnd,0,{}, {left,right});
     }
     return left;
   }
@@ -613,7 +625,7 @@ class Parser {
       if (token_.text!=")") {
         do {
           const int arg=expr(d+1); args.push_back(arg);
-          if(args.size()>4)fail("call argument budget exceeded");
+          if(args.size()>kInternalArgs)fail("call argument budget exceeded");
           if(!take(","))break;
         }while(true);
       }
@@ -658,6 +670,7 @@ std::int64_t checked(Kind k,std::int64_t a,std::int64_t b) {
       if(__builtin_mul_overflow(a,b,&out))throw ArithmeticFailure(ArithmeticStatus::Overflow,"i64 mul overflow");
       return out;
     case Kind::IntegerXor: return a^b;
+    case Kind::IntegerAnd: return a&b;
     case Kind::Div:
       if(b==0) throw ArithmeticFailure(ArithmeticStatus::DivisionByZero,"i64 division by zero");
       if(a==std::numeric_limits<std::int64_t>::min() && b==-1)
@@ -794,7 +807,7 @@ struct Native {
   std::string effect_target=".Lores_return_effect";
   std::string variant_target=".Lores_return_variant";
   std::string value_slot(int id) const {
-    return "-"+std::to_string(8u*(static_cast<std::size_t>(id)+6u))+"(%rbp)";
+    return "-"+std::to_string(8u*(static_cast<std::size_t>(id)+kInternalArgs+2u))+"(%rbp)";
   }
   std::string parameter_slot(int id) const {
     return "-"+std::to_string(8u*(static_cast<std::size_t>(id)+1u))+"(%rbp)";
@@ -870,11 +883,20 @@ struct Native {
       out<<".Lores_end_"<<tag<<":\n";
     } else if(n.kind==Kind::Call||n.kind==Kind::ResultCall||n.kind==Kind::OptionCall||n.kind==Kind::BoolCall) {
       for (int child:n.children)emit_node(fn,child);
-      for (std::size_t i=0;i<n.children.size();++i)
+      // All expressions were evaluated before touching outgoing stack slots.
+      // r8 remains the depth counter and r9 the effect status. Extra private
+      // arguments occupy a 16-byte-aligned caller-owned stack area.
+      const auto extra=n.children.size()>kEntryArgs?n.children.size()-kEntryArgs:0u;
+      const auto stack_bytes=((extra*8u+15u)/16u)*16u;
+      if(stack_bytes)out<<"  subq $"<<stack_bytes<<", %rsp\n";
+      for(std::size_t i=kEntryArgs;i<n.children.size();++i)
+        out<<"  movq "<<value_slot(n.children[i])<<", %rax\n  movq %rax, "<<(i-kEntryArgs)*8u<<"(%rsp)\n";
+      for (std::size_t i=0;i<std::min(n.children.size(),kEntryArgs);++i)
         out<<"  movq "<<value_slot(n.children[i])<<", "<<argument_reg(i)<<"\n";
-      out<<"  movq -40(%rbp), %r8\n"
+      out<<"  movq -72(%rbp), %r8\n"
          <<"  addq $1, %r8\n"
          <<"  call .Lores_fn_"<<n.callee<<"\n";
+      if(stack_bytes)out<<"  addq $"<<stack_bytes<<", %rsp\n";
       out<<"  testq %r9, %r9\n  jne "<<effect_target<<"\n";
       if(n.kind==Kind::ResultCall)
         out<<"  testq %rdx, %rdx\n  jne "<<variant_target<<"\n";
@@ -900,13 +922,14 @@ struct Native {
         case Kind::Sub: out<<"  subq ";break;
         case Kind::Mul: out<<"  imulq ";break;
         case Kind::IntegerXor: out<<"  xorq ";break;
+        case Kind::IntegerAnd: out<<"  andq ";break;
         default: out<<"  cmpq ";break;
       }
       out<<value_slot(n.children[1])<<", %rax\n";
       if(n.kind==Kind::Add||n.kind==Kind::Sub||n.kind==Kind::Mul) {
         out<<"  movl $"<<static_cast<std::uint64_t>(ArithmeticStatus::Overflow)<<", %r9d\n"
            <<"  jo "<<effect_target<<"\n";
-      } else if(n.kind!=Kind::IntegerXor) {
+      } else if(n.kind!=Kind::IntegerXor&&n.kind!=Kind::IntegerAnd) {
         const char* cc="e";
         switch(n.kind) {
           case Kind::Less: cc="l";break;
@@ -953,16 +976,18 @@ struct Native {
        <<".size oresforge_entry_effect, .-oresforge_entry_effect\n";
     for (std::size_t i=0;i<program.functions.size();++i) {
       const auto& fn=program.functions[i];
-      const std::size_t slots=5u+fn.nodes.size();
+      const std::size_t slots=kInternalArgs+1u+fn.nodes.size();
       const std::size_t bytes=((slots*8u+15u)/16u)*16u;
       out<<".Lores_fn_"<<i<<":\n"
          <<"  cmpq $"<<kMaxStackDepth<<", %r8\n"
          <<"  jae .Lores_depth\n"
          <<"  pushq %rbp\n  movq %rsp, %rbp\n"
          <<"  subq $"<<bytes<<", %rsp\n";
-      for (std::size_t arg=0;arg<4;++arg)
+      for (std::size_t arg=0;arg<std::min(fn.parameters.size(),kEntryArgs);++arg)
         out<<"  movq "<<argument_reg(arg)<<", "<<parameter_slot(static_cast<int>(arg))<<"\n";
-      out<<"  movq %r8, -40(%rbp)\n";
+      for (std::size_t arg=kEntryArgs;arg<fn.parameters.size();++arg)
+        out<<"  movq "<<16u+(arg-kEntryArgs)*8u<<"(%rbp), %rax\n  movq %rax, "<<parameter_slot(static_cast<int>(arg))<<"\n";
+      out<<"  movq %r8, -72(%rbp)\n";
       emit_node(fn,fn.result);
       if(!fn.returns_scalar_option) out<<"  xorl %edx, %edx\n";
       out<<"  xorl %r9d, %r9d\n  leave\n  ret\n";
@@ -992,7 +1017,7 @@ void verify(const Module& m) {
     const auto& fn=m.functions[fi];
     if(fn.name.empty() || !names.emplace(fn.name,fi).second)
       throw std::runtime_error("duplicate or invalid function");
-    if(fn.parameters.size()>4)throw std::runtime_error("function parameter budget exceeded");
+    if(fn.parameters.size()>(fi==static_cast<std::size_t>(m.entry)?kEntryArgs:kInternalArgs))throw std::runtime_error("function parameter budget exceeded");
     if(fn.nodes.empty() || fn.nodes.size()>kMaxNodesPerFunction)
       throw std::runtime_error("invalid callable function body");
     total+=fn.nodes.size();
@@ -1033,7 +1058,7 @@ void verify(const Module& m) {
         case Kind::Greater: case Kind::GreaterEqual: case Kind::Equal:
         case Kind::NotEqual: case Kind::If: case Kind::BoolIf: case Kind::Call:
         case Kind::Boolean: case Kind::Not: case Kind::Ternary:
-         case Kind::And: case Kind::Or: case Kind::BooleanXor: case Kind::Div: case Kind::Trap: case Kind::ResultCall: case Kind::BindResult: case Kind::Local: case Kind::Ok: case Kind::Some: case Kind::None: case Kind::OptionIf: case Kind::OptionCall: case Kind::BoolCall: case Kind::IntegerXor: case Kind::OptionMatch: case Kind::OptionPayload: case Kind::ResultMatch: case Kind::ResultPayload: break;
+         case Kind::And: case Kind::Or: case Kind::BooleanXor: case Kind::Div: case Kind::Trap: case Kind::ResultCall: case Kind::BindResult: case Kind::Local: case Kind::Ok: case Kind::Some: case Kind::None: case Kind::OptionIf: case Kind::OptionCall: case Kind::BoolCall: case Kind::IntegerXor: case Kind::IntegerAnd: case Kind::OptionMatch: case Kind::OptionPayload: case Kind::ResultMatch: case Kind::ResultPayload: break;
         default: throw std::runtime_error("unknown callable opcode");
       }
       if(n.kind!=Kind::Call && n.kind!=Kind::ResultCall && n.kind!=Kind::OptionCall && n.kind!=Kind::BoolCall && !n.name.empty())
@@ -1116,7 +1141,7 @@ void verify(const Module& m) {
           throw std::runtime_error("Boolean Xor intrinsic is shadowed by a source declaration");
       } else if(n.kind==Kind::Equal||n.kind==Kind::NotEqual) {
         if(child_bool(0)!=child_bool(1)) throw std::runtime_error("comparison operand type mismatch");
-      } else if(n.kind==Kind::IntegerXor||n.kind==Kind::Add||n.kind==Kind::Sub||n.kind==Kind::Mul||n.kind==Kind::Div||
+      } else if(n.kind==Kind::IntegerXor||n.kind==Kind::IntegerAnd||n.kind==Kind::Add||n.kind==Kind::Sub||n.kind==Kind::Mul||n.kind==Kind::Div||
                 n.kind==Kind::Less||n.kind==Kind::LessEqual||n.kind==Kind::Greater||
                 n.kind==Kind::GreaterEqual) {
         if(child_bool(0)||child_bool(1)) throw std::runtime_error("Boolean is not an int");

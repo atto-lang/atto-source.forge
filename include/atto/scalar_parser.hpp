@@ -31,7 +31,7 @@ struct Node {
   std::vector<LoopExit> exits{};
 };
 enum class ParseError {
-  none, lexical, ownership_bang_unsupported, suspension_unsupported, pointer_profile, syntax, literal_out_of_range, depth_limit, node_limit, telemetry, verify_unproven, verify_unsupported, unit_name, unit_duplicate, unit_dimension, unit_scale, unit_limit, unit_erasure, unit_attachment, unit_inexact, unit_range, refinement_empty, refinement_binding, refinement_precondition, refinement_return, refinement_duplicate, refinement_postcondition, refinement_contract, refinement_export, refinement_body, refinement_call, refinement_cast, i32_range, new_required, lock_unsupported, task_unsupported, task_return_type, pair_key_type, pair_scope, pair_escape, pair_projection, pair_key_unsupported, missing_initializer, entry_scope, entry_escape, entry_projection, source_bidi, bool_operand, duplicate_local, unbound_local, spawn_options_unsupported, stdout_profile_unsupported
+  none, lexical, ownership_bang_unsupported, suspension_unsupported, pointer_profile, syntax, literal_out_of_range, depth_limit, node_limit, telemetry, verify_unproven, verify_unsupported, unit_name, unit_duplicate, unit_dimension, unit_scale, unit_limit, unit_erasure, unit_attachment, unit_inexact, unit_range, refinement_empty, refinement_binding, refinement_precondition, refinement_return, refinement_duplicate, refinement_postcondition, refinement_contract, refinement_export, refinement_body, refinement_call, refinement_cast, i32_range, new_required, lock_unsupported, task_unsupported, task_return_type, pair_key_type, pair_scope, pair_escape, pair_projection, pair_key_unsupported, missing_initializer, entry_scope, entry_escape, entry_projection, source_bidi, bool_operand, duplicate_local, unbound_local, spawn_options_unsupported, stdout_profile_unsupported, io_direction_unsupported, unsupported_continuous_pipe
 };
 // Stable sanitized diagnostics; never echo user source bytes.
 [[nodiscard]] constexpr std::string_view parse_error_name(ParseError error) noexcept {
@@ -46,6 +46,8 @@ enum class ParseError {
     case ParseError::suspension_unsupported: return "E_SUSPENDS_UNSUPPORTED";
     case ParseError::spawn_options_unsupported: return "E_SPAWN_OPTIONS_UNSUPPORTED";
     case ParseError::stdout_profile_unsupported: return "E_STDOUT_PROFILE_UNSUPPORTED";
+    case ParseError::io_direction_unsupported: return "E_IO_DIRECTION_UNSUPPORTED";
+    case ParseError::unsupported_continuous_pipe: return "E_UNSUPPORTED_CONTINUOUS_PIPE";
     case ParseError::pointer_profile: return "E_POINTER_PROFILE";
     case ParseError::syntax: return "E_PARSE_SYNTAX";
     case ParseError::literal_out_of_range: return "E_PARSE_RANGE";
@@ -462,7 +464,7 @@ class Parser {
   using RecordFields = std::vector<std::pair<std::string_view,std::size_t>>;
   // Only root-local const literal i64 records, never a runtime record handle.
   std::vector<std::pair<std::string_view,RecordFields>> record_locals_;
-  // Distinct positional metadata; no dynamic product ABI or field names.
+  // Distinct positional metadata; no runtime aggregate handle or name projection.
   std::vector<std::pair<std::string_view,std::vector<std::size_t>>> tuple_locals_;
   struct LocalPair { std::string_view name, key; std::size_t payload; };
   // Distinct nominal source metadata; only the explicit value projection
@@ -673,6 +675,17 @@ class Parser {
     fail(ParseError::unit_erasure); return false;
   }
   [[nodiscard]] const Token& current() const { return tokens_[pos_]; }
+  // Keep angle tokens separate in the lexer: nested type closers and
+  // unit/cast delimiters retain their existing grammar. Only recognize
+  // contiguous directional operators at scalar expression boundaries.
+  [[nodiscard]] bool direction_pair() const {
+    if (pos_ + 1 >= tokens_.size()) return false;
+    const auto& a = current();
+    const auto& b = tokens_[pos_ + 1];
+    return (a.kind == Kind::lt || a.kind == Kind::gt) &&
+           a.kind == b.kind && a.length == 1 && b.length == 1 &&
+           a.offset + a.length == b.offset;
+  }
   [[nodiscard]] std::string_view text() const {
     const auto& t = current();
     return source_.substr(t.offset, t.length);
@@ -813,7 +826,7 @@ class Parser {
   [[nodiscard]] std::optional<std::size_t> postfix(std::optional<std::size_t> result, bool compact = false, bool conversion = false) {
     if (!result) return std::nullopt;
     while (current().kind == Kind::double_colon || current().kind == Kind::dot ||
-           (compact && current().kind == Kind::lt && pos_ > 0 &&
+           (compact && current().kind == Kind::lt && !direction_pair() && pos_ > 0 &&
             tokens_[pos_-1].offset + tokens_[pos_-1].length == current().offset)) {
       const bool cast = take(Kind::double_colon);
       if (!cast && take(Kind::dot) && name("to_unit")) {
@@ -890,6 +903,10 @@ class Parser {
       if (!rhs) return std::nullopt;
       lhs = append(Node{op, *lhs, *rhs, 0});
       if (!lhs) return std::nullopt;
+    }
+    if (direction_pair()) {
+      fail(ParseError::io_direction_unsupported);
+      return std::nullopt;
     }
     return lhs;
   }
@@ -1031,6 +1048,10 @@ class Parser {
 
   [[nodiscard]] std::optional<std::size_t> unary(int depth) {
     if (depth > max_parse_depth) { fail(ParseError::depth_limit); return std::nullopt; }
+    if (direction_pair()) {
+      fail(ParseError::io_direction_unsupported);
+      return std::nullopt;
+    }
     if(current().kind==Kind::name && text()=="Pair" && pos_+1<tokens_.size() && tokens_[pos_+1].kind==Kind::dot) return pair_projection(depth);
     if(current().kind==Kind::name && text()=="Entry" && pos_+1<tokens_.size() && tokens_[pos_+1].kind==Kind::dot) return entry_projection(depth);
     if (take(Kind::lt)) {
@@ -1182,10 +1203,12 @@ class Parser {
       for(const auto& tuple:tuple_locals_)if(tuple.first==text()){
         ++pos_;
         if(!take(Kind::lbracket)||current().kind!=Kind::integer){fail(ParseError::syntax);return std::nullopt;}
-        const auto index=parse_source_decimal(text());++pos_;
-        if(!index||*index<0||static_cast<std::uint64_t>(*index)>=tuple.second.size()||
-           !take(Kind::rbracket)){fail(ParseError::syntax);return std::nullopt;}
-        return postfix(append(Node{Op::copy,tuple.second[static_cast<std::size_t>(*index)],0,0}));
+        const auto slot=parse_source_decimal(text());++pos_;
+        if(!take(Kind::rbracket)||!slot||*slot<0||
+           static_cast<std::uint64_t>(*slot)>=tuple.second.size()){
+          fail(ParseError::unbound_local);return std::nullopt;
+        }
+        return postfix(append(Node{Op::copy,tuple.second[static_cast<std::size_t>(*slot)],0,0}));
       }
       for(const auto& record:record_locals_)if(record.first==text()){
         ++pos_;
@@ -1322,41 +1345,37 @@ class Parser {
       if(!brace&&!take(Kind::lparen)){fail(ParseError::syntax);return std::nullopt;}
       const auto close=brace?Kind::rbrace:Kind::rparen;
       if(typed_tuple&&brace){fail(ParseError::syntax);return std::nullopt;}
-      // Empty parentheses default to Tuple. Explicit Record is distinct.
-      // Untyped braces remain fail-closed pending empty Map/Record policy.
-      if(current().kind==close){
-        if(brace&&!typed_record){fail(ParseError::syntax);return std::nullopt;}
-        if(!take(close)||!take(Kind::semicolon)){fail(ParseError::syntax);return std::nullopt;}
-        if(typed_record)record_locals_.emplace_back(local,RecordFields{});
-        else tuple_locals_.emplace_back(local,std::vector<std::size_t>{});
-        continue;
-      }
-      // Bounded positional literal profile. With no expectation, a lone
-      // grouped integer remains scalar; a comma selects a Tuple.
-      if(!brace&&!typed_record&&(typed_tuple||current().kind==Kind::integer||current().kind==Kind::minus)){
+      // Empty parentheses default to Tuple; explicit Record owns its own
+      // empty shape. Inferred positional i64 literals are bounded to the
+      // same scalar leaf grammar as named fields. A comma-free single leaf
+      // is scalar unless the explicit Tuple context selects one slot.
+      if(!brace&&!typed_record&&(typed_tuple||current().kind==close||
+          current().kind==Kind::integer||current().kind==Kind::minus)){
         std::vector<std::size_t> slots;
-        bool comma=false;
+        bool saw_comma=false;
         while(current().kind!=close){
           if(slots.size()>=16){fail(ParseError::node_limit);return std::nullopt;}
           const bool negative=take(Kind::minus);
           if(current().kind!=Kind::integer){fail(ParseError::syntax);return std::nullopt;}
           const auto digits=text();++pos_;
-          const auto value=negative?parse_source_decimal(std::string("-")+std::string(digits)):parse_source_decimal(digits);
+          auto value=negative?parse_source_decimal(std::string("-")+std::string(digits)):parse_source_decimal(digits);
           if(!value){fail(ParseError::literal_out_of_range);return std::nullopt;}
-          const auto node=append(Node{Op::literal,0,0,*value});
+          auto node=append(Node{Op::literal,0,0,*value});
           if(!node)return std::nullopt;
           slots.push_back(*node);
           if(!take(Kind::comma))break;
-          comma=true;
+          saw_comma=true;
         }
         if(!take(close)||!take(Kind::semicolon)){fail(ParseError::syntax);return std::nullopt;}
-        if(!typed_tuple&&slots.size()==1&&!comma)bindings_.emplace_back(local,slots.front());
+        if(!typed_tuple&&slots.size()==1&&!saw_comma)
+          bindings_.emplace_back(local,slots.front());
         else tuple_locals_.emplace_back(local,std::move(slots));
         continue;
       }
+      if(current().kind==close&&!typed_record){fail(ParseError::syntax);return std::nullopt;}
       bool ordinary=false;
       RecordFields fields;
-      do{
+      if(current().kind!=close) do{
         if(fields.size()>=16||current().kind!=Kind::name||!record_label(text())){fail(ParseError::syntax);return std::nullopt;}
         const auto field=text();++pos_;
         for(const auto& old:fields)if(old.first==field){fail(ParseError::duplicate_local);return std::nullopt;}
@@ -1374,7 +1393,7 @@ class Parser {
         fields.emplace_back(field,*node);
         if(!take(Kind::comma)||current().kind==close)break;
       }while(true);
-      if((!brace&&!ordinary)||!take(close)||!take(Kind::semicolon)){fail(ParseError::syntax);return std::nullopt;}
+      if((!brace&&!ordinary&&!fields.empty())||!take(close)||!take(Kind::semicolon)){fail(ParseError::syntax);return std::nullopt;}
       record_locals_.emplace_back(local,std::move(fields));
     }
     if(!name("return")){fail(ParseError::syntax);return std::nullopt;}
@@ -2646,6 +2665,18 @@ public:
       lexed=tokenize(src,max_quantity_tokens);
   }
   if (!lexed.ok()) return Parser(src, std::move(lexed)).parse();
+  // Reserve continuous DATA graph operators in this scalar profile.
+  // Do not supersede lexical, Unicode, ownership or suspension errors.
+  for (const auto& token : lexed.tokens) {
+    if (token.kind != Kind::name) continue;
+    const auto word = src.substr(token.offset, token.length);
+    if (word == "pipe" || word == "rpipe") {
+      Parsed denied;
+      denied.error = ParseError::unsupported_continuous_pipe;
+      denied.error_offset = token.offset;
+      return denied;
+    }
+  }
   if(requests_measure_prelude(src,lexed)) {
     const auto prefix=std::string(measure_source)+"\n";
     const auto expanded=prefix+std::string(src);

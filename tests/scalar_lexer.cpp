@@ -91,6 +91,18 @@ int main() {
   assert(distinct_shifts.ok());
   assert(distinct_shifts.tokens[1].kind == Kind::shl);
   assert(distinct_shifts.tokens[3].kind == Kind::lshr);
+  // Preserve adjacent angle tokens for nested type grammar. Directional
+  // admission is contextual in the parser, not a global lexer rewrite.
+  const auto nested_angles = tokenize("Box<Box<int>>");
+  assert(nested_angles.ok());
+  assert(nested_angles.tokens[5].kind == Kind::gt &&
+         nested_angles.tokens[6].kind == Kind::gt);
+  assert(nested_angles.tokens[5].offset + 1 == nested_angles.tokens[6].offset);
+  const auto separated_angles = tokenize("1 < < 2");
+  assert(separated_angles.ok());
+  assert(separated_angles.tokens[1].kind == Kind::lt &&
+         separated_angles.tokens[2].kind == Kind::lt);
+  assert(separated_angles.tokens[1].offset + 1 != separated_angles.tokens[2].offset);
   const auto distinct_arrow = tokenize("int <- main()");
   assert(distinct_arrow.tokens[1].kind == Kind::left_arrow);
   // Unlowered ownership operations fail closed, but the typed pointer
