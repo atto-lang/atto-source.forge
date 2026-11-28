@@ -52,6 +52,28 @@ int main() {
     "fnc main():int {const x:=9223372036854775808;return 0;}"
   }) assert(!parse_source(source).ok());
   for(const auto* source : {
+    "fnc main():int {const t=();const Record r=();const Record s={};return 42;}",
+    "fnc main():int {const Tuple t=(42);return t[0];}",
+    "fnc main():int {const Tuple t=(42,);return t[0];}",
+    "fnc main():int {const t=(40,2);return t[0]+t[1];}",
+    "fnc main():int {const x=(42);return x;}",
+    "fnc main():int {const t=(/*empty*/);const Tuple u=(42);return u[0];}"
+  }) assert(parse_source(source).ok());
+  for(const auto* source : {
+    "fnc main():int {const t=();return t[0];}",
+    "fnc main():int {const Record r=();return r.a;}",
+    "fnc main():int {const Tuple t=(42);return t.a;}",
+    "fnc main():int {const Record r={a:42};return r[0];}",
+    "fnc main():int {const t=(42);return t[0];}",
+    "fnc main():int {const t=();const Record t=();return 0;}",
+    "fnc main():int {const t=();const p=Pair.of(\"p\",42);const Tuple p=();return 0;}",
+    "fnc main():int {const Tuple t={a:42};return 0;}",
+    "fnc main():int {const Tuple t=(a:42);return 0;}",
+    "fnc main():int {const Tuple t=(42);return t[1];}",
+    "fnc main():int {const t=();const Record r=t;return 0;}",
+    "fnc main():int {const r={};return 0;}"
+  }) assert(!parse_source(source).ok());
+  for(const auto* source : {
     "fnc main():int {const r={foo:=40,bar:2};return r.foo+r.bar;}",
     "fnc main():int {const Record r=(foo:=40,bar=2);return r.foo+r.bar;}",
     "fnc main():int {const r=(foo:40,bar:=2);return r.foo+r.bar;}",
