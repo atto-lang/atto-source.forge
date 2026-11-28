@@ -71,6 +71,36 @@ int main() {
     "fnc main():int {const r={foo:true};return 0;}",
     "fnc main():int {const r={foo:9223372036854775808};return 0;}"
   }) assert(!parse_source(source).ok());
+  for(const auto* source : {
+    "fnc main():int {const t=();return 42;}",
+    "fnc main():int {const Tuple t=();const Record r=();const Record s={};return 42;}",
+    "fnc main():int {const Tuple t=(42);return t[0];}",
+    "fnc main():int {const Tuple t=(42,);return t[0];}",
+    "fnc main():int {const x=(42);return x;}",
+    "fnc main():int {const t=(40,2);return t[0]+t[1];}",
+    "fnc main():int {const t=(/* empty */);return 42;}"
+  }) {
+    const auto parsed=parse_source(source);
+    assert(parsed.ok() && validate_ast(parsed));
+  }
+  for(const auto* source : {
+    "fnc main():int {const t=();return t[0];}",
+    "fnc main():int {const Record r=();return r.a;}",
+    "fnc main():int {const Record r=();return r[0];}",
+    "fnc main():int {const t=();return t.a;}",
+    "fnc main():int {const x=(42);return x[0];}",
+    "fnc main():int {const Tuple t=(42);return t[1];}",
+    "fnc main():int {const Tuple t=(42);return t[\"0\"];}",
+    "fnc main():int {const Tuple t=(42);return t[-1];}",
+    "fnc main():int {const Tuple t=(42);return t;}",
+    "fnc main():int {const t=();const Record t=();return 0;}",
+    "fnc main():int {const t=();const t:=42;return 0;}",
+    "fnc main():int {const x=(42);const Tuple x=();return 0;}",
+    "fnc main():int {const t=();const Record r=t;return 0;}",
+    "fnc main():int {const Tuple t={a:42};return 0;}",
+    "fnc main():int {const Record r=(42);return 0;}",
+    "fnc main():int {const r={};return 0;}"
+  }) assert(!parse_source(source).ok());
   for (const auto* call : {"stdio.out.write(\"A\")", "process.stdout.write(\"A\")",
                            "stdio /* inert */ .out.write(\"A\")", "process.stdout /* nested /* ok */ */ .write(\"A\")"}) {
     const auto source = std::string("pub fnc main(): int {") + call + "; return 42;}";
