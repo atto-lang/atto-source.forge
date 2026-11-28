@@ -31,7 +31,7 @@ struct Node {
   std::vector<LoopExit> exits{};
 };
 enum class ParseError {
-  none, lexical, ownership_bang_unsupported, suspension_unsupported, pointer_profile, syntax, literal_out_of_range, depth_limit, node_limit, telemetry, verify_unproven, verify_unsupported, unit_name, unit_duplicate, unit_dimension, unit_scale, unit_limit, unit_erasure, unit_attachment, unit_inexact, unit_range, refinement_empty, refinement_binding, refinement_precondition, refinement_return, refinement_duplicate, refinement_postcondition, refinement_contract, refinement_export, refinement_body, refinement_call, refinement_cast, i32_range, new_required, lock_unsupported, task_unsupported, task_return_type, pair_key_type, pair_scope, pair_escape, pair_projection, pair_key_unsupported, missing_initializer, entry_scope, entry_escape, entry_projection, source_bidi, bool_operand, duplicate_local, unbound_local, spawn_options_unsupported, stdout_profile_unsupported, io_direction_unsupported
+  none, lexical, ownership_bang_unsupported, suspension_unsupported, pointer_profile, syntax, literal_out_of_range, depth_limit, node_limit, telemetry, verify_unproven, verify_unsupported, unit_name, unit_duplicate, unit_dimension, unit_scale, unit_limit, unit_erasure, unit_attachment, unit_inexact, unit_range, refinement_empty, refinement_binding, refinement_precondition, refinement_return, refinement_duplicate, refinement_postcondition, refinement_contract, refinement_export, refinement_body, refinement_call, refinement_cast, i32_range, new_required, lock_unsupported, task_unsupported, task_return_type, pair_key_type, pair_scope, pair_escape, pair_projection, pair_key_unsupported, missing_initializer, entry_scope, entry_escape, entry_projection, source_bidi, bool_operand, duplicate_local, unbound_local, spawn_options_unsupported, stdout_profile_unsupported, io_direction_unsupported, unsupported_continuous_pipe
 };
 // Stable sanitized diagnostics; never echo user source bytes.
 [[nodiscard]] constexpr std::string_view parse_error_name(ParseError error) noexcept {
@@ -47,6 +47,7 @@ enum class ParseError {
     case ParseError::spawn_options_unsupported: return "E_SPAWN_OPTIONS_UNSUPPORTED";
     case ParseError::stdout_profile_unsupported: return "E_STDOUT_PROFILE_UNSUPPORTED";
     case ParseError::io_direction_unsupported: return "E_IO_DIRECTION_UNSUPPORTED";
+    case ParseError::unsupported_continuous_pipe: return "E_UNSUPPORTED_CONTINUOUS_PIPE";
     case ParseError::pointer_profile: return "E_POINTER_PROFILE";
     case ParseError::syntax: return "E_PARSE_SYNTAX";
     case ParseError::literal_out_of_range: return "E_PARSE_RANGE";
@@ -2664,6 +2665,18 @@ public:
       lexed=tokenize(src,max_quantity_tokens);
   }
   if (!lexed.ok()) return Parser(src, std::move(lexed)).parse();
+  // Reserve continuous DATA graph operators in this scalar profile.
+  // Do not supersede lexical, Unicode, ownership or suspension errors.
+  for (const auto& token : lexed.tokens) {
+    if (token.kind != Kind::name) continue;
+    const auto word = src.substr(token.offset, token.length);
+    if (word == "pipe" || word == "rpipe") {
+      Parsed denied;
+      denied.error = ParseError::unsupported_continuous_pipe;
+      denied.error_offset = token.offset;
+      return denied;
+    }
+  }
   if(requests_measure_prelude(src,lexed)) {
     const auto prefix=std::string(measure_source)+"\n";
     const auto expanded=prefix+std::string(src);

@@ -5,6 +5,22 @@
 using namespace atto::forge;
 using namespace atto::forge::scalar;
 int main() {
+  for (const auto* source : {"fnc main():int{return 1 pipe 2;}",
+                             "fnc main():int{return 2 rpipe 1;}",
+                             "fnc main():int{return a pipe b rpipe c;}"}) {
+    const auto result = parse_source(source);
+    assert(!result.ok() && result.error == ParseError::unsupported_continuous_pipe);
+    assert(parse_error_name(result.error) == "E_UNSUPPORTED_CONTINUOUS_PIPE");
+    const std::string_view input(source);
+    assert(result.error_offset == input.find("pipe") -
+      (input.find("rpipe") != std::string_view::npos &&
+       input.find("rpipe") + 1 == input.find("pipe") ? 1 : 0));
+  }
+  assert(parse_source("fnc main():int{/* outer /* pipe rpipe */ inner */ return 42;}").ok());
+  assert(parse_source("fnc main():int{val pipeline = 42; return pipeline;}").ok());
+  assert(parse_source("fnc main():int{return 40 | 2;}").ok());
+  assert(parse_source("pub susp fnc main():int{return 1 pipe 2;}").error == ParseError::suspension_unsupported);
+  assert(parse_source("fnc main():int{return 1 pipe @;}").error == ParseError::lexical);
   // Contiguous double-angle I/O is a distinct unsupported expression,
   // not a numeric shift. Preserve exact byte offsets and strict rejection.
   for (const auto* source : {
