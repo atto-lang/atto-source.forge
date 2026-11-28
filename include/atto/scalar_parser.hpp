@@ -1889,6 +1889,49 @@ class Parser {
     }
     return root;
   }
+  // Separate ordinary root-only Copy-int profile. Do not broaden strict
+  // verification, pointer, aggregate or task ownership admission.
+  [[nodiscard]] std::optional<std::size_t> arrow_binding_body(){
+    std::vector<std::size_t> effects;
+    bool seen_arrow=false;
+    while(current().kind==Kind::name&&(text()=="let"||text()=="set")){
+      const bool fresh=name("let");
+      if(!fresh&&!name("set"))return std::nullopt;
+      if(fresh&&!name("int")){fail(ParseError::syntax);return std::nullopt;}
+      if(current().kind!=Kind::name){fail(ParseError::syntax);return std::nullopt;}
+      const auto key=text();++pos_;
+      auto previous=std::find_if(bindings_.begin(),bindings_.end(),[&](const auto& v){return v.first==key;});
+      if((fresh&&(previous!=bindings_.end()||!binding_name(key)||key=="set"||bindings_.size()>=max_ordinary_bindings))||
+         (!fresh&&previous==bindings_.end())){fail(ParseError::syntax);return std::nullopt;}
+      const bool transfer=take(Kind::left_arrow);
+      if(!transfer&&(!fresh||!take(Kind::equals))){fail(ParseError::syntax);return std::nullopt;}
+      seen_arrow|=transfer;
+      if(current().kind==Kind::name){
+        const auto source=text();
+        if((!fresh&&source==key)||std::none_of(bindings_.begin(),bindings_.end(),[&](const auto& v){return v.first==source;})){
+          fail(ParseError::syntax);return std::nullopt;
+        }
+      }else if(current().kind!=Kind::integer){fail(ParseError::syntax);return std::nullopt;}
+      // A single token RHS only: no calls, compound expressions or unproved
+      // referents. Resolve against the old environment before publication.
+      const auto start=pos_;
+      auto value=expr(0);
+      if(!value||pos_!=start+1||!dimensionless(*value)||boolean_slot(*value)||!take(Kind::semicolon)){
+        fail(ParseError::syntax);return std::nullopt;
+      }
+      auto slot=append(Node{Op::copy,*value,0,0});if(!slot)return std::nullopt;
+      ranges_[*slot].width=Width::i64;
+      if(fresh)bindings_.emplace_back(key,*slot);else previous->second=*slot;
+      effects.push_back(*slot);
+    }
+    if(!seen_arrow){fail(ParseError::syntax);return std::nullopt;}
+    auto root=returning(0);
+    if(!root||!scalar_cast(*root)||!take(Kind::rbrace)){fail(ParseError::syntax);return std::nullopt;}
+    for(auto i=effects.rbegin();i!=effects.rend();++i){
+      root=append(Node{Op::sequence,*i,*root,0});if(!root)return std::nullopt;
+    }
+    return root;
+  }
   [[nodiscard]] std::optional<std::size_t> binding_body(std::optional<Refinement> result=std::nullopt,bool end_delimited=false){
     std::vector<std::size_t> effects;
     for(const auto& binding:bindings_)effects.push_back(binding.second);
@@ -2645,6 +2688,13 @@ public:
       auto result=record_body();
       if(!result||current().kind!=Kind::end){fail(ParseError::syntax);return std::move(out_);}
       out_.root=*result;return std::move(out_);
+    }
+    if(!strict_&&helpers_.empty()&&refinements_.empty()&&units_.empty()&&dimensions_.empty()&&
+       current().kind==Kind::name&&text()=="let"&&
+       std::any_of(tokens_.begin()+static_cast<std::ptrdiff_t>(pos_),tokens_.end(),[](const auto& t){return t.kind==Kind::left_arrow;})){
+      auto root=arrow_binding_body();
+      if(!root||current().kind!=Kind::end){fail(ParseError::syntax);return std::move(out_);}
+      out_.root=*root;return std::move(out_);
     }
     std::vector<std::string_view> aliases;
     auto root = strict_||!helpers_.empty()||(current().kind==Kind::name&&(text()=="val"||text()=="const"||text()=="int"||text()=="if"||(!refinements_.empty()&&text()=="let"))) ? binding_body() : body(aliases);

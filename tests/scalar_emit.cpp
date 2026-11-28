@@ -3,6 +3,25 @@
 #include <string>
 using namespace atto::forge::scalar;
 int main() {
+  for(const auto* body:{
+    "let int b=21;let int a<-b;return a+b;",
+    "let int a=0;let int b=21;set a<-b;return a+b;",
+    "let int a<-42;return a;",
+    "let int a=0;set a<-42;return a;"
+  }){
+    const auto source=std::string("fnc main():int{")+body+"}";
+    assert(parse_source(source).ok());
+    assert(emit_cpp_source(source));
+  }
+  for(const auto* body:{
+    "const int a<-42;return a;", "int a<-42;return a;",
+    "val int a<-42;return a;", "let int a=0;set! a<-42;return a;",
+    "let int a=0;a<-42;return a;", "let int a=0;set missing<-42;return a;",
+    "let int a=42;set a<-a;return a;", "let int a<-true;return a;",
+    "let int a< -42;return a;", "let int a<-21+21;return a;",
+    "let int a<-b;return a;", "let int a=21;let int a<-a;return a;"
+  }) assert(!emit_cpp_source(std::string("fnc main():int{")+body+"}"));
+
   const auto fixed=emit_cpp_source("fnc main():int{val int x=42;return x;}");
   assert(fixed);
   for (const auto* declaration : {"int x=42;", "const int x=42;",
