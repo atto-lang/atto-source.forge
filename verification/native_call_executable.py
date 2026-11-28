@@ -292,7 +292,7 @@ TRAPS = (
 INVALID = (
     ("integer-and-bool", "fnc main():int{return 1 & false;}", "Boolean is not an int"),
     ("integer-and-equality-precedence", "fnc main():int{return 12 & 10 eq 8;}", "Boolean is not an int"),
-    ("integer-and-double-separated", "fnc main():int{return 12 & & 10;}", "unexpected"),
+    ("integer-and-double-separated", "fnc main():int{return 12 & & 10;}", "expected callable expression"),
     ("wide-entry", "fnc main(a:int,b:int,c:int,d:int,e:int):int{return e;}", "function parameter budget exceeded"),
     ("wide-helper", "fnc f(a:int,b:int,c:int,d:int,e:int,f:int,g:int,h:int,i:int):int{return i;} fnc main():int{return 42;}", "function parameter budget exceeded"),
     ("wide-call", "fnc f(a:int,b:int,c:int,d:int,e:int,f:int,g:int,h:int):int{return h;} fnc main():int{return f(1,2,3,4,5,6,7,8,9);}", "call argument budget exceeded"),
