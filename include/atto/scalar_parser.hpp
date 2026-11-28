@@ -477,6 +477,8 @@ class Parser {
     return std::nullopt;
   }
   std::vector<std::string_view> dimensions_;
+  std::vector<Dim> dimension_vectors_;
+  std::size_t base_dimensions_=0;
   struct Unit { std::string_view name; std::size_t dim; Scale scale; };
   std::vector<Unit> units_;
   struct Refinement { std::string_view name; Dim dim; Scale scale; i64 lo, hi; Width width=Width::i64; };
@@ -492,7 +494,7 @@ class Parser {
   };
   std::vector<Helper> helpers_;
   std::vector<std::pair<std::string_view,std::vector<std::size_t>>> strict_arrays_;
-  static constexpr int exponent_limit = 32;
+  static constexpr int exponent_limit = 64;
   [[nodiscard]] bool dimensionless(std::size_t n) const { return dims_[n] == Dim{} && scales_[n] == Scale{}; }
   [[nodiscard]] bool known_name(std::string_view n) const {
     for (auto d : dimensions_) if (d == n) return true;
@@ -521,8 +523,34 @@ class Parser {
       if(!declaration_name(text())) {fail(ParseError::unit_name);return false;}
       const auto n = text(); ++pos_;
       if (dimension) {
-        if (dimensions_.size() == Dim{}.size()) {fail(ParseError::unit_limit);return false;}
+        Dim vector{};
+        if(take(Kind::equals)){
+          if(strict_){fail(ParseError::verify_unsupported);return false;}
+          auto read_dim=[&]()->std::optional<Dim>{
+            if(current().kind!=Kind::name){fail(ParseError::unit_name);return std::nullopt;}
+            for(std::size_t i=0;i<dimensions_.size();++i)
+              if(dimensions_[i]==text()){++pos_;return dimension_vectors_[i];}
+            fail(ParseError::unit_name);return std::nullopt;
+          };
+          auto first=read_dim();if(!first)return false;vector=*first;
+          unsigned factors=1;
+          while(current().kind==Kind::star||current().kind==Kind::slash){
+            const bool divide=take(Kind::slash);if(!divide)(void)take(Kind::star);
+            if(++factors>128){fail(ParseError::unit_limit);return false;}
+            auto rhs=read_dim();if(!rhs)return false;
+            for(std::size_t i=0;i<vector.size();++i){
+              vector[i]+=divide?-(*rhs)[i]:(*rhs)[i];
+              if(vector[i]>exponent_limit||vector[i]<-exponent_limit){fail(ParseError::unit_limit);return false;}
+            }
+          }
+          if(vector==Dim{}){fail(ParseError::unit_dimension);return false;}
+          for(const auto& prior:dimension_vectors_)if(prior==vector){fail(ParseError::unit_dimension);return false;}
+        }else{
+          if(base_dimensions_==Dim{}.size()){fail(ParseError::unit_limit);return false;}
+          vector[base_dimensions_++]=1;
+        }
         dimensions_.push_back(n);
+        dimension_vectors_.push_back(vector);
       } else {
         if (!take(Kind::colon) || current().kind != Kind::name) return false;
         std::size_t d = 0;
@@ -610,7 +638,7 @@ class Parser {
         const Unit* unit=nullptr;
         for (const auto& u:units_) if (u.name==text()) unit=&u;
         if (!unit) return false;
-        dim[unit->dim]=1;scale=unit->scale;++pos_;
+        dim=dimension_vectors_[unit->dim];scale=unit->scale;++pos_;
       }
       if (!take(Kind::semicolon)) return false;
       refinements_.push_back(Refinement{n,dim,scale,lo,hi,width});
@@ -634,7 +662,7 @@ class Parser {
     if (!dimensionless(n)) {fail(ParseError::unit_attachment);return false;}
     if(current().kind!=Kind::name){fail(ParseError::unit_name);return false;}
     for (const auto& u : units_) if (u.name == text()) {
-      dims_[n][u.dim] = 1; scales_[n]=u.scale; ++pos_; return true;
+      dims_[n] = dimension_vectors_[u.dim]; scales_[n]=u.scale; ++pos_; return true;
     }
     fail(ParseError::unit_name); return false;
   }
@@ -730,7 +758,7 @@ class Parser {
           s=*scale;r=ranges_[n.left].binary(ranges_[n.right],n.op);
           for (std::size_t i = 0; i < d.size(); ++i) {
             d[i] = lhs[i] + (n.op == Op::mul ? rhs[i] : -rhs[i]);
-            if (d[i] > exponent_limit || d[i] < -exponent_limit) { fail(ParseError::syntax); return std::nullopt; }
+            if (d[i] > exponent_limit || d[i] < -exponent_limit) { fail(ParseError::unit_limit); return std::nullopt; }
           }
         } else if (!dimensionless(n.left) || !dimensionless(n.right)) {
           fail(ParseError::syntax); return std::nullopt;
@@ -793,7 +821,7 @@ class Parser {
         const Unit* target=nullptr;
         for (const auto& u:units_) if (u.name==text()) target=&u;
         if (!target) { fail(ParseError::unit_name); return std::nullopt; }
-        Dim d{}; d[target->dim]=1;
+        Dim d=dimension_vectors_[target->dim];
         if (dims_[*result]!=d) { fail(ParseError::unit_dimension); return std::nullopt; }
         ++pos_;
         if (!take(Kind::gt)||!take(Kind::lparen)||!take(Kind::rparen)) { fail(ParseError::syntax); return std::nullopt; }
@@ -1797,7 +1825,7 @@ class Parser {
       if(!take(Kind::lt)||current().kind!=Kind::name)return std::nullopt;
       const Unit* u=nullptr;for(const auto& candidate:units_)if(candidate.name==text())u=&candidate;
       if(!u){fail(ParseError::unit_name);return std::nullopt;}
-      d[u->dim]=1;scale=u->scale;++pos_;if(!take(Kind::gt))return std::nullopt;
+      d=dimension_vectors_[u->dim];scale=u->scale;++pos_;if(!take(Kind::gt))return std::nullopt;
     }
     if(d!=want.dim){fail(ParseError::unit_dimension);return std::nullopt;}
     if(scale!=want.scale){fail(ParseError::unit_scale);return std::nullopt;}
