@@ -1,0 +1,64 @@
+name: Native readonly class ABI exact head
+on:
+  pull_request:
+    paths: [compiler/readonly_native.hpp, compiler/main.cpp, .github/workflows/native-readonly-class.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify source and compile
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          test "$(git write-tree)" = "$(git rev-parse HEAD^{tree})"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          git rev-parse HEAD HEAD^{tree}
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+          cmake --build build --target oresforge oresforge_tests -j2
+          ctest --test-dir build -R '^oresforge_unit$' --output-on-failure
+      - name: Compile actual source and execute native ABI guests
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          cat > "$work/guest.atto" <<'EOF'
+          // atto-ownership: borrow-default-v1
+          define class Parcel as pub let int padding = 99; pub let int value = 21; end
+          fnc get(Parcel p): int { return p.value; }
+          fnc forward(Parcel p): int { return get(p); }
+          pub fnc main(): int { let p = new Parcel(); return forward(p) + get(p); }
+          EOF
+          build/oresforge emit-readonly-asm x86_64 "$work/guest.atto" > "$work/guest.s"
+          build/oresforge emit-readonly-asm arm64 "$work/guest.atto" > "$work/arm.s"
+          grep -F 'movq 8(%rdi), %rax' "$work/guest.s"
+          grep -F 'jmp .Lro_0' "$work/guest.s"
+          grep -F 'ldr x0, [x0, #8]' "$work/arm.s"
+          grep -F 'b .Lro_0' "$work/arm.s"
+          clang --target=aarch64-linux-gnu -c "$work/arm.s" -o "$work/arm.o"
+          printf '%s\n' '#include <stdint.h>' 'extern int64_t oresforge_entry(void);' 'int main(void){for(int i=0;i<1000;i++)if(oresforge_entry()!=42)return 1;return 0;}' > "$work/host.c"
+          clang "$work/guest.s" "$work/host.c" -o "$work/guest"
+          "$work/guest"
+          sed 's/value = 21/value = 9223372036854775807/' "$work/guest.atto" > "$work/overflow.atto"
+          build/oresforge emit-readonly-asm x86_64 "$work/overflow.atto" > "$work/overflow.s"
+          clang "$work/overflow.s" "$work/host.c" -o "$work/overflow"
+          status=0
+          (ulimit -c 0; "$work/overflow") || status=$?
+          test "$status" = 132
+          sed 's/return get(p);/return forward(p);/' "$work/guest.atto" > "$work/cycle.atto"
+          sed 's/return p.value;/return p.missing;/' "$work/guest.atto" > "$work/missing.atto"
+          sed 's/return get(p);/return get(new Parcel());/' "$work/guest.atto" > "$work/escape.atto"
+          for name in cycle missing escape; do
+            if build/oresforge emit-readonly-asm x86_64 "$work/$name.atto" > "$work/$name.s"; then exit 1; fi
+            test ! -s "$work/$name.s"
+          done
+          sha256sum "$work/guest.s" "$work/arm.o"
