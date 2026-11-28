@@ -49,6 +49,7 @@ set(product_cases
   "const Tuple t=(42,)|return t[0]"
   "const x=(42)|return x"
   "const t=(40,2)|return t[0]+t[1]"
+  "const t=()|const Record r=()|const Record s={}|const Tuple a=(20)|const b=(20,2)|return a[0]+b[0]+b[1]"
   "const t=(/* empty */)|return 42")
 set(product_id 0)
 foreach(body IN LISTS product_cases)
