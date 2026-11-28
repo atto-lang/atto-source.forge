@@ -31,7 +31,7 @@ struct Node {
   std::vector<LoopExit> exits{};
 };
 enum class ParseError {
-  none, lexical, ownership_bang_unsupported, suspension_unsupported, pointer_profile, syntax, literal_out_of_range, depth_limit, node_limit, telemetry, verify_unproven, verify_unsupported, unit_name, unit_duplicate, unit_dimension, unit_scale, unit_limit, unit_erasure, unit_attachment, unit_inexact, unit_range, refinement_empty, refinement_binding, refinement_precondition, refinement_return, refinement_duplicate, refinement_postcondition, refinement_contract, refinement_export, refinement_body, refinement_call, refinement_cast, i32_range, new_required, lock_unsupported, task_unsupported, task_return_type, pair_key_type, pair_scope, pair_escape, pair_projection, pair_key_unsupported, missing_initializer, entry_scope, entry_escape, entry_projection, source_bidi, bool_operand, duplicate_local, unbound_local, spawn_options_unsupported, stdout_profile_unsupported
+  none, lexical, ownership_bang_unsupported, suspension_unsupported, pointer_profile, syntax, literal_out_of_range, depth_limit, node_limit, telemetry, verify_unproven, verify_unsupported, unit_name, unit_duplicate, unit_dimension, unit_scale, unit_limit, unit_erasure, unit_attachment, unit_inexact, unit_range, refinement_empty, refinement_binding, refinement_precondition, refinement_return, refinement_duplicate, refinement_postcondition, refinement_contract, refinement_export, refinement_body, refinement_call, refinement_cast, i32_range, new_required, lock_unsupported, task_unsupported, task_return_type, pair_key_type, pair_scope, pair_escape, pair_projection, pair_key_unsupported, missing_initializer, entry_scope, entry_escape, entry_projection, source_bidi, bool_operand, duplicate_local, unbound_local, spawn_options_unsupported, stdout_profile_unsupported, io_direction_unsupported
 };
 // Stable sanitized diagnostics; never echo user source bytes.
 [[nodiscard]] constexpr std::string_view parse_error_name(ParseError error) noexcept {
@@ -46,6 +46,7 @@ enum class ParseError {
     case ParseError::suspension_unsupported: return "E_SUSPENDS_UNSUPPORTED";
     case ParseError::spawn_options_unsupported: return "E_SPAWN_OPTIONS_UNSUPPORTED";
     case ParseError::stdout_profile_unsupported: return "E_STDOUT_PROFILE_UNSUPPORTED";
+    case ParseError::io_direction_unsupported: return "E_IO_DIRECTION_UNSUPPORTED";
     case ParseError::pointer_profile: return "E_POINTER_PROFILE";
     case ParseError::syntax: return "E_PARSE_SYNTAX";
     case ParseError::literal_out_of_range: return "E_PARSE_RANGE";
@@ -671,6 +672,17 @@ class Parser {
     fail(ParseError::unit_erasure); return false;
   }
   [[nodiscard]] const Token& current() const { return tokens_[pos_]; }
+  // Keep angle tokens separate in the lexer: nested type closers and
+  // unit/cast delimiters retain their existing grammar. Only recognize
+  // contiguous directional operators at scalar expression boundaries.
+  [[nodiscard]] bool direction_pair() const {
+    if (pos_ + 1 >= tokens_.size()) return false;
+    const auto& a = current();
+    const auto& b = tokens_[pos_ + 1];
+    return (a.kind == Kind::lt || a.kind == Kind::gt) &&
+           a.kind == b.kind && a.length == 1 && b.length == 1 &&
+           a.offset + a.length == b.offset;
+  }
   [[nodiscard]] std::string_view text() const {
     const auto& t = current();
     return source_.substr(t.offset, t.length);
@@ -811,7 +823,7 @@ class Parser {
   [[nodiscard]] std::optional<std::size_t> postfix(std::optional<std::size_t> result, bool compact = false, bool conversion = false) {
     if (!result) return std::nullopt;
     while (current().kind == Kind::double_colon || current().kind == Kind::dot ||
-           (compact && current().kind == Kind::lt && pos_ > 0 &&
+           (compact && current().kind == Kind::lt && !direction_pair() && pos_ > 0 &&
             tokens_[pos_-1].offset + tokens_[pos_-1].length == current().offset)) {
       const bool cast = take(Kind::double_colon);
       if (!cast && take(Kind::dot) && name("to_unit")) {
@@ -888,6 +900,10 @@ class Parser {
       if (!rhs) return std::nullopt;
       lhs = append(Node{op, *lhs, *rhs, 0});
       if (!lhs) return std::nullopt;
+    }
+    if (direction_pair()) {
+      fail(ParseError::io_direction_unsupported);
+      return std::nullopt;
     }
     return lhs;
   }
@@ -1029,6 +1045,10 @@ class Parser {
 
   [[nodiscard]] std::optional<std::size_t> unary(int depth) {
     if (depth > max_parse_depth) { fail(ParseError::depth_limit); return std::nullopt; }
+    if (direction_pair()) {
+      fail(ParseError::io_direction_unsupported);
+      return std::nullopt;
+    }
     if(current().kind==Kind::name && text()=="Pair" && pos_+1<tokens_.size() && tokens_[pos_+1].kind==Kind::dot) return pair_projection(depth);
     if(current().kind==Kind::name && text()=="Entry" && pos_+1<tokens_.size() && tokens_[pos_+1].kind==Kind::dot) return entry_projection(depth);
     if (take(Kind::lt)) {

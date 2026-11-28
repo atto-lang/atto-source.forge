@@ -5,6 +5,34 @@
 using namespace atto::forge;
 using namespace atto::forge::scalar;
 int main() {
+  // Contiguous double-angle I/O is a distinct unsupported expression,
+  // not a numeric shift. Preserve exact byte offsets and strict rejection.
+  for (const auto* source : {
+    "fnc main(): int {return 1 >>;}",
+    "fnc main(): int {return (1 >>);}",
+    "fnc main(): int {return 1 << 2;}",
+    "fnc main(): int {return 1<<2;}",
+    "fnc main(): int {return 1 >> 2;}",
+    "fnc main(): int {return << 1;}"
+  }) {
+    const auto rejected = parse_source(source);
+    assert(!rejected.ok());
+    assert(rejected.error == ParseError::io_direction_unsupported);
+    assert(parse_error_name(rejected.error) == "E_IO_DIRECTION_UNSUPPORTED");
+    const std::string_view input(source);
+    const auto offset = input.find("<<") != std::string_view::npos
+      ? input.find("<<") : input.find(">>");
+    assert(rejected.error_offset == offset);
+  }
+  for (const auto* source : {"fnc main():int{return 1 < < 2;}",
+                             "fnc main():int{return 1 > > 2;}"}) {
+    const auto rejected = parse_source(source);
+    assert(!rejected.ok());
+    assert(rejected.error != ParseError::io_direction_unsupported);
+  }
+  assert(parse_source("fnc main():int{return 1 <<< 3 | 8 >>> 2;}").ok());
+  assert(parse_source("fnc main():int{/* outer /* << >> */ inner */ return 42;}").ok());
+  assert(parse_source("fnc main():int{return <int>42;}").ok());
   // Bounded catalog allowance must not change ordinary or strict lexing.
   std::string catalog = "define dimension Length; define unit Meter: Length;";
   for(int i=0;i<48;++i) catalog += "define unit Measure"+std::to_string(i)+": Length = Meter * 1;";
