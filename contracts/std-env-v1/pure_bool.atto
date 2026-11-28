@@ -1,0 +1,10 @@
+// Source-only target: import and link std/env, run guest, expect exit 42.
+import module std_env from "std/env";
+pub fnc main(): int {
+  if std_env.parse_bool("true").unwrap() == false; do return 101; fi
+  if std_env.parse_bool("0").unwrap() == true; do return 102; fi
+  if std_env.parse_bool("TRUE").is_ok(); do return 103; fi
+  if std_env.parse_bool("yes").is_ok(); do return 104; fi
+  if std_env.parse_bool("").is_ok(); do return 105; fi
+  return 42;
+}

@@ -41,37 +41,103 @@ int main() {
   const std::string nul("1\0" "2", 3);
   auto bad = tokenize(std::string_view(nul));
   assert(bad.error == LexError::unsupported_byte && bad.error_offset == 1);
-  // The Forge numeric shifts are spelled <<< and >>>. Two-character
-  // directional channel I/O is a different syntax family and cannot be
-  // accidentally interpreted as a shift or malformed one-byte tokens.
-  const std::string directions = "c << 42; (c >>); c <<< 3; c >>> 2;";
-  const auto ops_io = tokenize(directions);
-  assert(ops_io.ok());
-  int io_writes = 0, io_reads = 0, numeric_shifts = 0;
-  for (const auto& op : ops_io.tokens) {
-    if (op.kind == Kind::io_write) {
-      ++io_writes;
-      assert(directions.substr(op.offset, op.length) == "<<");
-    }
-    if (op.kind == Kind::io_read) {
-      ++io_reads;
-      assert(directions.substr(op.offset, op.length) == ">>");
-    }
-    if (op.kind == Kind::shl || op.kind == Kind::lshr) ++numeric_shifts;
-  }
-  assert(io_writes == 1 && io_reads == 1 && numeric_shifts == 2);
-  assert(tokenize("c < < 42;").error == LexError::unsupported_byte);
-  assert(tokenize("c > >;").error == LexError::unsupported_byte);
-  assert(tokenize("// c << 42\n 7").ok());
-  assert(tokenize("/* c >> */ 7").ok());
-  const auto bits = tokenize("~1 & 2 | 3 ^ 4");
+  const std::string unicode_names = "Φ φ 数量 價格 𠮷 x𠮷2 〇";
+  const auto names = tokenize(unicode_names);
+  assert(names.ok() && names.tokens.size() == 8);
+  assert(names.tokens[4].length == 4 && names.tokens[5].length == 6);
+  for (std::size_t j = 0; j < 7; ++j) assert(names.tokens[j].kind == Kind::name);
+  assert(tokenize("/* \xe2\x80\xae */").error == LexError::source_bidi);
+  assert(!tokenize("// \xf0\x80\x80\x80").ok());
+  assert(!tokenize("\xed\xa0\x80").ok());
+  const auto negation = tokenize("¬¬Φ !φ != !eq");
+  assert(negation.ok());
+  assert(negation.tokens[0].kind == Kind::unicode_not && negation.tokens[0].length == 2);
+  assert(negation.tokens[1].kind == Kind::unicode_not);
+  assert(negation.tokens[3].kind == Kind::bang);
+  const auto bits = tokenize("~1 & 2 | 3 ^^ 4");
   assert(bits.ok());
   assert(bits.tokens[0].kind == Kind::tilde);
   assert(bits.tokens[2].kind == Kind::bit_and);
   assert(bits.tokens[4].kind == Kind::bit_or);
-  assert(bits.tokens[6].kind == Kind::bit_xor);
+  assert(bits.tokens[6].kind == Kind::bit_xor && bits.tokens[6].length == 2);
+  const auto carets = tokenize("^ ^^ ^ ^");
+  assert(carets.ok() && carets.tokens[0].kind == Kind::caret &&
+         carets.tokens[1].kind == Kind::bit_xor &&
+         carets.tokens[2].kind == Kind::caret && carets.tokens[3].kind == Kind::caret);
   assert(tokenize("\xC3\xA9").error == LexError::unsupported_byte);
   assert(tokenize(std::string(max_source_bytes + 1, 'a')).error == LexError::source_too_large);
   assert(tokenize(std::string(max_tokens + 1, '+')).error == LexError::token_limit);
   assert(tokenize(std::string(max_tokens, '+')).ok());
+  // Pointer-local tokens share the same lexer as scalar shifts and arrows.
+  const std::string lease = "Pointer<int> ptr = ref!value; deref!ptr; unref!ptr;";
+  const auto pointer_tokens = tokenize(lease);
+  assert(pointer_tokens.ok());
+  bool less = false, greater = false, assign = false, bang = false;
+  for (std::size_t j = 0; j < pointer_tokens.tokens.size(); ++j) {
+    const auto& tok = pointer_tokens.tokens[j];
+    less = less || tok.kind == Kind::lt;
+    greater = greater || tok.kind == Kind::gt;
+    assign = assign || tok.kind == Kind::equals;
+    if (tok.kind == Kind::bang) {
+      assert(j > 0);
+      const auto& before = pointer_tokens.tokens[j - 1];
+      assert(before.kind == Kind::name);
+      assert(before.offset + before.length == tok.offset);
+      bang = true;
+    }
+  }
+  assert(less && greater && assign && bang);
+  const auto distinct_shifts = tokenize("1 <<< 2 >>> 1");
+  assert(distinct_shifts.ok());
+  assert(distinct_shifts.tokens[1].kind == Kind::shl);
+  assert(distinct_shifts.tokens[3].kind == Kind::lshr);
+  // Preserve adjacent angle tokens for nested type grammar. Directional
+  // admission is contextual in the parser, not a global lexer rewrite.
+  const auto nested_angles = tokenize("Box<Box<int>>");
+  assert(nested_angles.ok());
+  assert(nested_angles.tokens[5].kind == Kind::gt &&
+         nested_angles.tokens[6].kind == Kind::gt);
+  assert(nested_angles.tokens[5].offset + 1 == nested_angles.tokens[6].offset);
+  const auto separated_angles = tokenize("1 < < 2");
+  assert(separated_angles.ok());
+  assert(separated_angles.tokens[1].kind == Kind::lt &&
+         separated_angles.tokens[2].kind == Kind::lt);
+  assert(separated_angles.tokens[1].offset + 1 != separated_angles.tokens[2].offset);
+  const auto distinct_arrow = tokenize("int <- main()");
+  assert(distinct_arrow.tokens[1].kind == Kind::left_arrow);
+  // Unlowered ownership operations fail closed, but the typed pointer
+  // profile must continue to tokenize its ref!/deref!/unref! aliases.
+  for (const std::string_view src : {
+      "copy!42", "take!item", "borrow! mut item", "share!item",
+      "pin!item", "drop!item", "freeze!item", "weak!item",
+      "copy!eqfoo", "copy!eq\xC3\xA9" }) {
+    const auto lexed = tokenize(src);
+    assert(lexed.error == LexError::ownership_bang_unsupported);
+    assert(lexed.error_offset == 0);
+  }
+  for (const std::string_view src : {
+      "copy!=item", "copy!eq item", "copy !item",
+      "ref!=handle", "deref!eq handle", "unref!eq handle",
+      "mut borrow!eq handle",
+      "ref!value", "deref!ptr", "unref!ptr" }) {
+    assert(tokenize(src).ok());
+  }
+  // Nested comments, including ownership-looking source, stay inert.
+  const std::string nested_comments =
+      "/* outer /* copy! item */ still outer */ ref!item";
+  const auto nested_tokens = tokenize(nested_comments);
+  assert(nested_tokens.ok());
+  assert(nested_tokens.tokens[0].offset == nested_comments.find("ref!"));
+  assert(tokenize("/* outer /* ref!item */").error == LexError::unterminated_comment);
+  // Portable language contract: 128 levels accepted, the 129th denied.
+  // The first 128 opener bytes are 256 bytes, so the rejected byte is 256.
+  std::string nested_128, nested_129;
+  for (int n = 0; n < 128; ++n) nested_128 += "/*";
+  for (int n = 0; n < 128; ++n) nested_128 += "*/";
+  nested_129 = "/*" + nested_128 + "*/";
+  assert(tokenize(nested_128 + "42").ok());
+  const auto exceeded = tokenize(nested_129);
+  assert(exceeded.error == LexError::comment_nesting_limit);
+  assert(exceeded.error_offset == 256);
+
 }

@@ -108,13 +108,21 @@ and atto-platform-conformance#76.
 
 ## Restricted native scalar compiled guest (stage 0)
 
+The `forge_scalar` AOT emitter accepts nested and fallthrough
+`using telemetry.span("checkout") as span { ... }` scopes around a scalar
+return. Operation names use 1–256 printable ASCII bytes without quote or
+backslash escapes. Link scoped guests with a hosted provider of
+`ores_native_telemetry_span_begin` and `ores_native_telemetry_span_end`.
+Generated lexical guards close active scopes on normal return and checked
+arithmetic failure. The hosted provider controls recording.
+
 Build CMake and invoke `build/forge_scalar fixtures/scalar-v1/arithmetic.atto -o /tmp/atto-scalar.cpp`,
 then compile generated native C++ with `c++ -std=c++20 -I include /tmp/atto-scalar.cpp -o /tmp/atto-scalar`.
 The actual guest binary prints `34`. Signed overflow emits `E_OVERFLOW` and exits 70;
 division by zero emits `E_DIVZERO` and exits 71.
 The C++ frontend and test harness contain no Python. The CMake integration test
 compiles and executes four source fixtures on GCC and Clang and denies malformed
-or over-budget sources while removing a stale output artifact.
+or over-budget sources without modifying existing user-selected output files or creating new artifacts.
 
 Scope: one scalar main function with literals, parentheses, unary arithmetic
 and checked i64 operators. This is not a general Forge JIT/AOT compiler, actor
@@ -128,7 +136,7 @@ Restricted decimal scalar literals permit leading zeros in the signed `INT64_MIN
 
 The native Forge tests compile and execute an additional 29-case `.atto` scalar conformance corpus, including signed arithmetic, bitwise precedence, masked shifts, INT64_MIN, overflow and division-by-zero exits. When `ATTO_FORGE_SANITIZERS=ON`, **generated guest binaries** themselves are built under ASan/UBSan, as well as the Forge frontend. This validates only the restricted stage-0 compiled scalar subset, not the full Forge JIT/AOT or actor runtime.
 
-The native Forge CLI now reports sanitized parse codes (`E_PARSE_LEXICAL`, `E_PARSE_SYNTAX`, `E_PARSE_RANGE`, `E_PARSE_DEPTH`, `E_PARSE_NODES`) with source byte offsets, without echoing source text. Invalid source removes stale emitted artifacts and exits 2.
+The native Forge CLI reports sanitized parse codes (`E_PARSE_LEXICAL`, `E_OWNERSHIP_BANG_UNSUPPORTED`, `E_PARSE_SYNTAX`, `E_PARSE_RANGE`, `E_PARSE_DEPTH`, `E_PARSE_NODES`, `E_POINTER_PROFILE`) with source byte offsets, without echoing source text. Invalid source exits 2 without modifying preexisting output files or creating a new artifact. Unlowered ownership bangs fail explicitly, while the separately checked bounded local pointer profile admits its constrained `ref!`/`deref!`/`unref!` operations.
 
 Restricted Forge CLI output-path preflight rejects symlinked ancestor directories, symlinked output files, and preexisting staging paths, including dangling symlinks; it also requires destination parent directories to exist. This is not a proof against adversarial concurrent filesystem races: production sandboxing must use OS-level capabilities and descriptor-relative atomic publication.
 
@@ -136,7 +144,7 @@ Native GCC/Clang checked-i64 primitives are additionally validated against indep
 
 A separate executed native scalar reproducibility suite compiles 48 deterministic signed-expression `.atto` fixtures twice each to separate output filenames, hashes both emitted C++ files for byte equality, verifies source paths are absent, then compiles and runs each guest with ASan/UBSan under GCC and Clang and compares output to a separately evaluated CMake integer oracle. This is independent of full Forge JIT/AOT or actor parity.
 
-Restricted scalar `.atto` source accepts `//` line comments and `/* ... */` non-nested block comments between tokens. Unterminated block comments fail lexically at the opening byte offset. Comments do not count against the 256-token limit but the 16 KiB source limit remains enforced. Native guest execution is tested with both kinds of comments.
+Restricted scalar `.atto` source accepts `//` line comments and nested `/* ... */` block comments between tokens, bounded to 128 open comment levels (129 is rejected), matching the canonical AttoLang lexical limit. Unterminated block comments fail lexically at the opening byte offset. Comments are entirely inert, including ownership-looking text, and do not count against the 256-token limit; the 16 KiB source limit remains enforced. Native guest execution of the full integration suite still requires exact-head CI evidence.
 
 The restricted native `.atto` scalar frontend accepts equivalent `int` return-signature variants: `fnc main(): int { ... }`, `fnc main() -> int { ... }`, `fnc main(): int -> { ... }`, `fnc int <- main() { ... }`, and `int <- main() { ... }`. Other return types remain outside this scalar slice. All variants compile and execute as native guests.
 
