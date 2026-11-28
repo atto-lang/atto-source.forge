@@ -130,6 +130,9 @@ RESULT_INVALID = (
     ("trap-unary-precedence", "fnc main():Result<int,Error>{return trap! 5/2;}", "unexpected token"),
 )
 POSITIVE = (
+    ("integer-and-runtime", "fnc main(a:int,b:int):int{return a & b;}", ((15,42,10),(-1,42,42),(0,-1,0),(-9223372036854775808,-1,-9223372036854775808))),
+    ("integer-and-precedence", "fnc main(a:int):int{return (a+1 & 7) ^^ 4;}", ((42,7),(2,7),(7,4))),
+    ("integer-and-alignment", "fnc aligned(a:int):bool{if a <= 0 then return false; fi return (a & (a-1)) eq 0;} fnc main(a:int):int{return aligned(a) ? 42 : 7;}", ((8,42),(3,7),(0,7),(-1,7),(4611686018427387904,42))),
     ("private-five", "fnc weighted(a:int,b:int,c:int,d:int,e:int):int{return a+2*b+3*c+4*d+5*e;} fnc main():int{return weighted(1,2,3,4,5);}", ((55,),)),
     ("private-seven", "fnc weighted(a:int,b:int,c:int,d:int,e:int,f:int,g:int):int{return a+2*b+3*c+4*d+5*e+6*f+7*g;} fnc main():int{return weighted(1,2,3,4,5,6,7);}", ((140,),)),
     ("private-eight", "fnc weighted(a:int,b:int,c:int,d:int,e:int,f:int,g:int,h:int):int{return a+2*b+3*c+4*d+5*e+6*f+7*g+8*h;} fnc main(x:int):int{return weighted(1,2,3,4,5,6,7,x);}", ((8,204),(0,140),(-8,76))),
@@ -287,6 +290,9 @@ TRAPS = (
      (1,), "call depth exceeded"),
 )
 INVALID = (
+    ("integer-and-bool", "fnc main():int{return 1 & false;}", "Boolean is not an int"),
+    ("integer-and-equality-precedence", "fnc main():int{return 12 & 10 eq 8;}", "Boolean is not an int"),
+    ("integer-and-double-separated", "fnc main():int{return 12 & & 10;}", "expected callable expression"),
     ("wide-entry", "fnc main(a:int,b:int,c:int,d:int,e:int):int{return e;}", "function parameter budget exceeded"),
     ("wide-helper", "fnc f(a:int,b:int,c:int,d:int,e:int,f:int,g:int,h:int,i:int):int{return i;} fnc main():int{return 42;}", "function parameter budget exceeded"),
     ("wide-call", "fnc f(a:int,b:int,c:int,d:int,e:int,f:int,g:int,h:int):int{return h;} fnc main():int{return f(1,2,3,4,5,6,7,8,9);}", "call argument budget exceeded"),
@@ -609,6 +615,8 @@ def main():
                 require(blob==({**GUARD_FIXTURE_BLOBS, **SHARED_FIXTURE_BLOBS})[label],"shared fixture drift "+label)
             if label in ("factorial","fibonacci","mutual","nested"):
                 require(asm.count("  call .Lores_fn_")>=1,"missing real native call "+label)
+            if label.startswith("integer-and-"):
+                require("  andq " in asm,"missing native integer and instruction "+label)
             if label.startswith("integer-xor-"):
                 require("  xorq " in asm,"missing native integer xor instruction "+label)
             if label in ("factorial","lazy"):
