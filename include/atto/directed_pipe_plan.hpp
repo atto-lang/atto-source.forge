@@ -65,6 +65,8 @@ inline std::string scoped(const std::string& tenant, const std::string& id) {
 
 [[nodiscard]] inline Plan plan(const std::vector<Stage>& written,
                                 Direction direction) {
+  if (direction != Direction::pipe && direction != Direction::rpipe)
+    throw Error("E_PIPE_DIRECTION");
   if (written.size() < 2 || written.size() > 16)
     throw Error("E_PIPE_STAGE_LIMIT");
   const auto tenant = written.front().tenant;

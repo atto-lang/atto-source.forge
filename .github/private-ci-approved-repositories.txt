@@ -1,0 +1,5 @@
+# Private CI destinations explicitly approved for source transfers.
+# No repositories are approved by default.
+# Changes must be independently reviewed under protected-main CODEOWNERS.
+# Format: exact owner/repo numeric_repository_id
+# DISABLED: no destinations until the independent-reviewer policy is enabled and approved.

@@ -1,0 +1,11 @@
+// Strict experimental Forge allocation-ASM profile (not general Oreslang).
+// Baseline: one heap allocation/free. Safe scalarization: zero heap calls.
+define struct Point as
+    int x
+    int y
+end
+
+define pub fnc main(a:int,b:int):int {
+    let p = Point { x: a, y: b };
+    return p.x + p.y;
+}

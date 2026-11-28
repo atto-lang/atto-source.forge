@@ -29,6 +29,9 @@ void rejects(const char* code, const std::function<void()>& action) {
 }
 }  // namespace
 int main() {
+  rejects("E_PIPE_DIRECTION", [] {
+    (void)plan({producer(), consumer()}, static_cast<Direction>(222));
+  });
   const auto forward = plan({producer(), channel(), consumer()}, Direction::pipe);
   const auto reverse = plan({consumer(), channel(), producer()}, Direction::rpipe);
   assert(forward.flow_indices == std::vector<std::size_t>({0,1,2}));

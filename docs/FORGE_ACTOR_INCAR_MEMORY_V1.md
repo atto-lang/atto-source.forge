@@ -1,0 +1,108 @@
+# Forge actor-incarnation private heap and logical stack — v1 host substrate
+
+Status: **authored native C++ host code; exact-head native CI NOT_EXECUTED**.
+This is a first backend-local memory primitive, not compiled AttoLang actor lowering
+or true per-actor OS stack-fault containment.
+
+## Implemented
+
+ActorIncarnationMemoryV1 binds one distinct native heap buffer and one
+distinct native frame buffer to the live, opaque issuance identity of one
+Mailbox incarnation. The two buffers are independently bounded (bootstrap
+defaults: 1 MiB heap, 64 KiB logical frame stack). Storage is native C++
+memory, not Java/CLR tracing GC.
+
+Mailbox::authorizes checks current local capability, actor ID, generation
+and closed state under its mutex. Memory methods check the issued actor
+reference and each caller's reference. Closing/restarting a mailbox revokes
+old-incarnation memory authority on subsequent calls. Retirement zeroes and
+deallocates the native buffers; reincarnation needs a new ownership object.
+
+Heap handles are opaque capabilities: bounded allocation, copy-only reads and
+writes, stale/cross-actor denial, zero-on-drop, and bulk cursor reset when all
+live allocations are dropped. A long-lived allocation can pin the simple bump
+cursor: this is not a complete compacting or free-list production actor heap.
+
+Frame handles are distinct opaque capabilities. Strict LIFO, byte/depth
+bounds, zero-on-pop, terminal poisoning on invalid ordering/quota failure,
+exact execution identity, and one-shot suspended continuation fencing are
+implemented. Native frame bytes remain present across trusted host-directed
+suspension/resumption on a different carrier. A poisoned logical stack also
+revokes all subsequent heap operations on that incarnation. Because Forge has
+no integrated continuation scheduler, `verify_handler_exit` refuses any
+live execution, including a suspended one: it cannot return and admit
+another message just because a continuation token was issued.
+
+The new CMake regression compiles against Forge's real authenticated mailbox.
+The source-local workflow requests GCC/Clang optimized and ASan/UBSan builds
+and actual CTest execution at the checked-out exact PR head. These checks
+are authored, not yet observed to have executed.
+
+## Limits and required review
+
+- No real define-actor source syntax, actor HIR/IR, compiler-produced stack
+  layout, emitted native machine-code frame, or .atto typed local is lowered
+  to this host primitive.
+- Mailbox creation does not automatically create an ActorIncarnationMemoryV1
+  instance. A trusted supervisor adapter must construct, bind and retire it
+  correctly on STOP, restart, panic, and shutdown.
+- A mailbox capability does not constitute a physical turn or carrier lease.
+  The host must enforce non-reentrant dispatch and trusted continuation
+  ownership. Suspension here is a bounded byte-state transition only.
+- Mailbox::lock_authorized now holds the live mailbox-generation mutex
+  throughout each native heap/frame byte operation, so STOP and restart wait
+  for that operation rather than invalidating its authority mid-copy. The
+  lock is held only across trusted bounded memory operations; no guest
+  callbacks run while it is held. This establishes byte-operation fencing,
+  not full async scheduler, in-flight FFI or guest STOP linearization.
+  Do not expose this primitive directly to untrusted guests.
+- Every instance charges its combined heap-and-stack capacity against a
+  thread-safe process ledger (512 MiB bootstrap ceiling). An optional
+  runtime-scoped `ActorMemoryAggregateBudgetV1` is charged in addition
+  to the process ledger. Both credits are reserved before native allocation,
+  rolled back if construction fails, and refunded once on retirement/destruction.
+  The caller must keep its scoped ledger alive until all admitted actor memory
+  instances have been retired. The host regression tests budget contention,
+  failed-constructor rollback, re-admission, and destructor refund.
+- Tenant-specific quotas/admission, FFI lifetime pins, full allocation
+  recycling, and deterministic asynchronous reclamation still require
+  integration. The process ledger covers this v1 primitive only, not other
+  existing runtime allocation families.
+- C++ calls still use the carrier's physical OS stack. A logical frame slab
+  cannot prevent a process-fatal recursive native stack overflow.
+- Forge and Cranelift need distinct compiler-backed receipts. A C++ host test
+  cannot certify either compiler's guest actor execution.
+
+## Release gate
+
+Keep draft until real, nonzero-step CI runs with exact head/tree readback,
+GCC/Clang sanitizer execution, semantic integration with actor arena drafts
+#101/#117, independent review, and compiler-backed canonical .atto actor A
+failure / sibling B survival / restart / cancellation / continuation tests.
+Steps=[] or steps=null, runner_id=0 and source-only readback do not count as
+guest parity. No external private-source mirroring without authorization.
+
+Companion review targets: Java actor frames #2627, .NET actor frames #385,
+LLVM actor ownership/runtime work, platform-conformance #562.
+
+## 7 November hardening: terminal frame faults and concurrent quotas
+
+Further fail-closed checks now reject duplicate actor `begin` as a
+terminal reentrancy violation; make frame read/write bounds violations poison
+the offending logical execution; and reject heap access while the actor's
+logical continuation is suspended without a physical actor turn. Once a
+logical frame stack is poisoned, the same incarnation cannot continue heap
+operations. New native host negatives cover bounds faults, one healthy
+sibling, duplicate begin, suspended heap access, closed/restarted
+incarnation construction, reservation neutrality after stale construction,
+and zeroed new-incarnation memory.
+
+The aggregate budget ledger's `reserve` and `refund` methods are private
+to the actor-memory primitive; external host code can observe reservations
+but cannot erase a separate actor's quota credits. A new two-thread native
+test contends for a single 176-byte slot and requires exactly one admission,
+one denied reservation, and full final runtime+process refund. This is a
+C++ host-only admission model, **not an actor scheduler**. Full tenant
+quotas, bounded guest call-frame lowering, and compiler-backed `.atto`
+tests still block readiness. None of these new CTests have been observed
+to execute on a GitHub runner.

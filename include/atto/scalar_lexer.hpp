@@ -1,17 +1,18 @@
 #pragma once
 // Stage-0 restricted .atto scalar lexer. No Python, no guest execution claim.
 // Token locations are offsets, never borrowed views into a temporary source.
+#include "portable_unicode_identifier.hpp"
 #include <cstddef>
 #include <string_view>
 #include <vector>
 
 namespace atto::forge::scalar {
 enum class Kind {
-  name, integer, lparen, rparen, lbrace, rbrace, colon, semicolon,
-  comma, lt, gt, dot, assign, plus, minus, star, slash, percent, bit_and, bit_or, bit_xor, tilde, shl, lshr, arrow, left_arrow, end
+  name, integer, quoted, lparen, rparen, lbracket, rbracket, lbrace, rbrace, colon, double_colon, colon_assign, lt, gt, semicolon, dot, equals, comma, question,
+  plus, minus, star, slash, percent, logical_and, logical_or, not_equal, equal_equal, bit_and, bit_or, caret, bit_xor, tilde, shl, lshr, arrow, left_arrow, bang, unicode_not, end
 };
 struct Token { Kind kind; std::size_t offset; std::size_t length; };
-enum class LexError { none, source_too_large, token_limit, unsupported_byte, unterminated_comment };
+enum class LexError { none, source_too_large, token_limit, unsupported_byte, unterminated_comment, comment_nesting_limit, ownership_bang_unsupported, suspension_unsupported, source_bidi };
 struct Lexed {
   std::vector<Token> tokens;
   LexError error = LexError::none;
@@ -19,14 +20,32 @@ struct Lexed {
   [[nodiscard]] bool ok() const noexcept { return error == LexError::none; }
 };
 inline constexpr std::size_t max_source_bytes = 16 * 1024;
-inline constexpr std::size_t max_tokens = 256;
+// Ordinary bounded scalar lane admits larger lexical programs; strict proof budget stays unchanged.
+inline constexpr std::size_t max_tokens = 512;
+// Ordinary quantity catalog declarations get a separate bounded allowance.
+inline constexpr std::size_t max_quantity_tokens = 2048;
+inline constexpr std::size_t max_strict_tokens = 256;
 
-[[nodiscard]] inline Lexed tokenize(std::string_view src) {
+[[nodiscard]] inline Lexed tokenize(std::string_view src, std::size_t token_budget = max_tokens) {
   Lexed out;
   if (src.size() > max_source_bytes) {
     out.error = LexError::source_too_large;
     out.error_offset = max_source_bytes;
     return out;
+  }
+  for (std::size_t at = 0; at < src.size();) {
+    const auto scalar = unicode_at(src, at);
+    if (scalar.width && (scalar.value == 0x61c || scalar.value == 0x200e || scalar.value == 0x200f ||
+        (scalar.value >= 0x202a && scalar.value <= 0x202e) ||
+        (scalar.value >= 0x2066 && scalar.value <= 0x2069))) {
+      out.error = LexError::source_bidi; out.error_offset = at; return out;
+    }
+    if (!scalar.width || unicode_source_control(scalar.value)) {
+      out.error = LexError::unsupported_byte;
+      out.error_offset = at;
+      return out;
+    }
+    at += scalar.width;
   }
   auto is_name_start = [](char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
@@ -50,32 +69,79 @@ inline constexpr std::size_t max_tokens = 256;
     if (c == '/' && i + 1 < src.size() && src[i + 1] == '*') {
       const std::size_t opening = i;
       i += 2;
-      bool closed = false;
-      while (i + 1 < src.size()) {
-        if (src[i] == '*' && src[i + 1] == '/') {
+      std::size_t depth = 1;
+      // Nested comments are inert. Bound nesting before incrementing;
+      // otherwise the first interior */ can expose source inside a comment.
+      while (i < src.size() && depth != 0) {
+        if (i + 1 < src.size() && src[i] == '/' && src[i + 1] == '*') {
+          if (depth >= 128) {
+            out.error = LexError::comment_nesting_limit;
+            out.error_offset = i;
+            return out;
+          }
+          ++depth;
           i += 2;
-          closed = true;
-          break;
+        } else if (i + 1 < src.size() && src[i] == '*' && src[i + 1] == '/') {
+          --depth;
+          i += 2;
+        } else {
+          ++i;
         }
-        ++i;
       }
-      if (!closed) {
+      if (depth != 0) {
         out.error = LexError::unterminated_comment;
         out.error_offset = opening;
         return out;
       }
       continue;
     }
-    if (out.tokens.size() >= max_tokens) {
+    if (out.tokens.size() >= max_quantity_tokens || out.tokens.size() >= token_budget) {
       out.error = LexError::token_limit;
       out.error_offset = i;
       return out;
     }
     const std::size_t start = i;
     Kind kind;
-    if (is_name_start(c)) {
+    // Exact UTF-8 aliases are effects, never an ordinary scalar identifier.
+    if (src.substr(i, 3) == "\xE2\xA7\x96" || src.substr(i, 3) == "\xE2\x88\x82") {
+      out.error = LexError::suspension_unsupported;
+      out.error_offset = start;
+      return out;
+    }
+    if (portable_name_start(unicode_at(src, i).value)) {
       kind = Kind::name;
-      do { ++i; } while (i < src.size() && is_name(src[i]));
+      do {
+        i += unicode_at(src, i).width;
+      } while (i < src.size() && portable_name_part(unicode_at(src, i).value));
+      // Only these operations are unlowered in the scalar and bounded
+      // pointer profile. Crucially, ref!/deref!/unref! are NOT rejected
+      // here: the typed local_pointer parser admits their verified subset.
+      const auto word = src.substr(start, i - start);
+      if (word == "suspends" || word == "susp") {
+        out.error = LexError::suspension_unsupported;
+        out.error_offset = start;
+        return out;
+      }
+      const bool unlowered_ownership =
+          word == "copy" || word == "take" || word == "borrow" ||
+          word == "share" || word == "pin" || word == "drop" ||
+          word == "freeze" || word == "weak";
+      // Distinguish !eq and != comparisons. Treat a non-ASCII byte
+      // after !eq as potentially identifier-like, never as punctuation.
+      const bool eq_boundary = i + 3 == src.size() ||
+          (i + 3 < src.size() &&
+           static_cast<unsigned char>(src[i + 3]) < 0x80 &&
+           !is_name(src[i + 3]));
+      const bool comparison = src.substr(i, 2) == "!=" ||
+          (src.substr(i, 3) == "!eq" && eq_boundary);
+      if (unlowered_ownership && i < src.size() && src[i] == '!' &&
+          !comparison) {
+        out.error = LexError::ownership_bang_unsupported;
+        out.error_offset = start;
+        return out;
+      }
+    } else if (unicode_at(src, i).value == 0xacu) {
+      kind = Kind::unicode_not; i += 2;
     } else if (c == '-' && src.substr(i, 2) == "->") {
       kind = Kind::arrow;
       i += 2;
@@ -88,25 +154,52 @@ inline constexpr std::size_t max_tokens = 256;
     } else if (c == '>' && src.substr(i, 3) == ">>>") {
       kind = Kind::lshr;
       i += 3;
+    } else if (c == ':' && src.substr(i, 2) == "::") {
+      kind = Kind::double_colon;
+      i += 2;
+    } else if (c == ':' && src.substr(i, 2) == ":=") {
+      kind = Kind::colon_assign; i += 2;
+    } else if (src.substr(i, 2) == "&&") {
+      kind = Kind::logical_and; i += 2;
+    } else if (src.substr(i, 2) == "||") {
+      kind = Kind::logical_or; i += 2;
+    } else if (src.substr(i, 2) == "!=") {
+      kind = Kind::not_equal; i += 2;
+    } else if (src.substr(i, 2) == "==") {
+      kind = Kind::equal_equal; i += 2;
+    } else if (c == '^' && src.substr(i, 2) == "^^") {
+      kind = Kind::bit_xor;
+      i += 2;
     } else if (is_digit(c)) {
       kind = Kind::integer;
-      do { ++i; } while (i < src.size() && is_digit(src[i]));
+      do { ++i; } while (i < src.size() && (is_digit(src[i]) || src[i]=='_'));
+    } else if (c == '"') {
+      kind = Kind::quoted;
+      ++i;
+      while (i < src.size() && src[i] != '"') ++i;
+      if (i == src.size()) {
+        out.error = LexError::unsupported_byte;
+        out.error_offset = start;
+        return out;
+      }
+      ++i;
     } else {
       ++i;
       switch (c) {
         case '(': kind = Kind::lparen; break;
         case ')': kind = Kind::rparen; break;
+        case '[': kind = Kind::lbracket; break;
+        case ']': kind = Kind::rbracket; break;
         case '{': kind = Kind::lbrace; break;
         case '}': kind = Kind::rbrace; break;
         case ':': kind = Kind::colon; break;
-        case ';': kind = Kind::semicolon; break;
-        // Lex typed headers before denying an unsupported actor pipe. These
-        // punctuation tokens remain non-executable in the scalar parser.
-        case ',': kind = Kind::comma; break;
+        case '=': kind = Kind::equals; break;
         case '<': kind = Kind::lt; break;
         case '>': kind = Kind::gt; break;
+        case ';': kind = Kind::semicolon; break;
+        case ',': kind = Kind::comma; break;
+        case '?': kind = Kind::question; break;
         case '.': kind = Kind::dot; break;
-        case '=': kind = Kind::assign; break;
         case '+': kind = Kind::plus; break;
         case '-': kind = Kind::minus; break;
         case '*': kind = Kind::star; break;
@@ -114,8 +207,9 @@ inline constexpr std::size_t max_tokens = 256;
         case '%': kind = Kind::percent; break;
         case '&': kind = Kind::bit_and; break;
         case '|': kind = Kind::bit_or; break;
-        case '^': kind = Kind::bit_xor; break;
+        case '^': kind = Kind::caret; break;
         case '~': kind = Kind::tilde; break;
+        case '!': kind = Kind::bang; break;
         default:
           out.error = LexError::unsupported_byte;
           out.error_offset = start;

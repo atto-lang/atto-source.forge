@@ -1,0 +1,28 @@
+name: Checked u64 Forge native scalar candidate
+on:
+  pull_request:
+    paths:
+      - 'tools/forge_checked_u64.cpp'
+      - 'tests/checked_u64_forge_native.test.mjs'
+      - 'tests/checked_u64_division.py'
+      - 'contracts/atto-xo-checked-u64-debit-v1/**'
+      - '.github/workflows/checked-u64-forge.yml'
+permissions:
+  contents: read
+jobs:
+  checked-guests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Execute compiled native guests with two toolchains
+        run: |
+          clang++ --version
+          g++ --version
+          node --test tests/checked_u64_forge_native.test.mjs
+      - name: Execute bounded quotient and cross-target arithmetic checks
+        run: |
+          ATTO_U64_DIV_SOURCE="$PWD/tools/forge_checked_u64.cpp" python3 tests/checked_u64_division.py

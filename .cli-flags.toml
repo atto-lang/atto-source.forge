@@ -1,0 +1,23 @@
+# flags-2-env maps the public Oreslang optimization options to this backend's
+# environment ABI. The standalone Forge executable also accepts direct flags.
+# Auto selects safe only for the verified closed allocation emitter.
+[flags.opt-escape]
+env = "ORES_OPT_ESCAPE"
+aliases = ["opt-escape"]
+type = "string"
+default = "auto"
+help = "Allocation optimization: auto|off|safe|verify|speculative (auto selects safe only in closed emit-alloc-asm x86_64 profile)."
+
+[flags.jit]
+env = "ORES_JIT"
+aliases = ["jit"]
+type = "string"
+default = "off"
+help = "Executable JIT compilation: on|off (Forge currently supports off only)."
+
+[flags.opt-escape-report]
+env = "ORES_OPT_ESCAPE_REPORT"
+aliases = ["opt-escape-report"]
+type = "bool"
+default = "false"
+help = "Emit verified allocation decisions (Forge currently rejects true)."

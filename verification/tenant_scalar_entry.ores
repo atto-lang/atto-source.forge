@@ -1,0 +1,1 @@
+fnc main(old:int,delta:int):int{return old+delta;}

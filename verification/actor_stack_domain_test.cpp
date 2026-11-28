@@ -1,0 +1,106 @@
+#include "runtime/ActorStackDomain.hpp"
+#include <array>
+#include <cassert>
+#include <cstdint>
+#include <exception>
+#include <signal.h>
+#include <sys/wait.h>
+#include <sys/resource.h>
+#include <unistd.h>
+#include <stdexcept>
+#include <thread>
+#include <vector>
+using oresforge::runtime::ActorHeapHandle;
+using oresforge::runtime::ActorStackDomain;
+
+template<class F> void must_fail(F&& f) {
+  bool failed=false;
+  try { f(); } catch (const std::exception&) { failed=true; }
+  assert(failed);
+}
+
+#if !ORESFORGE_ACTOR_ASAN
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((noinline))
+#endif
+void exhaust_actor_stack(unsigned depth) {
+  volatile char padding[4096] = {};
+  padding[depth % sizeof(padding)] = 1;
+  if (depth) exhaust_actor_stack(depth - 1);
+  if (padding[depth % sizeof(padding)] != 1) std::abort();
+}
+void verify_guard_page_fault() {
+  const pid_t child = ::fork();
+  assert(child >= 0);
+  if (child == 0) {
+    struct rlimit no_core{0,0};
+    ::setrlimit(RLIMIT_CORE, &no_core);
+    ActorStackDomain tiny(777, ActorStackDomain::kMinStackBytes, 4096);
+    tiny.run_turn([](auto&){exhaust_actor_stack(100);});
+    ::_exit(0);
+  }
+  int status = 0;
+  assert(::waitpid(child, &status, 0) == child);
+  assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGSEGV);
+}
+#endif
+// Address-taken locals may reside on ASan's fake stack. Test physical
+// containment with the machine stack pointer; keep instrumented accesses.
+static std::uintptr_t physical_stack_pointer() {
+  std::uintptr_t sp;
+  asm volatile("mov %%rsp, %0" : "=r"(sp));
+  return sp;
+}
+int main() {
+  ActorStackDomain a(1, 128*1024, 4096), b(2, 128*1024, 4096);
+  int host_local = 0;
+  ActorHeapHandle a_handle, b_handle;
+  std::uintptr_t a_addr=0, b_addr=0;
+  must_fail([&]{ a.allocate(8); });
+  a.run_turn([&](ActorStackDomain& actor){
+    int local=41;
+    a_addr=physical_stack_pointer();
+    assert(actor.contains_stack_address(reinterpret_cast<void*>(a_addr)));
+    assert(!b.contains_stack_address(reinterpret_cast<void*>(a_addr)));
+    a_handle=actor.allocate(sizeof(local));
+    actor.write(a_handle, 0, &local, sizeof(local));
+    must_fail([&]{ b.allocate(1); });
+    must_fail([&]{ actor.write(a_handle, 3, &local, 4); });
+    must_fail([&]{ b.run_turn([](auto&){}); });
+  });
+  b.run_turn([&](ActorStackDomain& actor){
+    int local=13;
+    b_addr=physical_stack_pointer();
+    assert(actor.contains_stack_address(reinterpret_cast<void*>(b_addr)));
+    assert(!a.contains_stack_address(reinterpret_cast<void*>(b_addr)));
+    b_handle=actor.allocate(sizeof(local));
+    actor.write(b_handle, 0, &local, sizeof(local));
+    must_fail([&]{ actor.read(a_handle,0,&local,sizeof(local)); });
+  });
+  assert(a_addr!=b_addr && a_addr!=reinterpret_cast<std::uintptr_t>(&host_local));
+  a.run_turn([&](ActorStackDomain& actor){
+    int result=0;
+    actor.read(a_handle,0,&result,sizeof(result));
+    assert(result==41);
+    must_fail([&]{ actor.read(b_handle,0,&result,sizeof(result)); });
+    actor.release(a_handle);
+    must_fail([&]{ actor.read(a_handle,0,&result,sizeof(result)); });
+    must_fail([&]{ actor.allocate(5000); });
+  });
+  must_fail([&]{ a.run_turn([](auto&){throw std::runtime_error("actor failure");}); });
+  // An exception unwinds on the actor's own stack; later turns still work.
+  a.run_turn([&](ActorStackDomain& actor){
+    assert(actor.contains_stack_address(reinterpret_cast<void*>(physical_stack_pointer())));
+  });
+  std::thread outsider([&]{must_fail([&]{a.run_turn([](auto&){});});});
+  outsider.join();
+  b.stop();b.stop();
+  must_fail([&]{b.run_turn([](auto&){});});
+  must_fail([&]{ActorStackDomain bad(0,128*1024,4096);});
+  must_fail([&]{ActorStackDomain bad(3,16*1024,4096);});
+  must_fail([&]{ActorStackDomain bad(3,128*1024,0);});
+#if !ORESFORGE_ACTOR_ASAN
+  verify_guard_page_fault();
+#endif
+  return 0;
+}
