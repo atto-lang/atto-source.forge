@@ -151,7 +151,7 @@ class Parser {
       ++at_;
     } else if (c=='^' && at_<text_.size() && text_[at_]=='^') {
       ++at_;
-    } else if (std::string_view("()+-*/{};:,<>=^?").find(c)==std::string_view::npos) {
+    } else if (std::string_view("()+-*/{};:,<>=^?&").find(c)==std::string_view::npos) {
       at_=begin;
       fail("invalid character");
     }
@@ -502,11 +502,21 @@ class Parser {
   }
   int integer_xor(std::size_t d) {
     depth(d);
-    int left=comparison(d+1);
+    int left=integer_and(d+1);
     while (take("^^")) {
-      const int right=comparison(d+1);
+      const int right=integer_and(d+1);
       require_integer(left); require_integer(right);
       left=add(Kind::IntegerXor,0,{}, {left,right});
+    }
+    return left;
+  }
+  int integer_and(std::size_t d) {
+    depth(d);
+    int left=comparison(d+1);
+    while(take("&")) {
+      const int right=comparison(d+1);
+      require_integer(left); require_integer(right);
+      left=add(Kind::IntegerAnd,0,{}, {left,right});
     }
     return left;
   }
@@ -660,6 +670,7 @@ std::int64_t checked(Kind k,std::int64_t a,std::int64_t b) {
       if(__builtin_mul_overflow(a,b,&out))throw ArithmeticFailure(ArithmeticStatus::Overflow,"i64 mul overflow");
       return out;
     case Kind::IntegerXor: return a^b;
+    case Kind::IntegerAnd: return a&b;
     case Kind::Div:
       if(b==0) throw ArithmeticFailure(ArithmeticStatus::DivisionByZero,"i64 division by zero");
       if(a==std::numeric_limits<std::int64_t>::min() && b==-1)
@@ -911,13 +922,14 @@ struct Native {
         case Kind::Sub: out<<"  subq ";break;
         case Kind::Mul: out<<"  imulq ";break;
         case Kind::IntegerXor: out<<"  xorq ";break;
+        case Kind::IntegerAnd: out<<"  andq ";break;
         default: out<<"  cmpq ";break;
       }
       out<<value_slot(n.children[1])<<", %rax\n";
       if(n.kind==Kind::Add||n.kind==Kind::Sub||n.kind==Kind::Mul) {
         out<<"  movl $"<<static_cast<std::uint64_t>(ArithmeticStatus::Overflow)<<", %r9d\n"
            <<"  jo "<<effect_target<<"\n";
-      } else if(n.kind!=Kind::IntegerXor) {
+      } else if(n.kind!=Kind::IntegerXor&&n.kind!=Kind::IntegerAnd) {
         const char* cc="e";
         switch(n.kind) {
           case Kind::Less: cc="l";break;
@@ -1046,7 +1058,7 @@ void verify(const Module& m) {
         case Kind::Greater: case Kind::GreaterEqual: case Kind::Equal:
         case Kind::NotEqual: case Kind::If: case Kind::BoolIf: case Kind::Call:
         case Kind::Boolean: case Kind::Not: case Kind::Ternary:
-         case Kind::And: case Kind::Or: case Kind::BooleanXor: case Kind::Div: case Kind::Trap: case Kind::ResultCall: case Kind::BindResult: case Kind::Local: case Kind::Ok: case Kind::Some: case Kind::None: case Kind::OptionIf: case Kind::OptionCall: case Kind::BoolCall: case Kind::IntegerXor: case Kind::OptionMatch: case Kind::OptionPayload: case Kind::ResultMatch: case Kind::ResultPayload: break;
+         case Kind::And: case Kind::Or: case Kind::BooleanXor: case Kind::Div: case Kind::Trap: case Kind::ResultCall: case Kind::BindResult: case Kind::Local: case Kind::Ok: case Kind::Some: case Kind::None: case Kind::OptionIf: case Kind::OptionCall: case Kind::BoolCall: case Kind::IntegerXor: case Kind::IntegerAnd: case Kind::OptionMatch: case Kind::OptionPayload: case Kind::ResultMatch: case Kind::ResultPayload: break;
         default: throw std::runtime_error("unknown callable opcode");
       }
       if(n.kind!=Kind::Call && n.kind!=Kind::ResultCall && n.kind!=Kind::OptionCall && n.kind!=Kind::BoolCall && !n.name.empty())
@@ -1129,7 +1141,7 @@ void verify(const Module& m) {
           throw std::runtime_error("Boolean Xor intrinsic is shadowed by a source declaration");
       } else if(n.kind==Kind::Equal||n.kind==Kind::NotEqual) {
         if(child_bool(0)!=child_bool(1)) throw std::runtime_error("comparison operand type mismatch");
-      } else if(n.kind==Kind::IntegerXor||n.kind==Kind::Add||n.kind==Kind::Sub||n.kind==Kind::Mul||n.kind==Kind::Div||
+      } else if(n.kind==Kind::IntegerXor||n.kind==Kind::IntegerAnd||n.kind==Kind::Add||n.kind==Kind::Sub||n.kind==Kind::Mul||n.kind==Kind::Div||
                 n.kind==Kind::Less||n.kind==Kind::LessEqual||n.kind==Kind::Greater||
                 n.kind==Kind::GreaterEqual) {
         if(child_bool(0)||child_bool(1)) throw std::runtime_error("Boolean is not an int");
