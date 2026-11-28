@@ -45,6 +45,7 @@ class Parser {
   }
   std::int64_t number() {
     auto n=pop();std::int64_t v=0;
+    if(n.empty()||n.size()>19||!std::all_of(n.begin(),n.end(),[](unsigned char c){return digit(c);}))bad();
     auto r=std::from_chars(n.data(),n.data()+n.size(),v);
     if(r.ec!=std::errc{}||r.ptr!=n.data()+n.size())bad();
     return v;
@@ -93,7 +94,7 @@ class Parser {
     oresforge::source::validate_utf8(s);
     // Restrict to ASCII tokens; comments cannot hide Unicode controls or
     // alternate line boundaries. Only line comments are admitted.
-    for(unsigned char c:s)if(c>127||c==0||(c<32&&!space(c)))bad();
+    for(unsigned char c:s)if(c>=127||c==0||(c<32&&!space(c)))bad();
     for(std::size_t i=0;i<s.size();){
       auto c=static_cast<unsigned char>(s[i]);
       if(space(c)){++i;continue;}
