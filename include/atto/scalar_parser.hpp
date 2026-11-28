@@ -1324,6 +1324,28 @@ class Parser {
     pair_locals_.push_back({local,key,*payload});
     return true;
   }
+  // Select aggregate grammar only on explicit aggregate syntax, not on
+  // every ordinary const declaration. No parser retry after a denial.
+  [[nodiscard]] bool local_product_ahead() {
+    if(local_pair_ahead())return true;
+    if(pos_+3>=tokens_.size()||tokens_[pos_+1].kind!=Kind::name)return false;
+    const auto& next=tokens_[pos_+1];
+    const auto type=source_.substr(next.offset,next.length);
+    if(type=="Record"||type=="Tuple")return true;
+    if(tokens_[pos_+2].kind!=Kind::equals)return false;
+    if(tokens_[pos_+3].kind==Kind::lbrace)return true;
+    if(tokens_[pos_+3].kind!=Kind::lparen)return false;
+    if(pos_+4<tokens_.size()&&tokens_[pos_+4].kind==Kind::rparen)return true;
+    unsigned depth=0;
+    for(std::size_t i=pos_+4;i<tokens_.size();++i){
+      const auto kind=tokens_[i].kind;
+      if(kind==Kind::lparen){++depth;continue;}
+      if(kind==Kind::rparen){if(depth==0)break;--depth;continue;}
+      if(depth==0&&(kind==Kind::comma||kind==Kind::colon_assign||kind==Kind::colon||kind==Kind::equals))return true;
+      if(kind==Kind::semicolon||kind==Kind::end)break;
+    }
+    return false;
+  }
   [[nodiscard]] std::optional<std::size_t> record_body() {
     while(current().kind==Kind::name&&text()=="const"){
       if(local_pair_ahead()){
@@ -2619,7 +2641,7 @@ public:
         return std::move(out_);
       }
     }
-    if(!strict_&&helpers_.empty()&&refinements_.empty()&&units_.empty()&&dimensions_.empty()&&current().kind==Kind::name&&text()=="const"){
+    if(!strict_&&helpers_.empty()&&refinements_.empty()&&units_.empty()&&dimensions_.empty()&&current().kind==Kind::name&&text()=="const"&&local_product_ahead()){
       auto result=record_body();
       if(!result||current().kind!=Kind::end){fail(ParseError::syntax);return std::move(out_);}
       out_.root=*result;return std::move(out_);
